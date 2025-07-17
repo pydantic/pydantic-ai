@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Any
-
-from uvicorn.config import LOGGING_CONFIG
 
 
 @dataclass
@@ -16,19 +13,6 @@ class Args:
     port: int
     reload: bool
     log_level: str
-    loggers: list[str]
-
-    def log_config(self) -> dict[str, Any]:
-        """Return the logging configuration based on the log level."""
-        log_config: dict[str, Any] = LOGGING_CONFIG.copy()
-        for logger in self.loggers:
-            log_config['loggers'][logger] = {
-                'handlers': ['default'],
-                'level': self.log_level.upper(),
-                'propagate': False,
-            }
-
-        return log_config
 
 
 def parse_args() -> Args:
@@ -59,14 +43,6 @@ def parse_args() -> Args:
         choices=['critical', 'error', 'warning', 'info', 'debug', 'trace'],
         default='info',
         help='Log level (default: info)',
-    )
-    parser.add_argument(
-        '--loggers',
-        nargs='*',
-        default=[
-            'pydantic_ai.ag_ui',
-        ],
-        help='Logger names to configure (default: adapter and model loggers)',
     )
 
     return Args(**vars(parser.parse_args()))

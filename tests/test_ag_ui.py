@@ -20,8 +20,8 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import (
     AgentInfo,
-    DeltaThinkingCall,
     DeltaThinkingCalls,
+    DeltaThinkingPart,
     DeltaToolCall,
     DeltaToolCalls,
     FunctionModel,
@@ -52,7 +52,6 @@ with contextlib.suppress(ImportError):
 
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
-        Role,
         StateDeps,
         _Adapter,  # type: ignore[reportPrivateUsage]
     )
@@ -188,7 +187,6 @@ async def test_basic_user_message() -> None:
     run_input = create_input(
         UserMessage(
             id='msg_1',
-            role=Role.USER.value,
             content='Hello, how are you?',
         )
     )
@@ -231,27 +229,22 @@ async def test_multiple_messages() -> None:
     run_input = create_input(
         UserMessage(
             id='msg_1',
-            role=Role.USER.value,
             content='First message',
         ),
         AssistantMessage(
             id='msg_2',
-            role=Role.ASSISTANT.value,
             content='Assistant response',
         ),
         SystemMessage(
             id='msg_3',
-            role=Role.SYSTEM.value,
             content='System message',
         ),
         DeveloperMessage(
             id='msg_4',
-            role=Role.DEVELOPER.value,
             content='Developer note',
         ),
         UserMessage(
             id='msg_5',
-            role=Role.USER.value,
             content='Second message',
         ),
     )
@@ -270,12 +263,10 @@ async def test_messages_with_history() -> None:
     run_input = create_input(
         UserMessage(
             id='msg_1',
-            role=Role.USER.value,
             content='First message',
         ),
         UserMessage(
             id='msg_2',
-            role=Role.USER.value,
             content='Second message',
         ),
     )
@@ -309,7 +300,6 @@ async def test_tool_ag_ui() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please call get_weather for Paris',
             ),
             tools=[get_weather()],
@@ -318,12 +308,10 @@ async def test_tool_ag_ui() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please call get_weather for Paris',
             ),
             AssistantMessage(
                 id='msg_2',
-                role=Role.ASSISTANT.value,
                 tool_calls=[
                     ToolCall(
                         id='pyd_ai_00000000000000000000000000000003',
@@ -337,7 +325,6 @@ async def test_tool_ag_ui() -> None:
             ),
             ToolMessage(
                 id='msg_3',
-                role=Role.TOOL.value,
                 content='Tool result',
                 tool_call_id='pyd_ai_00000000000000000000000000000003',
             ),
@@ -394,7 +381,6 @@ async def test_tool_ag_ui_multiple() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please call get_weather and get_weather_parts for Paris',
             ),
             tools=[get_weather(), get_weather('get_weather_parts')],
@@ -402,12 +388,10 @@ async def test_tool_ag_ui_multiple() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please call get_weather for Paris',
             ),
             AssistantMessage(
                 id='msg_2',
-                role=Role.ASSISTANT.value,
                 tool_calls=[
                     ToolCall(
                         id=tool_call_id1,
@@ -421,13 +405,11 @@ async def test_tool_ag_ui_multiple() -> None:
             ),
             ToolMessage(
                 id='msg_3',
-                role=Role.TOOL.value,
                 content='Tool result',
                 tool_call_id=tool_call_id1,
             ),
             AssistantMessage(
                 id='msg_4',
-                role=Role.ASSISTANT.value,
                 tool_calls=[
                     ToolCall(
                         id=tool_call_id2,
@@ -441,7 +423,6 @@ async def test_tool_ag_ui_multiple() -> None:
             ),
             ToolMessage(
                 id='msg_5',
-                role=Role.TOOL.value,
                 content='Tool result',
                 tool_call_id=tool_call_id2,
             ),
@@ -496,7 +477,6 @@ async def test_tool_ag_ui_parts() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please call get_weather_parts for Paris',
             ),
             tools=[get_weather('get_weather_parts')],
@@ -504,12 +484,10 @@ async def test_tool_ag_ui_parts() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please call get_weather_parts for Paris',
             ),
             AssistantMessage(
                 id='msg_2',
-                role=Role.ASSISTANT.value,
                 tool_calls=[
                     ToolCall(
                         id='pyd_ai_00000000000000000000000000000003',
@@ -523,7 +501,6 @@ async def test_tool_ag_ui_parts() -> None:
             ),
             ToolMessage(
                 id='msg_3',
-                role=Role.TOOL.value,
                 content='Tool result',
                 tool_call_id='pyd_ai_00000000000000000000000000000003',
             ),
@@ -576,7 +553,6 @@ async def test_tool_local_single_event() -> None:
     run_input = create_input(
         UserMessage(
             id='msg_1',
-            role=Role.USER.value,
             content='Please call send_snapshot',
         ),
     )
@@ -626,7 +602,6 @@ async def test_tool_local_multiple_events() -> None:
     run_input = create_input(
         UserMessage(
             id='msg_1',
-            role=Role.USER.value,
             content='Please call send_custom',
         ),
     )
@@ -678,7 +653,6 @@ async def test_tool_local_parts() -> None:
     run_input = create_input(
         UserMessage(
             id='msg_1',
-            role=Role.USER.value,
             content='Please call current_time',
         ),
     )
@@ -712,8 +686,8 @@ async def test_thinking() -> None:
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaThinkingCalls | str]:
-        yield {0: DeltaThinkingCall(content_delta='Thinking ')}
-        yield {0: DeltaThinkingCall(content_delta='about the weather')}
+        yield {0: DeltaThinkingPart(content='Thinking ')}
+        yield {0: DeltaThinkingPart(content='about the weather')}
         yield 'Thought about the weather'
 
     agent = Agent(
@@ -723,7 +697,6 @@ async def test_thinking() -> None:
     run_input = create_input(
         UserMessage(
             id='msg_1',
-            role=Role.USER.value,
             content='Think about the weather',
         ),
     )
@@ -773,7 +746,6 @@ async def test_tool_local_then_ag_ui() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please tell me the time and then call get_weather for Paris',
             ),
             tools=[get_weather()],
@@ -781,12 +753,10 @@ async def test_tool_local_then_ag_ui() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Please call get_weather for Paris',
             ),
             AssistantMessage(
                 id='msg_2',
-                role=Role.ASSISTANT.value,
                 tool_calls=[
                     ToolCall(
                         id=tool_call_id1,
@@ -800,13 +770,11 @@ async def test_tool_local_then_ag_ui() -> None:
             ),
             ToolMessage(
                 id='msg_3',
-                role=Role.TOOL.value,
                 content='Tool result',
                 tool_call_id=tool_call_id1,
             ),
             AssistantMessage(
                 id='msg_4',
-                role=Role.ASSISTANT.value,
                 tool_calls=[
                     ToolCall(
                         id=tool_call_id2,
@@ -820,7 +788,6 @@ async def test_tool_local_then_ag_ui() -> None:
             ),
             ToolMessage(
                 id='msg_5',
-                role=Role.TOOL.value,
                 content='Bright and sunny',
                 tool_call_id=tool_call_id2,
             ),
@@ -871,7 +838,6 @@ async def test_request_with_state() -> None:
         create_input(
             UserMessage(
                 id='msg_1',
-                role=Role.USER.value,
                 content='Hello, how are you?',
             ),
             state=StateInt(value=41),
@@ -879,14 +845,12 @@ async def test_request_with_state() -> None:
         create_input(
             UserMessage(
                 id='msg_2',
-                role=Role.USER.value,
                 content='Hello, how are you?',
             ),
         ),
         create_input(
             UserMessage(
                 id='msg_3',
-                role=Role.USER.value,
                 content='Hello, how are you?',
             ),
             state=StateInt(value=42),
@@ -922,7 +886,6 @@ async def test_concurrent_runs() -> None:
         run_input = create_input(
             UserMessage(
                 id=f'msg_{i}',
-                role=Role.USER.value,
                 content=f'Message {i}',
             ),
             thread_id=f'test_thread_{i}',
@@ -958,7 +921,6 @@ async def test_to_ag_ui() -> None:
             run_input = create_input(
                 UserMessage(
                     id='msg_1',
-                    role=Role.USER.value,
                     content='Hello, world!',
                 ),
             )

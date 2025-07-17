@@ -4,16 +4,12 @@ from __future__ import annotations
 
 from enum import StrEnum
 from textwrap import dedent
-from typing import TYPE_CHECKING
 
 from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.ag_ui import StateDeps
-
-if TYPE_CHECKING:  # pragma: no cover
-    from pydantic_ai import RunContext
 
 
 class SkillLevel(StrEnum):
@@ -65,18 +61,18 @@ class Recipe(BaseModel):
         description='The skill level required for the recipe',
     )
     special_preferences: list[SpecialPreferences] = Field(
-        default_factory=lambda: list[SpecialPreferences](),
+        default_factory=list,
         description='Any special preferences for the recipe',
     )
     cooking_time: CookingTime = Field(
         default=CookingTime.FIVE_MIN, description='The cooking time of the recipe'
     )
     ingredients: list[Ingredient] = Field(
-        default_factory=lambda: list[Ingredient](),
+        default_factory=list,
         description='Ingredients for the recipe',
     )
     instructions: list[str] = Field(
-        default_factory=lambda: list[str](), description='Instructions for the recipe'
+        default_factory=list, description='Instructions for the recipe'
     )
 
 
@@ -88,13 +84,7 @@ class RecipeSnapshot(BaseModel):
     )
 
 
-agent = Agent(
-    'openai:gpt-4o-mini',
-    output_type=str,
-    deps_type=StateDeps[RecipeSnapshot],
-)
-
-app = agent.to_ag_ui(deps=StateDeps(RecipeSnapshot()))
+agent = Agent('openai:gpt-4o-mini', deps_type=StateDeps[RecipeSnapshot])
 
 
 @agent.tool_plain
@@ -142,3 +132,6 @@ def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
         {ctx.deps.state.recipe.model_dump_json(indent=2)}
         """,
     )
+
+
+app = agent.to_ag_ui(deps=StateDeps(RecipeSnapshot()))

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 from textwrap import dedent
 from typing import Any, Literal
 
@@ -11,9 +10,45 @@ from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
 
+StepStatus = Literal['pending', 'completed']
+
+
+class Step(BaseModel):
+    """Represents a step in a plan."""
+
+    description: str = Field(description='The description of the step')
+    status: StepStatus = Field(
+        default='pending',
+        description='The status of the step (e.g., pending, completed)',
+    )
+
+
+class Plan(BaseModel):
+    """Represents a plan with multiple steps."""
+
+    steps: list[Step] = Field(default_factory=list, description='The steps in the plan')
+
+
+class JSONPatchOp(BaseModel):
+    """A class representing a JSON Patch operation (RFC 6902)."""
+
+    op: Literal['add', 'remove', 'replace', 'move', 'copy', 'test'] = Field(
+        description='The operation to perform: add, remove, replace, move, copy, or test',
+    )
+    path: str = Field(description='JSON Pointer (RFC 6901) to the target location')
+    value: Any = Field(
+        default=None,
+        description='The value to apply (for add, replace operations)',
+    )
+    from_: str | None = Field(
+        default=None,
+        alias='from',
+        description='Source path (for move, copy operations)',
+    )
+
+
 agent = Agent(
     'openai:gpt-4o-mini',
-    output_type=str,
     instructions=dedent(
         """
         When planning use tools only, without any other messages.
@@ -29,52 +64,6 @@ agent = Agent(
         """
     ),
 )
-
-app = agent.to_ag_ui()
-
-
-class StepStatus(StrEnum):
-    """The status of a step in a plan."""
-
-    PENDING = 'pending'
-    COMPLETED = 'completed'
-
-
-class Step(BaseModel):
-    """Represents a step in a plan."""
-
-    description: str = Field(description='The description of the step')
-    status: StepStatus = Field(
-        default=StepStatus.PENDING,
-        description='The status of the step (e.g., pending, completed)',
-    )
-
-
-class Plan(BaseModel):
-    """Represents a plan with multiple steps."""
-
-    steps: list[Step] = Field(
-        default_factory=lambda: list[Step](), description='The steps in the plan'
-    )
-
-
-class JSONPatchOp(BaseModel):
-    """A class representing a JSON Patch operation (RFC 6902)."""
-
-    op: Literal['add', 'remove', 'replace', 'move', 'copy', 'test'] = Field(
-        ...,
-        description='The operation to perform: add, remove, replace, move, copy, or test',
-    )
-    path: str = Field(..., description='JSON Pointer (RFC 6901) to the target location')
-    value: Any = Field(
-        default=None,
-        description='The value to apply (for add, replace operations)',
-    )
-    from_: str | None = Field(
-        default=None,
-        alias='from',
-        description='Source path (for move, copy operations)',
-    )
 
 
 @agent.tool_plain
@@ -119,9 +108,12 @@ def update_plan_step(
         )
     if status is not None:
         changes.append(
-            JSONPatchOp(op='replace', path=f'/steps/{index}/status', value=status.value)
+            JSONPatchOp(op='replace', path=f'/steps/{index}/status', value=status)
         )
     return StateDeltaEvent(
         type=EventType.STATE_DELTA,
         delta=changes,
     )
+
+
+app = agent.to_ag_ui()

@@ -7,9 +7,5 @@ from __future__ import annotations
 
 from pydantic_ai import Agent
 
-agent = Agent(
-    'openai:gpt-4o-mini',
-    output_type=str,
-)
-
+agent = Agent('openai:gpt-4o-mini')
 app = agent.to_ag_ui()

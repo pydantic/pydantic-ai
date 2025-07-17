@@ -52,5 +52,5 @@ if __name__ == '__main__':
         'pydantic_ai_ag_ui_examples.dojo_server:app',
         port=args.port,
         reload=args.reload,
-        log_config=args.log_config(),
+        log_level=args.log_level,
     )

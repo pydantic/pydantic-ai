@@ -1,42 +1,36 @@
-# PydanticAI
+# PydanticAI AG-UI Examples
 
-Implementation of the AG-UI protocol for PydanticAI.
+This example uses PydanticAI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) example app.
 
 ## Prerequisites
 
-This example uses a PydanticAI agent using an OpenAI model and the AG-UI dojo.
-
 1. An [OpenAI API key](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key)
-2. A clone of the [AG-UI protocol repository](https://github.com/ag-ui-protocol/ag-ui)
+2. A clone of the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
 
 ## Running
 
-To run this integration you need to:
+1. Run the Pydantic AI AG-UI example backend
 
-1. Make a copy of `.env-sample` as `.env` in the `typescript-sdk/integrations/pydantic-ai` directory
-2. Open it in your editor and set `OPENAI_API_KEY` to a valid OpenAI key
-3. Open terminal in the `typescript-sdk/integrations/pydantic-ai` of the `ag-ui` repo
-4. Install the `pydantic-ai-examples` package
+    1. Install the `pydantic-ai-examples` package
 
-    ```shell
-    pip/uv-add pydantic-ai-examples
-    ```
+        ```shell
+        pip/uv-add pydantic-ai-examples
+        ```
 
-5. Run the example dojo server
+    2. Run the example AG-UI app
 
-    ```shell
-    python -m pydantic_ai_ag_ui_examples.dojo_server
-    ```
+        ```shell
+        python/uv-run -m pydantic_ai_ag_ui_examples.dojo_server
+        ```
 
-6. Open another terminal in root directory of the `ag-ui` repository clone
-7. Start the integration ag-ui dojo:
+2. Run the AG-UI Dojo example frontend
+    1. Move to the cloned AG-UI repository directory
+    2. In the `typescript-sdk/integrations/pydantic-ai` directory, copy `.env-sample` to `.env`
+    3. Open it in your editor and set `OPENAI_API_KEY` to a valid OpenAI key
+    4. Open a terminal in the `typescript-sdk` directory
+    5. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo#development-setup)
 
-    ```shell
-    cd typescript-sdk
-    pnpm install && pnpm run dev
-    ```
-
-8. Finally visit [http://localhost:3000/pydantic-ai](http://localhost:3000/pydantic-ai)
+3. Finally visit <http://localhost:3000/pydantic-ai>
 
 ## Feature Demos
 

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from textwrap import dedent
 
 from ag_ui.core import CustomEvent, EventType
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.ag_ui import StateDeps
-
-if TYPE_CHECKING:  # pragma: no cover
-    from pydantic_ai import RunContext
 
 
 class DocumentState(BaseModel):
@@ -20,13 +17,7 @@ class DocumentState(BaseModel):
     document: str = ''
 
 
-agent = Agent(
-    'openai:gpt-4o-mini',
-    output_type=str,
-    deps_type=StateDeps[DocumentState],
-)
-
-app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
+agent = Agent('openai:gpt-4o-mini', deps_type=StateDeps[DocumentState])
 
 
 # Tools which return AG-UI events will be sent to the client as part of the
@@ -63,19 +54,24 @@ def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
     Returns:
         Instructions string for the document writing agent.
     """
-    return f"""You are a helpful assistant for writing documents.
+    return dedent(
+        f"""You are a helpful assistant for writing documents.
 
-Before you start writing, you MUST call the `document_predict_state`
-tool to enable state prediction.
+        Before you start writing, you MUST call the `document_predict_state`
+        tool to enable state prediction.
 
-To present the document to the user for review, you MUST use the
-`write_document` tool.
+        To present the document to the user for review, you MUST use the
+        `write_document` tool.
 
-When you have written the document, DO NOT repeat it as a message.
-If accepted briefly summarize the changes you made, 2 sentences
-max, otherwise ask the user to clarify what they want to change.
+        When you have written the document, DO NOT repeat it as a message.
+        If accepted briefly summarize the changes you made, 2 sentences
+        max, otherwise ask the user to clarify what they want to change.
 
-This is the current document:
+        This is the current document:
 
-{ctx.deps.state.document}
-"""
+        {ctx.deps.state.document}
+        """
+    )
+
+
+app = agent.to_ag_ui(deps=StateDeps(DocumentState()))

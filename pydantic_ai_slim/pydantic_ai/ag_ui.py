@@ -10,10 +10,8 @@ import json
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from http import HTTPStatus
 from typing import (
-    TYPE_CHECKING,
     Any,
     Callable,
     Final,
@@ -69,13 +67,14 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
+from collections.abc import AsyncGenerator
+
 from pydantic import BaseModel, ValidationError
 
 from ._agent_graph import CallToolsNode, ModelRequestNode
-from .agent import Agent, RunOutputDataT
+from .agent import Agent, AgentRun, RunOutputDataT
 from .messages import (
     AgentStreamEvent,
-    FinalResultEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
@@ -100,14 +99,13 @@ from .toolsets import AbstractToolset
 from .toolsets.deferred import DeferredToolset
 from .usage import Usage, UsageLimits
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+__all__ = [
+    'SSE_CONTENT_TYPE',
+    'StateDeps',
+    'StateHandler',
+    'AGUIApp',
+]
 
-    from ag_ui.encoder import EventEncoder
-
-    from .agent import AgentRun
-
-# Constants.
 SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
 
@@ -117,9 +115,8 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
     def __init__(
         self,
-        *,
-        # Agent parameters.
         agent: Agent[AgentDepsT, OutputDataT],
+        *,
         # Agent.iter parameters.
         output_type: OutputSpec[OutputDataT] | None = None,
         model: Model | KnownModelName | str | None = None,
@@ -187,7 +184,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
             """Endpoint to run the agent with the provided input data."""
             accept = request.headers.get('accept', SSE_CONTENT_TYPE)
             try:
-                input_data = RunAgentInput.model_validate_json(await request.body())
+                input_data = RunAgentInput.model_validate(await request.json())
             except ValidationError as e:  # pragma: no cover
                 return Response(
                     content=json.dumps(e.json()),
@@ -278,7 +275,7 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                     for tool in run_input.tools
                 ]
             )
-            toolsets = list(toolsets or []) + [toolset]
+            toolsets = [*toolsets, toolset] if toolsets else [toolset]
 
         try:
             yield encoder.encode(
@@ -295,7 +292,7 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             if isinstance(deps, StateHandler):
                 deps.state = run_input.state
 
-            history = _convert_history(run_input.messages)
+            history = _History.from_ag_ui(run_input.messages)
 
             async with self.agent.iter(
                 user_prompt=None,
@@ -317,7 +314,7 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             )
         except Exception as e:  # pragma: no cover
             yield encoder.encode(
-                RunErrorEvent(type=EventType.RUN_ERROR, message=str(e), code='run_error'),
+                RunErrorEvent(type=EventType.RUN_ERROR, message=str(e)),
             )
             raise e
         else:
@@ -328,41 +325,6 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                     run_id=run_input.run_id,
                 ),
             )
-
-    async def _tool_result_event(
-        self,
-        result: ToolReturnPart,
-        prompt_message_id: str,
-    ) -> AsyncGenerator[BaseEvent, None]:
-        """Convert a tool call result to AG-UI events.
-
-        Args:
-            result: The tool call result to process.
-            prompt_message_id: The message ID of the prompt that initiated the tool call.
-
-        Yields:
-            AG-UI Server-Sent Events (SSE).
-        """
-        yield ToolCallResultEvent(
-            message_id=prompt_message_id,
-            type=EventType.TOOL_CALL_RESULT,
-            role=Role.TOOL.value,
-            tool_call_id=result.tool_call_id,
-            content=result.model_response_str(),
-        )
-
-        # Now check for  AG-UI events returned by the tool calls.
-        content = result.content
-        if isinstance(content, BaseEvent):
-            yield content
-        elif isinstance(content, (str, bytes)):  # pragma: no branch
-            # Avoid iterable check for strings and bytes.
-            pass
-        elif isinstance(content, Iterable):  # pragma: no branch
-            item: Any
-            for item in content:  # type: ignore[reportUnknownMemberType]
-                if isinstance(item, BaseEvent):  # pragma: no branch
-                    yield item
 
     async def _agent_stream(
         self,
@@ -380,25 +342,23 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
         """
         async for node in run:
             if isinstance(node, ModelRequestNode):
-                # Handle model requests.
                 stream_ctx = _RequestStreamContext()
                 async with node.stream(run.ctx) as request_stream:
                     async for agent_event in request_stream:
-                        async for msg in self._agent_event(stream_ctx, agent_event):
+                        async for msg in self._handle_model_request_event(stream_ctx, agent_event):
                             yield msg
 
                     if stream_ctx.part_end:  # pragma: no branch
                         yield stream_ctx.part_end
                         stream_ctx.part_end = None
             elif isinstance(node, CallToolsNode):
-                # Handle tool results.
                 async with node.stream(run.ctx) as handle_stream:
                     async for event in handle_stream:
                         if isinstance(event, FunctionToolResultEvent) and isinstance(event.result, ToolReturnPart):
-                            async for msg in self._tool_result_event(event.result, history.prompt_message_id):
+                            async for msg in self._handle_tool_result_event(event.result, history.prompt_message_id):
                                 yield msg
 
-    async def _agent_event(
+    async def _handle_model_request_event(
         self,
         stream_ctx: _RequestStreamContext,
         agent_event: AgentStreamEvent,
@@ -424,7 +384,6 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                 yield TextMessageStartEvent(
                     type=EventType.TEXT_MESSAGE_START,
                     message_id=message_id,
-                    role=Role.ASSISTANT.value,
                 )
                 stream_ctx.part_end = TextMessageEndEvent(
                     type=EventType.TEXT_MESSAGE_END,
@@ -469,9 +428,7 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                     delta=delta.content_delta,
                 )
             elif isinstance(delta, ToolCallPartDelta):  # pragma: no branch
-                assert delta.tool_call_id, (
-                    'Tool call ID must be set in ToolCallPartDelta from ModelResponsePartsManager.'
-                )
+                assert delta.tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
                 yield ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=delta.tool_call_id,
@@ -482,9 +439,40 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                     type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
                     delta=delta.content_delta or '',
                 )
-        elif isinstance(agent_event, FinalResultEvent):
-            # No equivalent AG-UI event yet.
+
+    async def _handle_tool_result_event(
+        self,
+        result: ToolReturnPart,
+        prompt_message_id: str,
+    ) -> AsyncGenerator[BaseEvent, None]:
+        """Convert a tool call result to AG-UI events.
+
+        Args:
+            result: The tool call result to process.
+            prompt_message_id: The message ID of the prompt that initiated the tool call.
+
+        Yields:
+            AG-UI Server-Sent Events (SSE).
+        """
+        yield ToolCallResultEvent(
+            message_id=prompt_message_id,
+            type=EventType.TOOL_CALL_RESULT,
+            role='tool',
+            tool_call_id=result.tool_call_id,
+            content=result.model_response_str(),
+        )
+
+        # Now check for  AG-UI events returned by the tool calls.
+        content = result.content
+        if isinstance(content, BaseEvent):
+            yield content
+        elif isinstance(content, (str, bytes)):  # pragma: no branch
+            # Avoid iterable check for strings and bytes.
             pass
+        elif isinstance(content, Iterable):  # pragma: no branch
+            for item in content:  # type: ignore[reportUnknownMemberType]
+                if isinstance(item, BaseEvent):  # pragma: no branch
+                    yield item
 
 
 @dataclass
@@ -494,139 +482,70 @@ class _History:
     prompt_message_id: str  # The ID of the last user message.
     messages: list[ModelMessage]
 
+    @classmethod
+    def from_ag_ui(cls, messages: list[Message]) -> _History:
+        """Convert a AG-UI history to a PydanticAI one.
 
-def _convert_history(messages: list[Message]) -> _History:
-    """Convert a AG-UI history to a PydanticAI one.
+        Args:
+            messages: List of AG-UI messages to convert.
 
-    Args:
-        messages: List of AG-UI messages to convert.
+        Returns:
+            List of PydanticAI model messages.
+        """
+        prompt_message_id = ''
+        result: list[ModelMessage] = []
+        tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+        for msg in messages:
+            if isinstance(msg, UserMessage):
+                prompt_message_id = msg.id
+                result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
+            elif isinstance(msg, AssistantMessage):
+                if msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        tool_calls[tool_call.id] = tool_call.function.name
 
-    Returns:
-        List of PydanticAI model messages.
-    """
-    prompt_message_id = ''
-    result: list[ModelMessage] = []
-    tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
-    for msg in messages:
-        if isinstance(msg, UserMessage):
-            prompt_message_id = msg.id
-            result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
-        elif isinstance(msg, AssistantMessage):
-            if msg.tool_calls:
-                for tool_call in msg.tool_calls:
-                    tool_calls[tool_call.id] = tool_call.function.name
+                    result.append(
+                        ModelResponse(
+                            parts=[
+                                ToolCallPart(
+                                    tool_name=tool_call.function.name,
+                                    tool_call_id=tool_call.id,
+                                    args=tool_call.function.arguments,
+                                )
+                                for tool_call in msg.tool_calls
+                            ]
+                        )
+                    )
+
+                if msg.content:
+                    result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+            elif isinstance(msg, SystemMessage):
+                result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
+            elif isinstance(msg, ToolMessage):
+                tool_name = tool_calls.get(msg.tool_call_id)
+                if tool_name is None:  # pragma: no cover
+                    raise _ToolCallNotFoundError(tool_call_id=msg.tool_call_id)
 
                 result.append(
-                    ModelResponse(
+                    ModelRequest(
                         parts=[
-                            ToolCallPart(
-                                tool_name=tool_call.function.name,
-                                tool_call_id=tool_call.id,
-                                args=tool_call.function.arguments,
+                            ToolReturnPart(
+                                tool_name=tool_name,
+                                content=msg.content,
+                                tool_call_id=msg.tool_call_id,
                             )
-                            for tool_call in msg.tool_calls
                         ]
                     )
                 )
+            elif isinstance(msg, DeveloperMessage):  # pragma: no branch
+                result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
 
-            if msg.content:
-                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
-        elif isinstance(msg, SystemMessage):
-            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
-        elif isinstance(msg, ToolMessage):
-            tool_name = tool_calls.get(msg.tool_call_id)
-            if tool_name is None:  # pragma: no cover
-                raise ToolCallNotFoundError(tool_call_id=msg.tool_call_id)
-
-            result.append(
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name=tool_name,
-                            content=msg.content,
-                            tool_call_id=msg.tool_call_id,
-                        )
-                    ]
-                )
-            )
-        elif isinstance(msg, DeveloperMessage):  # pragma: no branch
-            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
-
-    return _History(
-        prompt_message_id=prompt_message_id,
-        messages=result,
-    )
-
-
-__all__ = [
-    '_Adapter',
-    'SSE_CONTENT_TYPE',
-    'StateDeps',
-    'StateHandler',
-    'AGUIApp',
-]
-
-
-# Enums.
-# TODO(steve): Remove this and all uses once https://github.com/ag-ui-protocol/ag-ui/pull/49 is merged.
-class Role(str, Enum):
-    """Enum for message roles in AG-UI protocol."""
-
-    ASSISTANT = 'assistant'
-    USER = 'user'
-    DEVELOPER = 'developer'
-    SYSTEM = 'system'
-    TOOL = 'tool'
-
-
-# Exceptions.
-@dataclass
-class _RunError(Exception):
-    """Exception raised for errors during agent runs."""
-
-    message: str
-    code: str
-
-    def __str__(self) -> str:  # pragma: no cover
-        return self.message
-
-
-@dataclass
-class _NoMessagesError(_RunError):
-    """Exception raised when no messages are found in the input."""
-
-    message: str = 'no messages found in the input'
-    code: str = 'no_messages'
-
-
-@dataclass
-class StateNotSetError(_RunError, AttributeError):
-    """Exception raised when the state has not been set."""
-
-    message: str = 'state is not set'
-    code: str = 'state_not_set'
-
-
-@dataclass
-class InvalidStateError(_RunError, ValidationError):
-    """Exception raised when an invalid state is provided."""
-
-    message: str = 'invalid state provided'
-    code: str = 'invalid_state'
-
-
-class ToolCallNotFoundError(_RunError, ValueError):
-    """Exception raised when an tool result is present without a matching call."""
-
-    def __init__(self, tool_call_id: str) -> None:
-        """Initialize the exception with the tool call ID."""
-        super().__init__(  # pragma: no cover
-            message=f'Tool call with ID {tool_call_id} not found in the history.',
-            code='tool_call_not_found',
+        return cls(
+            prompt_message_id=prompt_message_id,
+            messages=result,
         )
 
 
-# Protocols.
 @runtime_checkable
 class StateHandler(Protocol):
     """Protocol for state handlers in agent runs."""
@@ -703,7 +622,7 @@ class StateDeps(Generic[StateT]):
         try:
             self._state = type(self._state).model_validate(state)
         except ValidationError as e:  # pragma: no cover
-            raise InvalidStateError from e
+            raise _InvalidStateError from e
 
 
 @dataclass(repr=False)
@@ -723,3 +642,41 @@ class _RequestStreamContext:
         """
         self.message_id = str(uuid.uuid4())
         return self.message_id
+
+
+@dataclass
+class _RunError(Exception):
+    """Exception raised for errors during agent runs."""
+
+    message: str
+    code: str
+
+    def __str__(self) -> str:  # pragma: no cover
+        return self.message
+
+
+@dataclass
+class _NoMessagesError(_RunError):
+    """Exception raised when no messages are found in the input."""
+
+    message: str = 'no messages found in the input'
+    code: str = 'no_messages'
+
+
+@dataclass
+class _InvalidStateError(_RunError, ValidationError):
+    """Exception raised when an invalid state is provided."""
+
+    message: str = 'invalid state provided'
+    code: str = 'invalid_state'
+
+
+class _ToolCallNotFoundError(_RunError, ValueError):
+    """Exception raised when an tool result is present without a matching call."""
+
+    def __init__(self, tool_call_id: str) -> None:
+        """Initialize the exception with the tool call ID."""
+        super().__init__(  # pragma: no cover
+            message=f'Tool call with ID {tool_call_id} not found in the history.',
+            code='tool_call_not_found',
+        )

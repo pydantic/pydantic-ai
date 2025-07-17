@@ -9,7 +9,7 @@ from .predictive_state_updates import app as predictive_state_updates_app
 from .shared_state import app as shared_state_app
 from .tool_based_generative_ui import app as tool_based_generative_ui_app
 
-__all__: list[str] = [
+__all__ = [
     'agentic_chat_app',
     'agentic_generative_ui_app',
     'human_in_the_loop_app',

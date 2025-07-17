@@ -1,4 +1,4 @@
-"""Basic example of using Agent.to_ag_ui with FastAPI."""
+"""Basic example of using Agent.to_ag_ui with Uvicorn."""
 
 from __future__ import annotations
 
@@ -22,5 +22,4 @@ if __name__ == '__main__':
         port=args.port,
         reload=args.reload,
         log_level=args.log_level,
-        log_config=args.log_config(),
     )

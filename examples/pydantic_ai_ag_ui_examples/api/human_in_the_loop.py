@@ -11,7 +11,6 @@ from pydantic_ai import Agent
 
 agent = Agent(
     'openai:gpt-4o-mini',
-    output_type=str,
     instructions=dedent(
         """
         When planning tasks use tools only, without any other messages.
