@@ -403,11 +403,12 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                 yield ThinkingTextMessageStartEvent(
                     type=EventType.THINKING_TEXT_MESSAGE_START,
                 )
-                if part.content:  # pragma: no branch
-                    yield ThinkingTextMessageContentEvent(
-                        type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                        delta=part.content,
-                    )
+                # Always send the content even if it's empty, as it may be
+                # used to indicate the start of thinking.
+                yield ThinkingTextMessageContentEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                    delta=part.content or '',
+                )
                 stream_ctx.part_end = ThinkingTextMessageEndEvent(
                     type=EventType.THINKING_TEXT_MESSAGE_END,
                 )
