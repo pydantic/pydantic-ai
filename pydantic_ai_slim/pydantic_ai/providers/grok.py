@@ -40,14 +40,17 @@ class GrokProvider(Provider[AsyncOpenAI]):
     # ---------------------------------------------------------------------
     # Supported model names
     # ---------------------------------------------------------------------
-    # List kept in sync with xAI public API / OpenRouter catalogue
-    # Only chat-completions capable models are included.
 
+    # https://docs.x.ai/docs/models
     GROK_MODEL_NAMES: list[str] = [
         'grok-4',
+        'grok-4-0709',
         'grok-3',
         'grok-3-mini',
-        'grok-2-1212',
+        'grok-3-fast',
+        'grok-3-mini-fast',
+        'grok-2-vision-1212',
+        'grok-2-image-1212',
     ]
 
     @classmethod
