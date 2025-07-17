@@ -200,6 +200,8 @@ filterwarnings = [
     "error",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
+    # mistralai accesses model_fields on the instance, which is deprecated in Pydantic 2.11.
+    "ignore:Accessing the 'model_fields' attribute",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
