@@ -1,11 +1,10 @@
 from __future__ import annotations as _annotations
 
 import pytest
+from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from ..conftest import BinaryContent, try_import
-
-from inline_snapshot import snapshot
 
 with try_import() as imports_successful:
     from pydantic_ai.settings import ModelSettings
