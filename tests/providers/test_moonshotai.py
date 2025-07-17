@@ -67,3 +67,4 @@ def test_moonshotai_model_profile():
     assert isinstance(model.profile, OpenAIModelProfile)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
     assert model.profile.openai_supports_strict_tool_definition is False
+    assert model.profile.openai_supports_tool_choice_required is False
