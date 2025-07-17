@@ -1,0 +1,33 @@
+interactions:
+  - request:
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - "105"
+        content-type:
+          - application/json
+        host:
+          - example.com
+      method: POST
+      parsed_body:
+        messages:
+          - content: What is the capital of France?
+            role: user
+        model: gpt-4o
+        stream: false
+      uri: https://example.com/chat/completions
+    response:
+      body:
+        string: "ok"
+      headers:
+        content-type:
+          - text/html
+      status:
+        code: 200
+        message: OK
+version: 1
