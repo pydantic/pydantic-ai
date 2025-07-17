@@ -68,7 +68,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   -m [MODEL], --model [MODEL]
-                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".
+                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "openai:gpt-4.1".
   -a AGENT, --agent AGENT
                         Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
   -l, --list-models     List all available models and exit
