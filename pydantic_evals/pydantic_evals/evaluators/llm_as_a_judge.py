@@ -234,16 +234,19 @@ def _build_prompt(
     if inputs is not None:
         if isinstance(inputs, str):
             sections.append(f'<Input>\n{inputs}\n</Input>')
-        elif isinstance(inputs, Sequence):
-            for item in inputs:  # type: ignore
-                if isinstance(item, (str, MultiModalContentTypes)):
-                    sections.append(item)
-                else:
-                    sections.append(_stringify(item))
-        elif isinstance(inputs, MultiModalContentTypes):
-            sections.append(inputs)
         else:
-            sections.append(_stringify(inputs))
+            sections.append('<Input>\n')
+            if isinstance(inputs, Sequence):
+                for item in inputs:  # type: ignore
+                    if isinstance(item, (str, MultiModalContentTypes)):
+                        sections.append(item)
+                    else:
+                        sections.append(_stringify(item))
+            elif isinstance(inputs, MultiModalContentTypes):
+                sections.append(inputs)
+            else:
+                sections.append(_stringify(inputs))
+            sections.append('</Input>')
 
     sections.append(f'<Output>\n{_stringify(output)}\n</Output>')
     sections.append(f'<Rubric>\n{rubric}\n</Rubric>')
