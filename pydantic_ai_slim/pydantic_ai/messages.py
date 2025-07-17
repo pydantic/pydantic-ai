@@ -749,7 +749,7 @@ class ModelResponse:
                         },
                     }
                 )
-            elif isinstance(part, TextPart | ThinkingPart):
+            elif isinstance(part, (TextPart, ThinkingPart)):
                 if settings.include_content:
                     body.setdefault('content', []).append(
                         {'kind': 'thinking' if isinstance(part, ThinkingPart) else 'text', 'text': part.content}
