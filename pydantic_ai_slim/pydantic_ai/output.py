@@ -361,7 +361,10 @@ See [output docs](../output.md) for more information.
 
 @dataclass
 class DeferredToolCalls:
-    """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools."""
+    """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+    See [deferred toolset docs](../toolsets.md#deferred-toolset) for more information.
+    """
 
     tool_calls: list[ToolCallPart]
     tool_defs: dict[str, ToolDefinition]
