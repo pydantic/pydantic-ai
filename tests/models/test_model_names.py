@@ -49,6 +49,7 @@ def test_known_model_names():
         f'google-vertex:{n}' for n in get_model_names(GeminiModelName)
     ]
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
+    grok_provider_names = ['grok:grok-4']
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
         n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
@@ -64,6 +65,7 @@ def test_known_model_names():
         + cohere_names
         + google_names
         + groq_names
+        + grok_provider_names
         + mistral_names
         + openai_names
         + bedrock_names

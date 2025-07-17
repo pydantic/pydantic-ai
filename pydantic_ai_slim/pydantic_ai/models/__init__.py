@@ -191,6 +191,7 @@ KnownModelName = TypeAliasType(
         'groq:llama-guard-3-8b',
         'groq:llama3-70b-8192',
         'groq:llama3-8b-8192',
+        'groq:moonshotai/kimi-k2-instruct',
         'groq:whisper-large-v3',
         'groq:whisper-large-v3-turbo',
         'groq:playai-tts',
@@ -287,6 +288,7 @@ KnownModelName = TypeAliasType(
         'openai:o4-mini',
         'openai:o4-mini-2025-04-16',
         'test',
+        'grok:grok-4',
     ],
 )
 """Known model names that can be used with the `model` parameter of [`Agent`][pydantic_ai.Agent].
