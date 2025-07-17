@@ -280,7 +280,6 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
         try:
             yield encoder.encode(
                 RunStartedEvent(
-                    type=EventType.RUN_STARTED,
                     thread_id=run_input.thread_id,
                     run_id=run_input.run_id,
                 ),
@@ -310,17 +309,16 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                     yield encoder.encode(event)
         except _RunError as e:
             yield encoder.encode(
-                RunErrorEvent(type=EventType.RUN_ERROR, message=e.message, code=e.code),
+                RunErrorEvent(message=e.message, code=e.code),
             )
         except Exception as e:  # pragma: no cover
             yield encoder.encode(
-                RunErrorEvent(type=EventType.RUN_ERROR, message=str(e)),
+                RunErrorEvent(message=str(e)),
             )
             raise e
         else:
             yield encoder.encode(
                 RunFinishedEvent(
-                    type=EventType.RUN_FINISHED,
                     thread_id=run_input.thread_id,
                     run_id=run_input.run_id,
                 ),
@@ -382,27 +380,22 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             if isinstance(part, TextPart):
                 message_id = stream_ctx.new_message_id()
                 yield TextMessageStartEvent(
-                    type=EventType.TEXT_MESSAGE_START,
                     message_id=message_id,
                 )
                 stream_ctx.part_end = TextMessageEndEvent(
-                    type=EventType.TEXT_MESSAGE_END,
                     message_id=message_id,
                 )
-                if part.content:
+                if part.content:  # pragma: no branch
                     yield TextMessageContentEvent(
-                        type=EventType.TEXT_MESSAGE_CONTENT,
                         message_id=message_id,
                         delta=part.content,
                     )
             elif isinstance(part, ToolCallPart):  # pragma: no branch
                 yield ToolCallStartEvent(
-                    type=EventType.TOOL_CALL_START,
                     tool_call_id=part.tool_call_id,
                     tool_call_name=part.tool_name,
                 )
                 stream_ctx.part_end = ToolCallEndEvent(
-                    type=EventType.TOOL_CALL_END,
                     tool_call_id=part.tool_call_id,
                 )
 
@@ -423,22 +416,21 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             delta = agent_event.delta
             if isinstance(delta, TextPartDelta):
                 yield TextMessageContentEvent(
-                    type=EventType.TEXT_MESSAGE_CONTENT,
                     message_id=stream_ctx.message_id,
                     delta=delta.content_delta,
                 )
             elif isinstance(delta, ToolCallPartDelta):  # pragma: no branch
                 assert delta.tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
                 yield ToolCallArgsEvent(
-                    type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=delta.tool_call_id,
                     delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
                 )
             elif isinstance(delta, ThinkingPartDelta):  # pragma: no branch
-                yield ThinkingTextMessageContentEvent(
-                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                    delta=delta.content_delta or '',
-                )
+                if delta.content_delta:  # pragma: no branch
+                    yield ThinkingTextMessageContentEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                        delta=delta.content_delta,
+                    )
 
     async def _handle_tool_result_event(
         self,
