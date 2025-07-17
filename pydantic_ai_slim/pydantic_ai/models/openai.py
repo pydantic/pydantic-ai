@@ -350,10 +350,10 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        # although the OpenAI SDK claims to return a a pydantic model:
-        # * it hasn't actually performed validation (presummably they're creating the model with model_construct?!)
-        # * if the endpoint returns plain text, the response is a string
-        # thus we perform validation here
+        # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
+        # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
+        # * if the endpoint returns plain text, the return type is a string
+        # Thus we validate it fully here.
         if not isinstance(response, chat.ChatCompletion):
             raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
 
