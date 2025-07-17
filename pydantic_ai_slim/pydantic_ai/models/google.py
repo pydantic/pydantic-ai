@@ -73,18 +73,10 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestGoogleModelNames = Literal[
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro',
     'gemini-2.0-flash',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite-preview-06-17',
-    'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-05-06',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
@@ -151,6 +143,7 @@ class GoogleModel(Model):
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Gemini model.
 
@@ -160,16 +153,18 @@ class GoogleModel(Model):
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: The model settings to use. Defaults to None.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = GoogleProvider(vertexai=provider == 'google-vertex')  # pragma: lax no cover
+            provider = GoogleProvider(vertexai=provider == 'google-vertex')
 
         self._provider = provider
         self._system = provider.name
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:

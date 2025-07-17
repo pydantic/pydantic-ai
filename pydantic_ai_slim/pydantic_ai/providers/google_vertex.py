@@ -50,7 +50,7 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        return google_model_profile(model_name)  # pragma: lax no cover
+        return google_model_profile(model_name)
 
     @overload
     def __init__(
@@ -116,6 +116,8 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
+    _refresh_lock: anyio.Lock = anyio.Lock()
+
     credentials: BaseCredentials | ServiceAccountCredentials | None
 
     def __init__(
@@ -169,10 +171,13 @@ class _VertexAIAuth(httpx.Auth):
         return creds
 
     async def _refresh_token(self) -> str:  # pragma: no cover
-        assert self.credentials is not None
-        await anyio.to_thread.run_sync(self.credentials.refresh, Request())  # type: ignore[reportUnknownMemberType]
-        assert isinstance(self.credentials.token, str), f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
-        return self.credentials.token
+        async with self._refresh_lock:
+            assert self.credentials is not None
+            await anyio.to_thread.run_sync(self.credentials.refresh, Request())  # type: ignore[reportUnknownMemberType]
+            assert isinstance(self.credentials.token, str), (  # type: ignore[reportUnknownMemberType]
+                f'Expected token to be a string, got {self.credentials.token}'  # type: ignore[reportUnknownMemberType]
+            )
+            return self.credentials.token
 
 
 async def _async_google_auth() -> tuple[BaseCredentials, str | None]:
