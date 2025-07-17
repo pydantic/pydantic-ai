@@ -134,31 +134,15 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
-        'google-gla:gemini-1.5-flash',
-        'google-gla:gemini-1.5-flash-8b',
-        'google-gla:gemini-1.5-pro',
-        'google-gla:gemini-1.0-pro',
         'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.0-flash-lite-preview-02-05',
-        'google-gla:gemini-2.0-pro-exp-02-05',
-        'google-gla:gemini-2.5-flash-preview-05-20',
+        'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
         'google-gla:gemini-2.5-flash-lite-preview-06-17',
-        'google-gla:gemini-2.5-pro-exp-03-25',
-        'google-gla:gemini-2.5-pro-preview-05-06',
         'google-gla:gemini-2.5-pro',
-        'google-vertex:gemini-1.5-flash',
-        'google-vertex:gemini-1.5-flash-8b',
-        'google-vertex:gemini-1.5-pro',
-        'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.0-flash-lite-preview-02-05',
-        'google-vertex:gemini-2.0-pro-exp-02-05',
-        'google-vertex:gemini-2.5-flash-preview-05-20',
+        'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
         'google-vertex:gemini-2.5-flash-lite-preview-06-17',
-        'google-vertex:gemini-2.5-pro-exp-03-25',
-        'google-vertex:gemini-2.5-pro-preview-05-06',
         'google-vertex:gemini-2.5-pro',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
@@ -227,6 +211,14 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-7-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-3-haiku',
+        'huggingface:Qwen/QwQ-32B',
+        'huggingface:Qwen/Qwen2.5-72B-Instruct',
+        'huggingface:Qwen/Qwen3-235B-A22B',
+        'huggingface:Qwen/Qwen3-32B',
+        'huggingface:deepseek-ai/DeepSeek-R1',
+        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
+        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
+        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
@@ -560,7 +552,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:
+def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model
@@ -624,6 +616,10 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceModel
+
+        return HuggingFaceModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 

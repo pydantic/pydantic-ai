@@ -974,12 +974,47 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
 
     @agent.tool_plain()
     def get_location(loc_name: str) -> str:
-        return f'Location for {loc_name}'
+        return f'Location for {loc_name}'  # pragma: no cover
 
     async with agent.run_stream('Hello') as result:
         data = await result.get_output()
 
     assert data == 'Hello foo'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Hello foo'),
+                    ToolCallPart(
+                        tool_name='get_location',
+                        args={'loc_name': 'San Fransisco'},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(request_tokens=1, response_tokens=2, total_tokens=3, details={}),
+                model_name='gemini-1.5-flash',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_location',
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
 
 
 async def test_empty_text_ignored():
