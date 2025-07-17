@@ -2,13 +2,14 @@
 
 Pydantic AI is model-agnostic and has built-in support for multiple model providers:
 
-- [OpenAI](openai.md)
-- [Anthropic](anthropic.md)
-- [Gemini](gemini.md) (via two different APIs: Generative Language API and VertexAI API)
-- [Groq](groq.md)
-- [Mistral](mistral.md)
-- [Cohere](cohere.md)
-- [Bedrock](bedrock.md)
+* [OpenAI](openai.md)
+* [Anthropic](anthropic.md)
+* [Gemini](gemini.md) (via two different APIs: Generative Language API and VertexAI API)
+* [Groq](groq.md)
+* [Mistral](mistral.md)
+* [Cohere](cohere.md)
+* [Bedrock](bedrock.md)
+* [Hugging Face](huggingface.md)
 
 ## OpenAI-compatible Providers
 
