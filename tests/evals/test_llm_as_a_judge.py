@@ -339,7 +339,9 @@ async def test_judge_output_expected_with_model_settings_mock(mocker: MockerFixt
 
     test_model_settings = ModelSettings(temperature=1)
 
-    result = await judge_input_output({'key': 'value'}, 'Hello world', 'Output test', model_settings=test_model_settings)
+    result = await judge_input_output(
+        {'key': 'value'}, 'Hello world', 'Output test', model_settings=test_model_settings
+    )
     assert isinstance(result, GradingOutput)
     assert result.reason == 'Test passed with settings'
     assert result.pass_ is True
