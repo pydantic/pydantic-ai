@@ -19,6 +19,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModelName
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
+    from pydantic_ai.providers.grok import GrokProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -49,7 +50,7 @@ def test_known_model_names():
         f'google-vertex:{n}' for n in get_model_names(GeminiModelName)
     ]
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
-    grok_provider_names = ['grok:grok-4']
+    grok_names = [f'grok:{n}' for n in GrokProvider.get_model_names()]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
         n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
@@ -65,7 +66,7 @@ def test_known_model_names():
         + cohere_names
         + google_names
         + groq_names
-        + grok_provider_names
+        + grok_names
         + mistral_names
         + openai_names
         + bedrock_names

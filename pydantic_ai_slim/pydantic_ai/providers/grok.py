@@ -37,6 +37,24 @@ class GrokProvider(Provider[AsyncOpenAI]):
     def client(self) -> AsyncOpenAI:
         return self._client
 
+    # ---------------------------------------------------------------------
+    # Supported model names
+    # ---------------------------------------------------------------------
+    # List kept in sync with xAI public API / OpenRouter catalogue
+    # Only chat-completions capable models are included.
+
+    GROK_MODEL_NAMES: list[str] = [
+        'grok-4',
+        'grok-3',
+        'grok-3-mini',
+        'grok-2-1212',
+    ]
+
+    @classmethod
+    def get_model_names(cls) -> list[str]:
+        """Return the list of Grok model IDs we know about."""
+        return cls.GROK_MODEL_NAMES.copy()
+
     def model_profile(self, model_name: str) -> ModelProfile | None:
         profile = grok_model_profile(model_name)
 

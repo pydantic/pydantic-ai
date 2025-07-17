@@ -288,6 +288,9 @@ KnownModelName = TypeAliasType(
         'openai:o4-mini',
         'openai:o4-mini-2025-04-16',
         'test',
+        'grok:grok-2-1212',
+        'grok:grok-3',
+        'grok:grok-3-mini',
         'grok:grok-4',
     ],
 )
