@@ -616,7 +616,7 @@ async def test_google_model_empty_assistant_response(allow_model_requests: None,
         ],
     )
 
-    assert result.output == snapshot('Yes, your previous message was empty.  Is there something I can help you with?\n')
+    assert result.output == snapshot('Yes, your previous message was empty.  Is there anything I can help you with?\n')
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
