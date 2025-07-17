@@ -244,7 +244,9 @@ async def test_judge_input_output_expected_mock(mocker: MockerFixture):
 
 
 @pytest.mark.anyio
-async def test_judge_input_output_expected_with_model_settings_mock(mocker: MockerFixture, image_content: BinaryContent):
+async def test_judge_input_output_expected_with_model_settings_mock(
+    mocker: MockerFixture, image_content: BinaryContent
+):
     """Test judge_input_output_expected function with model_settings and mocked agent."""
     mock_result = mocker.MagicMock()
     mock_result.output = GradingOutput(reason='Test passed with settings', pass_=True, score=1.0)
@@ -294,6 +296,7 @@ async def test_judge_input_output_expected_with_model_settings_mock(mocker: Mock
     assert call_kwargs['model_settings'] == test_model_settings
     # Check if 'model' kwarg is passed, its value will be the default model or None
     assert 'model' in call_kwargs
+
 
 @pytest.mark.anyio
 async def test_judge_output_expected_mock(mocker: MockerFixture):
