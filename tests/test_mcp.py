@@ -155,6 +155,15 @@ def test_sse_server_with_header_and_timeout():
     assert sse_server.log_level == 'info'
 
 
+def test_sse_server_conflicting_timeout_params():
+    with pytest.raises(TypeError, match="'read_timeout' and 'sse_read_timeout' cannot be set at the same time."):
+        MCPServerSSE(
+            url='http://localhost:8000/sse',
+            read_timeout=50,
+            sse_read_timeout=100,
+        )
+
+
 @pytest.mark.vcr()
 async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent):
     async with agent:

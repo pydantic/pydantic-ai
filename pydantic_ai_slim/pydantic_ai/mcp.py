@@ -616,7 +616,7 @@ class MCPServerSSE(_MCPServerHTTP):
         url: str,
         headers: dict[str, str] | None = None,
         http_client: httpx.AsyncClient | None = None,
-        read_timeout: float = 5 * 60,
+        read_timeout: float | None = None,
         tool_prefix: str | None = None,
         log_level: mcp_types.LoggingLevel | None = None,
         log_handler: LoggingFnT | None = None,
@@ -629,16 +629,16 @@ class MCPServerSSE(_MCPServerHTTP):
     ) -> None:
         # Handle deprecated sse_read_timeout parameter
         if 'sse_read_timeout' in kwargs:
-            if 'read_timeout' in kwargs:
-                raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
+            if read_timeout is not None:
+                raise TypeError("'read_timeout' and 'sse_read_timeout' cannot be set at the same time.")
 
             warnings.warn(
                 "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
             )
             read_timeout = kwargs.pop('sse_read_timeout')
 
-        if kwargs:
-            raise TypeError(f'got an unexpected keyword argument {next(iter(kwargs))!r}')
+        if read_timeout is None:
+            read_timeout = 5 * 60
 
         super().__init__(
             url=url,
