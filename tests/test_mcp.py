@@ -140,18 +140,28 @@ def test_sse_server():
 
 
 def test_sse_server_with_header_and_timeout():
-    sse_server = MCPServerSSE(
-        url='http://localhost:8000/sse',
-        headers={'my-custom-header': 'my-header-value'},
-        timeout=10,
-        sse_read_timeout=100,
-        log_level='info',
-    )
+    with pytest.warns(DeprecationWarning, match="'sse_read_timeout' is deprecated, use 'read_timeout' instead."):
+        sse_server = MCPServerSSE(
+            url='http://localhost:8000/sse',
+            headers={'my-custom-header': 'my-header-value'},
+            timeout=10,
+            sse_read_timeout=100,
+            log_level='info',
+        )
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
     assert sse_server.timeout == 10
-    assert sse_server.sse_read_timeout == 100
+    assert sse_server.read_timeout == 100
     assert sse_server.log_level == 'info'
+
+
+def test_sse_server_conflicting_timeout_params():
+    with pytest.raises(TypeError, match="'read_timeout' and 'sse_read_timeout' cannot be set at the same time."):
+        MCPServerSSE(
+            url='http://localhost:8000/sse',
+            read_timeout=50,
+            sse_read_timeout=100,
+        )
 
 
 @pytest.mark.vcr()
