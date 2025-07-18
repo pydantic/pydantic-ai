@@ -76,6 +76,11 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
 
+    def __post_init__(self):
+        self._enter_lock = Lock()
+        self._running_count = 0
+        self._exit_stack = None
+
     @abstractmethod
     @asynccontextmanager
     async def client_streams(
@@ -533,7 +538,7 @@ class _MCPServerHTTP(MCPServer):
             self._transport_client,
             url=self.url,
             timeout=self.timeout,
-            sse_read_timeout=self.sse_read_timeout,
+            sse_read_timeout=self.read_timeout,
         )
 
         if self.http_client is not None:
