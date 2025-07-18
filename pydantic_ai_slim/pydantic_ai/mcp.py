@@ -532,15 +532,24 @@ class _MCPServerHTTP(MCPServer):
         self.log_level = log_level
         self.log_handler = log_handler
         self.timeout = timeout
-        if 'sse_read_timeout' in _deprecated_kwargs:
-            if self.read_timeout is not None:
-                raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
-            warnings.warn('`sse_read_timeout` is deprecated, use `read_timeout` instead', DeprecationWarning)
-            self.read_timeout = _deprecated_kwargs.pop('sse_read_timeout')
         self.process_tool_call = process_tool_call
         self.allow_sampling = allow_sampling
         self.max_retries = max_retries
         self.sampling_model = sampling_model
+
+        if 'sse_read_timeout' in _deprecated_kwargs:
+            # check if `read_timeout` was passed as a keyword argument.
+            # `read_timeout` has a default value, so we can't just check for `is not None`.
+            if 'read_timeout' in _deprecated_kwargs:
+                raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
+
+            warnings.warn('`sse_read_timeout` is deprecated, use `read_timeout` instead', DeprecationWarning)
+            self.read_timeout = _deprecated_kwargs.pop('sse_read_timeout')
+        else:
+            self.read_timeout = read_timeout
+
+        if _deprecated_kwargs:
+            raise TypeError(f'got an unexpected keyword argument {next(iter(_deprecated_kwargs))!r}')
 
     @property
     @abstractmethod
@@ -606,7 +615,7 @@ class _MCPServerHTTP(MCPServer):
         return f'{self.__class__.__name__}(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
 
 
-@dataclass
+@dataclass(init=False)
 class MCPServerSSE(_MCPServerHTTP):
     """An MCP server that connects over streamable HTTP connections.
 
@@ -633,6 +642,9 @@ class MCPServerSSE(_MCPServerHTTP):
     1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
     2. This will connect to a server running on `localhost:3001`.
     """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
     @property
     def _transport_client(self):
