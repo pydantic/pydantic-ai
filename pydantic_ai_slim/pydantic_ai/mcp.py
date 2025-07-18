@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
@@ -60,7 +61,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
     timeout: float = 5
-    sse_read_timeout: float = 5 * 60
+    read_timeout: float = 5 * 60
     process_tool_call: ProcessToolCallback | None = None
     allow_sampling: bool = True
     max_retries: int = 1
@@ -74,11 +75,6 @@ class MCPServer(AbstractToolset[Any], ABC):
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
-
-    def __post_init__(self):
-        self._enter_lock = Lock()
-        self._running_count = 0
-        self._exit_stack = None
 
     @abstractmethod
     @asynccontextmanager
@@ -210,7 +206,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     write_stream=self._write_stream,
                     sampling_callback=self._sampling_callback if self.allow_sampling else None,
                     logging_callback=self.log_handler,
-                    read_timeout_seconds=timedelta(seconds=self.sse_read_timeout),
+                    read_timeout_seconds=timedelta(seconds=self.read_timeout),
                 )
                 self._client = await self._exit_stack.enter_async_context(client)
 
@@ -404,7 +400,7 @@ class MCPServerStdio(MCPServer):
         return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
 
 
-@dataclass
+@dataclass(init=False)
 class _MCPServerHTTP(MCPServer):
     url: str
     """The URL of the endpoint on the MCP server."""
@@ -441,10 +437,10 @@ class _MCPServerHTTP(MCPServer):
         ```
     """
 
-    sse_read_timeout: float = 5 * 60
-    """Maximum time in seconds to wait for new SSE messages before timing out.
+    read_timeout: float = 5 * 60
+    """Maximum time in seconds to wait for new messages before timing out.
 
-    This timeout applies to the long-lived SSE connection after it's established.
+    This timeout applies to the long-lived connection after it's established.
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
@@ -487,6 +483,18 @@ class _MCPServerHTTP(MCPServer):
 
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
+
+    @deprecated("'sse_read_timeout' is deprecated, use 'read_timeout' instead.")
+    def __init__(
+        self,
+        *,
+        sse_read_timeout: float = 5 * 60,
+    ) -> None:
+        if sse_read_timeout is not None:
+            if self.read_timeout is not None:
+                raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
+            warnings.warn('`sse_read_timeout` is deprecated, use `read_timeout` instead', DeprecationWarning)
+            self.read_timeout = sse_read_timeout
 
     @property
     @abstractmethod
