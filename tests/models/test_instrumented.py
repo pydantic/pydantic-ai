@@ -715,7 +715,8 @@ def test_messages_to_otel_events_instructions():
 def test_messages_to_otel_events_instructions_multiple_messages():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
-        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[ThinkingPart('thinking_1'), TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1')]),
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
     ]
     settings = InstrumentationSettings()
@@ -725,11 +726,17 @@ def test_messages_to_otel_events_instructions_multiple_messages():
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
-                'content': 'text1',
+                'content': [{'kind': 'thinking', 'text': 'thinking_1'}, {'kind': 'text', 'text': 'text1'}],
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
-            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking_1'}],
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 3, 'event.name': 'gen_ai.user.message'},
         ]
     )
 
@@ -754,6 +761,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             ]
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1'), TextPart('text_2')]),
         ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1')]),
     ]
     settings = InstrumentationSettings()
@@ -806,8 +814,18 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
-                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking1'}],
+                'content': [
+                    {'kind': 'text', 'text': 'text1'},
+                    {'kind': 'thinking', 'text': 'thinking1'},
+                    {'kind': 'text', 'text': 'text_2'},
+                ],
                 'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking1'}],
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
