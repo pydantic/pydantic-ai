@@ -8,9 +8,16 @@ from typing import Any
 import pytest
 
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.tools import ToolDefinition
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
+
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
 @pytest.mark.anyio()

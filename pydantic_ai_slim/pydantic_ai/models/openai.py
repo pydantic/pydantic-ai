@@ -298,17 +298,12 @@ class OpenAIModel(Model):
         tools = self._get_tools(model_request_parameters)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
             tool_choice = 'required'
         else:
-            tool_choice = 'auto'
-
-        # Some providers (e.g. MoonshotAI) don't yet accept `tool_choice="required"`.
-        profile_capabilities = OpenAIModelProfile.from_profile(self.profile)
-        if tool_choice == 'required' and not getattr(
-            profile_capabilities, 'openai_supports_tool_choice_required', True
-        ):
-            # Fall back to 'auto' so the request remains valid.
             tool_choice = 'auto'
 
         openai_messages = await self._map_messages(messages)
