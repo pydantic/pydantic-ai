@@ -341,6 +341,7 @@ It is is a no-op by default, but enables some useful abilities:
 You can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] method.
 
 ```python {title="logging_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
+import asyncio
 from typing_extensions import Any
 
 from prepared_toolset import prepared_toolset
@@ -356,6 +357,8 @@ class LoggingToolset(WrapperToolset):
     async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: RunContext, tool: ToolsetTool) -> Any:
         LOG.append(f'Calling tool {name!r} with args: {tool_args!r}')
         try:
+            await asyncio.sleep(0.1 * len(LOG)) # (1)!
+
             result = await super().call_tool(name, tool_args, ctx, tool)
             LOG.append(f'Finished calling tool {name!r} with result: {result!r}')
         except Exception as e:
@@ -367,7 +370,7 @@ class LoggingToolset(WrapperToolset):
 
 logging_toolset = LoggingToolset(prepared_toolset)
 
-agent = Agent(TestModel(), toolsets=[logging_toolset]) # (1)!
+agent = Agent(TestModel(), toolsets=[logging_toolset]) # (2)!
 result = agent.run_sync('Call all the tools')
 print(LOG)
 """
@@ -384,7 +387,8 @@ print(LOG)
 """
 ```
 
-1. We use [`TestModel`][pydantic_ai.models.test.TestModel] here as it will automatically call each tool.
+1. All docs examples are tested in CI and their their output is verified, so we need `LOG` to always have the same order whenever this code is run. Since the tools could finish in any order, we sleep an increasing amount of time based on which number tool call we are to ensure that they finish (and log) in the same order they were called in.
+2. We use [`TestModel`][pydantic_ai.models.test.TestModel] here as it will automatically call each tool.
 
 _(This example is complete, it can be run "as is")_
 

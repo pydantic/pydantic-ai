@@ -49,7 +49,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
-    _toolset: ToolManager[AgentDepsT]
+    _tool_manager: ToolManager[AgentDepsT]
 
     _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _final_result_event: FinalResultEvent | None = field(default=None, init=False)
@@ -111,8 +111,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {output_tool_name!r}'
                 )
-            return await self._toolset.handle_call(tool_call, allow_partial=allow_partial)
-        elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
+            return await self._tool_manager.handle_call(tool_call, allow_partial=allow_partial)
+        elif deferred_tool_calls := self._tool_manager.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(  # pragma: no cover
                     'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
@@ -154,7 +154,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     ):  # pragma: no branch
                         return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
                     elif isinstance(new_part, _messages.ToolCallPart) and (
-                        tool_def := self._toolset.get_tool_def(new_part.tool_name)
+                        tool_def := self._tool_manager.get_tool_def(new_part.tool_name)
                     ):
                         if tool_def.kind == 'output':
                             return _messages.FinalResultEvent(
@@ -196,7 +196,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _output_tool_name: str | None
     _on_complete: Callable[[], Awaitable[None]]
-    _toolset: ToolManager[AgentDepsT]
+    _tool_manager: ToolManager[AgentDepsT]
 
     _initial_run_ctx_usage: Usage = field(init=False)
     is_complete: bool = field(default=False, init=False)
@@ -443,8 +443,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {self._output_tool_name!r}'
                 )
-            return await self._toolset.handle_call(tool_call, allow_partial=allow_partial)
-        elif deferred_tool_calls := self._toolset.get_deferred_tool_calls(message.parts):
+            return await self._tool_manager.handle_call(tool_call, allow_partial=allow_partial)
+        elif deferred_tool_calls := self._tool_manager.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(
                     'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
