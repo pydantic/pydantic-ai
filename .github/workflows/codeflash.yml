@@ -26,6 +26,17 @@ jobs:
         with:
           enable-cache: true
       - name: 📦 Install Dependencies
-        run: uv sync --package pydantic-ai-slim
+        run: make install
+      - name: Functions to Optimize
+        shell: python
+        id: discover_step
+        run: |
+          from codeflash.cli_cmds.cli import parse_args, process_pyproject_config
+          import os
+          args = process_pyproject_config(parse_args())
+          t = TestConfig(tests_root=args.tests_root, tests_project_rootdir=args.test_project_root, project_root_path=args.project_root,  test_framework=args.test_framework, pytest_cmd=args.pytest_cmd,)
+          f = get_functions_to_optimize(test_cfg=t, ignore_paths=args.ignore_paths, project_root=args.project_root, module_root=args.module_root,optimize_all=None, replay_test=None, file=None, only_get_this_function=None)
+          functions = " ".join([fto.function_name for ftol in f[0].values() for fto in ftol])
+          open(os.environ.get('GITHUB_OUTPUT'), 'a').write(f"functions_to_optimize={functions}")
       - name: ⚡️Codeflash Optimization
-        run: uv run codeflash
+        run: uv run codeflash optimize --only-functions ${{ steps.discover_step.outputs.functions_to_optimize }} -m pytest --inline-snapshot=disable tests/test_examples.py
