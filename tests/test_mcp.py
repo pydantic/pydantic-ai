@@ -134,14 +134,14 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
 
 
 def test_sse_server():
-    sse_server = MCPServerSSE(url='http://localhost:8000/sse')  # pyright: ignore[reportDeprecated]
+    sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server.log_level is None
 
 
 def test_sse_server_with_header_and_timeout():
     with pytest.warns(DeprecationWarning, match="'sse_read_timeout' is deprecated, use 'read_timeout' instead."):
-        sse_server = MCPServerSSE(  # pyright: ignore[reportDeprecated]
+        sse_server = MCPServerSSE(
             url='http://localhost:8000/sse',
             headers={'my-custom-header': 'my-header-value'},
             timeout=10,

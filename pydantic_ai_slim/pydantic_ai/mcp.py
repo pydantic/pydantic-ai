@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable, overload
+from typing import Any, Callable
 
 import anyio
 import httpx
@@ -489,26 +489,6 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
-    @overload
-    @deprecated("'sse_read_timeout' is deprecated, use 'read_timeout' instead.")
-    def __init__(
-        self,
-        *,
-        url: str,
-        headers: dict[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
-        sse_read_timeout: float = 5 * 60,
-        tool_prefix: str | None = None,
-        log_level: mcp_types.LoggingLevel | None = None,
-        log_handler: LoggingFnT | None = None,
-        timeout: float = 5,
-        process_tool_call: ProcessToolCallback | None = None,
-        allow_sampling: bool = True,
-        max_retries: int = 1,
-        sampling_model: models.Model | None = None,
-    ) -> None: ...
-
-    @overload
     def __init__(
         self,
         *,
@@ -524,24 +504,6 @@ class _MCPServerHTTP(MCPServer):
         allow_sampling: bool = True,
         max_retries: int = 1,
         sampling_model: models.Model | None = None,
-    ) -> None: ...
-
-    def __init__(
-        self,
-        *,
-        url: str,
-        headers: dict[str, str] | None = None,
-        http_client: httpx.AsyncClient | None = None,
-        read_timeout: float = 5 * 60,
-        tool_prefix: str | None = None,
-        log_level: mcp_types.LoggingLevel | None = None,
-        log_handler: LoggingFnT | None = None,
-        timeout: float = 5,
-        process_tool_call: ProcessToolCallback | None = None,
-        allow_sampling: bool = True,
-        max_retries: int = 1,
-        sampling_model: models.Model | None = None,
-        **_deprecated_kwargs: Any,
     ):
         self.url = url
         self.headers = headers
@@ -554,18 +516,7 @@ class _MCPServerHTTP(MCPServer):
         self.allow_sampling = allow_sampling
         self.max_retries = max_retries
         self.sampling_model = sampling_model
-
-        if 'sse_read_timeout' in _deprecated_kwargs:
-            if 'read_timeout' in _deprecated_kwargs:
-                raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
-
-            warnings.warn("'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning)
-            self.read_timeout = _deprecated_kwargs.pop('sse_read_timeout')
-        else:
-            self.read_timeout = read_timeout
-
-        if _deprecated_kwargs:
-            raise TypeError(f'got an unexpected keyword argument {next(iter(_deprecated_kwargs))!r}')
+        self.read_timeout = read_timeout
 
     @property
     @abstractmethod
@@ -658,6 +609,51 @@ class MCPServerSSE(_MCPServerHTTP):
     1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
     2. This will connect to a server running on `localhost:3001`.
     """
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        read_timeout: float = 5 * 60,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        max_retries: int = 1,
+        sampling_model: models.Model | None = None,
+        **kwargs: Any,
+    ) -> None:
+        # Handle deprecated sse_read_timeout parameter
+        if 'sse_read_timeout' in kwargs:
+            if 'read_timeout' in kwargs:
+                raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
+
+            warnings.warn(
+                "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
+            )
+            read_timeout = kwargs.pop('sse_read_timeout')
+
+        if kwargs:
+            raise TypeError(f'got an unexpected keyword argument {next(iter(kwargs))!r}')
+
+        super().__init__(
+            url=url,
+            headers=headers,
+            http_client=http_client,
+            read_timeout=read_timeout,
+            tool_prefix=tool_prefix,
+            log_level=log_level,
+            log_handler=log_handler,
+            timeout=timeout,
+            process_tool_call=process_tool_call,
+            allow_sampling=allow_sampling,
+            max_retries=max_retries,
+            sampling_model=sampling_model,
+        )
 
     @property
     def _transport_client(self):
