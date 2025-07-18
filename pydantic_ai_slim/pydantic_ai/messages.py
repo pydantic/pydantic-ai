@@ -757,11 +757,23 @@ class ModelResponse:
                         },
                     }
                 )
-            elif isinstance(part, TextPart):
-                if body.get('content'):
-                    body = new_event_body()
+            elif isinstance(part, (TextPart, ThinkingPart)):
+                kind = 'thinking' if isinstance(part, ThinkingPart) else 'text'
+                existing_content = body.get('content')
                 if settings.include_content:
-                    body['content'] = part.content
+                    if not existing_content:
+                        body['content'] = (
+                            part.content if isinstance(part, TextPart) else [{'kind': kind, 'text': part.content}]
+                        )
+                    elif isinstance(existing_content, list):
+                        body['content'] = existing_content + [{'kind': kind, 'text': part.content}]
+                    elif isinstance(existing_content, str):
+                        body['content'] = [
+                            {'kind': 'text', 'text': existing_content},
+                            {'kind': kind, 'text': part.content},
+                        ]
+                else:
+                    body.setdefault('content', []).append({'kind': kind})
 
         return result
 

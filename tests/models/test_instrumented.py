@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -146,7 +147,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 18000000000,
+                'end_time': 16000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
@@ -280,7 +281,7 @@ Fix the errors and try again.\
                     'index': 0,
                     'message': {
                         'role': 'assistant',
-                        'content': 'text1',
+                        'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'text', 'text': 'text2'}],
                         'tool_calls': [
                             {
                                 'id': 'tool_call_1',
@@ -300,17 +301,6 @@ Fix the errors and try again.\
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 14000000000,
                 'observed_timestamp': 15000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text2'}},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
-                'timestamp': 16000000000,
-                'observed_timestamp': 17000000000,
                 'trace_id': 1,
                 'span_id': 1,
                 'trace_flags': 1,
@@ -413,7 +403,10 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
+                'body': {
+                    'index': 0,
+                    'message': {'role': 'assistant', 'content': 'text1text2'},
+                },
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
@@ -630,18 +623,20 @@ Fix the errors and try again.\
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
-                                    'event.name': 'gen_ai.assistant.message',
                                     'role': 'assistant',
                                     'content': 'text3',
-                                    'gen_ai.message.index': 1,
                                     'gen_ai.system': 'my_system',
+                                    'gen_ai.message.index': 1,
+                                    'event.name': 'gen_ai.assistant.message',
                                 },
                                 {
-                                    'event.name': 'gen_ai.choice',
                                     'index': 0,
                                     'message': {
                                         'role': 'assistant',
-                                        'content': 'text1',
+                                        'content': [
+                                            {'kind': 'text', 'text': 'text1'},
+                                            {'kind': 'text', 'text': 'text2'},
+                                        ],
                                         'tool_calls': [
                                             {
                                                 'id': 'tool_call_1',
@@ -656,12 +651,7 @@ Fix the errors and try again.\
                                         ],
                                     },
                                     'gen_ai.system': 'my_system',
-                                },
-                                {
                                     'event.name': 'gen_ai.choice',
-                                    'index': 0,
-                                    'message': {'role': 'assistant', 'content': 'text2'},
-                                    'gen_ai.system': 'my_system',
                                 },
                             ]
                         )
@@ -725,7 +715,8 @@ def test_messages_to_otel_events_instructions():
 def test_messages_to_otel_events_instructions_multiple_messages():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
-        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[ThinkingPart('thinking_1'), TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1')]),
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
     ]
     settings = InstrumentationSettings()
@@ -735,11 +726,17 @@ def test_messages_to_otel_events_instructions_multiple_messages():
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
-                'content': 'text1',
+                'content': [{'kind': 'thinking', 'text': 'thinking_1'}, {'kind': 'text', 'text': 'text1'}],
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
-            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking_1'}],
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 3, 'event.name': 'gen_ai.user.message'},
         ]
     )
 
@@ -764,7 +761,8 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             ]
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
-        ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1'), TextPart('text_2')]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1')]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -816,8 +814,18 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
-                'content': 'text1',
+                'content': [
+                    {'kind': 'text', 'text': 'text1'},
+                    {'kind': 'thinking', 'text': 'thinking1'},
+                    {'kind': 'text', 'text': 'text_2'},
+                ],
                 'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking1'}],
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
@@ -845,6 +853,7 @@ def test_messages_without_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('system_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[ThinkingPart('thinking_1')]),
         ModelRequest(
             parts=[
                 UserPromptPart(
@@ -859,7 +868,13 @@ def test_messages_without_content(document_content: BinaryContent):
                 )
             ]
         ),
-        ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
+        ModelResponse(
+            parts=[
+                TextPart('text2'),
+                ThinkingPart('thinking_2'),
+                ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4}),
+            ]
+        ),
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
@@ -875,7 +890,14 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
+                'content': [{'kind': 'text'}],
                 'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'thinking'}],
+                'gen_ai.message.index': 2,
                 'event.name': 'gen_ai.assistant.message',
             },
             {
@@ -888,11 +910,12 @@ def test_messages_without_content(document_content: BinaryContent):
                     {'kind': 'binary', 'media_type': 'application/pdf'},
                 ],
                 'role': 'user',
-                'gen_ai.message.index': 2,
+                'gen_ai.message.index': 3,
                 'event.name': 'gen_ai.user.message',
             },
             {
                 'role': 'assistant',
+                'content': [{'kind': 'text'}, {'kind': 'thinking'}],
                 'tool_calls': [
                     {
                         'id': IsStr(),
@@ -900,33 +923,33 @@ def test_messages_without_content(document_content: BinaryContent):
                         'function': {'name': 'my_tool'},
                     }
                 ],
-                'gen_ai.message.index': 3,
+                'gen_ai.message.index': 4,
                 'event.name': 'gen_ai.assistant.message',
             },
             {
                 'role': 'tool',
                 'id': 'tool_call_1',
                 'name': 'tool',
-                'gen_ai.message.index': 4,
+                'gen_ai.message.index': 5,
                 'event.name': 'gen_ai.tool.message',
             },
             {
                 'role': 'tool',
                 'id': 'tool_call_2',
                 'name': 'tool',
-                'gen_ai.message.index': 5,
+                'gen_ai.message.index': 6,
                 'event.name': 'gen_ai.tool.message',
             },
             {
                 'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
                 'role': 'user',
-                'gen_ai.message.index': 6,
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
             },
             {
                 'content': {'kind': 'text'},
                 'role': 'user',
-                'gen_ai.message.index': 7,
+                'gen_ai.message.index': 8,
                 'event.name': 'gen_ai.user.message',
             },
         ]
