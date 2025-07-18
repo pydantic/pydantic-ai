@@ -15,7 +15,7 @@ interactions:
   response:
     headers:
       content-length:
-      - '545'
+      - '550'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -46,6 +46,7 @@ interactions:
       - text-to-text
     - model_id: claude-4-sonnet
       regions:
+      - eu
       - us
       type:
       - text-to-text
