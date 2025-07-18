@@ -14,7 +14,7 @@ TOOL_SCHEMA_VALIDATOR = SchemaValidator(schema=core_schema.any_schema())
 
 @dataclass
 class DeferredToolset(AbstractToolset[AgentDepsT]):
-    """A toolset that holds deferred tools that will be called by the upstream service that called the agent.
+    """A toolset that holds deferred tools whose results will be produced outside of the Pydantic AI agent run in which they were called.
 
     See [toolset docs](../toolsets.md#deferred-toolset), [`ToolDefinition.kind`][pydantic_ai.tools.ToolDefinition.kind], and [`DeferredToolCalls`][pydantic_ai.output.DeferredToolCalls] for more information.
     """
