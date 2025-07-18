@@ -40,7 +40,7 @@ try:
         ChatMessageV2,
         ChatResponse,
         SystemChatMessageV2,
-        TextAssistantMessageContentItem,
+        TextAssistantMessageV2ContentItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
@@ -227,7 +227,7 @@ class CohereModel(Model):
                         assert_never(item)
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts:
-                    message_param.content = [TextAssistantMessageContentItem(text='\n\n'.join(texts))]
+                    message_param.content = [TextAssistantMessageV2ContentItem(text='\n\n'.join(texts))]
                 if tool_calls:
                     message_param.tool_calls = tool_calls
                 cohere_messages.append(message_param)

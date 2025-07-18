@@ -123,7 +123,7 @@ def completion_message(
     return MistralChatCompletionResponse(
         id='123',
         choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
-        created=1704067200 if with_created else None,  # 2024-01-01
+        created=1704067200 if with_created else 0,  # 2024-01-01
         model='mistral-large-123',
         object='chat.completion',
         usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
