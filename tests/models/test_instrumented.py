@@ -900,7 +900,7 @@ def test_messages_without_content(document_content: BinaryContent):
                 'content': [{'kind': 'text'}, {'kind': 'thinking'}],
                 'tool_calls': [
                     {
-                        'id': 'pyd_ai_e81c1ed5cc4c4bb8b02f53369e349298',
+                        'id': IsStr(),
                         'type': 'function',
                         'function': {'name': 'my_tool'},
                     }
