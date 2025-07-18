@@ -835,6 +835,7 @@ def test_messages_without_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('system_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[ThinkingPart('thinking_1')]),
         ModelRequest(
             parts=[
                 UserPromptPart(
@@ -849,7 +850,13 @@ def test_messages_without_content(document_content: BinaryContent):
                 )
             ]
         ),
-        ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
+        ModelResponse(
+            parts=[
+                TextPart('text2'),
+                ThinkingPart('thinking_2'),
+                ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4}),
+            ]
+        ),
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
@@ -870,6 +877,12 @@ def test_messages_without_content(document_content: BinaryContent):
                 'event.name': 'gen_ai.assistant.message',
             },
             {
+                'role': 'assistant',
+                'content': [{'kind': 'thinking'}],
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
                 'content': [
                     {'kind': 'text'},
                     {'kind': 'video-url'},
@@ -879,46 +892,46 @@ def test_messages_without_content(document_content: BinaryContent):
                     {'kind': 'binary', 'media_type': 'application/pdf'},
                 ],
                 'role': 'user',
-                'gen_ai.message.index': 2,
+                'gen_ai.message.index': 3,
                 'event.name': 'gen_ai.user.message',
             },
             {
                 'role': 'assistant',
-                'content': [{'kind': 'text'}],
+                'content': [{'kind': 'text'}, {'kind': 'thinking'}],
                 'tool_calls': [
                     {
-                        'id': IsStr(),
+                        'id': 'pyd_ai_e81c1ed5cc4c4bb8b02f53369e349298',
                         'type': 'function',
                         'function': {'name': 'my_tool'},
                     }
                 ],
-                'gen_ai.message.index': 3,
+                'gen_ai.message.index': 4,
                 'event.name': 'gen_ai.assistant.message',
             },
             {
                 'role': 'tool',
                 'id': 'tool_call_1',
                 'name': 'tool',
-                'gen_ai.message.index': 4,
+                'gen_ai.message.index': 5,
                 'event.name': 'gen_ai.tool.message',
             },
             {
                 'role': 'tool',
                 'id': 'tool_call_2',
                 'name': 'tool',
-                'gen_ai.message.index': 5,
+                'gen_ai.message.index': 6,
                 'event.name': 'gen_ai.tool.message',
             },
             {
                 'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
                 'role': 'user',
-                'gen_ai.message.index': 6,
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
             },
             {
                 'content': {'kind': 'text'},
                 'role': 'user',
-                'gen_ai.message.index': 7,
+                'gen_ai.message.index': 8,
                 'event.name': 'gen_ai.user.message',
             },
         ]
