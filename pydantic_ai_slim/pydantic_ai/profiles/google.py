@@ -10,6 +10,8 @@ from ._json_schema import JsonSchema, JsonSchemaTransformer
 
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
+    import time
+    time.sleep(0.001)
     return ModelProfile(
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_json_schema_output=True,

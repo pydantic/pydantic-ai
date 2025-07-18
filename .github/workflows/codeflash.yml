@@ -1,0 +1,48 @@
+name: Codeflash Optimization
+on:
+  pull_request:
+    paths:
+      - 'pydantic_ai_slim/pydantic_ai/**'
+  workflow_dispatch:
+concurrency:
+  # Any new push to the PR will cancel the previous run, so that only the latest code is optimized
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  optimize:
+    name: Optimize new Python code
+    # Don't run codeflash on codeflash-ai[bot] commits, prevent duplicate optimizations
+    if: ${{ github.actor != 'codeflash-ai[bot]' }}
+    runs-on: ubuntu-latest
+    env:
+      CODEFLASH_API_KEY: ${{ secrets.CODEFLASH_API_KEY }}
+    steps:
+      - name: 🛎️ Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 🐍 Setup UV
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: 📦 Install Dependencies
+        run: uv sync --frozen --all-extras --all-packages --group lint --group docs
+      - name: Functions to Optimize
+        id: discover_step
+        run: |
+          uv run python -c "
+          from codeflash.cli_cmds.cli import parse_args, process_pyproject_config
+          from codeflash.verification.verification_utils import TestConfig
+          from codeflash.discovery.functions_to_optimize import get_functions_to_optimize
+          import os
+          args = process_pyproject_config(parse_args())
+          t = TestConfig(tests_root=args.tests_root, tests_project_rootdir=args.test_project_root, project_root_path=args.project_root,  test_framework=args.test_framework, pytest_cmd=args.pytest_cmd,)
+          f = get_functions_to_optimize(test_cfg=t, ignore_paths=args.ignore_paths, project_root=args.project_root, module_root=args.module_root,optimize_all=None, replay_test=None, file=None, only_get_this_function=None)
+          functions = ' '.join([fto.function_name for ftol in f[0].values() for fto in ftol])
+          open(os.environ.get('GITHUB_OUTPUT'), 'a').write(f'functions_to_optimize={functions}')
+          "
+      - name: ⚡️Codeflash Optimization
+        run: uv run codeflash optimize --only-functions ${{ steps.discover_step.outputs.functions_to_optimize }} -m pytest --inline-snapshot=disable tests/test_examples.py
