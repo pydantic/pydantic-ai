@@ -757,15 +757,14 @@ class ModelResponse:
                 else:
                     if not existing_content:
                         body['content'] = (
-                            part.content if isinstance(part, TextPart)
-                            else [{'kind': kind, 'text': part.content}]
+                            part.content if isinstance(part, TextPart) else [{'kind': kind, 'text': part.content}]
                         )
                     elif isinstance(existing_content, list):
                         existing_content.append({'kind': kind, 'text': part.content})
                     elif isinstance(existing_content, str):
                         body['content'] = [
                             {'kind': 'text', 'text': existing_content},
-                            {'kind': kind, 'text': part.content}
+                            {'kind': kind, 'text': part.content},
                         ]
 
         return result
