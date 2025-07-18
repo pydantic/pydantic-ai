@@ -510,10 +510,10 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # parts.append({'text': item.content, 'thought': True})
             pass
         elif isinstance(item, ServerToolCallPart):  # pragma: no cover
-            # Never returned from google
+            # This is currently never returned from google
             pass
         elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
-            # Never returned from google
+            # This is currently never returned from google
             pass
         else:
             assert_never(item)

@@ -319,11 +319,11 @@ class GroqModel(Model):
                         continue
                     elif isinstance(item, ServerToolCallPart):  # pragma: no cover
                         # ServerToolCallPart is handled separately in server-side tools
-                        # Never returned from groq
+                        # This is currently never returned from groq
                         pass
                     elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
                         # ServerToolReturnPart is handled separately in server-side tools
-                        # Never returned from groq
+                        # This is currently never returned from groq
                         pass
                     else:
                         assert_never(item)

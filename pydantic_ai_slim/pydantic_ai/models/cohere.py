@@ -227,11 +227,11 @@ class CohereModel(Model):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ServerToolCallPart):  # pragma: no cover
                         # ServerToolCallPart represents a tool call from a remote server
-                        # Never returned from cohere
+                        # This is currently never returned from cohere
                         pass
                     elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
                         # ServerToolReturnPart represents a tool return from a remote server
-                        # Never returned from cohere
+                        # This is currently never returned from cohere
                         pass
                     else:
                         assert_never(item)

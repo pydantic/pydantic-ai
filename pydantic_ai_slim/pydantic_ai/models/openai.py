@@ -449,7 +449,7 @@ class OpenAIModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    # OpenAI doesn't return server tools calls.
+                    # OpenAI doesn't return server tool calls
                     elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):  # pragma: no cover
                         continue
                     else:
@@ -897,7 +897,7 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
-                    # OpenAI doesn't return server tools calls.
+                    # OpenAI doesn't return server tool calls
                     elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):
                         continue
                     elif isinstance(item, ThinkingPart):
