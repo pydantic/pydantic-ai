@@ -16,7 +16,7 @@ from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime, now_utc as _now_utc
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -349,7 +349,10 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = number_to_datetime(response.created)
+        if response.created:
+            timestamp = number_to_datetime(response.created)
+        else:
+            timestamp = _now_utc()
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         # The `reasoning_content` is only present in DeepSeek models.
