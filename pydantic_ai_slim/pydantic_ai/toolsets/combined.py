@@ -86,3 +86,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:
             toolset.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT] | None]
+    ) -> None:
+        new_toolsets = []
+        for toolset in self.toolsets:
+            new_toolsets.append(visitor(toolset) or toolset)
+        self.toolsets = new_toolsets
+
+        for toolset in self.toolsets:
+            toolset.visit_and_replace(visitor)
