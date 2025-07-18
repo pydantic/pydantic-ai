@@ -35,3 +35,9 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         self.wrapped.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT] | None]
+    ) -> None:
+        self.wrapped = visitor(self.wrapped) or self.wrapped
+        self.wrapped.visit_and_replace(visitor)

@@ -116,6 +116,12 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """Run a visitor function on all concrete toolsets that are not wrappers (i.e. they implement their own tool listing and calling)."""
         visitor(self)
 
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT] | None]
+    ) -> None:
+        """The reason we are adding this is to be able to use it to recursively turn toolsets into temporal-compatible toolsets."""
+        return None
+
     def filtered(
         self, filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool]
     ) -> FilteredToolset[AgentDepsT]:
