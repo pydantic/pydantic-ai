@@ -262,7 +262,7 @@ Fix the errors and try again.\
                 'trace_flags': 1,
             },
             {
-                'body': {'role': 'assistant', 'content': [{'kind': 'text', 'text': 'text3'}]},
+                'body': {'role': 'assistant', 'content': 'text3'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -405,7 +405,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
             {
                 'body': {
                     'index': 0,
-                    'message': {'role': 'assistant', 'content': [{'kind': 'text', 'text': 'text1text2'}]},
+                    'message': {'role': 'assistant', 'content': 'text1text2'},
                 },
                 'severity_number': 9,
                 'severity_text': None,
@@ -506,7 +506,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': [{'kind': 'text', 'text': 'text1'}]}},
+                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
@@ -624,7 +624,7 @@ Fix the errors and try again.\
                                 },
                                 {
                                     'role': 'assistant',
-                                    'content': [{'kind': 'text', 'text': 'text3'}],
+                                    'content': 'text3',
                                     'gen_ai.system': 'my_system',
                                     'gen_ai.message.index': 1,
                                     'event.name': 'gen_ai.assistant.message',
@@ -704,7 +704,7 @@ def test_messages_to_otel_events_instructions():
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
-                'content': [{'kind': 'text', 'text': 'text1'}],
+                'content': 'text1',
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
@@ -725,7 +725,7 @@ def test_messages_to_otel_events_instructions_multiple_messages():
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
-                'content': [{'kind': 'text', 'text': 'text1'}],
+                'content': 'text1',
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
@@ -865,6 +865,7 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
+                'content': [{'kind': 'text'}],
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
@@ -883,6 +884,7 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
+                'content': [{'kind': 'text'}],
                 'tool_calls': [
                     {
                         'id': IsStr(),
