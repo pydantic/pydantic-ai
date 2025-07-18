@@ -3,12 +3,15 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import date
+from itertools import chain
 from typing import Any
 from xml.etree import ElementTree
 
 from pydantic import BaseModel
 
 __all__ = ('format_as_xml',)
+
+from pydantic.fields import ComputedFieldInfo
 
 
 def format_as_xml(
@@ -100,7 +103,7 @@ class _ToXml:
                 element = ElementTree.Element(value.__class__.__name__)
             self._mapping_to_xml(
                 element=element,
-                mapping=value.model_dump(mode='python'),
+                mapping=self._partial_model_dump(value),
                 fields_attributes=self._fields_attributes(value) if self.add_fields_attributes else None,
             )
         elif isinstance(value, Iterable):
@@ -126,17 +129,39 @@ class _ToXml:
             element.append(self.to_xml(value, key, fields_attributes.get(key)))
 
     @staticmethod
+    def _partial_model_dump(model: BaseModel) -> dict[str, Any]:
+        """Dump only primitive types in order to keep fields information on models in sub-fields."""
+        exclude: set[str] = set()
+        for field in chain(
+            (k for k, v in model.model_fields.items() if not v.exclude), model.model_computed_fields.keys()
+        ):
+            value = getattr(model, field)
+            if value is not None and (
+                not isinstance(value, (str, int, float, date, bytearray, bytes, bool))
+                or not (is_dataclass(value) and not isinstance(value, type))
+            ):
+                exclude.add(field)
+        # FIXME we iteratively dump again sub-fields, we could set exclude parameter, but we would lost fields order
+        dump: dict[str, Any] = model.model_dump(mode='python')
+        # FIXME what is excluded won't follow serialization rules defined in the model
+        for field in exclude:
+            dump[field] = getattr(model, field)
+        return dump
+
+    @staticmethod
     def _fields_attributes(value: BaseModel) -> dict[str, dict[str, str]]:
+        """Obtain a map of xml attributes for each Pydantic field."""
         ret: dict[str, dict[str, str]] = {}
-        for field, info in value.model_fields.items():
-            if not info.exclude:
-                attributes = {}
-                for attr in ('title', 'description', 'alias'):
-                    attr_value = getattr(info, attr, None)
-                    if attr_value is not None:
-                        attributes[attr] = str(attr_value)
-                if attributes:
-                    ret[info.serialization_alias or field] = attributes
+        for model_fields in (value.model_fields, value.model_computed_fields):
+            for field, info in model_fields.items():
+                if isinstance(info, ComputedFieldInfo) or not info.exclude:
+                    attributes = {}
+                    for attr in ('title', 'description', 'alias'):
+                        attr_value = getattr(info, attr, None)
+                        if attr_value is not None:
+                            attributes[attr] = str(attr_value)
+                    if attributes:
+                        ret[field] = attributes
         return ret
 
 

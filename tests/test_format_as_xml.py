@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Self
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, computed_field
 
 from pydantic_ai import format_as_xml
 
@@ -18,6 +18,19 @@ class ExampleDataclass:
 class ExamplePydanticModel(BaseModel):
     name: str
     age: int
+
+
+class ExamplePydanticModelFields(BaseModel):
+    name: str = Field(description="The person's name")
+    age: int = Field(description='Years', title='Age', default=18)
+    height: float = Field(description="The person's height", exclude=True)
+    children: list[Self] | None = Field(alias='child', default=None)
+
+    @computed_field(title='Location')
+    def location(self) -> str | None:
+        if self.name == 'John':
+            return 'Australia'
+        return None
 
 
 @pytest.mark.parametrize(
@@ -125,6 +138,121 @@ class ExamplePydanticModel(BaseModel):
 )
 def test(input_obj: Any, output: str):
     assert format_as_xml(input_obj) == output
+
+
+@pytest.mark.parametrize(
+    'input_obj,use_fields,output',
+    [
+        pytest.param(
+            ExamplePydanticModelFields(
+                name='John',
+                age=42,
+                height=160.0,
+                child=[
+                    ExamplePydanticModelFields(name='Liam', height=150),
+                    ExamplePydanticModelFields(name='Alice', height=160),
+                ],
+            ),
+            True,
+            snapshot("""\
+<examples>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children alias="child">
+    <ExamplePydanticModelFields>
+      <name description="The person's name">Liam</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticModelFields>
+    <ExamplePydanticModelFields>
+      <name description="The person's name">Alice</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticModelFields>
+  </children>
+  <location title="Location">Australia</location>
+</examples>\
+"""),
+            id='pydantic model with fields',
+        ),
+        pytest.param(
+            [
+                ExamplePydanticModelFields(
+                    name='John',
+                    age=42,
+                    height=160.0,
+                    child=[
+                        ExamplePydanticModelFields(name='Liam', height=150),
+                        ExamplePydanticModelFields(name='Alice', height=160),
+                    ],
+                )
+            ],
+            True,
+            snapshot("""\
+<examples>
+  <ExamplePydanticModelFields>
+    <name description="The person's name">John</name>
+    <age title="Age" description="Years">42</age>
+    <children alias="child">
+      <ExamplePydanticModelFields>
+        <name description="The person's name">Liam</name>
+        <age title="Age" description="Years">18</age>
+        <children alias="child">null</children>
+        <location title="Location">null</location>
+      </ExamplePydanticModelFields>
+      <ExamplePydanticModelFields>
+        <name description="The person's name">Alice</name>
+        <age title="Age" description="Years">18</age>
+        <children alias="child">null</children>
+        <location title="Location">null</location>
+      </ExamplePydanticModelFields>
+    </children>
+    <location title="Location">Australia</location>
+  </ExamplePydanticModelFields>
+</examples>\
+"""),
+            id='list[pydantic model with fields]',
+        ),
+        pytest.param(
+            ExamplePydanticModelFields(
+                name='John',
+                age=42,
+                height=160.0,
+                child=[
+                    ExamplePydanticModelFields(name='Liam', height=150),
+                    ExamplePydanticModelFields(name='Alice', height=160),
+                ],
+            ),
+            False,
+            snapshot("""\
+<examples>
+  <name>John</name>
+  <age>42</age>
+  <children>
+    <ExamplePydanticModelFields>
+      <name>Liam</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticModelFields>
+    <ExamplePydanticModelFields>
+      <name>Alice</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticModelFields>
+  </children>
+  <location>Australia</location>
+</examples>\
+"""),
+            id='pydantic model without fields',
+        ),
+    ],
+)
+def test_fields(input_obj: Any, use_fields: bool, output: str):
+    assert format_as_xml(input_obj, fields_attributes=use_fields) == output
 
 
 @pytest.mark.parametrize(
