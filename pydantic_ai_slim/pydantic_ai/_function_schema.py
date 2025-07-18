@@ -96,8 +96,12 @@ def function_schema(  # noqa: C901
     config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
-
-    sig = signature(function)
+    errors: list[str] = []
+    try:
+        sig = signature(function)
+    except ValueError as e:
+        errors.append(f'Error getting signature for {function.__qualname__}: {e}')
+        sig = signature(lambda: None)  # fallback to an empty signature
 
     type_hints = _typing_extra.get_function_type_hints(function)
 
@@ -105,7 +109,6 @@ def function_schema(  # noqa: C901
     fields: dict[str, core_schema.TypedDictField] = {}
     positional_fields: list[str] = []
     var_positional_field: str | None = None
-    errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
 
     description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
@@ -235,14 +238,19 @@ def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
     Returns:
         `True` if the function takes a `RunContext` as first argument, `False` otherwise.
     """
-    sig = signature(function)
+    try:
+        sig = signature(function)
+    except ValueError:
+        return False
     try:
         first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
         return False
     else:
         type_hints = _typing_extra.get_function_type_hints(function)
-        annotation = type_hints[first_param_name]
+        annotation = type_hints.get(first_param_name)
+        if annotation is None:
+            return False
         return True is not sig.empty and _is_call_ctx(annotation)
 
 
