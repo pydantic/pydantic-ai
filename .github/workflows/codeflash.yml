@@ -29,7 +29,7 @@ jobs:
         with:
           deno-version: v2.x
       - name: 📦 Install Dependencies
-        run: make install
+        run: uv sync --frozen --all-extras --all-packages --group lint --group docs
       - name: Functions to Optimize
         shell: python
         id: discover_step
