@@ -508,6 +508,24 @@ class _MCPServerHTTP(MCPServer):
         sampling_model: models.Model | None = None,
     ) -> None: ...
 
+    @overload
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        read_timeout: float = 5 * 60,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        max_retries: int = 1,
+        sampling_model: models.Model | None = None,
+    ) -> None: ...
+
     def __init__(
         self,
         *,
@@ -538,12 +556,10 @@ class _MCPServerHTTP(MCPServer):
         self.sampling_model = sampling_model
 
         if 'sse_read_timeout' in _deprecated_kwargs:
-            # check if `read_timeout` was passed as a keyword argument.
-            # `read_timeout` has a default value, so we can't just check for `is not None`.
             if 'read_timeout' in _deprecated_kwargs:
                 raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
 
-            warnings.warn('`sse_read_timeout` is deprecated, use `read_timeout` instead', DeprecationWarning)
+            warnings.warn("'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning)
             self.read_timeout = _deprecated_kwargs.pop('sse_read_timeout')
         else:
             self.read_timeout = read_timeout
@@ -642,9 +658,6 @@ class MCPServerSSE(_MCPServerHTTP):
     1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
     2. This will connect to a server running on `localhost:3001`.
     """
-
-    def __init__(self, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
 
     @property
     def _transport_client(self):
