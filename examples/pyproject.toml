@@ -63,10 +63,7 @@ dependencies = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = [
-    "pydantic_ai_ag_ui_examples",
-    "pydantic_ai_examples",
-]
+packages = ["pydantic_ai_examples"]
 
 [tool.uv.sources]
 pydantic-ai-slim = { workspace = true }

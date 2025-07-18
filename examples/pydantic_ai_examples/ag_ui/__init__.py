@@ -1,7 +1,7 @@
-"""Example usage of the AG-UI adapter for PydanticAI.
+"""Example usage of the AG-UI adapter for Pydantic AI.
 
 This provides a FastAPI application that demonstrates how to use the
-PydanticAI agent with the AG-UI protocol. It includes examples for
+Pydantic AI agent with the AG-UI protocol. It includes examples for
 each of the AG-UI dojo features:
 - Agentic Chat
 - Human in the Loop
@@ -24,7 +24,7 @@ from .api import (
     tool_based_generative_ui_app,
 )
 
-app = FastAPI(title='PydanticAI AG-UI server')
+app = FastAPI(title='Pydantic AI AG-UI server')
 app.mount('/agentic_chat', agentic_chat_app, 'Agentic Chat')
 app.mount('/agentic_generative_ui', agentic_generative_ui_app, 'Agentic Generative UI')
 app.mount('/human_in_the_loop', human_in_the_loop_app, 'Human in the Loop')
@@ -39,9 +39,3 @@ app.mount(
     tool_based_generative_ui_app,
     'Tool Based Generative UI',
 )
-
-
-if __name__ == '__main__':
-    import uvicorn
-
-    uvicorn.run('pydantic_ai_ag_ui_examples.dojo_server:app', port=9000)

@@ -1939,7 +1939,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 the other, not both.
 
         Returns:
-            An ASGI application for running PydanticAI agents with AG-UI protocol support.
+            An ASGI application for running Pydantic AI agents with AG-UI protocol support.
         """
         from .ag_ui import AGUIApp
 

@@ -5,9 +5,9 @@ from __future__ import annotations
 from enum import StrEnum
 from textwrap import dedent
 
-from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic import BaseModel, Field
 
+from ag_ui.core import EventType, StateSnapshotEvent
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.ag_ui import StateDeps
 

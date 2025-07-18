@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from textwrap import dedent
 
-from ag_ui.core import CustomEvent, EventType
 from pydantic import BaseModel
 
+from ag_ui.core import CustomEvent, EventType
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.ag_ui import StateDeps
 

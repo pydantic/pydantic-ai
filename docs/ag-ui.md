@@ -182,6 +182,6 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 ## Examples
 
 For more examples of how to use [`to_ag_ui()`][pydantic_ai.Agent.to_ag_ui] see
-[`pydantic_ai_ag_ui_examples`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_ag_ui_examples),
+[`pydantic_ai_examples.ag_ui`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/ag_ui),
 which includes a server for use with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo).

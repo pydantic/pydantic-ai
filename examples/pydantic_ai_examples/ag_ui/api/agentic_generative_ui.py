@@ -5,9 +5,9 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import Any, Literal
 
-from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
 from pydantic import BaseModel, Field
 
+from ag_ui.core import EventType, StateDeltaEvent, StateSnapshotEvent
 from pydantic_ai import Agent
 
 StepStatus = Literal['pending', 'completed']

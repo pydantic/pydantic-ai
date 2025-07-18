@@ -1,4 +1,4 @@
-"""Provides an AG-UI protocol adapter for the PydanticAI agent.
+"""Provides an AG-UI protocol adapter for the Pydantic AI agent.
 
 This package provides seamless integration between pydantic-ai agents and ag-ui
 for building interactive AI applications with streaming event-based communication.
@@ -111,7 +111,7 @@ SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
 
 
 class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
-    """ASGI application for running PydanticAI agents with AG-UI protocol support."""
+    """ASGI application for running Pydantic AI agents with AG-UI protocol support."""
 
     def __init__(
         self,
@@ -138,7 +138,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         """Initialise the AG-UI application.
 
         Args:
-            agent: The PydanticAI `Agent` to adapt.
+            agent: The Pydantic AI `Agent` to adapt.
 
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
                 no output validators since output validators would expect an argument that matches the agent's
@@ -213,14 +213,14 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
 @dataclass(repr=False)
 class _Adapter(Generic[AgentDepsT, OutputDataT]):
-    """An agent adapter providing AG-UI protocol support for PydanticAI agents.
+    """An agent adapter providing AG-UI protocol support for Pydantic AI agents.
 
     This class manages the agent runs, tool calls, state storage and providing
     an adapter for running agents with Server-Sent Event (SSE) streaming
     responses using the AG-UI protocol.
 
     Args:
-        agent: The PydanticAI `Agent` to adapt.
+        agent: The Pydantic AI `Agent` to adapt.
     """
 
     agent: Agent[AgentDepsT, OutputDataT] = field(repr=False)
@@ -263,7 +263,7 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
         encoder = EventEncoder(accept=accept)
         if run_input.tools:
             # AG-UI tools can't be prefixed as that would result in a mismatch between the tool names in the
-            # PydanticAI events and actual AG-UI tool names, preventing the tool from being called. If any
+            # Pydantic AI events and actual AG-UI tool names, preventing the tool from being called. If any
             # conflicts arise, the AG-UI tool should be renamed or a `PrefixedToolset` used for local toolsets.
             toolset = DeferredToolset[AgentDepsT](
                 [
@@ -477,13 +477,13 @@ class _History:
 
     @classmethod
     def from_ag_ui(cls, messages: list[Message]) -> _History:
-        """Convert a AG-UI history to a PydanticAI one.
+        """Convert a AG-UI history to a Pydantic AI one.
 
         Args:
             messages: List of AG-UI messages to convert.
 
         Returns:
-            List of PydanticAI model messages.
+            List of Pydantic AI model messages.
         """
         prompt_message_id = ''
         result: list[ModelMessage] = []

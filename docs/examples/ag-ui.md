@@ -1,47 +1,64 @@
-# PydanticAI AG-UI Examples
+# Agent User Interaction (AG-UI) Protocol
 
-This example uses PydanticAI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) example app.
+Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) example app.
+
+See the [AG-UI docs](../ag-ui.md) for more information about the AG-UI integration.
+
+Demonstrates:
+
+- [AG-UI](../ag-ui.md)
+- [Tools](../tools.md)
 
 ## Prerequisites
 
-1. An [OpenAI API key](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key)
-2. A clone of the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
+- An [OpenAI API key](https://help.openai.com/en/articles/4936850-where-do-i-find-my-openai-api-key)
 
-## Running
+## Running the Example
 
-1. Run the Pydantic AI AG-UI example backend
+With [dependencies installed and environment variables set](./index.md#usage)
+you will need two command line windows.
 
-    1. Install the `pydantic-ai-examples` package
+### Pydantic AI AG-UI backend
 
-        ```shell
-        pip/uv-add pydantic-ai-examples
-        ```
+Start by running the Pydantic AI AG-UI example backend.
 
-    2. Run the example AG-UI app
+```bash
+export OPENAI_API_KEY=<your api key>
+python/uv-run -m pydantic_ai_examples.ag_ui
+```
 
-        ```shell
-        python/uv-run -m pydantic_ai_ag_ui_examples.dojo_server
-        ```
+### AG-UI Dojo example frontend
 
-2. Run the AG-UI Dojo example frontend
-    1. Move to the cloned AG-UI repository directory
-    2. In the `typescript-sdk/integrations/pydantic-ai` directory, copy `.env-sample` to `.env`
-    3. Open it in your editor and set `OPENAI_API_KEY` to a valid OpenAI key
-    4. Open a terminal in the `typescript-sdk` directory
-    5. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo#development-setup)
+Next run the AG-UI Dojo example frontend.
 
-3. Finally visit <http://localhost:3000/pydantic-ai>
+1. Clone the [AG-UI repository](https://github.com/ag-ui-protocol/ag-ui)
 
-## Feature Demos
+    ```shell
+    git clone https://github.com/ag-ui-protocol/ag-ui.git
+    ```
 
-### [Agentic Chat](http://localhost:3000/pydantic-ai/feature/agentic_chat)
+2. Change into to the `ag-ui/typescript-sdk` directory
 
-This demonstrates a basic agent interaction including PydanticAI server side
+    ```shell
+    cd ag-ui/typescript-sdk
+    ```
+
+3. Run the Dojo app following the [official instructions](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo#development-setup)
+4. Visit <http://localhost:3000/pydantic-ai>
+5. Select View `Pydantic AI` from the sidebar
+
+## Feature Examples
+
+### Agentic Chat
+
+This demonstrates a basic agent interaction including Pydantic AI server side
 tools and AG-UI client side tools.
+
+View the [Agentic Chat example](http://localhost:3000/pydantic-ai/feature/agentic_chat).
 
 #### Agent Tools
 
-- `time` - PydanticAI tool to check the current time for a time zone
+- `time` - Pydantic AI tool to check the current time for a time zone
 - `background` - AG-UI tool to set the background color of the client window
 
 #### Agent Prompts
@@ -54,7 +71,7 @@ What is the time in New York?
 Change the background to blue
 ```
 
-A complex example which mixes both AG-UI and PydanticAI tools:
+A complex example which mixes both AG-UI and Pydantic AI tools:
 
 ```text
 Perform the following steps, waiting for the response of each step before continuing:
@@ -64,10 +81,12 @@ Perform the following steps, waiting for the response of each step before contin
 4. Report how long the background set took by diffing the two times
 ```
 
-### [Agentic Generative UI](http://localhost:3000/pydantic-ai/feature/agentic_generative_ui)
+### Agentic Generative UI
 
 Demonstrates a long running task where the agent sends updates to the frontend
 to let the user know what's happening.
+
+View the [Agentic Generative UI example](http://localhost:3000/pydantic-ai/feature/agentic_generative_ui).
 
 #### Plan Prompts
 
@@ -75,7 +94,7 @@ to let the user know what's happening.
 Create a plan for breakfast and execute it
 ```
 
-### [Human in the Loop](http://localhost:3000/pydantic-ai/feature/human_in_the_loop)
+### Human in the Loop
 
 Demonstrates simple human in the loop workflow where the agent comes up with a
 plan and the user can approve it using checkboxes.
@@ -90,16 +109,18 @@ plan and the user can approve it using checkboxes.
 Generate a list of steps for cleaning a car for me to review
 ```
 
-### [Predictive State Updates](http://localhost:3000/pydantic-ai/feature/predictive_state_updates)
+### Predictive State Updates
 
 Demonstrates how to use the predictive state updates feature to update the state
 of the UI based on agent responses, including user interaction via user
 confirmation.
 
+View the [Predictive State Updates example](http://localhost:3000/pydantic-ai/feature/predictive_state_updates).
+
 #### Story Tools
 
 - `write_document` - AG-UI tool to write the document to a window
-- `document_predict_state` - PydanticAI tool that enables document state
+- `document_predict_state` - Pydantic AI tool that enables document state
   prediction for the `write_document` tool
 
 This also shows how to use custom instructions based on shared state information.
@@ -118,13 +139,15 @@ Agent prompt
 Help me complete my story about bruce the dog, is should be no longer than a sentence.
 ```
 
-### [Shared State](http://localhost:3000/pydantic-ai/feature/shared_state)
+### Shared State
 
 Demonstrates how to use the shared state between the UI and the agent.
 
 State sent to the agent is detected by a function based instruction. This then
 validates the data using a custom pydantic model before using to create the
 instructions for the agent to follow and send to the client using a AG-UI tool.
+
+View the [Shared State example](http://localhost:3000/pydantic-ai/feature/shared_state).
 
 #### Recipe Tools
 
@@ -135,9 +158,11 @@ instructions for the agent to follow and send to the client using a AG-UI tool.
 1. Customise the basic settings of your recipe
 2. Click `Improve with AI`
 
-### [Tool Based Generative UI](http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui)
+### Tool Based Generative UI
 
 Demonstrates customised rendering for tool output with used confirmation.
+
+View the [Tool Based Generative UI example](http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui).
 
 #### Haiku Tools
 
