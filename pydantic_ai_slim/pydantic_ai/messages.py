@@ -751,7 +751,7 @@ class ModelResponse:
                 )
             elif isinstance(part, (TextPart, ThinkingPart)):
                 kind = 'thinking' if isinstance(part, ThinkingPart) else 'text'
-                existing_content = body.get('content')
+                existing_content = body.get('content', [])
                 if not settings.include_content:
                     body.setdefault('content', []).append({'kind': kind})
                 else:
