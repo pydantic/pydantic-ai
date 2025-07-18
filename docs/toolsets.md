@@ -597,40 +597,5 @@ If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/conc
 
 You will need to install the `langchain-community` package and any others required by the tools in question.
 
-```python {test="skip"}
-from langchain_community.agent_toolkits import SlackToolkit
-
-from pydantic_ai import Agent
-from pydantic_ai.ext.langchain import LangChainToolset
-
-
-toolkit = SlackToolkit()
-toolset = LangChainToolset(toolkit.get_tools())
-
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
-# ...
 ```
-
-### ACI.dev Tools {#aci-tools}
-
-If you'd like to use tools from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
-
-You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
-
-```python {test="skip"}
-import os
-
-from pydantic_ai import Agent
-from pydantic_ai.ext.aci import ACIToolset
-
-
-toolset = ACIToolset(
-    [
-        'OPEN_WEATHER_MAP__CURRENT_WEATHER',
-        'OPEN_WEATHER_MAP__FORECAST',
-    ],
-    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
-)
-
-agent = Agent('openai:gpt-4o', toolsets=[toolset])
 ```

@@ -747,14 +747,6 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
-        # Some providers (e.g. MoonshotAI) don't yet accept `tool_choice="required"`.
-        profile_capabilities = OpenAIModelProfile.from_profile(self.profile)
-        if tool_choice == 'required' and not getattr(
-            profile_capabilities, 'openai_supports_tool_choice_required', True
-        ):
-            # Fall back to 'auto' so the request remains valid.
-            tool_choice = 'auto'
-
         instructions, openai_messages = await self._map_messages(messages)
         reasoning = self._get_reasoning(model_settings)
 
