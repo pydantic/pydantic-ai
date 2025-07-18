@@ -334,9 +334,7 @@ print(test_model.last_model_request_parameters.function_tools)
 
 [`WrapperToolset`][pydantic_ai.toolsets.WrapperToolset] wraps another toolset and delegates all responsibility to it.
 
-To easily chain different modifications, you can also call [`wrap()`][pydantic_ai.toolsets.AbstractToolset.wrap] on any toolset instead of directly constructing an instance of (a subclass of) `WrapperToolset`.
-
-`WrapperToolset` is a no-op by default, but enables some useful abilities:
+It is is a no-op by default, but enables some useful abilities:
 
 #### Changing Tool Execution
 
@@ -367,7 +365,7 @@ class LoggingToolset(WrapperToolset):
             return result
 
 
-logging_toolset = prepared_toolset.wrap(LoggingToolset)
+logging_toolset = LoggingToolset(prepared_toolset)
 
 agent = Agent(TestModel(), toolsets=[logging_toolset]) # (1)!
 result = agent.run_sync('Call all the tools')
@@ -438,14 +436,17 @@ If you want to reuse a network connection or session across tool listings and ca
 
 ### Deferred Toolset
 
-A deferred tool is one that will be executed not by Pydantic AI, but by the upstream service that called the agent, such as a web application that supports frontend-defined tools provided to Pydantic AI via a protocol like [AG-UI](https://docs.ag-ui.com/concepts/tools#frontend-defined-tools).
+A deferred tool is one whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
 
-!!! note
-    This is not typically something you need to bother with, unless you are implementing support for such a protocol between an upstream tool provider and Pydantic AI.
+Deferred tools enable various use cases:
 
-When the model calls a deferred tool, the agent run ends with a [`DeferredToolCalls`][pydantic_ai.output.DeferredToolCalls] object containing the deferred tool call names and arguments, which is expected to be returned to the upstream tool provider. This upstream service is then expected to generate a response for each tool call and start a new Pydantic AI agent run with the message history and new [`ToolReturnPart`s][pydantic_ai.messages.ToolReturnPart] corresponding to each deferred call, after which the run will continue.
+- Support client-side tools implemented by a web or app frontend
+- Implement a Human-in-the-Loop flow where the user needs to explicitly provide an "answer" before the run can continue
+- Pass slow tasks off to a background worker or external service that will send a (webhook) notification when the result is ready and the agent run can be continued.
 
-To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolCalls` to the `Agent`'s [output types](output.md#structured-output) so that the agent run's output type is correctly inferred. Finally, you should handle the possible `DeferredToolCalls` result by returning it to the upstream tool provider.
+When the model calls a deferred tool, the agent run ends with a [`DeferredToolCalls`][pydantic_ai.output.DeferredToolCalls] object containing the deferred tool call names and arguments, which are expected to be returned to the service that will (eventually) produce the result(s). Once all the results are ready, a new Pydantic AI agent run can then be started with the original run's message history plus new [`ToolReturnPart`s][pydantic_ai.messages.ToolReturnPart] (or [`RetryPromptPart`s][pydantic_ai.messages.RetryPromptPart] in case of failure) corresponding to each deferred call, after which the run will continue.
+
+To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolCalls` to the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. Finally, you should handle the possible `DeferredToolCalls` output by passing it to the service that will produce the results.
 
 If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolCalls` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_sync()`][pydantic_ai.Agent.run_sync], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly.
 
@@ -482,7 +483,7 @@ print(repr(result.output))
 #> PersonalizedGreeting(greeting='Hello, David!', language_code='en-US')
 ```
 
-Next, let's define an function for a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model plus a dict of frontend tool names and descriptions. This is where `DeferredToolset` and `DeferredToolCalls` come in:
+Next, let's define a function that represents a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model plus a list of frontend tool definitions. This is where `DeferredToolset` and `DeferredToolCalls` come in:
 
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
 from deferred_toolset_agent import agent, PersonalizedGreeting
@@ -526,8 +527,10 @@ frontend_tool_definitions = [
         description="Get the user's preferred language from their browser",
     )
 ]
+
 def get_preferred_language(default_language: str) -> str:
     return 'es-MX' # (1)!
+
 frontend_tool_functions = {'get_preferred_language': get_preferred_language}
 
 messages: list[ModelMessage] = [
@@ -578,7 +581,7 @@ PersonalizedGreeting(greeting='Hola, David! Espero que tengas un gran día!', la
 """
 ```
 
-1. Imagine that this returns [`navigator.language`](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language)
+1. Imagine that this returns the frontend [`navigator.language`](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/language).
 
 _(This example is complete, it can be run "as is")_
 
