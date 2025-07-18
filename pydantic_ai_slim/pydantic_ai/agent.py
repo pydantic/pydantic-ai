@@ -420,7 +420,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if self._output_toolset:
             self._output_toolset.max_retries = self._max_result_retries
 
-        self._function_toolset = FunctionToolset(tools, max_retries=retries)
+        self._function_toolset = FunctionToolset('Agent tools', tools, max_retries=retries)
         self._user_toolsets = toolsets or ()
 
         self.history_processors = history_processors or []

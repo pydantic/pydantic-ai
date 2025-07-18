@@ -71,8 +71,11 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     @property
     def name(self) -> str:
-        """The name of the toolset for use in error messages."""
-        return self.__class__.__name__.replace('Toolset', ' toolset')
+        """A unique name for the toolset.
+
+        If you're defining a subclass that can be instantiated by a user, you should let them pass a custom name to the constructor and return that here.
+        """
+        raise NotImplementedError()
 
     @property
     def tool_name_conflict_hint(self) -> str:

@@ -29,9 +29,9 @@ def override_tool():
     return "I override all other tools"
 
 
-agent_toolset = FunctionToolset(tools=[agent_tool]) # (1)!
-extra_toolset = FunctionToolset(tools=[extra_tool])
-override_toolset = FunctionToolset(tools=[override_tool])
+agent_toolset = FunctionToolset('agent', tools=[agent_tool]) # (1)!
+extra_toolset = FunctionToolset('extra', tools=[extra_tool])
+override_toolset = FunctionToolset('override', tools=[override_tool])
 
 test_model = TestModel() # (2)!
 agent = Agent(test_model, toolsets=[agent_toolset])
@@ -84,7 +84,7 @@ def temperature_fahrenheit(city: str) -> float:
     return 69.8
 
 
-weather_toolset = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
+weather_toolset = FunctionToolset('weather', tools=[temperature_celsius, temperature_fahrenheit])
 
 
 @weather_toolset.tool
@@ -95,7 +95,7 @@ def conditions(ctx: RunContext, city: str) -> str:
         return "It's raining"
 
 
-datetime_toolset = FunctionToolset()
+datetime_toolset = FunctionToolset('datetime')
 datetime_toolset.add_function(lambda: datetime.now(), name='now')
 
 test_model = TestModel() # (1)!
@@ -417,7 +417,7 @@ test_model = TestModel() # (1)!
 agent = Agent(
     test_model,
     deps_type=WrapperToolset, # (2)!
-    toolsets=[togglable_toolset, FunctionToolset([toggle])]
+    toolsets=[togglable_toolset, FunctionToolset('toggle', [toggle])]
 )
 result = agent.run_sync('Toggle the toolset', deps=togglable_toolset)
 print([t.name for t in test_model.last_model_request_parameters.function_tools]) # (3)!
@@ -462,7 +462,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.toolsets.function import FunctionToolset
 
-toolset = FunctionToolset()
+toolset = FunctionToolset('user_info')
 
 
 @toolset.tool
@@ -502,7 +502,7 @@ from pydantic_ai.messages import ModelMessage
 def run_agent(
     messages: list[ModelMessage] = [], frontend_tools: list[ToolDefinition] = {}
 ) -> tuple[Union[PersonalizedGreeting, DeferredToolCalls], list[ModelMessage]]:
-    deferred_toolset = DeferredToolset(frontend_tools)
+    deferred_toolset = DeferredToolset('frontend', frontend_tools)
     result = agent.run_sync(
         toolsets=[deferred_toolset], # (1)!
         output_type=[agent.output_type, DeferredToolCalls], # (2)!
@@ -609,7 +609,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 
 
 toolkit = SlackToolkit()
-toolset = LangChainToolset(toolkit.get_tools())
+toolset = LangChainToolset('slack', toolkit.get_tools())
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])
 # ...
@@ -629,6 +629,7 @@ from pydantic_ai.ext.aci import ACIToolset
 
 
 toolset = ACIToolset(
+    'open_weather_map',
     [
         'OPEN_WEATHER_MAP__CURRENT_WEATHER',
         'OPEN_WEATHER_MAP__FORECAST',

@@ -266,14 +266,15 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             # Pydantic AI events and actual AG-UI tool names, preventing the tool from being called. If any
             # conflicts arise, the AG-UI tool should be renamed or a `PrefixedToolset` used for local toolsets.
             toolset = DeferredToolset[AgentDepsT](
-                [
+                name='AG-UI frontend tools',
+                tool_defs=[
                     ToolDefinition(
                         name=tool.name,
                         description=tool.description,
                         parameters_json_schema=tool.parameters,
                     )
                     for tool in run_input.tools
-                ]
+                ],
             )
             toolsets = [*toolsets, toolset] if toolsets else [toolset]
 

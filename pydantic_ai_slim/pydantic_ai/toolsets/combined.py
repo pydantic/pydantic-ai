@@ -40,6 +40,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self._entered_count = 0
         self._exit_stack = None
 
+    @property
+    def name(self) -> str:
+        return f'{self.__class__.__name__}({", ".join(toolset.name for toolset in self.toolsets)})'
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._entered_count == 0:

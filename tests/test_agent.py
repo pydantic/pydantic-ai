@@ -3652,7 +3652,7 @@ def test_deprecated_kwargs_mixed_valid_invalid():
 
 
 def test_override_toolsets():
-    foo_toolset = FunctionToolset()
+    foo_toolset = FunctionToolset('foo')
 
     @foo_toolset.tool
     def foo() -> str:
@@ -3675,7 +3675,7 @@ def test_override_toolsets():
     assert available_tools[-1] == snapshot(['baz', 'foo'])
     assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
 
-    bar_toolset = FunctionToolset()
+    bar_toolset = FunctionToolset('bar')
 
     @bar_toolset.tool
     def bar() -> str:
@@ -3702,7 +3702,7 @@ def test_override_toolsets():
 
 
 def test_adding_tools_during_run():
-    toolset = FunctionToolset()
+    toolset = FunctionToolset('foo')
 
     def foo() -> str:
         return 'Hello from foo'

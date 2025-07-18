@@ -77,7 +77,7 @@ def test_langchain_tool_conversion():
 
 
 def test_langchain_toolset():
-    toolset = LangChainToolset([langchain_tool])
+    toolset = LangChainToolset('langchain', [langchain_tool])
     agent = Agent('test', toolsets=[toolset], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")

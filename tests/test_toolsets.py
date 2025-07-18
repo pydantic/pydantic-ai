@@ -41,7 +41,7 @@ async def test_function_toolset():
     class PrefixDeps:
         prefix: str | None = None
 
-    toolset = FunctionToolset[PrefixDeps]()
+    toolset = FunctionToolset[PrefixDeps]('tools')
 
     async def prepare_add_prefix(ctx: RunContext[PrefixDeps], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps.prefix is None:
@@ -127,7 +127,7 @@ async def test_function_toolset():
 async def test_prepared_toolset_user_error_add_new_tools():
     """Test that PreparedToolset raises UserError when prepare function tries to add new tools."""
     context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
+    base_toolset = FunctionToolset[None]('tools')
 
     @base_toolset.tool
     def add(a: int, b: int) -> int:
@@ -162,7 +162,7 @@ async def test_prepared_toolset_user_error_add_new_tools():
 async def test_prepared_toolset_user_error_change_tool_names():
     """Test that PreparedToolset raises UserError when prepare function tries to change tool names."""
     context = build_run_context(None)
-    base_toolset = FunctionToolset[None]()
+    base_toolset = FunctionToolset[None]('tools')
 
     @base_toolset.tool
     def add(a: int, b: int) -> int:
@@ -204,7 +204,7 @@ async def test_comprehensive_toolset_composition():
         enable_advanced: bool = True
 
     # Create first FunctionToolset with basic math operations
-    math_toolset = FunctionToolset[TestDeps]()
+    math_toolset = FunctionToolset[TestDeps]('math')
 
     @math_toolset.tool
     def add(a: int, b: int) -> int:
@@ -222,7 +222,7 @@ async def test_comprehensive_toolset_composition():
         return a * b  # pragma: no cover
 
     # Create second FunctionToolset with string operations
-    string_toolset = FunctionToolset[TestDeps]()
+    string_toolset = FunctionToolset[TestDeps]('string')
 
     @string_toolset.tool
     def concat(s1: str, s2: str) -> str:
@@ -240,7 +240,7 @@ async def test_comprehensive_toolset_composition():
         return text[::-1]  # pragma: no cover
 
     # Create third FunctionToolset with advanced operations
-    advanced_toolset = FunctionToolset[TestDeps]()
+    advanced_toolset = FunctionToolset[TestDeps]('advanced')
 
     @advanced_toolset.tool
     def power(base: int, exponent: int) -> int:

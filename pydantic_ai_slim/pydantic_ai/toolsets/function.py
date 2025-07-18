@@ -36,13 +36,17 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     max_retries: int = field(default=1)
     tools: dict[str, Tool[Any]] = field(default_factory=dict)
 
-    def __init__(self, tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [], max_retries: int = 1):
+    def __init__(
+        self, name: str, tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [], max_retries: int = 1
+    ):
         """Build a new function toolset.
 
         Args:
+            name: The unique name of the toolset.
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
         """
+        self._name = name
         self.max_retries = max_retries
         self.tools = {}
         for tool in tools:
@@ -50,6 +54,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 self.add_tool(tool)
             else:
                 self.add_function(tool)
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     @overload
     def tool(self, func: ToolFuncEither[AgentDepsT, ToolParams], /) -> ToolFuncEither[AgentDepsT, ToolParams]: ...
@@ -96,7 +104,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         from pydantic_ai import Agent, RunContext
         from pydantic_ai.toolsets.function import FunctionToolset
 
-        toolset = FunctionToolset()
+        toolset = FunctionToolset('foobar_spam')
 
         @toolset.tool
         def foobar(ctx: RunContext[int], x: int) -> int:

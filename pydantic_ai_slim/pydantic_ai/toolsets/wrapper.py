@@ -18,6 +18,10 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
     wrapped: AbstractToolset[AgentDepsT]
 
+    @property
+    def name(self) -> str:
+        return f'{self.__class__.__name__}({self.wrapped.name})'
+
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()
         return self

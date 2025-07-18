@@ -65,5 +65,5 @@ def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
 class LangChainToolset(FunctionToolset):
     """A toolset that wraps LangChain tools."""
 
-    def __init__(self, tools: list[LangChainTool]):
-        super().__init__([tool_from_langchain(tool) for tool in tools])
+    def __init__(self, name: str, tools: list[LangChainTool]):
+        super().__init__(name, [tool_from_langchain(tool) for tool in tools])

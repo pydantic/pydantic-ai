@@ -605,7 +605,7 @@ def test_tool_name_conflict_hint():
         def foo_tool(x: str) -> str:
             return x + 'foo'  # pragma: no cover
 
-        function_toolset = FunctionToolset([tool])
+        function_toolset = FunctionToolset('toolset', [tool])
         prefixed_toolset = PrefixedToolset(function_toolset, 'foo')
         Agent('test', tools=[foo_tool], toolsets=[prefixed_toolset]).run_sync('')
 
@@ -1199,13 +1199,14 @@ def test_tool_retries():
 
 def test_deferred_tool():
     deferred_toolset = DeferredToolset(
+        'deferred',
         [
             ToolDefinition(
                 name='my_tool',
                 description='',
                 parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
             ),
-        ]
+        ],
     )
     agent = Agent(TestModel(), output_type=[str, DeferredToolCalls], toolsets=[deferred_toolset])
 
@@ -1234,13 +1235,14 @@ def test_deferred_tool_with_output_type():
         foo: str
 
     deferred_toolset = DeferredToolset(
+        'deferred',
         [
             ToolDefinition(
                 name='my_tool',
                 description='',
                 parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
             ),
-        ]
+        ],
     )
     agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolCalls], toolsets=[deferred_toolset])
 
@@ -1253,13 +1255,14 @@ def test_deferred_tool_with_tool_output_type():
         foo: str
 
     deferred_toolset = DeferredToolset(
+        'deferred',
         [
             ToolDefinition(
                 name='my_tool',
                 description='',
                 parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
             ),
-        ]
+        ],
     )
     agent = Agent(
         TestModel(call_tools=[]),
@@ -1273,13 +1276,14 @@ def test_deferred_tool_with_tool_output_type():
 
 async def test_deferred_tool_without_output_type():
     deferred_toolset = DeferredToolset(
+        'deferred',
         [
             ToolDefinition(
                 name='my_tool',
                 description='',
                 parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
             ),
-        ]
+        ],
     )
     agent = Agent(TestModel(), toolsets=[deferred_toolset])
 

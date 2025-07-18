@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from pydantic_core import SchemaValidator, core_schema
@@ -12,7 +12,6 @@ from .abstract import AbstractToolset, ToolsetTool
 TOOL_SCHEMA_VALIDATOR = SchemaValidator(schema=core_schema.any_schema())
 
 
-@dataclass
 class DeferredToolset(AbstractToolset[AgentDepsT]):
     """A toolset that holds deferred tools whose results will be produced outside of the Pydantic AI agent run in which they were called.
 
@@ -20,6 +19,14 @@ class DeferredToolset(AbstractToolset[AgentDepsT]):
     """
 
     tool_defs: list[ToolDefinition]
+
+    def __init__(self, name: str, tool_defs: list[ToolDefinition]):
+        self._name = name
+        self.tool_defs = tool_defs
+
+    @property
+    def name(self) -> str:
+        return self._name
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return {
