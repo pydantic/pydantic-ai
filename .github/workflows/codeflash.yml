@@ -25,6 +25,9 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
       - name: 📦 Install Dependencies
         run: make install
       - name: Functions to Optimize
