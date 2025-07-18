@@ -36,6 +36,7 @@ jobs:
           uv run python -c "
           from codeflash.cli_cmds.cli import parse_args, process_pyproject_config
           from codeflash.verification.verification_utils import TestConfig
+          from codeflash.discovery.functions_to_optimize import get_functions_to_optimize
           import os
           args = process_pyproject_config(parse_args())
           t = TestConfig(tests_root=args.tests_root, tests_project_rootdir=args.test_project_root, project_root_path=args.project_root,  test_framework=args.test_framework, pytest_cmd=args.pytest_cmd,)
