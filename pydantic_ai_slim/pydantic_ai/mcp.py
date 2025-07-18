@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, overload
 
 import anyio
 import httpx
@@ -489,17 +489,58 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
+    @overload
     @deprecated("'sse_read_timeout' is deprecated, use 'read_timeout' instead.")
     def __init__(
         self,
         *,
+        url: str,
+        headers: dict[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
         sse_read_timeout: float = 5 * 60,
-    ) -> None:
-        if sse_read_timeout is not None:
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        max_retries: int = 1,
+        sampling_model: models.Model | None = None,
+    ) -> None: ...
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        read_timeout: float = 5 * 60,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        max_retries: int = 1,
+        sampling_model: models.Model | None = None,
+        **_deprecated_kwargs: Any,
+    ):
+        self.url = url
+        self.headers = headers
+        self.http_client = http_client
+        self.tool_prefix = tool_prefix
+        self.log_level = log_level
+        self.log_handler = log_handler
+        self.timeout = timeout
+        if 'sse_read_timeout' in _deprecated_kwargs:
             if self.read_timeout is not None:
                 raise TypeError('`read_timeout` and `sse_read_timeout` cannot be set at the same time.')
             warnings.warn('`sse_read_timeout` is deprecated, use `read_timeout` instead', DeprecationWarning)
-            self.read_timeout = sse_read_timeout
+            self.read_timeout = _deprecated_kwargs.pop('sse_read_timeout')
+        self.process_tool_call = process_tool_call
+        self.allow_sampling = allow_sampling
+        self.max_retries = max_retries
+        self.sampling_model = sampling_model
 
     @property
     @abstractmethod
