@@ -1,4 +1,4 @@
-# Agent User Interaction (AG-UI) Protocol
+# Agent User Interaction (AG-UI)
 
 Example of using Pydantic AI agents with the [AG-UI Dojo](https://github.com/ag-ui-protocol/ag-ui/tree/main/typescript-sdk/apps/dojo) example app.
 
@@ -20,10 +20,15 @@ you will need two command line windows.
 
 ### Pydantic AI AG-UI backend
 
-Start by running the Pydantic AI AG-UI example backend.
+Setup your OpenAI API Key
 
 ```bash
 export OPENAI_API_KEY=<your api key>
+```
+
+Start the Pydantic AI AG-UI example backend.
+
+```bash
 python/uv-run -m pydantic_ai_examples.ag_ui
 ```
 
@@ -81,6 +86,10 @@ Perform the following steps, waiting for the response of each step before contin
 4. Report how long the background set took by diffing the two times
 ```
 
+#### Agentic Chat - Code
+
+```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/agentic_chat.py"}```
+
 ### Agentic Generative UI
 
 Demonstrates a long running task where the agent sends updates to the frontend
@@ -93,6 +102,10 @@ View the [Agentic Generative UI example](http://localhost:3000/pydantic-ai/featu
 ```text
 Create a plan for breakfast and execute it
 ```
+
+#### Agentic Generative UI - Code
+
+```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/agentic_generative_ui.py"}```
 
 ### Human in the Loop
 
@@ -108,6 +121,10 @@ plan and the user can approve it using checkboxes.
 ```text
 Generate a list of steps for cleaning a car for me to review
 ```
+
+#### Human in the Loop - Code
+
+```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/human_in_the_loop.py"}```
 
 ### Predictive State Updates
 
@@ -139,6 +156,10 @@ Agent prompt
 Help me complete my story about bruce the dog, is should be no longer than a sentence.
 ```
 
+#### Predictive State Updates - Code
+
+```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/predictive_state_updates.py"}```
+
 ### Shared State
 
 Demonstrates how to use the shared state between the UI and the agent.
@@ -158,6 +179,10 @@ View the [Shared State example](http://localhost:3000/pydantic-ai/feature/shared
 1. Customise the basic settings of your recipe
 2. Click `Improve with AI`
 
+#### Shared State - Code
+
+```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/shared_state.py"}```
+
 ### Tool Based Generative UI
 
 Demonstrates customised rendering for tool output with used confirmation.
@@ -173,3 +198,7 @@ View the [Tool Based Generative UI example](http://localhost:3000/pydantic-ai/fe
 ```text
 Generate a haiku about formula 1
 ```
+
+#### Tool Based Generative UI - Code
+
+```snippet {path="/examples/pydantic_ai_examples/ag_ui/api/tool_based_generative_ui.py"}```
