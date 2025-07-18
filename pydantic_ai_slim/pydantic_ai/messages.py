@@ -755,16 +755,18 @@ class ModelResponse:
                 if not settings.include_content:
                     body.setdefault('content', []).append({'kind': kind})
                 else:
-                    if existing_content:
-                        if isinstance(existing_content, list):
-                            body.setdefault('content', []).append({'kind': kind, 'text': part.content})
-                        elif isinstance(existing_content, str):
-                            body['content'] = [{'kind': 'text', 'text': existing_content}, {'kind': kind, 'text': part.content}]
-                    else:
-                        if isinstance(part, TextPart):
-                            body['content'] = part.content
-                        elif isinstance(part, ThinkingPart):
-                            body['content'] = [{'kind': kind, 'text': part.content}]
+                    if not existing_content:
+                        body['content'] = (
+                            part.content if isinstance(part, TextPart)
+                            else [{'kind': kind, 'text': part.content}]
+                        )
+                    elif isinstance(existing_content, list):
+                        existing_content.append({'kind': kind, 'text': part.content})
+                    elif isinstance(existing_content, str):
+                        body['content'] = [
+                            {'kind': 'text', 'text': existing_content},
+                            {'kind': kind, 'text': part.content}
+                        ]
 
         return result
 
