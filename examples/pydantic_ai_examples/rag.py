@@ -204,7 +204,7 @@ async def database_connect(
                     'SELECT 1 FROM pg_database WHERE datname = $1', database
                 )
                 if not db_exists:
-                    await conn.execute(f'CREATE DATABASE {database}')
+                    await conn.execute("CREATE DATABASE ?")
             finally:
                 await conn.close()
 
