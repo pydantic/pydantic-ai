@@ -1,3 +1,4 @@
+from sqlalchemy import text
 """Example demonstrating how to use Pydantic AI to generate SQL queries based on user input.
 
 Run postgres with:
@@ -159,7 +160,7 @@ async def database_connect(server_dsn: str, database: str) -> AsyncGenerator[Any
                 'SELECT 1 FROM pg_database WHERE datname = $1', database
             )
             if not db_exists:
-                await conn.execute(f'CREATE DATABASE {database}')
+        result = session.execute(text("SELECT * FROM customers WHERE name ILIKE :search_term"), {"search_term": f:param"), {"param": {search_term}%"}})
         finally:
             await conn.close()
 
