@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import importlib.util
+import logging
 import os
 import re
 import secrets
@@ -28,6 +29,11 @@ from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
+# Configure VCR logger to WARNING as it is too verbose by default
+# specifically, it logs every request and response including binary
+# content in Cassette.append, which is causing log downloads from
+# GitHub action to fail.
+logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
@@ -317,6 +323,11 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def huggingface_api_key() -> str:
+    return os.getenv('HF_TOKEN', 'hf_token')
+
+
+@pytest.fixture(scope='session')
 def heroku_inference_key() -> str:
     return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
 
@@ -398,6 +409,7 @@ def model(
     groq_api_key: str,
     co_api_key: str,
     gemini_api_key: str,
+    huggingface_api_key: str,
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
@@ -440,6 +452,14 @@ def model(
             from pydantic_ai.models.bedrock import BedrockConverseModel
 
             return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+        elif request.param == 'huggingface':
+            from pydantic_ai.models.huggingface import HuggingFaceModel
+            from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+            return HuggingFaceModel(
+                'Qwen/Qwen2.5-72B-Instruct',
+                provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:

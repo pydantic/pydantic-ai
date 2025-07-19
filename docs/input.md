@@ -2,7 +2,6 @@
 
 Some LLMs are now capable of understanding audio, video, image and document content.
 
-
 ## Image Input
 
 !!! info
@@ -105,7 +104,7 @@ print(result.output)
 
 ## User-side download vs. direct file URL
 
-As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, PydanticAI downloads the file content and then sends it as part of the API request.
+As a general rule, when you provide a URL using any of `ImageUrl`, `AudioUrl`, `VideoUrl` or `DocumentUrl`, Pydantic AI downloads the file content and then sends it as part of the API request.
 
 The situation is different for certain models:
 
@@ -113,12 +112,12 @@ The situation is different for certain models:
 
 - [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] and [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on Vertex AI: any URL provided using `ImageUrl`, `AudioUrl`, `VideoUrl`, or `DocumentUrl` is sent as-is in the API request and no data is downloaded beforehand.
 
-    See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
+  See the [Gemini API docs for Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference#filedata) to learn more about supported URLs, formats and limitations:
 
-    - Cloud Storage bucket URIs (with protocol `gs://`)
-    - Public HTTP(S) URLs
-    - Public YouTube video URL (maximum one URL per request)
+  - Cloud Storage bucket URIs (with protocol `gs://`)
+  - Public HTTP(S) URLs
+  - Public YouTube video URL (maximum one URL per request)
 
-    However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct PydanticAI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
+  However, because of crawling restrictions, it may happen that Gemini can't access certain URLs. In that case, you can instruct Pydantic AI to download the file content and send that instead of the URL by setting the boolean flag `force_download` to `True`. This attribute is available on all objects that inherit from [`FileUrl`][pydantic_ai.messages.FileUrl].
 
 - [`GeminiModel`][pydantic_ai.models.gemini.GeminiModel] and [`GoogleModel`][pydantic_ai.models.google.GoogleModel] on GLA: YouTube video URLs are sent directly in the request to the model.
