@@ -1,3 +1,4 @@
+import ast
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
@@ -27,6 +28,40 @@ __all__ = (
 
 
 @dataclass(repr=False)
+
+def _safe_eval(expression):
+    """Safely evaluate expressions, preventing code injection."""
+    try:
+        # First try ast.literal_eval for simple literals
+        return ast.literal_eval(expression)
+    except (ValueError, SyntaxError):
+        # For more complex expressions, use restricted eval
+        # Only allow basic mathematical operations and safe built-ins
+        allowed_names = {
+            "__builtins__": {},
+            "abs": abs, "min": min, "max": max, "round": round,
+            "len": len, "sum": sum, "int": int, "float": float,
+            "str": str, "bool": bool, "list": list, "dict": dict,
+            "tuple": tuple, "set": set
+        }
+        try:
+            # Validate that the expression doesn't contain dangerous patterns
+            dangerous_patterns = [
+                r'__import__', r'exec', r'eval', r'open', r'file',
+                r'input', r'raw_input', r'compile', r'globals',
+                r'locals', r'vars', r'dir', r'hasattr', r'getattr',
+                r'setattr', r'delattr', r'callable'
+            ]
+            
+            for pattern in dangerous_patterns:
+                if re.search(pattern, expression, re.IGNORECASE):
+                    raise ValueError(f"Potentially dangerous expression: {expression}")
+            
+            return _safe_eval(expression, allowed_names, {})
+        except Exception as e:
+            raise ValueError(f"Cannot safely evaluate expression: {expression}") from e
+
+
 class Equals(Evaluator[object, object, object]):
     """Check if the output exactly equals the provided value."""
 
@@ -281,7 +316,7 @@ class Python(Evaluator[object, object, object]):
 
     def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
         # Evaluate the condition, exposing access to the evaluator context as `ctx`.
-        return eval(self.expression, {'ctx': ctx})
+        return _safe_eval(self.expression, {'ctx': ctx})
 
 
 DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
