@@ -14,7 +14,7 @@ import { asXml, runCode, runCodeWithToolInjection, type ToolInjectionConfig } fr
 const VERSION = '0.0.14'
 
 export async function main() {
-  const args = globalThis.Deno?.args || []
+  const args = Deno?.args || []
   if (args.length === 1 && args[0] === 'stdio') {
     await runStdio()
   } else if (args.length >= 1 && args[0] === 'sse') {
@@ -36,7 +36,7 @@ Usage: deno run -N -R=node_modules -W=node_modules --node-modules-dir=auto jsr:@
 options:
   --port <port>  Port to run the SSE server on (default: 3001)`,
     )
-    globalThis.Deno?.exit(1)
+    Deno?.exit(1)
   }
 }
 
@@ -46,7 +46,7 @@ options:
 function createServer(): McpServer {
   const server = new McpServer(
     {
-      name: 'MCP Run Python with Tool Injection',
+      name: 'MCP Run Python',
       version: VERSION,
     },
     {
