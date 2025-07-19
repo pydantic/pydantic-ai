@@ -12,13 +12,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
+from pydantic import ValidationError
 from typing_inspection.introspection import get_literal_values
 
 from . import __version__
 from ._run_context import AgentDepsT
 from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage
+from .messages import ModelMessage, ModelMessagesTypeAdapter
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
@@ -53,6 +54,7 @@ This folder is used to store the prompt history and configuration.
 """
 
 PROMPT_HISTORY_FILENAME = 'prompt-history.txt'
+LAST_CONVERSATION_FILENAME = 'last-conversation.json'
 
 
 class SimpleCodeBlock(CodeBlock):
@@ -146,6 +148,13 @@ Special prompts:
         help='Which colors to use for code, can be "dark", "light" or any theme from pygments.org/styles/. Defaults to "dark" which works well on dark terminals.',
         default='dark',
     )
+    parser.add_argument(
+        '-c',
+        '--continue',
+        dest='continue_',
+        action='store_true',
+        help='Continue last conversation, if any, instead of starting a new one.',
+    )
     parser.add_argument('--no-stream', action='store_true', help='Disable streaming from the model')
     parser.add_argument('--version', action='store_true', help='Show version and exit')
 
@@ -205,17 +214,40 @@ Special prompts:
     else:
         code_theme = args.code_theme  # pragma: no cover
 
+    try:
+        history = load_last_conversation() if args.continue_ else None
+    except ValidationError:
+        console.print(
+            '[red]Error loading last conversation, it is corrupted or invalid. Starting a new conversation.[/red]'
+        )
+        history = None
+
     if prompt := cast(str, args.prompt):
         try:
-            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme))
+            asyncio.run(ask_agent(agent, prompt, stream, console, code_theme, messages=history))
         except KeyboardInterrupt:
             pass
         return 0
 
     try:
-        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name))
+        return asyncio.run(run_chat(stream, agent, console, code_theme, prog_name, history=history))
     except KeyboardInterrupt:  # pragma: no cover
         return 0
+
+
+def store_last_conversation(messages: list[ModelMessage], config_dir: Path | None = None) -> None:
+    last_conversation_path = (config_dir or PYDANTIC_AI_HOME) / LAST_CONVERSATION_FILENAME
+    last_conversation_path.parent.mkdir(parents=True, exist_ok=True)
+    last_conversation_path.write_bytes(ModelMessagesTypeAdapter.dump_json(messages))
+
+
+def load_last_conversation(config_dir: Path | None = None) -> list[ModelMessage] | None:
+    last_conversation_path = (config_dir or PYDANTIC_AI_HOME) / LAST_CONVERSATION_FILENAME
+
+    if not last_conversation_path.exists():
+        return None
+
+    return ModelMessagesTypeAdapter.validate_json(last_conversation_path.read_text())
 
 
 async def run_chat(
@@ -226,6 +258,7 @@ async def run_chat(
     prog_name: str,
     config_dir: Path | None = None,
     deps: AgentDepsT = None,
+    history: list[ModelMessage] | None = None,
 ) -> int:
     prompt_history_path = (config_dir or PYDANTIC_AI_HOME) / PROMPT_HISTORY_FILENAME
     prompt_history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -233,7 +266,7 @@ async def run_chat(
     session: PromptSession[Any] = PromptSession(history=FileHistory(str(prompt_history_path)))
 
     multiline = False
-    messages: list[ModelMessage] = []
+    messages: list[ModelMessage] = history or []
 
     while True:
         try:
@@ -252,7 +285,7 @@ async def run_chat(
                 return exit_value
         else:
             try:
-                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages)
+                messages = await ask_agent(agent, text, stream, console, code_theme, deps, messages, config_dir)
             except CancelledError:  # pragma: no cover
                 console.print('[dim]Interrupted[/dim]')
             except Exception as e:  # pragma: no cover
@@ -270,6 +303,7 @@ async def ask_agent(
     code_theme: str,
     deps: AgentDepsT = None,
     messages: list[ModelMessage] | None = None,
+    config_dir: Path | None = None,
 ) -> list[ModelMessage]:
     status = Status('[dim]Working on it…[/dim]', console=console)
 
@@ -278,7 +312,10 @@ async def ask_agent(
             result = await agent.run(prompt, message_history=messages, deps=deps)
         content = str(result.output)
         console.print(Markdown(content, code_theme=code_theme))
-        return result.all_messages()
+        result_messages = result.all_messages()
+        store_last_conversation(result_messages, config_dir)
+
+        return result_messages
 
     with status, ExitStack() as stack:
         async with agent.iter(prompt, message_history=messages, deps=deps) as agent_run:
@@ -293,7 +330,10 @@ async def ask_agent(
                             live.update(Markdown(str(content), code_theme=code_theme))
 
         assert agent_run.result is not None
-        return agent_run.result.all_messages()
+        result_messages = agent_run.result.all_messages()
+        store_last_conversation(result_messages, config_dir)
+
+        return result_messages
 
 
 class CustomAutoSuggest(AutoSuggestFromHistory):
