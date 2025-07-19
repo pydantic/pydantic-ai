@@ -425,12 +425,19 @@ class AnthropicModel(Model):
 
 
 def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
-    if isinstance(message, BetaMessage):
-        response_usage = message.usage
-    elif isinstance(message, BetaRawMessageStartEvent):
-        response_usage = message.message.usage
-    elif isinstance(message, BetaRawMessageDeltaEvent):
-        response_usage = message.usage
+    """Maps Anthropic API message object to pydantic-ai Usage object, extracting integer-type usage statistics.
+
+    Handles BetaMessage, BetaRawMessageStartEvent, BetaRawMessageDeltaEvent.
+    Returns empty Usage if type doesn't contain usage info.
+    """
+    msg_type = type(message)
+
+    if msg_type is BetaMessage:
+        response_usage = cast(BetaMessage, message).usage
+    elif msg_type is BetaRawMessageStartEvent:
+        response_usage = cast(BetaRawMessageStartEvent, message).message.usage
+    elif msg_type is BetaRawMessageDeltaEvent:
+        response_usage = cast(BetaRawMessageDeltaEvent, message).usage
     else:
         # No usage information provided in:
         # - RawMessageStopEvent
@@ -454,10 +461,13 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
         + details.get('cache_read_input_tokens', 0)
     )
 
+    output_tokens = response_usage.output_tokens
+    total_tokens = request_tokens + output_tokens
+
     return usage.Usage(
         request_tokens=request_tokens or None,
-        response_tokens=response_usage.output_tokens,
-        total_tokens=request_tokens + response_usage.output_tokens,
+        response_tokens=output_tokens,
+        total_tokens=total_tokens,
         details=details or None,
     )
 
