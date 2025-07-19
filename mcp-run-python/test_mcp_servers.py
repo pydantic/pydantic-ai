@@ -24,8 +24,6 @@ DENO_ARGS = [
     '-N',
     '-R=mcp-run-python/node_modules',
     '-W=mcp-run-python/node_modules',
-    '-R=node_modules',
-    '-W=node_modules',
     '--node-modules-dir=auto',
     'mcp-run-python/src/main.ts',
 ]
