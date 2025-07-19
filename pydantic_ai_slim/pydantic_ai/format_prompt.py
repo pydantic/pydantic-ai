@@ -13,9 +13,8 @@ __all__ = ('format_as_xml',)
 
 def format_as_xml(
     obj: Any,
-    root_tag: str = 'examples',
-    item_tag: str = 'example',
-    include_root_tag: bool = True,
+    root_tag: str | None = None,
+    item_tag: str = 'item',
     none_str: str = 'null',
     indent: str | None = '  ',
 ) -> str:
@@ -32,8 +31,6 @@ def format_as_xml(
         root_tag: Outer tag to wrap the XML in, use `None` to omit the outer tag.
         item_tag: Tag to use for each item in an iterable (e.g. list), this is overridden by the class name
             for dataclasses and Pydantic models.
-        include_root_tag: Whether to include the root tag in the output
-            (The root tag is always included if it includes a body - e.g. when the input is a simple value).
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
 
@@ -55,7 +52,7 @@ def format_as_xml(
     ```
     """
     el = _ToXml(item_tag=item_tag, none_str=none_str).to_xml(obj, root_tag)
-    if not include_root_tag and el.text is None:
+    if root_tag is None and el.text is None:
         join = '' if indent is None else '\n'
         return join.join(_rootless_xml_elements(el, indent))
     else:
