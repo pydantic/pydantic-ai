@@ -25,7 +25,7 @@ from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
     from mcp import types as mcp_types
-    from mcp.client.session import ClientSession, LoggingFnT
+    from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
@@ -66,6 +66,8 @@ class MCPServer(AbstractToolset[Any], ABC):
     allow_sampling: bool = True
     max_retries: int = 1
     sampling_model: models.Model | None = None
+    allow_elicitation: bool = True
+    elicitation_callback: ElicitationFnT | None = None
     # } end of "abstract fields"
 
     _enter_lock: Lock = field(compare=False)
@@ -398,6 +400,12 @@ class MCPServerStdio(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
+    allow_elicitation: bool = True
+    """Whether to allow MCP elicitation through this client."""
+
+    elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -498,6 +506,12 @@ class _MCPServerHTTP(MCPServer):
 
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
+
+    allow_elicitation: bool = True
+    """Whether to allow MCP elicitation through this client."""
+
+    elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
 
     def __init__(
         self,

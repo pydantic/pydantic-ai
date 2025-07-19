@@ -1,6 +1,6 @@
 /* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
-import { preparePythonCode } from './prepareEnvCode.ts'
+import { preparePythonCode, toolInjectionCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
 
 export interface CodeFile {
@@ -9,9 +9,31 @@ export interface CodeFile {
   active: boolean
 }
 
+// Tool injection configuration
+export interface ToolInjectionConfig {
+  enableToolInjection: boolean
+  availableTools: string[]
+  timeoutSeconds: number
+  // deno-lint-ignore no-explicit-any
+  elicitationCallback?: (request: any) => Promise<any>
+}
+
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
+): Promise<RunSuccess | RunError> {
+  // Use enhanced version without tool injection for backwards compatibility
+  const result = await runCodeWithToolInjection(files, log, undefined)
+
+  // Convert to original format
+  return result
+}
+
+// Enhanced version that supports optional tool injection
+export async function runCodeWithToolInjection(
+  files: CodeFile[],
+  log: (level: LoggingLevel, data: string) => void,
+  toolConfig?: ToolInjectionConfig,
 ): Promise<RunSuccess | RunError> {
   // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
   const realConsoleLog = console.log
@@ -53,6 +75,7 @@ export async function runCode(
   const moduleName = '_prepare_env'
 
   pathlib.Path(`${dirPath}/${moduleName}.py`).write_text(preparePythonCode)
+  pathlib.Path(`${dirPath}/tool_injection.py`).write_text(toolInjectionCode)
 
   const preparePyEnv: PreparePyEnv = pyodide.pyimport(moduleName)
 
@@ -68,11 +91,20 @@ export async function runCode(
   } else {
     const { dependencies } = prepareStatus
     const activeFile = files.find((f) => f.active)! || files[0]
+
     try {
+      const globals = pyodide.toPy({ __name__: '__main__' })
+
+      // Inject tool functions if enabled
+      if (toolConfig?.enableToolInjection) {
+        injectToolFunctions(pyodide, globals, toolConfig, log)
+      }
+
       const rawValue = await pyodide.runPythonAsync(activeFile.content, {
-        globals: pyodide.toPy({ __name__: '__main__' }),
+        globals,
         filename: activeFile.name,
       })
+
       runResult = {
         status: 'success',
         dependencies,
@@ -88,10 +120,46 @@ export async function runCode(
       }
     }
   }
+
   sys.stdout.flush()
   sys.stderr.flush()
   console.log = realConsoleLog
   return runResult
+}
+
+// Tool injection implementation
+function injectToolFunctions(
+  // deno-lint-ignore no-explicit-any
+  pyodide: any,
+  // deno-lint-ignore no-explicit-any
+  globals: any,
+  config: ToolInjectionConfig,
+  log: (level: LoggingLevel, data: string) => void,
+): void {
+  log('info', `Injecting tool functions for ${config.availableTools.length} tools`)
+
+  const tool_injection = pyodide.pyimport('tool_injection')
+
+  // JavaScript callback that Python will invoke for tool execution
+  // deno-lint-ignore no-explicit-any
+  const tool_callback = async (elicitation_request_proxy: any) => {
+    const elicitation_request = elicitation_request_proxy.toJs()
+
+    if (!config.elicitationCallback) {
+      throw new Error('Tool injection requires an elicitation callback.')
+    }
+
+    const elicitation_response = await config.elicitationCallback(elicitation_request)
+    return pyodide.toPy(elicitation_response)
+  }
+
+  tool_injection.inject_tool_functions(
+    globals,
+    config.availableTools,
+    tool_callback,
+  )
+
+  log('info', `Tool injection complete. Available tools: ${config.availableTools.join(', ')}`)
 }
 
 interface RunSuccess {
