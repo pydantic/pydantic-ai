@@ -33,6 +33,7 @@ from . import (
 from ._agent_graph import HistoryProcessor
 from ._output import OutputToolset
 from ._tool_manager import ToolManager
+from .mcp import MCPServer
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
 from .profiles import ModelProfile
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
     from fasta2a.broker import Broker
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
+    from mcp import types as mcp_types
     from starlette.middleware import Middleware
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
@@ -1834,13 +1836,99 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         except exceptions.UserError as e:
             raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
 
-        from .mcp import MCPServer
-
         def _set_sampling_model(toolset: AbstractToolset[AgentDepsT]) -> None:
             if isinstance(toolset, MCPServer):
                 toolset.sampling_model = sampling_model
 
         self._get_toolset().apply(_set_sampling_model)
+
+    def _create_elicitation_callback(self):
+        """Create an elicitation callback that routes to this agent's tools."""
+
+        async def elicitation_callback(context: Any, params: Any) -> Any:
+            """Handle elicitation requests by delegating to the agent's tools."""
+            try:
+                tool_execution_data = json.loads(params.message)
+                tool_name = tool_execution_data.get('tool_name')
+                tool_arguments = tool_execution_data.get('arguments', {})
+
+                # Try function tools first
+                function_tools = self._function_toolset.tools
+                if tool_name in function_tools:
+                    tool_func = function_tools[tool_name].function_schema.function
+
+                    # Handle both sync and async functions
+
+                    if inspect.iscoroutinefunction(tool_func):
+                        result = await tool_func(**tool_arguments)
+                    else:
+                        result = tool_func(**tool_arguments)
+
+                    return mcp_types.ElicitResult(action='accept', content={'result': str(result)})
+
+                # Try MCP tools with name mapping
+                actual_tool_name = tool_name.replace('_', '-')
+
+                for toolset in self._user_toolsets:
+                    if not isinstance(toolset, MCPServer):
+                        continue
+                    mcp_server = toolset
+                    if 'mcp-run-python' in str(mcp_server):
+                        continue
+
+                    try:
+                        result = await mcp_server.direct_call_tool(actual_tool_name, tool_arguments)
+                        return mcp_types.ElicitResult(action='accept', content={'result': str(result)})
+                    except Exception:
+                        continue
+
+                return mcp_types.ErrorData(code=mcp_types.INVALID_PARAMS, message=f'Tool {tool_name} not found')
+
+            except Exception as e:
+                return mcp_types.ErrorData(code=mcp_types.INTERNAL_ERROR, message=f'Tool execution failed: {str(e)}')
+
+        return elicitation_callback
+
+    def _create_auto_tool_injection_callback(self):
+        """Create a callback that auto-injects available tools into run_python_code calls."""
+
+        async def auto_inject_tools_callback(
+            ctx: RunContext[Any],
+            call_tool_func: Callable[[str, dict[str, Any], dict[str, Any] | None], Awaitable[Any]],
+            tool_name: str,
+            arguments: dict[str, Any],
+        ) -> Any:
+            """Auto-inject available tools into run_python_code calls."""
+            if tool_name == 'run_python_code':
+                # Auto-inject available tools if not already provided
+                if 'tools' not in arguments or not arguments['tools']:
+                    available_tools: list[str] = []
+
+                    # Add function tools
+                    available_tools.extend(list(self._function_toolset.tools.keys()))
+
+                    for toolset in self._user_toolsets:
+                        if not isinstance(toolset, MCPServer):
+                            continue
+                        mcp_server = toolset
+                        if 'mcp-run-python' in str(mcp_server):
+                            continue
+
+                        try:
+                            server_tools = await mcp_server.list_tools()
+                            for tool_def in server_tools:
+                                python_name = tool_def.name.replace('-', '_')
+                                available_tools.append(python_name)
+                        except Exception:
+                            # Silently continue if we can't get tools from a server
+                            pass
+
+                    arguments['tools'] = available_tools
+
+            # Continue with normal processing
+            return await call_tool_func(tool_name, arguments, None)
+
+        return auto_inject_tools_callback
 
     @asynccontextmanager
     @deprecated(
@@ -1861,6 +1949,22 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         except exceptions.UserError:
             if model is not None:
                 raise
+
+        # Auto-setup elicitation callback if allow_elicitation is True and no callback is set
+
+        for toolset in self._user_toolsets:
+            if isinstance(toolset, MCPServer):
+                mcp_server = toolset
+                if (
+                    hasattr(mcp_server, 'allow_elicitation')
+                    and mcp_server.allow_elicitation
+                    and mcp_server.elicitation_callback is None
+                ):
+                    mcp_server.elicitation_callback = self._create_elicitation_callback()
+
+                    # Also setup auto-tool-injection for run_python_code if not already set
+                    if mcp_server.process_tool_call is None:
+                        mcp_server.process_tool_call = self._create_auto_tool_injection_callback()
 
         async with self:
             yield
