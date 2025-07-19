@@ -13,6 +13,7 @@ from inline_snapshot import snapshot
 from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamablehttp_client
 
 if TYPE_CHECKING:
     from mcp import ClientSession
@@ -33,13 +34,38 @@ def anyio_backend():
     return 'asyncio'
 
 
-@pytest.fixture(name='mcp_session', params=['stdio', 'sse'])
+@pytest.fixture(name='mcp_session', params=['stdio', 'sse', 'streamable_http'])
 async def fixture_mcp_session(request: pytest.FixtureRequest) -> AsyncIterator[ClientSession]:
     if request.param == 'stdio':
         server_params = StdioServerParameters(command='deno', args=[*DENO_ARGS, 'stdio'])
         async with stdio_client(server_params) as (read, write):
             async with ClientSession(read, write) as session:
                 yield session
+    elif request.param == 'streamable_http':
+        port = 3101
+        p = subprocess.Popen(['deno', *DENO_ARGS, 'streamable_http', f'--port={port}'])
+        try:
+            url = f'http://localhost:{port}/mcp'
+
+            async with AsyncClient() as client:
+                for _ in range(10):
+                    try:
+                        await client.get(url, timeout=0.01)
+                    except HTTPError:
+                        await asyncio.sleep(0.1)
+                    else:
+                        break
+
+            async with streamablehttp_client(url) as (read_stream, write_stream, _):
+                async with ClientSession(read_stream, write_stream) as session:
+                    yield session
+
+        finally:
+            p.terminate()
+            exit_code = p.wait()
+            if exit_code > 0:
+                pytest.fail(f'Process exited with code {exit_code}')
+
     else:
         port = 3101
 

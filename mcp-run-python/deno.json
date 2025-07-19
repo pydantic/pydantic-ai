@@ -13,7 +13,7 @@
     "build-publish": "deno task build && deno publish"
   },
   "imports": {
-    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.8.0",
+    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.15.1",
     "@std/cli": "jsr:@std/cli@^1.0.15",
     "@std/path": "jsr:@std/path@^1.0.8",
     // do NOT upgrade above this version until there is a workaround for https://github.com/pyodide/pyodide/pull/5621
