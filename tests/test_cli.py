@@ -210,8 +210,8 @@ def test_cli_continue_last_conversation_corrupted_file(
         assert capfd.readouterr().out.splitlines() == snapshot(
             [
                 IsStr(),
-                'Error loading last conversation, it is corrupted or invalid. Starting a new ',
-                'conversation.',
+                'Error loading last conversation, it is corrupted or invalid.',
+                'Starting a new conversation.',
                 '# world',
             ]
         )
