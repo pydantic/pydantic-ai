@@ -218,7 +218,7 @@ Special prompts:
         history = load_last_conversation() if args.continue_ else None
     except ValidationError:
         console.print(
-            '[red]Error loading last conversation, it is corrupted or invalid. Starting a new conversation.[/red]'
+            '[red]Error loading last conversation, it is corrupted or invalid.\nStarting a new conversation.[/red]'
         )
         history = None
 
