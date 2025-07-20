@@ -19,6 +19,7 @@ authors = [
     { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
     { name = "David Montague", email = "david@pydantic.dev" },
     { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
 ]
 license = "MIT"
 readme = "README.md"
@@ -46,7 +47,7 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,evals,ag-ui]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -199,6 +200,8 @@ filterwarnings = [
     "error",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
+    # mistralai accesses model_fields on the instance, which is deprecated in Pydantic 2.11.
+    "ignore:Accessing the 'model_fields' attribute",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",

@@ -73,18 +73,10 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestGoogleModelNames = Literal[
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro',
     'gemini-2.0-flash',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite-preview-06-17',
-    'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-05-06',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
@@ -492,8 +484,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             parts.append({'function_call': function_call})
         elif isinstance(item, TextPart):
-            if item.content:  # pragma: no branch
-                parts.append({'text': item.content})
+            parts.append({'text': item.content})
         elif isinstance(item, ThinkingPart):  # pragma: no cover
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.

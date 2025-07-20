@@ -2,10 +2,10 @@
 
 The manager tracks which parts (in particular, text and tool calls) correspond to which
 vendor-specific identifiers (e.g., `index`, `tool_call_id`, etc., as appropriate for a given model),
-and produces PydanticAI-format events as appropriate for consumers of the streaming APIs.
+and produces Pydantic AI-format events as appropriate for consumers of the streaming APIs.
 
 The "vendor-specific identifiers" to use depend on the semantics of the responses of the responses from the vendor,
-and are tightly coupled to the specific model being used, and the PydanticAI Model subclass implementation.
+and are tightly coupled to the specific model being used, and the Pydantic AI Model subclass implementation.
 
 This `ModelResponsePartsManager` is used in each of the subclasses of `StreamedResponse` as a way to consolidate
 event-emitting logic.

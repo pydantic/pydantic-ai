@@ -11,6 +11,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import get_traceparent
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -294,6 +295,7 @@ def test_logfire(
                                 },
                                 'outer_typed_dict_key': None,
                                 'strict': None,
+                                'kind': 'function',
                             }
                         ],
                         'output_mode': 'text',
@@ -641,10 +643,11 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('include_content,tool_error', [(True, False), (True, True), (False, False), (False, True)])
 def test_include_tool_args_span_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
+    tool_error: bool,
 ) -> None:
     """Test that tool arguments are included/excluded in span attributes based on instrumentation settings."""
 
@@ -655,61 +658,119 @@ def test_include_tool_args_span_attributes(
     @my_agent.tool_plain
     async def add_numbers(x: int, y: int) -> int:
         """Add two numbers together."""
+        if tool_error:
+            raise ModelRetry('Tool error')
         return x + y
 
-    result = my_agent.run_sync('Add 42 and 42')
-    assert result.output == snapshot('{"add_numbers":84}')
+    try:
+        result = my_agent.run_sync('Add 42 and 42')
+        assert result.output == snapshot('{"add_numbers":84}')
+    except UnexpectedModelBehavior:
+        if not tool_error:
+            raise  # pragma: no cover
 
     summary = get_logfire_summary()
 
-    [tool_attributes] = [
+    tool_attributes = next(
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'add_numbers'
-    ]
+    )
 
     if include_content:
-        assert tool_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'add_numbers',
-                'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"x":42,"y":42}',
-                'tool_response': '84',
-                'logfire.msg': 'running tool: add_numbers',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-            }
-        )
+        if tool_error:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"x":42,"y":42}',
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': """\
+Tool error
+
+Fix the errors and try again.\
+""",
+                    'logfire.level_num': 17,
+                }
+            )
+        else:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"x":42,"y":42}',
+                    'tool_response': '84',
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                }
+            )
     else:
-        assert tool_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'add_numbers',
-                'gen_ai.tool.call.id': IsStr(),
-                'logfire.msg': 'running tool: add_numbers',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-            }
-        )
+        if tool_error:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                }
+            )
+        else:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                }
+            )
 
 
 class WeatherInfo(BaseModel):
@@ -750,7 +811,7 @@ def test_output_type_function_logfire_attributes(
             {
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city": "Mexico City"}',
+                'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -811,7 +872,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
             {
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city": "Mexico City"}',
+                'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -881,7 +942,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "New York City"}',
+                    'tool_arguments': '{"city":"New York City"}',
                     'logfire.json_schema': IsJson(
                         snapshot(
                             {
@@ -900,7 +961,7 @@ def test_output_type_function_with_retry_logfire_attributes(
                     'gen_ai.tool.name': 'final_result',
                     'logfire.msg': 'running output function: final_result',
                     'gen_ai.tool.call.id': IsStr(),
-                    'tool_arguments': '{"city": "Mexico City"}',
+                    'tool_arguments': '{"city":"Mexico City"}',
                     'logfire.json_schema': IsJson(
                         snapshot(
                             {
@@ -968,7 +1029,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
             {
                 'gen_ai.tool.name': 'get_weather',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city": "Mexico City"}',
+                'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.msg': 'running output function: get_weather',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1034,7 +1095,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
             {
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city": "Mexico City"}',
+                'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1101,7 +1162,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
             {
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city": "Mexico City"}',
+                'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1163,7 +1224,7 @@ def test_output_type_async_function_logfire_attributes(
             {
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city": "Mexico City"}',
+                'tool_arguments': '{"city":"Mexico City"}',
                 'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
@@ -1299,7 +1360,7 @@ def test_prompted_output_function_logfire_attributes(
         assert output_function_attributes == snapshot(
             {
                 'gen_ai.tool.name': 'upcase_text',
-                'tool_arguments': '{"text": "hello world"}',
+                'tool_arguments': '{"text":"hello world"}',
                 'logfire.msg': 'running output function: upcase_text',
                 'logfire.json_schema': IsJson(
                     snapshot(

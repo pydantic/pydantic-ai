@@ -79,6 +79,7 @@ PreviewGroqModelNames = Literal[
     'llama-3.2-3b-preview',
     'llama-3.2-11b-vision-preview',
     'llama-3.2-90b-vision-preview',
+    'moonshotai/kimi-k2-instruct',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
