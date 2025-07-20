@@ -1,6 +1,7 @@
 import sys
 import types
 from io import StringIO
+from pathlib import Path
 from typing import Any, Callable
 
 import pytest
@@ -22,7 +23,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.output import DummyOutput
     from prompt_toolkit.shortcuts import PromptSession
 
-    from pydantic_ai._cli import cli, cli_agent, handle_slash_command
+    from pydantic_ai._cli import LAST_CONVERSATION_FILENAME, PYDANTIC_AI_HOME, cli, cli_agent, handle_slash_command
     from pydantic_ai.models.openai import OpenAIModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
@@ -54,6 +55,16 @@ def create_test_module():
     finally:
         if 'test_module' in sys.modules:  # pragma: no branch
             del sys.modules['test_module']
+
+
+@pytest.fixture
+def emtpy_last_conversation_path():
+    path = PYDANTIC_AI_HOME / LAST_CONVERSATION_FILENAME
+
+    if path.exists():
+        path.unlink()
+
+    return path
 
 
 def test_agent_flag(
@@ -161,6 +172,51 @@ def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
         assert cli(['--no-stream', 'hello']) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# result', '', 'py', 'x = 1', '/py'])
+
+
+@pytest.mark.parametrize('args', [['hello', '-c'], ['hello', '--continue']])
+def test_cli_continue_last_conversation(
+    args: list[str],
+    capfd: CaptureFixture[str],
+    env: TestEnv,
+    emtpy_last_conversation_path: Path,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    with cli_agent.override(model=TestModel(custom_output_text='# world')):
+        assert cli(args) == 0
+        assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# world'])
+        assert emtpy_last_conversation_path.exists()
+        content = emtpy_last_conversation_path.read_text()
+        assert content
+
+        assert cli(args) == 0
+        assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# world'])
+        assert emtpy_last_conversation_path.exists()
+        # verity that new content is appended to the file
+        assert len(emtpy_last_conversation_path.read_text()) > len(content)
+
+
+@pytest.mark.parametrize('args', [['hello', '-c'], ['hello', '--continue']])
+def test_cli_continue_last_conversation_corrupted_file(
+    args: list[str],
+    capfd: CaptureFixture[str],
+    env: TestEnv,
+    emtpy_last_conversation_path: Path,
+):
+    env.set('OPENAI_API_KEY', 'test')
+    emtpy_last_conversation_path.write_text('not a valid json')
+    with cli_agent.override(model=TestModel(custom_output_text='# world')):
+        assert cli(args) == 0
+        assert capfd.readouterr().out.splitlines() == snapshot(
+            [
+                IsStr(),
+                'Error loading last conversation, it is corrupted or invalid. Starting a new ',
+                'conversation.',
+                '# world',
+            ]
+        )
+        assert emtpy_last_conversation_path.exists()
+        assert emtpy_last_conversation_path.read_text()
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
