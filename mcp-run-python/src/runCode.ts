@@ -13,6 +13,7 @@ export interface CodeFile {
 export interface ToolInjectionConfig {
   enableToolInjection: boolean
   availableTools: string[]
+  toolNameMapping?: Record<string, string> // python_name -> original_mcp_name
   timeoutSeconds: number
   // deno-lint-ignore no-explicit-any
   elicitationCallback?: (request: any) => Promise<any>
@@ -157,6 +158,7 @@ function injectToolFunctions(
     globals,
     config.availableTools,
     tool_callback,
+    config.toolNameMapping,
   )
 
   log('info', `Tool injection complete. Available tools: ${config.availableTools.join(', ')}`)

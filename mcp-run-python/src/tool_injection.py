@@ -58,38 +58,52 @@ def _handle_tool_callback_result(result: Any, tool_name: str) -> Any:
         return result
 
 
-def _create_tool_function(tool_name: str, tool_callback: Callable[[Any], Any]) -> Callable[..., Any]:
+def _create_tool_function(
+    tool_name: str, tool_callback: Callable[[Any], Any], globals_dict: dict[str, Any]
+) -> Callable[..., Any]:
     """Create a tool function that can be called from Python."""
 
     def tool_function(*args: Any, **kwargs: Any) -> Any:
         """Synchronous tool function that handles the async callback properly."""
-        # Note: tool_callback is guaranteed to be not None due to check in inject_tool_functions
 
-        elicitation_request = _create_elicitation_request(tool_name, args, kwargs)
+        # Get the actual MCP tool name from the stored mapping
+        tool_mapping = globals_dict.get('__tool_name_mapping__', {})
+        actual_tool_name = tool_mapping.get(tool_name, tool_name)
+
+        elicitation_request = _create_elicitation_request(actual_tool_name, args, kwargs)
 
         try:
             result = tool_callback(elicitation_request)
-            return _handle_tool_callback_result(result, tool_name)
+            return _handle_tool_callback_result(result, actual_tool_name)
         except Exception as e:
-            raise Exception(f'Tool {tool_name} failed: {str(e)}')
+            raise Exception(f'Tool {actual_tool_name} failed: {str(e)}')
 
     return tool_function
 
 
 def inject_tool_functions(
-    globals_dict: dict[str, Any], available_tools: list[str], tool_callback: Callable[[Any], Any] | None = None
+    globals_dict: dict[str, Any],
+    available_tools: list[str],
+    tool_callback: Callable[[Any], Any] | None = None,
+    tool_name_mapping: dict[str, str] | None = None,
 ) -> None:
     """Inject tool functions into the global namespace.
 
     Args:
         globals_dict: Global namespace to inject tools into
-        available_tools: List of available tool names
+        available_tools: List of available tool names (should be Python-valid identifiers)
         tool_callback: Optional callback for tool execution
+        tool_name_mapping: Optional mapping of python_name -> original_mcp_name
     """
     if not available_tools:
         return
 
-    # Inject tool functions into globals
+    # Store the tool name mapping globally for elicitation callback to use
+    if tool_name_mapping:
+        globals_dict['__tool_name_mapping__'] = tool_name_mapping
+
+    # Inject tool functions into globals using Python-valid names
     for tool_name in available_tools:
         if tool_callback is not None:
-            globals_dict[tool_name] = _create_tool_function(tool_name, tool_callback)
+            # tool_name should already be a valid Python identifier from agent.py
+            globals_dict[tool_name] = _create_tool_function(tool_name, tool_callback, globals_dict)

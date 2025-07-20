@@ -12,6 +12,7 @@ from copy import deepcopy
 from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final, overload
 
+from mcp import types as mcp_types
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
@@ -70,7 +71,6 @@ if TYPE_CHECKING:
     from fasta2a.broker import Broker
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
-    from mcp import types as mcp_types
     from starlette.middleware import Middleware
     from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
@@ -1849,23 +1849,36 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
                     return mcp_types.ElicitResult(action='accept', content={'result': str(result)})
 
-                # Try MCP tools with name mapping
-                actual_tool_name = tool_name.replace('_', '-')
-
+                # Find the MCP server that has this tool
+                target_server = None
                 for toolset in self._user_toolsets:
                     if not isinstance(toolset, MCPServer):
                         continue
-                    mcp_server = toolset
-                    if 'mcp-run-python' in str(mcp_server):
+                    if 'mcp-run-python' in str(toolset):
                         continue
 
+                    # Check if this server has the tool
                     try:
-                        result = await mcp_server.direct_call_tool(actual_tool_name, tool_arguments)
-                        return mcp_types.ElicitResult(action='accept', content={'result': str(result)})
+                        server_tools = await toolset.list_tools()
+                        for tool_def in server_tools:
+                            if tool_def.name == tool_name:
+                                target_server = toolset
+                                break
+                        if target_server:
+                            break
                     except Exception:
                         continue
 
-                return mcp_types.ErrorData(code=mcp_types.INVALID_PARAMS, message=f'Tool {tool_name} not found')
+                if target_server:
+                    try:
+                        result = await target_server.direct_call_tool(tool_name, tool_arguments)
+                        return mcp_types.ElicitResult(action='accept', content={'result': str(result)})
+                    except Exception as e:
+                        return mcp_types.ErrorData(
+                            code=mcp_types.INTERNAL_ERROR, message=f'Tool execution failed: {str(e)}'
+                        )
+                else:
+                    return mcp_types.ErrorData(code=mcp_types.INVALID_PARAMS, message=f'Tool {tool_name} not found')
 
             except Exception as e:
                 return mcp_types.ErrorData(code=mcp_types.INTERNAL_ERROR, message=f'Tool execution failed: {str(e)}')
@@ -1883,30 +1896,37 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         ) -> Any:
             """Auto-inject available tools into run_python_code calls."""
             if tool_name == 'run_python_code':
-                # Auto-inject available tools if not already provided
-                if 'tools' not in arguments or not arguments['tools']:
-                    available_tools: list[str] = []
+                # Always auto-inject all available tools for Python code execution
+                available_tools: list[str] = []
+                tool_name_mapping: dict[str, str] = {}
 
-                    # Add function tools
-                    available_tools.extend(list(self._function_toolset.tools.keys()))
+                # Add function tools
+                function_tools = list(self._function_toolset.tools.keys())
+                available_tools.extend(function_tools)
+                for func_tool_name in function_tools:
+                    tool_name_mapping[func_tool_name] = func_tool_name
 
-                    for toolset in self._user_toolsets:
-                        if not isinstance(toolset, MCPServer):
-                            continue
-                        mcp_server = toolset
-                        if 'mcp-run-python' in str(mcp_server):
-                            continue
+                # Add MCP server tools with proper name conversion
+                for toolset in self._user_toolsets:
+                    if not isinstance(toolset, MCPServer):
+                        continue
+                    if 'mcp-run-python' in str(toolset):
+                        continue
 
-                        try:
-                            server_tools = await mcp_server.list_tools()
-                            for tool_def in server_tools:
-                                python_name = tool_def.name.replace('-', '_')
-                                available_tools.append(python_name)
-                        except Exception:
-                            # Silently continue if we can't get tools from a server
-                            pass
+                    try:
+                        server_tools = await toolset.list_tools()
+                        for tool_def in server_tools:
+                            original_name = tool_def.name
+                            python_name = original_name.replace('-', '_')
+                            available_tools.append(python_name)
+                            tool_name_mapping[python_name] = original_name
+                    except Exception:
+                        # Silently continue if we can't get tools from a server
+                        pass
 
-                    arguments['tools'] = available_tools
+                # Always provide all available tools and mapping
+                arguments['tools'] = available_tools
+                arguments['tool_name_mapping'] = tool_name_mapping
 
             # Continue with normal processing
             return await call_tool_func(tool_name, arguments, None)
@@ -1937,17 +1957,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         for toolset in self._user_toolsets:
             if isinstance(toolset, MCPServer):
-                mcp_server = toolset
                 if (
-                    hasattr(mcp_server, 'allow_elicitation')
-                    and mcp_server.allow_elicitation
-                    and mcp_server.elicitation_callback is None
+                    hasattr(toolset, 'allow_elicitation')
+                    and toolset.allow_elicitation
+                    and toolset.elicitation_callback is None
                 ):
-                    mcp_server.elicitation_callback = self._create_elicitation_callback()
+                    toolset.elicitation_callback = self._create_elicitation_callback()
 
                     # Also setup auto-tool-injection for run_python_code if not already set
-                    if mcp_server.process_tool_call is None:
-                        mcp_server.process_tool_call = self._create_auto_tool_injection_callback()
+                    if toolset.process_tool_call is None:
+                        toolset.process_tool_call = self._create_auto_tool_injection_callback()
 
         async with self:
             yield

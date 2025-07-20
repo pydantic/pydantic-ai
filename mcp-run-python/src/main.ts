@@ -106,13 +106,19 @@ The tools are injected into the global namespace automatically - no discovery fu
         .array(z.string())
         .optional()
         .describe('List of available tools for injection (enables tool injection when provided)'),
+      tool_name_mapping: z
+        .record(z.string())
+        .optional()
+        .describe('Mapping of python_name -> original_mcp_name for tool name conversion'),
     },
     async ({
       python_code,
       tools = [],
+      tool_name_mapping = {},
     }: {
       python_code: string
       tools?: string[]
+      tool_name_mapping?: Record<string, string>
     }) => {
       const logPromises: Promise<void>[] = []
 
@@ -179,6 +185,7 @@ The tools are injected into the global namespace automatically - no discovery fu
           {
             enableToolInjection: true,
             availableTools: tools,
+            toolNameMapping: tool_name_mapping,
             timeoutSeconds: 30,
             elicitationCallback,
           } as ToolInjectionConfig,

@@ -82,11 +82,15 @@ class TestMCPElicitationCallback:
         )
 
         model = TestModel(custom_output_text='Test response')
-        agent = Agent(model, mcp_servers=[server])
+        agent = Agent(model, toolsets=[server])
 
         # Verify the server is properly configured
-        assert len(agent._mcp_servers) == 1  # type: ignore
-        assert agent._mcp_servers[0].elicitation_callback is mock_elicitation  # type: ignore
+        toolsets = getattr(agent, '_user_toolsets', [])
+        mcp_servers = [ts for ts in toolsets if hasattr(ts, '__class__') and 'MCPServer' in ts.__class__.__name__]
+        assert len(mcp_servers) == 1
+        # Use getattr to safely check elicitation_callback
+        callback = getattr(mcp_servers[0], 'elicitation_callback', None)
+        assert callback is mock_elicitation
 
     async def test_elicitation_callback_error_handling(self):
         """Test error handling in elicitation callback."""
@@ -483,14 +487,19 @@ class TestMCPRunPythonToolInjection:
 
         # Create agent with the MCP server
         model = TestModel(custom_output_text='Tool injection test completed')
-        agent = Agent(model, mcp_servers=[mcp_server])
+        agent = Agent(model, toolsets=[mcp_server])
 
         # Verify the agent has the MCP server with elicitation callback
-        assert len(agent._mcp_servers) == 1  # type: ignore
-        assert agent._mcp_servers[0].elicitation_callback is agent_tool_callback  # type: ignore
+        # Note: Using getattr to safely access toolsets for testing
+        toolsets = getattr(agent, '_user_toolsets', [])
+        mcp_servers = [ts for ts in toolsets if hasattr(ts, '__class__') and 'MCPServer' in ts.__class__.__name__]
+        assert len(mcp_servers) == 1
+        # Use getattr to safely check elicitation_callback
+        callback = getattr(mcp_servers[0], 'elicitation_callback', None)
+        assert callback is agent_tool_callback
 
         # Test running agent with MCP servers
-        async with agent.run_mcp_servers():
+        async with agent:
             # Verify the MCP server is properly integrated
             tools = await mcp_server.list_tools()
             assert len(tools) == 1
@@ -780,7 +789,7 @@ class TestMCPRunPythonToolInjection:
 
         async with server:
             # Test basic Python execution
-            result = await server.call_tool(
+            result = await server.direct_call_tool(
                 'run_python_code', {'python_code': 'print("Hello, World!")\n"Hello from Python"'}
             )
 
@@ -827,7 +836,7 @@ class TestMCPRunPythonToolInjection:
         async with server:
             # Test Python code execution with tool injection
             # This should trigger the elicitation callback when tools are called
-            result = await server.call_tool(
+            result = await server.direct_call_tool(
                 'run_python_code',
                 {'python_code': 'print("Testing tool injection")', 'tools': ['web_search', 'calculate']},
             )
@@ -854,7 +863,7 @@ class TestMCPRunPythonToolInjection:
 
         async with server:
             # Test Python code with syntax error
-            result = await server.call_tool('run_python_code', {'python_code': 'print("Missing closing quote)'})
+            result = await server.direct_call_tool('run_python_code', {'python_code': 'print("Missing closing quote)'})
 
             # Should return error status
             assert isinstance(result, str)
@@ -1009,7 +1018,7 @@ class TestMCPRunPythonToolInjection:
 
         async with server:
             # Test code with dependencies
-            result = await server.call_tool(
+            result = await server.direct_call_tool(
                 'run_python_code',
                 {
                     'python_code': """
@@ -1049,7 +1058,8 @@ str(arr.sum())
         async with server:
             tools = await server.list_tools()
             assert len(tools) == 1
-            assert tools[0].name == 'python_run_python_code'
+            # list_tools() returns original tool names without prefix
+            assert tools[0].name == 'run_python_code'
 
     async def test_mcp_run_python_timeout_setting(self):
         """Test mcp-run-python server with timeout setting."""
@@ -1071,7 +1081,7 @@ str(arr.sum())
 
         async with server:
             # Test basic execution still works
-            result = await server.call_tool('run_python_code', {'python_code': 'print("Timeout test")'})
+            result = await server.direct_call_tool('run_python_code', {'python_code': 'print("Timeout test")'})
 
             assert isinstance(result, str)
             assert '<status>success</status>' in result
