@@ -58,13 +58,16 @@ def create_test_module():
 
 
 @pytest.fixture
-def emtpy_last_conversation_path():
+def create_last_conversation_file():
     path = PYDANTIC_AI_HOME / LAST_CONVERSATION_FILENAME
 
-    if path.exists():
-        path.unlink()
+    def _factory(empty: bool = True) -> Path:
+        if empty and path.exists():
+            path.unlink()
 
-    return path
+        return path
+
+    return _factory
 
 
 def test_agent_flag(
@@ -179,21 +182,23 @@ def test_cli_continue_last_conversation(
     args: list[str],
     capfd: CaptureFixture[str],
     env: TestEnv,
-    emtpy_last_conversation_path: Path,
+    create_last_conversation_file: Callable[..., Path],
 ):
+    last_conversation_path = create_last_conversation_file()
+
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# world')):
         assert cli(args) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# world'])
-        assert emtpy_last_conversation_path.exists()
-        content = emtpy_last_conversation_path.read_text()
+        assert last_conversation_path.exists()
+        content = last_conversation_path.read_text()
         assert content
 
         assert cli(args) == 0
         assert capfd.readouterr().out.splitlines() == snapshot([IsStr(), '# world'])
-        assert emtpy_last_conversation_path.exists()
+        assert last_conversation_path.exists()
         # verity that new content is appended to the file
-        assert len(emtpy_last_conversation_path.read_text()) > len(content)
+        assert len(last_conversation_path.read_text()) > len(content)
 
 
 @pytest.mark.parametrize('args', [['hello', '-c'], ['hello', '--continue']])
@@ -201,10 +206,12 @@ def test_cli_continue_last_conversation_corrupted_file(
     args: list[str],
     capfd: CaptureFixture[str],
     env: TestEnv,
-    emtpy_last_conversation_path: Path,
+    create_last_conversation_file: Callable[..., Path],
 ):
+    last_conversation_path = create_last_conversation_file()
+
     env.set('OPENAI_API_KEY', 'test')
-    emtpy_last_conversation_path.write_text('not a valid json')
+    last_conversation_path.write_text('not a valid json')
     with cli_agent.override(model=TestModel(custom_output_text='# world')):
         assert cli(args) == 0
         assert capfd.readouterr().out.splitlines() == snapshot(
@@ -215,8 +222,8 @@ def test_cli_continue_last_conversation_corrupted_file(
                 '# world',
             ]
         )
-        assert emtpy_last_conversation_path.exists()
-        assert emtpy_last_conversation_path.read_text()
+        assert last_conversation_path.exists()
+        assert last_conversation_path.read_text()
 
 
 def test_chat(capfd: CaptureFixture[str], mocker: MockerFixture, env: TestEnv):
