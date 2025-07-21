@@ -699,6 +699,7 @@ def test_messages_to_otel_events_instructions():
         ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1')]),
         ModelResponse(parts=[TextPart('text1'), ToolCallPart('my_tool', {'a': 13, 'b': 4})]),
         ModelResponse(parts=[ToolCallPart('my_tool', {'a': 13, 'b': 4}), TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1'), TextPart('text1')]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -741,6 +742,16 @@ def test_messages_to_otel_events_instructions():
                 ],
                 'content': 'text1',
                 'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [
+                    {'kind': 'text', 'text': 'text1'},
+                    {'kind': 'thinking', 'text': 'thinking_1'},
+                    {'kind': 'text', 'text': 'text1'},
+                ],
+                'gen_ai.message.index': 5,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
