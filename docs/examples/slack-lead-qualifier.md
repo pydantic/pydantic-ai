@@ -107,7 +107,6 @@ Now when someone new (possibly you with a throwaway email) joins the Slack works
     ```
 
 !!! note "Deploying to production"
-
     If you'd like to deploy this app into your Modal workspace in a persistent fashion, you can use this command:
 
     ```bash

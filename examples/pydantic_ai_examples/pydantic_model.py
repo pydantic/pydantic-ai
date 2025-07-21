@@ -1,4 +1,4 @@
-"""Simple example of using PydanticAI to construct a Pydantic model from a text input.
+"""Simple example of using Pydantic AI to construct a Pydantic model from a text input.
 
 Run with:
 

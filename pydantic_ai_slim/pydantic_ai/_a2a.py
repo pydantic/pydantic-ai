@@ -59,12 +59,12 @@ except ImportError as _import_error:
 
 
 @asynccontextmanager
-async def worker_lifespan(app: FastA2A, worker: Worker) -> AsyncIterator[None]:
+async def worker_lifespan(app: FastA2A, worker: Worker, agent: Agent[AgentDepsT, OutputDataT]) -> AsyncIterator[None]:
     """Custom lifespan that runs the worker during application startup.
 
     This ensures the worker is started and ready to process tasks as soon as the application starts.
     """
-    async with app.task_manager:
+    async with app.task_manager, agent:
         async with worker.run():
             yield
 
@@ -93,7 +93,7 @@ def agent_to_a2a(
     broker = broker or InMemoryBroker()
     worker = AgentWorker(agent=agent, broker=broker, storage=storage)
 
-    lifespan = lifespan or partial(worker_lifespan, worker=worker)
+    lifespan = lifespan or partial(worker_lifespan, worker=worker, agent=agent)
 
     return FastA2A(
         storage=storage,

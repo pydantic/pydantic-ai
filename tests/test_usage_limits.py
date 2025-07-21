@@ -176,6 +176,15 @@ async def test_multi_agent_usage_no_incr():
     # confirm the usage from result2 is the sum of the usage from result1
     assert result2.usage() == functools.reduce(operator.add, run_1_usages)
 
+    result1_usage = result1.usage()
+    result1_usage.details = {'custom1': 10, 'custom2': 20, 'custom3': 0}
+    assert result1_usage.opentelemetry_attributes() == {
+        'gen_ai.usage.input_tokens': 103,
+        'gen_ai.usage.output_tokens': 13,
+        'gen_ai.usage.details.custom1': 10,
+        'gen_ai.usage.details.custom2': 20,
+    }
+
 
 async def test_multi_agent_usage_sync():
     """As in `test_multi_agent_usage_async`, with a sync tool."""

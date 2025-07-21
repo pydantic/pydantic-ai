@@ -10,7 +10,8 @@ from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils
-from .tools import RunContext
+from .messages import ToolCallPart
+from .tools import RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -330,15 +331,17 @@ def StructuredDict(
     return _StructuredDict
 
 
+_OutputSpecItem = TypeAliasType(
+    '_OutputSpecItem',
+    Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], NativeOutput[T_co], PromptedOutput[T_co], TextOutput[T_co]],
+    type_params=(T_co,),
+)
+
 OutputSpec = TypeAliasType(
     'OutputSpec',
     Union[
-        OutputTypeOrFunction[T_co],
-        ToolOutput[T_co],
-        NativeOutput[T_co],
-        PromptedOutput[T_co],
-        TextOutput[T_co],
-        Sequence[Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], TextOutput[T_co]]],
+        _OutputSpecItem[T_co],
+        Sequence['OutputSpec[T_co]'],
     ],
     type_params=(T_co,),
 )
@@ -354,3 +357,14 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+
+@dataclass
+class DeferredToolCalls:
+    """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+    See [deferred toolset docs](../toolsets.md#deferred-toolset) for more information.
+    """
+
+    tool_calls: list[ToolCallPart]
+    tool_defs: dict[str, ToolDefinition]
