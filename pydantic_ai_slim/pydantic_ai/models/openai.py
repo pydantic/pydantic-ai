@@ -1149,6 +1149,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
             # TODO(Marcelo): We should support annotations in the future.
+            elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
+                pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
                 yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
