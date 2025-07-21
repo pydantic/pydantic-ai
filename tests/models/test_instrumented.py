@@ -853,7 +853,6 @@ def test_messages_without_content(document_content: BinaryContent):
     messages: list[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('system_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
-        ModelResponse(parts=[ThinkingPart('thinking_1')]),
         ModelRequest(
             parts=[
                 UserPromptPart(
@@ -879,6 +878,7 @@ def test_messages_without_content(document_content: BinaryContent):
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
         ModelRequest(parts=[UserPromptPart('simple text prompt')]),
+        ModelResponse(parts=[ThinkingPart('thinking_1')]),
     ]
     settings = InstrumentationSettings(include_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -895,12 +895,7 @@ def test_messages_without_content(document_content: BinaryContent):
                 'event.name': 'gen_ai.assistant.message',
             },
             {
-                'role': 'assistant',
-                'content': [{'kind': 'thinking'}],
-                'gen_ai.message.index': 2,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
+                'role': 'user',
                 'content': [
                     {'kind': 'text'},
                     {'kind': 'video-url'},
@@ -909,48 +904,53 @@ def test_messages_without_content(document_content: BinaryContent):
                     {'kind': 'document-url'},
                     {'kind': 'binary', 'media_type': 'application/pdf'},
                 ],
-                'role': 'user',
-                'gen_ai.message.index': 3,
+                'gen_ai.message.index': 2,
                 'event.name': 'gen_ai.user.message',
             },
             {
-                'role': 'assistant',
                 'content': [{'kind': 'text'}, {'kind': 'thinking'}],
+                'role': 'assistant',
                 'tool_calls': [
                     {
-                        'id': IsStr(),
+                        'id': 'pyd_ai_c7fd195c5b974741b553d1e126c6cb63',
                         'type': 'function',
                         'function': {'name': 'my_tool'},
                     }
                 ],
-                'gen_ai.message.index': 4,
+                'gen_ai.message.index': 3,
                 'event.name': 'gen_ai.assistant.message',
             },
             {
                 'role': 'tool',
                 'id': 'tool_call_1',
                 'name': 'tool',
-                'gen_ai.message.index': 5,
+                'gen_ai.message.index': 4,
                 'event.name': 'gen_ai.tool.message',
             },
             {
                 'role': 'tool',
                 'id': 'tool_call_2',
                 'name': 'tool',
-                'gen_ai.message.index': 6,
+                'gen_ai.message.index': 5,
                 'event.name': 'gen_ai.tool.message',
             },
             {
                 'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
                 'role': 'user',
-                'gen_ai.message.index': 7,
+                'gen_ai.message.index': 6,
                 'event.name': 'gen_ai.user.message',
             },
             {
                 'content': {'kind': 'text'},
                 'role': 'user',
-                'gen_ai.message.index': 8,
+                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
+            },
+            {
+                'content': [{'kind': 'thinking'}],
+                'role': 'assistant',
+                'gen_ai.message.index': 8,
+                'event.name': 'gen_ai.assistant.message',
             },
         ]
     )
