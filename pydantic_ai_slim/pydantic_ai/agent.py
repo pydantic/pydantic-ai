@@ -843,7 +843,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 agent_run = AgentRun(graph_run)
                 yield agent_run
                 if (final_result := agent_run.result) is not None and run_span.is_recording():
-                    if not instrumentation_settings or instrumentation_settings.include_content:
+                    if instrumentation_settings and instrumentation_settings.include_content:
                         run_span.set_attribute(
                             'final_result',
                             (
