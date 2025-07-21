@@ -2938,7 +2938,13 @@ def test_binary_content_all_messages_json():
                     {
                         'content': [
                             'Hello',
-                            {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'vendor_metadata': None, 'kind': 'binary'},
+                            {
+                                'data': 'SGVsbG8=',
+                                'media_type': 'text/plain',
+                                'vendor_metadata': None,
+                                'kind': 'binary',
+                                'identifier': None,
+                            },
                         ],
                         'timestamp': IsStr(),
                         'part_kind': 'user-prompt',
@@ -2973,7 +2979,7 @@ def test_binary_content_all_messages_json():
 def test_tool_return_part_binary_content_serialization():
     """Test that ToolReturnPart can properly serialize BinaryContent."""
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
-    binary_content = BinaryContent(png_data, media_type='image/png')
+    binary_content = BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
@@ -2982,10 +2988,12 @@ def test_tool_return_part_binary_content_serialization():
     assert '"kind":"binary"' in response_str
     assert '"media_type":"image/png"' in response_str
     assert '"data":"' in response_str
+    assert '"identifier":"image_id_1"' in response_str
 
     response_obj = tool_return.model_response_object()
     assert response_obj['return_value']['kind'] == 'binary'
     assert response_obj['return_value']['media_type'] == 'image/png'
+    assert response_obj['return_value']['identifier'] == 'image_id_1'
     assert 'data' in response_obj['return_value']
 
 
@@ -3009,6 +3017,50 @@ def test_tool_returning_binary_content_directly():
     # This should work without the serialization error
     result = agent.run_sync('Get an image')
     assert result.output == 'Image received'
+
+
+def test_tool_returning_binary_content_with_identifier():
+    """Test that a tool returning BinaryContent directly works correctly."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_image', {})])
+        else:
+            return ModelResponse(parts=[TextPart('Image received')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_image() -> BinaryContent:
+        """Return a simple image."""
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+        return BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
+
+    # This should work without the serialization error
+    result = agent.run_sync('Get an image')
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content='See file image_id_1',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content=[
+                        'This is file image_id_1:',
+                        BinaryContent(
+                            data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
+                            media_type='image/png',
+                            identifier='image_id_1',
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+    )
 
 
 def test_instructions_raise_error_when_system_prompt_is_set():
