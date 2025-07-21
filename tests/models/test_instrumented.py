@@ -989,3 +989,14 @@ def test_messages_without_content(document_content: BinaryContent):
             },
         ]
     )
+
+
+def test_model_response_empty_parts_otel_events():
+    """Test otel_events method with empty parts list."""
+    response = ModelResponse(parts=[])
+    settings = InstrumentationSettings()
+    events = response.otel_events(settings)
+
+    assert len(events) == 1
+    event_dict = InstrumentedModel.event_to_dict(events[0])
+    assert event_dict == snapshot({'role': 'assistant', 'event.name': 'gen_ai.assistant.message'})
