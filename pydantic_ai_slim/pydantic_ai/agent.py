@@ -17,7 +17,6 @@ from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
 from pydantic_ai.builtin_tools import AbstractBuiltinTool, WebSearchTool
-from pydantic_ai.profiles import ModelProfile
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -263,7 +262,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
-    def __init__(
+    def __init__(  # noqa: C901 adding builtin tools
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,

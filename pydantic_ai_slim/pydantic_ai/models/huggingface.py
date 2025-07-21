@@ -25,6 +25,8 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    ServerToolCallPart,
+    ServerToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -298,6 +300,14 @@ class HuggingFaceModel(Model):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
                         # please open an issue. The below code is the code to send thinking to the provider.
                         # texts.append(f'<think>\n{item.content}\n</think>')
+                        pass
+                    elif isinstance(item, ServerToolCallPart):  # pragma: no cover
+                        # ServerToolCallPart represents a tool call from a remote server
+                        # This is currently never returned from huggingface
+                        pass
+                    elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
+                        # ServerToolReturnPart represents a tool return from a remote server
+                        # This is currently never returned from huggingface
                         pass
                     else:
                         assert_never(item)
