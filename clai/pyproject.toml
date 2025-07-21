@@ -13,12 +13,13 @@ bump = true
 [project]
 name = "clai"
 dynamic = ["version", "dependencies"]
-description = "PydanticAI CLI: command line interface to chat to LLMs"
+description = "Pydantic AI CLI: command line interface to chat to LLMs"
 authors = [
-  { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-  { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
-  { name = "David Montague", email = "david@pydantic.dev" },
-  { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
 ]
 license = "MIT"
 readme = "README.md"

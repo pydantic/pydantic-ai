@@ -311,7 +311,7 @@ class AnthropicModel(Model):
                 )
             elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
                 warnings.warn(
-                    'PydanticAI currently does not handle redacted thinking blocks. '
+                    'Pydantic AI currently does not handle redacted thinking blocks. '
                     'If you have a suggestion on how we should handle them, please open an issue.',
                     UserWarning,
                 )

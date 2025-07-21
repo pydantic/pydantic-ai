@@ -41,11 +41,11 @@ where:
   standard library. This is also useful to check the server is running
   correctly.
 
-Usage of `jsr:@pydantic/mcp-run-python` with PydanticAI is described in the [client](client.md#mcp-stdio-server) documentation.
+Usage of `jsr:@pydantic/mcp-run-python` with Pydantic AI is described in the [client](client.md#mcp-stdio-server) documentation.
 
 ## Direct Usage
 
-As well as using this server with PydanticAI, it can be connected to other MCP clients. For clarity, in this example we connect directly using the [Python MCP client](https://github.com/modelcontextprotocol/python-sdk).
+As well as using this server with Pydantic AI, it can be connected to other MCP clients. For clarity, in this example we connect directly using the [Python MCP client](https://github.com/modelcontextprotocol/python-sdk).
 
 ```python {title="mcp_run_python.py" py="3.10"}
 from mcp import ClientSession, StdioServerParameters
