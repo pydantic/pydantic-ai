@@ -449,7 +449,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                 snapshot(
                     [
                         {
-                            'content': 'Here are some instructions',
                             'role': 'system',
                             'event.name': 'gen_ai.system.message',
                         },
@@ -481,7 +480,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                     ]
                 )
             ),
-            'final_result': '{"content": "a"}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
@@ -498,7 +496,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             snapshot(
                 [
                     {
-                        'content': 'Here are some instructions',
                         'role': 'system',
                         'gen_ai.system': 'test',
                         'event.name': 'gen_ai.system.message',
