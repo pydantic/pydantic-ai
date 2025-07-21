@@ -21,7 +21,7 @@ The MCP Run Python server is distributed as a [JSR package](https://jsr.io/@pyda
 ```bash {title="terminal"}
 deno run \
   -N -R=node_modules -W=node_modules --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
+  jsr:@pydantic/mcp-run-python [stdio|streamable_http|sse|warmup]
 ```
 
 where:
@@ -34,6 +34,10 @@ where:
 - `stdio` runs the server with the
   [Stdio MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio)
   — suitable for running the process as a subprocess locally
+- `streamable_http` runs the server with the
+  [Streamable HTTP MCP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
+  — running the server as an HTTP server to connect locally or remotely.
+  This supports stateful requests, but does not require the client to hold a stateful connection like SSE
 - `sse` runs the server with the
   [SSE MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse)
   — running the server as an HTTP server to connect locally or remotely
