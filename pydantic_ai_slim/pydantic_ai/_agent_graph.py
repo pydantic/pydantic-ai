@@ -113,7 +113,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
-    function_tools: dict[str, Tool[DepsT]] = dataclasses.field(repr=False)
     builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 

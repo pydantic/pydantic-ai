@@ -19,7 +19,6 @@ class AbstractBuiltinTool(ABC):
     """
 
 
-
 @dataclass
 class WebSearchTool(AbstractBuiltinTool):
     """A builtin tool that allows your agent to search the web for information.
