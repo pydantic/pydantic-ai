@@ -2550,10 +2550,15 @@ async def test_valid_response(env: TestEnv, allow_model_requests: None):
     assert result.output == snapshot('The capital of France is Paris.')
 
 
-async def test_invalid_response(env: TestEnv, allow_model_requests: None):
+async def test_invalid_response(allow_model_requests: None):
     """VCR recording is of an invalid JSON response."""
-    env.set('OPENAI_API_KEY', 'foobar')
-    agent = Agent('openai:gpt-4o')
+    m = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(
+            api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/content-type/application/json'
+        ),
+    )
+    agent = Agent(m)
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
@@ -2564,7 +2569,9 @@ async def test_invalid_response(env: TestEnv, allow_model_requests: None):
 
 async def test_text_response(allow_model_requests: None):
     """VCR recording is of a text response."""
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='foobar', base_url='https://example.com'))
+    m = OpenAIModel(
+        'gpt-4o', provider=OpenAIProvider(api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/')
+    )
     agent = Agent(m)
 
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
