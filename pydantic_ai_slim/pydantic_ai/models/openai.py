@@ -1167,6 +1167,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
                 pass  # there's nothing we need to do here
 
+            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):
+                pass  # there's nothing we need to do here
+
             else:  # pragma: no cover
                 warnings.warn(
                     f'Handling of this event type is not yet implemented. Please report on our GitHub: {chunk}',
