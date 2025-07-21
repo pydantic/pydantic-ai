@@ -696,6 +696,9 @@ def test_messages_to_otel_events_instructions():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1')]),
+        ModelResponse(parts=[TextPart('text1'), ToolCallPart('my_tool', {'a': 13, 'b': 4})]),
+        ModelResponse(parts=[ToolCallPart('my_tool', {'a': 13, 'b': 4}), TextPart('text1')]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -706,6 +709,38 @@ def test_messages_to_otel_events_instructions():
                 'role': 'assistant',
                 'content': 'text1',
                 'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking_1'}],
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'tool_calls': [
+                    {
+                        'id': IsStr(),
+                        'type': 'function',
+                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
+                    }
+                ],
+                'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'tool_calls': [
+                    {
+                        'id': IsStr(),
+                        'type': 'function',
+                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
+                    }
+                ],
+                'content': 'text1',
+                'gen_ai.message.index': 4,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
@@ -912,7 +947,7 @@ def test_messages_without_content(document_content: BinaryContent):
                 'role': 'assistant',
                 'tool_calls': [
                     {
-                        'id': 'pyd_ai_c7fd195c5b974741b553d1e126c6cb63',
+                        'id': IsStr(),
                         'type': 'function',
                         'function': {'name': 'my_tool'},
                     }
