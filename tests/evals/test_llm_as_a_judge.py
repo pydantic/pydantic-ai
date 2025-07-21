@@ -349,6 +349,46 @@ Hello
         )
     )
 
+    result = await judge_input_output_expected(
+        [123],
+        'Hello world with settings',
+        'Hello',
+        'Output contains input with settings',
+        model_settings=test_model_settings,
+    )
+
+    assert isinstance(result, GradingOutput)
+    assert result.reason == 'Test passed with settings'
+    assert result.pass_ is True
+    assert result.score == 1.0
+
+    call_args, call_kwargs = mock_run.call_args
+
+    assert call_args == snapshot(
+        (
+            [
+                '<Input>\n',
+                '123',
+                '</Input>',
+                """\
+<Output>
+Hello world with settings
+</Output>\
+""",
+                """\
+<Rubric>
+Output contains input with settings
+</Rubric>\
+""",
+                """\
+<ExpectedOutput>
+Hello
+</ExpectedOutput>\
+""",
+            ],
+        )
+    )
+
 
 @pytest.mark.anyio
 async def test_judge_output_expected_mock(mocker: MockerFixture):
