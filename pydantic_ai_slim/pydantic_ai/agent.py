@@ -843,14 +843,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 agent_run = AgentRun(graph_run)
                 yield agent_run
                 if (final_result := agent_run.result) is not None and run_span.is_recording():
-                    run_span.set_attribute(
-                        'final_result',
-                        (
-                            final_result.output
-                            if isinstance(final_result.output, str)
-                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                        ),
-                    )
+                    if instrumentation_settings and instrumentation_settings.include_content:
+                        run_span.set_attribute(
+                            'final_result',
+                            (
+                                final_result.output
+                                if isinstance(final_result.output, str)
+                                else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                            ),
+                        )
         finally:
             try:
                 if instrumentation_settings and run_span.is_recording():
