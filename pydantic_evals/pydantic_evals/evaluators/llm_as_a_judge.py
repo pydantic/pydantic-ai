@@ -64,7 +64,7 @@ async def judge_output(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(inputs=None, output=output, rubric=rubric)
+    user_prompt = _build_prompt(output=output, rubric=rubric)
     return (
         await _judge_output_agent.run(user_prompt, model=model or _default_model, model_settings=model_settings)
     ).output
@@ -194,7 +194,7 @@ async def judge_output_expected(
     If the model is not specified, a default model is used. The default model starts as 'openai:gpt-4o',
     but this can be changed using the `set_default_judge_model` function.
     """
-    user_prompt = _build_prompt(inputs=None, output=output, rubric=rubric, expected_output=expected_output)
+    user_prompt = _build_prompt(output=output, rubric=rubric, expected_output=expected_output)
     return (
         await _judge_output_expected_agent.run(
             user_prompt, model=model or _default_model, model_settings=model_settings
@@ -223,9 +223,9 @@ def _stringify(value: Any) -> str:
 
 
 def _build_prompt(
-    inputs: Any,
     output: Any,
     rubric: str,
+    inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> str | Sequence[str | UserContent]:
     """Build a prompt that includes input, output, and rubric."""
