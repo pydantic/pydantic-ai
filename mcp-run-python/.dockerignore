@@ -1,0 +1,19 @@
+# Ignore Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore test files
+test_*
+tests/
+*.log
+
+# Ignore Git and local config files
+.git
+.gitignore
+.env
+*.md
+
+# Node modules - unnecessary in container for Deno
+node_modules/

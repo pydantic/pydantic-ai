@@ -27,4 +27,4 @@ jobs:
         with:
           context: ./mcp-run-python
           push: true
-          tags: yourdockerhubuser/mcp-run-python:latest
+          tags: ghcr.io/${{ github.repository_owner }}/mcp-run-python:latest

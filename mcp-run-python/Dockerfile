@@ -11,4 +11,4 @@ COPY . .
 EXPOSE 3101
 
 # Default command: run MCP Run Python server in SSE mode with health check endpoint
-CMD ["run", "-N", "-R=node_modules", "-W=node_modules", "--node-modules-dir=auto", "jsr:@pydantic/mcp-run-python", "sse", "--port=3101"]
+CMD ["run", "--allow-net=0.0.0.0:3101", "-N", "-R=node_modules", "-W=node_modules", "--node-modules-dir=auto", "jsr:@pydantic/mcp-run-python", "sse", "--port=3101"]

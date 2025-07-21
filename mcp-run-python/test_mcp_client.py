@@ -11,9 +11,10 @@ async def main():
             result = await session.call_tool('run_python_code', {'python_code': "print('hello world')"})
             content = result.content[0]
             if isinstance(content, types.TextContent):
-                print(content.text)
+                print('Received:', content.text)
+                assert content.text.strip() == 'hello world', 'Unexpected response from server'
             else:
-                print(content)
+                raise ValueError('Unexpected content type:', content)
 
 
 if __name__ == '__main__':
