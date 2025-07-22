@@ -764,7 +764,6 @@ class ModelResponse:
                 )
 
         if len(body.get('content', [])) == 1 and body['content'][0]['kind'] == 'text' and settings.include_content:
-            # If there's only one text part, we can simplify the event body
             body['content'] = body['content'][0]['text']
 
         return result
