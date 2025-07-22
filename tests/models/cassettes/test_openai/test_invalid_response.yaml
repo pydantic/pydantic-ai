@@ -1,0 +1,51 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '105'
+      content-type:
+      - application/json
+      host:
+      - demo-endpoints.pydantic.workers.dev
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://demo-endpoints.pydantic.workers.dev/bin/content-type/application/json/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '128'
+      content-type:
+      - application/json
+      nel:
+      - '{"success_fraction":0,"report_to":"cf-nel","max_age":604800}'
+      report-to:
+      - '{"endpoints":[{"url":"https:\/\/a.nel.cloudflare.com\/report\/v4?s=vnOen4x5ThZsFrq57KAufS6JIp6%2FonMEN9WyAWXKhWzx0nNhyrIm3l5ffXE0t9yP69ay6%2Bj8TXT4jmQqDkjFOqlTXQ0lpQa7jkrZpXjuk1iD2hEyEZd5q%2F6ZKddrnPGojfa4%2FOwgp3aw2wf3DFzFZoPWYFhlEA%3D%3D"}],"group":"cf-nel","max_age":604800}'
+      server-timing:
+      - cfL4;desc="?proto=TCP&rtt=5088&min_rtt=4528&rtt_var=1666&sent=5&recv=8&lost=0&retrans=0&sent_bytes=2868&recv_bytes=1339&delivery_rate=756649&cwnd=252&unsent_bytes=0&cid=1ee35b7dfe7143b8&ts=51&x=0"
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      contentType: application/json
+      method: POST
+      pathname: /bin/content-type/application/json/chat/completions
+    status:
+      code: 200
+      message: OK
+version: 1
