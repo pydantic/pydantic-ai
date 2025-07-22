@@ -620,11 +620,11 @@ Fix the errors and try again.\
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
+                                    'event.name': 'gen_ai.assistant.message',
                                     'role': 'assistant',
                                     'content': 'text3',
-                                    'gen_ai.system': 'my_system',
                                     'gen_ai.message.index': 1,
-                                    'event.name': 'gen_ai.assistant.message',
+                                    'gen_ai.system': 'my_system',
                                 },
                                 {
                                     'index': 0,
@@ -693,10 +693,6 @@ def test_messages_to_otel_events_instructions():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
-        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1')]),
-        ModelResponse(parts=[TextPart('text1'), ToolCallPart('my_tool', {'a': 13, 'b': 4})]),
-        ModelResponse(parts=[ToolCallPart('my_tool', {'a': 13, 'b': 4}), TextPart('text1')]),
-        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1'), TextPart('text1')]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -709,48 +705,6 @@ def test_messages_to_otel_events_instructions():
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking_1'}],
-                'gen_ai.message.index': 2,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'assistant',
-                'content': 'text1',
-                'tool_calls': [
-                    {
-                        'id': IsStr(),
-                        'type': 'function',
-                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
-                    }
-                ],
-                'gen_ai.message.index': 3,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'assistant',
-                'tool_calls': [
-                    {
-                        'id': IsStr(),
-                        'type': 'function',
-                        'function': {'name': 'my_tool', 'arguments': {'a': 13, 'b': 4}},
-                    }
-                ],
-                'content': 'text1',
-                'gen_ai.message.index': 4,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [
-                    {'kind': 'text', 'text': 'text1'},
-                    {'kind': 'thinking', 'text': 'thinking_1'},
-                    {'kind': 'text', 'text': 'text1'},
-                ],
-                'gen_ai.message.index': 5,
-                'event.name': 'gen_ai.assistant.message',
-            },
         ]
     )
 
@@ -758,8 +712,7 @@ def test_messages_to_otel_events_instructions():
 def test_messages_to_otel_events_instructions_multiple_messages():
     messages = [
         ModelRequest(instructions='instructions', parts=[UserPromptPart('user_prompt')]),
-        ModelResponse(parts=[ThinkingPart('thinking_1'), TextPart('text1')]),
-        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking_1')]),
+        ModelResponse(parts=[TextPart('text1')]),
         ModelRequest(instructions='instructions2', parts=[UserPromptPart('user_prompt2')]),
     ]
     settings = InstrumentationSettings()
@@ -769,17 +722,11 @@ def test_messages_to_otel_events_instructions_multiple_messages():
             {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
             {
                 'role': 'assistant',
-                'content': [{'kind': 'thinking', 'text': 'thinking_1'}, {'kind': 'text', 'text': 'text1'}],
+                'content': 'text1',
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking_1'}],
-                'gen_ai.message.index': 2,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 3, 'event.name': 'gen_ai.user.message'},
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
         ]
     )
 
@@ -804,8 +751,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             ]
         ),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
-        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1'), TextPart('text_2')]),
-        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1')]),
+        ModelResponse(parts=[TextPart('text1')]),
     ]
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -857,18 +803,8 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
-                'content': [
-                    {'kind': 'text', 'text': 'text1'},
-                    {'kind': 'thinking', 'text': 'thinking1'},
-                    {'kind': 'text', 'text': 'text_2'},
-                ],
+                'content': 'text1',
                 'gen_ai.message.index': 6,
-                'event.name': 'gen_ai.assistant.message',
-            },
-            {
-                'role': 'assistant',
-                'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'thinking', 'text': 'thinking1'}],
-                'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.assistant.message',
             },
         ]
@@ -910,18 +846,11 @@ def test_messages_without_content(document_content: BinaryContent):
                 )
             ]
         ),
-        ModelResponse(
-            parts=[
-                TextPart('text2'),
-                ThinkingPart('thinking_2'),
-                ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4}),
-            ]
-        ),
+        ModelResponse(parts=[TextPart('text2'), ToolCallPart(tool_name='my_tool', args={'a': 13, 'b': 4})]),
         ModelRequest(parts=[ToolReturnPart('tool', 'tool_return_content', 'tool_call_1')]),
         ModelRequest(parts=[RetryPromptPart('retry_prompt', tool_name='tool', tool_call_id='tool_call_2')]),
         ModelRequest(parts=[UserPromptPart(content=['user_prompt2', document_content])]),
         ModelRequest(parts=[UserPromptPart('simple text prompt')]),
-        ModelResponse(parts=[ThinkingPart('thinking_1')]),
     ]
     settings = InstrumentationSettings(include_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
@@ -938,7 +867,6 @@ def test_messages_without_content(document_content: BinaryContent):
                 'event.name': 'gen_ai.assistant.message',
             },
             {
-                'role': 'user',
                 'content': [
                     {'kind': 'text'},
                     {'kind': 'video-url'},
@@ -947,12 +875,13 @@ def test_messages_without_content(document_content: BinaryContent):
                     {'kind': 'document-url'},
                     {'kind': 'binary', 'media_type': 'application/pdf'},
                 ],
+                'role': 'user',
                 'gen_ai.message.index': 2,
                 'event.name': 'gen_ai.user.message',
             },
             {
-                'content': [{'kind': 'text'}, {'kind': 'thinking'}],
                 'role': 'assistant',
+                'content': [{'kind': 'text'}],
                 'tool_calls': [
                     {
                         'id': IsStr(),
@@ -989,22 +918,40 @@ def test_messages_without_content(document_content: BinaryContent):
                 'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
             },
-            {
-                'content': [{'kind': 'thinking'}],
-                'role': 'assistant',
-                'gen_ai.message.index': 8,
-                'event.name': 'gen_ai.assistant.message',
-            },
         ]
     )
 
 
-def test_model_response_empty_parts_otel_events():
-    """Test otel_events method with empty parts list."""
-    response = ModelResponse(parts=[])
+def test_message_with_thinking_parts():
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1'), TextPart('text2')]),
+        ModelResponse(parts=[ThinkingPart('thinking2')]),
+        ModelResponse(parts=[ThinkingPart('thinking3'), TextPart('text3')]),
+    ]
     settings = InstrumentationSettings()
-    events = response.otel_events(settings)
-
-    assert len(events) == 1
-    event_dict = InstrumentedModel.event_to_dict(events[0])
-    assert event_dict == snapshot({'role': 'assistant', 'event.name': 'gen_ai.assistant.message'})
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {'kind': 'text', 'text': 'text1'},
+                    {'kind': 'thinking', 'text': 'thinking1'},
+                    {'kind': 'text', 'text': 'text2'},
+                ],
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'thinking', 'text': 'thinking2'}],
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'thinking', 'text': 'thinking3'}, {'kind': 'text', 'text': 'text3'}],
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.assistant.message',
+            },
+        ]
+    )
