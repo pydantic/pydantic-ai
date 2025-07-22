@@ -88,7 +88,7 @@ agent = Agent('openai:gpt-4o-mini', deps_type=StateDeps[RecipeSnapshot])
 
 
 @agent.tool_plain
-def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
+async def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
     """Display the recipe to the user.
 
     Args:
@@ -104,7 +104,7 @@ def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
 
 
 @agent.instructions
-def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
+async def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
     """Instructions for the recipe generation agent.
 
     Args:
