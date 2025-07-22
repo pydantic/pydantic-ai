@@ -79,8 +79,8 @@ def test_builtin_tool_raises_signature_error():
 
     from pydantic._internal._typing_extra import get_function_type_hints
 
-    def test_tool(*args: int) -> int:
-        return sum(args)
+    def test_tool(*args): # type: ignore[reportUnknownParameterType, reportUnknownArgumentType]
+        pass
 
     with pytest.raises(ValueError):
         signature(max)
