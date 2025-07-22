@@ -764,16 +764,13 @@ class ModelResponse:
                     body.setdefault('content', []).append({'kind': kind})
                     continue
 
-                content = body.setdefault('content', [])
+                existing = body.get('content', [])
+                if isinstance(existing, str):
+                    existing = [{'kind': 'text', 'text': existing}]
 
-                if isinstance(content, str):
-                    content = [{'kind': 'text', 'text': content}]
-                    body['content'] = content
+                existing.append({'kind': kind, 'text': part.content})
 
-                content.append({'kind': kind, 'text': part.content})
-
-                if len(content) == 1 and isinstance(part, TextPart):
-                    body['content'] = part.content
+                body['content'] = part.content if len(existing) == 1 and isinstance(part, TextPart) else existing
 
         return result
 
