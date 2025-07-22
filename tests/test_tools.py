@@ -55,6 +55,30 @@ def test_tool_plain_with_ctx():
     )
 
 
+def test_builtin_tool_registry():
+    """
+    Test that built-in functions can be registered as tools.
+    """
+    from pydantic_ai import Agent, Tool
+    from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models.test import TestModel
+
+    with pytest.raises(UserError):
+        Agent(TestModel(), tools=[max])
+
+    with pytest.raises(UserError):
+        agent = Agent(TestModel())
+        agent.tool_plain(min)
+
+    agent = Agent(TestModel(), tools=[print])
+    assert 'print' in agent._function_toolset.tools
+
+    agent._function_toolset.tools.pop('print', None)
+
+    agent._function_toolset.add_tool(Tool(print))
+    assert 'print' in agent._function_toolset.tools
+
+
 def test_tool_ctx_second():
     agent = Agent(TestModel())
 
