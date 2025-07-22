@@ -97,11 +97,12 @@ def function_schema(  # noqa: C901
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
     errors: list[str] = []
+
     try:
         sig = signature(function)
     except ValueError as e:
         errors.append(f'Error getting signature for {function.__qualname__}: {e}')
-        sig = signature(lambda: None)  # fallback to an empty signature
+        sig = signature(lambda: None)
 
     type_hints = _typing_extra.get_function_type_hints(function)
 
