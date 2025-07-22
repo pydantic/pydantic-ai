@@ -759,18 +759,13 @@ class ModelResponse:
                 )
             elif isinstance(part, (TextPart, ThinkingPart)):
                 kind = 'thinking' if isinstance(part, ThinkingPart) else 'text'
+                body.setdefault('content', []).append(
+                    {'kind': kind, 'text': part.content} if settings.include_content else {'kind': kind}
+                )
 
-                if not settings.include_content:
-                    body.setdefault('content', []).append({'kind': kind})
-                    continue
-
-                existing = body.get('content', [])
-                if isinstance(existing, str):
-                    existing = [{'kind': 'text', 'text': existing}]
-
-                existing.append({'kind': kind, 'text': part.content})
-
-                body['content'] = part.content if len(existing) == 1 and isinstance(part, TextPart) else existing
+        if len(body.get('content', [])) == 1 and body['content'][0]['kind'] == 'text' and settings.include_content:
+            # If there's only one text part, we can simplify the event body
+            body['content'] = body['content'][0]['text']
 
         return result
 
