@@ -760,7 +760,7 @@ class ModelResponse:
             elif isinstance(part, (TextPart, ThinkingPart)):
                 kind = 'thinking' if isinstance(part, ThinkingPart) else 'text'
                 body.setdefault('content', []).append(
-                    {'kind': kind, 'text': part.content} if settings.include_content else {'kind': kind}
+                    {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
 
         if len(body.get('content', [])) == 1 and body['content'][0]['kind'] == 'text' and settings.include_content:
