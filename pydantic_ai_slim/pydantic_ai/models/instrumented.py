@@ -157,7 +157,10 @@ class InstrumentationSettings:
         instructions = InstrumentedModel._get_instructions(messages)  # pyright: ignore [reportPrivateUsage]
         if instructions is not None:
             events.append(
-                LogRecord(event_name='gen_ai.system.message', body={'content': instructions, 'role': 'system'})
+                LogRecord(
+                    event_name='gen_ai.system.message',
+                    body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
+                )
             )
 
         for message_index, message in enumerate(messages):

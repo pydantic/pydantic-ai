@@ -409,7 +409,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'all_messages_events': IsJson(
                 snapshot(
                     [
-                        {'content': 'Here are some instructions', 'role': 'system'},
+                        {'role': 'system'},
                         {'content': {'kind': 'text'}, 'role': 'user', 'gen_ai.message.index': 0},
                         {
                             'role': 'assistant',
@@ -442,7 +442,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
         IsJson(
             snapshot(
                 [
-                    {'content': 'Here are some instructions', 'role': 'system', 'gen_ai.system': 'test'},
+                    {'role': 'system', 'gen_ai.system': 'test'},
                     {
                         'content': {'kind': 'text'},
                         'role': 'user',
