@@ -759,23 +759,21 @@ class ModelResponse:
                 )
             elif isinstance(part, (TextPart, ThinkingPart)):
                 kind = 'thinking' if isinstance(part, ThinkingPart) else 'text'
-                existing_content = body.get('content')
-                if settings.include_content:
-                    if not existing_content:
-                        body['content'] = (
-                            part.content if isinstance(part, TextPart) else [{'kind': kind, 'text': part.content}]
-                        )
-                    elif isinstance(existing_content, list):
-                        existing_content = cast(list[dict[str, Any]], existing_content)
-                        existing_content.append({'kind': kind, 'text': part.content})
-                        body['content'] = existing_content
-                    elif isinstance(existing_content, str):
-                        body['content'] = [
-                            {'kind': 'text', 'text': existing_content},
-                            {'kind': kind, 'text': part.content},
-                        ]
-                else:
+
+                if not settings.include_content:
                     body.setdefault('content', []).append({'kind': kind})
+                    continue
+
+                content_list = body.setdefault('content', [])
+
+                if isinstance(content_list, str):
+                    content_list = [{'kind': 'text', 'text': content_list}]
+                    body['content'] = content_list
+
+                content_list.append({'kind': kind, 'text': part.content})
+
+                if len(content_list) == 1 and isinstance(part, TextPart):
+                    body['content'] = part.content
 
         return result
 
