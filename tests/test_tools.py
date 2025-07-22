@@ -57,7 +57,7 @@ def test_tool_plain_with_ctx():
     )
 
 
-def test_builtin_tool_registry():
+def test_builtin_tool_registration():
     """
     Test that built-in functions can be registered as tools.
     """
