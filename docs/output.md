@@ -325,7 +325,7 @@ agent = Agent(
     'openai:gpt-4o',
     output_type=NativeOutput(
         [Fruit, Vehicle], # (1)!
-        name='Fruit or vehicle',
+        name='Fruit_or_vehicle',
         description='Return a fruit or vehicle.'
     ),
 )
