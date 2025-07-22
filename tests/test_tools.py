@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass, replace
+from inspect import signature
 from typing import Annotated, Any, Callable, Literal, Union
 
 import pydantic_core
@@ -7,6 +8,7 @@ import pytest
 from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic._internal._typing_extra import get_function_type_hints
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
@@ -59,9 +61,6 @@ def test_builtin_tool_registry():
     """
     Test that built-in functions can be registered as tools.
     """
-    from pydantic_ai import Agent
-    from pydantic_ai.exceptions import UserError
-    from pydantic_ai.models.test import TestModel
 
     with pytest.raises(UserError):
         Agent(TestModel(), tools=[max])
@@ -69,15 +68,6 @@ def test_builtin_tool_registry():
     with pytest.raises(UserError):
         agent = Agent(TestModel())
         agent.tool_plain(min)
-
-
-def test_builtin_tool_raises_signature_error():
-    """
-    Test that built-in functions raise a UserError when used as tools.
-    """
-    from inspect import signature
-
-    from pydantic._internal._typing_extra import get_function_type_hints
 
     def test_tool(*args):  # type: ignore[reportUnknownParameterType, reportUnknownArgumentType]
         pass
