@@ -74,7 +74,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # if the message currently has any parts with content, yield before streaming
         msg = self._raw_stream_response.get()
         for part in msg.parts:
-            if part.has_content():  # pragma: no cover
+            if part.has_content():
                 yield msg
                 break
 
@@ -153,7 +153,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return await self._tool_manager.handle_call(tool_call, allow_partial=allow_partial)
         elif deferred_tool_calls := self._tool_manager.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
-                raise exceptions.UserError(  # pragma: no cover
+                raise exceptions.UserError(
                     'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
                 )
             return cast(OutputDataT, deferred_tool_calls)
@@ -520,12 +520,12 @@ def _get_usage_checking_stream_response(
 ) -> AsyncIterable[_messages.ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
-        async def _usage_checking_iterator():  # pragma: no cover
+        async def _usage_checking_iterator():
             async for item in stream_response:
                 limits.check_tokens(get_usage())
                 yield item
 
-        return _usage_checking_iterator()  # pragma: no cover
+        return _usage_checking_iterator()
     else:
         return stream_response
 
