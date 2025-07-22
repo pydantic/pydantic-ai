@@ -62,14 +62,14 @@ def test_builtin_tool_registration():
 
     with pytest.raises(
         UserError,
-        match='Error generating schema for min:\n  Error getting signature for min: no signature found for builtin <built-in function min>',
+        match='Error generating schema for min:\n  no signature found for builtin <built-in function min>',
     ):
         agent = Agent(TestModel())
         agent.tool_plain(min)
 
     with pytest.raises(
         UserError,
-        match='Error generating schema for max:\n  Error getting signature for max: no signature found for builtin <built-in function max>',
+        match='Error generating schema for max:\n  no signature found for builtin <built-in function max>',
     ):
         agent = Agent(TestModel())
         agent.tool_plain(max)
