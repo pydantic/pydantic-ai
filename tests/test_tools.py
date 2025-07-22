@@ -90,7 +90,7 @@ def test_builtin_tool_raises_signature_error():
     with pytest.raises(KeyError):
         type_hints[first_param_name]  # KeyError
 
-    assert first_param_name in type_hints
+    assert first_param_name not in type_hints
 
 
 def test_tool_ctx_second():
