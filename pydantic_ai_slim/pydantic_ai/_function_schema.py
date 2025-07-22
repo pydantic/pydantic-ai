@@ -101,7 +101,7 @@ def function_schema(  # noqa: C901
     try:
         sig = signature(function)
     except ValueError as e:
-        errors.append(f'Error getting signature for {function.__qualname__}: {e}')
+        errors.append(str(e))
         sig = signature(lambda: None)
 
     type_hints = _typing_extra.get_function_type_hints(function)
