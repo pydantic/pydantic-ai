@@ -122,6 +122,7 @@ def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
         - Append new ingredients to the existing ones
         - Use the `display_recipe` tool to present the recipe to the user
         - Do NOT repeat the recipe in the message, use the tool instead
+        - Do NOT run the `display_recipe` tool multiple times in a row
 
         Once you have created the updated recipe and displayed it to the user,
         summarise the changes in one sentence, don't describe the recipe in
