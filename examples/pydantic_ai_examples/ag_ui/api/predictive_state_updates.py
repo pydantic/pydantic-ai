@@ -23,7 +23,7 @@ agent = Agent('openai:gpt-4o-mini', deps_type=StateDeps[DocumentState])
 # Tools which return AG-UI events will be sent to the client as part of the
 # event stream, single events and iterables of events are supported.
 @agent.tool_plain
-def document_predict_state() -> list[CustomEvent]:
+async def document_predict_state() -> list[CustomEvent]:
     """Enable document state prediction.
 
     Returns:
@@ -45,7 +45,7 @@ def document_predict_state() -> list[CustomEvent]:
 
 
 @agent.instructions()
-def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
+async def story_instructions(ctx: RunContext[StateDeps[DocumentState]]) -> str:
     """Provide instructions for writing document if present.
 
     Args:
