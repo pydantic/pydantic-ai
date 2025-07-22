@@ -84,8 +84,8 @@ def test_builtin_tool_raises_signature_error():
 
     with pytest.raises(ValueError):
         signature(max)
-    sig = signature(test_tool)
-    type_hints = get_function_type_hints(test_tool)
+    sig = signature(test_tool)  # type: ignore[reportUnknownArgumentType]
+    type_hints = get_function_type_hints(test_tool)  # type: ignore[reportUnknownArgumentType]
     first_param_name = next(iter(sig.parameters.keys()))
     with pytest.raises(KeyError):
         type_hints[first_param_name]  # KeyError
