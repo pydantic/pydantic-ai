@@ -88,7 +88,7 @@ agent = Agent('openai:gpt-4o-mini', deps_type=StateDeps[RecipeSnapshot])
 
 
 @agent.tool_plain
-def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
+async def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
     """Display the recipe to the user.
 
     Args:
@@ -104,7 +104,7 @@ def display_recipe(recipe: Recipe) -> StateSnapshotEvent:
 
 
 @agent.instructions
-def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
+async def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
     """Instructions for the recipe generation agent.
 
     Args:
@@ -122,6 +122,7 @@ def recipe_instructions(ctx: RunContext[StateDeps[RecipeSnapshot]]) -> str:
         - Append new ingredients to the existing ones
         - Use the `display_recipe` tool to present the recipe to the user
         - Do NOT repeat the recipe in the message, use the tool instead
+        - Do NOT run the `display_recipe` tool multiple times in a row
 
         Once you have created the updated recipe and displayed it to the user,
         summarise the changes in one sentence, don't describe the recipe in
