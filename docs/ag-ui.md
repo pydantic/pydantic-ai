@@ -150,7 +150,7 @@ app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
 
 
 @agent.tool
-def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
+async def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
     return StateSnapshotEvent(
         type=EventType.STATE_SNAPSHOT,
         snapshot=ctx.deps.state,
@@ -158,7 +158,7 @@ def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEven
 
 
 @agent.tool_plain
-def custom_events() -> list[CustomEvent]:
+async def custom_events() -> list[CustomEvent]:
     return [
         CustomEvent(
             type=EventType.CUSTOM,
