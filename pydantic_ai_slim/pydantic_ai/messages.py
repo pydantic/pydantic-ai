@@ -92,6 +92,9 @@ class FileUrl(ABC):
     url: str
     """The URL of the file."""
 
+    _media_type: str | None = field(default=None, repr=False)
+    """Optional override for the media type of the file, in case it cannot be inferred from the URL."""
+
     force_download: bool = False
     """If the model supports it:
 
@@ -106,10 +109,17 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
-    @property
     @abstractmethod
-    def media_type(self) -> str:
+    def _infer_media_type_from_url(self) -> str:
         """Return the media type of the file, based on the url."""
+
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the file, based on the url or the provided `_media_type`."""
+        if self._media_type is not None:
+            return self._media_type
+        else:
+            return self._infer_media_type_from_url()
 
     @property
     @abstractmethod
@@ -129,8 +139,7 @@ class VideoUrl(FileUrl):
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> VideoMediaType:
+    def _infer_media_type_from_url(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -180,8 +189,7 @@ class AudioUrl(FileUrl):
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> AudioMediaType:
+    def _infer_media_type_from_url(self) -> AudioMediaType:
         """Return the media type of the audio file, based on the url.
 
         References:
@@ -218,8 +226,7 @@ class ImageUrl(FileUrl):
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> ImageMediaType:
+    def _infer_media_type_from_url(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
         if self.url.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
@@ -251,8 +258,7 @@ class DocumentUrl(FileUrl):
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> str:
+    def _infer_media_type_from_url(self) -> str:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
         if type_ is None:
