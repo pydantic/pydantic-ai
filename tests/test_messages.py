@@ -17,7 +17,7 @@ def test_image_url():
     assert image_url.media_type == 'image/jpeg'
     assert image_url.format == 'jpeg'
 
-    image_url = ImageUrl(url='https://example.com/image', _media_type='image/jpeg')
+    image_url = ImageUrl(url='https://example.com/image', media_type_='image/jpeg')
     assert image_url.media_type == 'image/jpeg'
     assert image_url.format == 'jpeg'
 
@@ -27,7 +27,7 @@ def test_video_url():
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
 
-    video_url = VideoUrl(url='https://example.com/video', _media_type='video/mp4')
+    video_url = VideoUrl(url='https://example.com/video', media_type_='video/mp4')
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
 
@@ -53,7 +53,7 @@ def test_document_url():
     assert document_url.media_type == 'application/pdf'
     assert document_url.format == 'pdf'
 
-    document_url = DocumentUrl(url='https://example.com/document', _media_type='application/pdf')
+    document_url = DocumentUrl(url='https://example.com/document', media_type_='application/pdf')
     assert document_url.media_type == 'application/pdf'
     assert document_url.format == 'pdf'
 

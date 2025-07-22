@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import InitVar, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
@@ -92,7 +92,7 @@ class FileUrl(ABC):
     url: str
     """The URL of the file."""
 
-    _media_type: str | None = field(default=None, repr=False)
+    media_type_: InitVar[str | None] = None
     """Optional override for the media type of the file, in case it cannot be inferred from the URL."""
 
     force_download: bool = False
@@ -109,17 +109,19 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
+    _media_type: str | None = field(init=False, repr=False)
+
+    def __post_init__(self, media_type_: str | None = None) -> None:
+        self._media_type = media_type_
+
     @abstractmethod
-    def _infer_media_type_from_url(self) -> str:
+    def _infer_media_type(self) -> str:
         """Return the media type of the file, based on the url."""
 
     @property
     def media_type(self) -> str:
         """Return the media type of the file, based on the url or the provided `_media_type`."""
-        if self._media_type is not None:
-            return self._media_type
-        else:
-            return self._infer_media_type_from_url()
+        return self._media_type or self._infer_media_type()
 
     @property
     @abstractmethod
@@ -139,7 +141,7 @@ class VideoUrl(FileUrl):
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    def _infer_media_type_from_url(self) -> VideoMediaType:
+    def _infer_media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -189,7 +191,7 @@ class AudioUrl(FileUrl):
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    def _infer_media_type_from_url(self) -> AudioMediaType:
+    def _infer_media_type(self) -> AudioMediaType:
         """Return the media type of the audio file, based on the url.
 
         References:
@@ -226,7 +228,7 @@ class ImageUrl(FileUrl):
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    def _infer_media_type_from_url(self) -> ImageMediaType:
+    def _infer_media_type(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
         if self.url.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
@@ -258,7 +260,7 @@ class DocumentUrl(FileUrl):
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    def _infer_media_type_from_url(self) -> str:
+    def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
         if type_ is None:
