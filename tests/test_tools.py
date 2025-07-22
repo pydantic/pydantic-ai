@@ -62,10 +62,10 @@ def test_builtin_tool_registry():
     Test that built-in functions can be registered as tools.
     """
 
-    with pytest.raises(UserError):
+    with pytest.raises(UserError, match='Error generating schema for'):
         Agent(TestModel(), tools=[max])
 
-    with pytest.raises(UserError):
+    with pytest.raises(UserError, match='Error generating schema for'):
         agent = Agent(TestModel())
         agent.tool_plain(min)
 
