@@ -11,7 +11,7 @@ from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
@@ -1135,7 +1135,7 @@ async def test_evaluate_async_logfire(
                 'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
                 'attributes': '{}',
                 'case_name': 'case1',
-                'code.filepath': '_jb_pytest_runner.py',
+                'code.filepath': IsStr(),
                 'code.lineno': 123,
                 'expected_output': '{"answer":"4","confidence":1.0}',
                 'inputs': '{"query":"What is 2+2?"}',
@@ -1159,7 +1159,7 @@ async def test_evaluate_async_logfire(
         },
         {
             'attributes': {
-                'code.filepath': '_jb_pytest_runner.py',
+                'code.filepath': IsStr(),
                 'code.lineno': 123,
                 'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
                 'logfire.msg': 'execute mock_async_task',
@@ -1178,7 +1178,7 @@ async def test_evaluate_async_logfire(
                 'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
                 'attributes': '{}',
                 'case_name': 'case2',
-                'code.filepath': '_jb_pytest_runner.py',
+                'code.filepath': IsStr(),
                 'code.lineno': 123,
                 'expected_output': '{"answer":"Paris","confidence":1.0}',
                 'inputs': '{"query":"What is the capital of France?"}',
@@ -1202,7 +1202,7 @@ async def test_evaluate_async_logfire(
         },
         {
             'attributes': {
-                'code.filepath': '_jb_pytest_runner.py',
+                'code.filepath': IsStr(),
                 'code.lineno': 123,
                 'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
                 'logfire.msg': 'execute mock_async_task',
