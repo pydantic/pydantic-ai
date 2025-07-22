@@ -764,15 +764,15 @@ class ModelResponse:
                     body.setdefault('content', []).append({'kind': kind})
                     continue
 
-                content_list = body.setdefault('content', [])
+                content = body.setdefault('content', [])
 
-                if isinstance(content_list, str):
-                    content_list = [{'kind': 'text', 'text': content_list}]
-                    body['content'] = content_list
+                if isinstance(content, str):
+                    content = [{'kind': 'text', 'text': content}]
+                    body['content'] = content
 
-                content_list.append({'kind': kind, 'text': part.content})
+                content.append({'kind': kind, 'text': part.content})
 
-                if len(content_list) == 1 and isinstance(part, TextPart):
+                if len(content) == 1 and isinstance(part, TextPart):
                     body['content'] = part.content
 
         return result
