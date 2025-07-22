@@ -71,6 +71,28 @@ def test_builtin_tool_registry():
         agent.tool_plain(min)
 
 
+def test_builtin_tool_raises_signature_error():
+    """
+    Test that built-in functions raise a UserError when used as tools.
+    """
+    from inspect import signature
+
+    from pydantic._internal._typing_extra import get_function_type_hints
+
+    def test_tool(*args):
+        return sum(args)
+
+    with pytest.raises(ValueError):
+        signature(max)
+    sig = signature(test_tool)
+    type_hints = get_function_type_hints(test_tool)
+    first_param_name = next(iter(sig.parameters.keys()))
+    with pytest.raises(KeyError):
+        type_hints[first_param_name]  # KeyError
+
+    assert first_param_name in type_hints
+
+
 def test_tool_ctx_second():
     agent = Agent(TestModel())
 
