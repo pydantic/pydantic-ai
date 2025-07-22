@@ -251,7 +251,7 @@ def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
         type_hints = _typing_extra.get_function_type_hints(function)
         annotation = type_hints.get(first_param_name)
         if annotation is None:
-            return False
+            return False  # pragma: no cover
         return True is not sig.empty and _is_call_ctx(annotation)
 
 
