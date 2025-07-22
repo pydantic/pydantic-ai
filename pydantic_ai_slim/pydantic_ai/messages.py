@@ -763,8 +763,10 @@ class ModelResponse:
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
                 )
 
-        if len(body.get('content', [])) == 1 and body['content'][0]['kind'] == 'text' and settings.include_content:
-            body['content'] = body['content'][0]['text']
+        if content := body.get('content'):
+            text_content = content[0].get('text')
+            if content == [{'kind': 'text', 'text': text_content}]:
+                body['content'] = text_content
 
         return result
 
