@@ -241,8 +241,8 @@ def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
     """
     try:
         sig = signature(function)
-    except ValueError:
-        return False
+    except ValueError:  # pragma: no cover
+        return False  # pragma: no cover
     try:
         first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
