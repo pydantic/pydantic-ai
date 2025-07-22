@@ -83,6 +83,6 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         assert isinstance(tool, _CombinedToolsetTool)
         return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
 
-    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], Any]) -> Any:
+    def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:
             toolset.apply(visitor)

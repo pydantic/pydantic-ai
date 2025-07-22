@@ -282,6 +282,14 @@ class BinaryContent:
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
+    identifier: str | None = None
+    """Identifier for the binary content, such as a URL or unique ID.
+
+    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument, and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
+
+    This identifier is only automatically passed to the model when the `BinaryContent` is returned by a tool. If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier, e.g. "This is file <identifier>:" preceding the `BinaryContent`.
+    """
+
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
 

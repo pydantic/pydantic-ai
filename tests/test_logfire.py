@@ -426,7 +426,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                     ]
                 )
             ),
-            'final_result': '{"content": "a"}',
             'logfire.json_schema': IsJson(
                 snapshot(
                     {
