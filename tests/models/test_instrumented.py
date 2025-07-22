@@ -403,10 +403,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'trace_flags': 1,
             },
             {
-                'body': {
-                    'index': 0,
-                    'message': {'role': 'assistant', 'content': 'text1text2'},
-                },
+                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
