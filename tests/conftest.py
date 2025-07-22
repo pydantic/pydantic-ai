@@ -317,6 +317,11 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def vercel_api_key() -> str:
+    return os.getenv('AI_GATEWAY_API_KEY') or os.getenv('VERCEL_OIDC_TOKEN') or 'mock-api-key'
+
+
+@pytest.fixture(scope='session')
 def heroku_inference_key() -> str:
     return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
 

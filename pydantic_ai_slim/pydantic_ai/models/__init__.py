@@ -595,6 +595,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         'deepseek',
         'azure',
         'openrouter',
+        'vercel-ai-gateway',
         'grok',
         'fireworks',
         'together',
