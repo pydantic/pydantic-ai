@@ -72,7 +72,7 @@ def test_builtin_tool_registry():
     def test_tool(*args):  # type: ignore[reportUnknownParameterType, reportUnknownArgumentType]
         pass
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match='no signature found for'):
         signature(max)
     sig = signature(test_tool)  # type: ignore[reportUnknownArgumentType]
     type_hints = get_function_type_hints(test_tool)  # type: ignore[reportUnknownArgumentType]
