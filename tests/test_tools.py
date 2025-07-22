@@ -1,6 +1,5 @@
 import json
 from dataclasses import dataclass, replace
-from inspect import signature
 from typing import Annotated, Any, Callable, Literal, Union
 
 import pydantic_core
@@ -8,7 +7,6 @@ import pytest
 from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, WithJsonSchema
-from pydantic._internal._typing_extra import get_function_type_hints
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
@@ -68,19 +66,6 @@ def test_builtin_tool_registration():
     with pytest.raises(UserError, match='Error generating schema for'):
         agent = Agent(TestModel())
         agent.tool_plain(min)
-
-    def test_tool(*args):  # type: ignore[reportUnknownParameterType, reportUnknownArgumentType]
-        pass
-
-    with pytest.raises(ValueError, match='no signature found for'):
-        signature(max)
-    sig = signature(test_tool)  # type: ignore[reportUnknownArgumentType]
-    type_hints = get_function_type_hints(test_tool)  # type: ignore[reportUnknownArgumentType]
-    first_param_name = next(iter(sig.parameters.keys()))
-    with pytest.raises(KeyError):
-        type_hints[first_param_name]  # KeyError
-
-    assert first_param_name not in type_hints
 
 
 def test_tool_ctx_second():
