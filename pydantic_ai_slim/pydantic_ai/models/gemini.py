@@ -91,15 +91,6 @@ class GeminiModelSettings(ModelSettings, total=False):
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
     """
 
-    gemini_thinking_config: ThinkingConfig
-    """Thinking is on by default in both the API and AI Studio.
-
-    Being on by default doesn't mean the model will send back thoughts. For that, you need to set `include_thoughts`
-    to `True`. If you want to turn it off, set `thinking_budget` to `0`.
-
-    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
-    """
-
 
 @dataclass(init=False)
 class GeminiModel(Model):
