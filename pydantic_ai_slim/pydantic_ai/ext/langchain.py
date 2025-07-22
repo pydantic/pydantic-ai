@@ -38,20 +38,31 @@ def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
     function_name = langchain_tool.name
     function_description = langchain_tool.description
     inputs = langchain_tool.args.copy()
-    required = sorted({name for name, detail in inputs.items() if 'default' not in detail})
+    required = []
+    defaults = {}
+    # Only one iteration through inputs for both required and defaults
+    for name, detail in inputs.items():
+        if 'default' in detail:
+            defaults[name] = detail['default']
+        else:
+            required.append(name)
+    if required:
+        required.sort()
     schema: JsonSchemaValue = langchain_tool.get_input_jsonschema()
-    if 'additionalProperties' not in schema:
-        schema['additionalProperties'] = False
     if required:
         schema['required'] = required
+    if 'additionalProperties' not in schema:
+        schema['additionalProperties'] = False
 
-    defaults = {name: detail['default'] for name, detail in inputs.items() if 'default' in detail}
-
-    # restructures the arguments to match langchain tool run
+    # restructure arguments and merge efficiently using only the necessary step
     def proxy(*args: Any, **kwargs: Any) -> str:
         assert not args, 'This should always be called with kwargs'
-        kwargs = defaults | kwargs
-        return langchain_tool.run(kwargs)
+        if defaults:
+            merged = defaults.copy()
+            merged.update(kwargs)
+            return langchain_tool.run(merged)
+        else:
+            return langchain_tool.run(kwargs)
 
     return Tool.from_schema(
         function=proxy,
