@@ -28,7 +28,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-class VercelProvider(Provider[AsyncOpenAI]):
+class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
     """Provider for Vercel AI Gateway API."""
 
     @property
@@ -62,7 +62,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
             if provider in provider_to_profile:
                 profile = provider_to_profile[provider](model_name)
         
-        # As VercelProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As VercelAIGatewayProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
@@ -97,7 +97,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` environment variable '
-                'or pass the API key via `VercelProvider(api_key=...)` to use the Vercel AI Gateway provider.'
+                'or pass the API key via `VercelAIGatewayProvider(api_key=...)` to use the Vercel AI Gateway provider.'
             )
 
         if openai_client is not None:

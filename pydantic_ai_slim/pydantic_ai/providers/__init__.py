@@ -63,9 +63,9 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
 
         return OpenRouterProvider
     elif provider == 'vercel-ai-gateway':
-        from .vercel import VercelProvider
+        from .vercel import VercelAIGatewayProvider
 
-        return VercelProvider
+        return VercelAIGatewayProvider
     elif provider == 'azure':
         from .azure import AzureProvider
 

@@ -32,4 +32,4 @@
 
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
-::: pydantic_ai.providers.vercel.VercelProvider
+::: pydantic_ai.providers.vercel.VercelAIGatewayProvider

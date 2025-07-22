@@ -23,7 +23,7 @@ with try_import() as imports_successful:
     import openai
 
     from pydantic_ai.models.openai import OpenAIModel
-    from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vercel import VercelAIGatewayProvider
 
 
 pytestmark = [
@@ -34,7 +34,7 @@ pytestmark = [
 
 
 def test_vercel_provider():
-    provider = VercelProvider(api_key='api-key')
+    provider = VercelAIGatewayProvider(api_key='api-key')
     assert provider.name == 'vercel-ai-gateway'
     assert provider.base_url == 'https://ai-gateway.vercel.sh/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)
@@ -48,19 +48,19 @@ def test_vercel_provider_need_api_key(env: TestEnv) -> None:
         UserError,
         match=re.escape(
             'Set the `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` environment variable '
-            'or pass the API key via `VercelProvider(api_key=...)` to use the Vercel AI Gateway provider.'
+            'or pass the API key via `VercelAIGatewayProvider(api_key=...)` to use the Vercel AI Gateway provider.'
         ),
     ):
-        VercelProvider()
+        VercelAIGatewayProvider()
 
 def test_vercel_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
-    provider = VercelProvider(openai_client=openai_client)
+    provider = VercelAIGatewayProvider(openai_client=openai_client)
     assert provider.client == openai_client
 
 
 def test_vercel_provider_model_profile(mocker: MockerFixture):
-    provider = VercelProvider(api_key='api-key')
+    provider = VercelAIGatewayProvider(api_key='api-key')
 
     ns = 'pydantic_ai.providers.vercel'
     
@@ -125,6 +125,6 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
 
 def test_vercel_with_http_client():
     http_client = httpx.AsyncClient()
-    provider = VercelProvider(api_key='test-key', http_client=http_client)
+    provider = VercelAIGatewayProvider(api_key='test-key', http_client=http_client)
     assert provider.client.api_key == 'test-key'
     assert str(provider.client._base_url) == 'https://ai-gateway.vercel.sh/v1/'
