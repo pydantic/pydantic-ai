@@ -4,7 +4,6 @@ import os
 from typing import overload
 
 from httpx import AsyncClient as AsyncHTTPClient
-from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -75,9 +74,6 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str) -> None: ...
-
-    @overload
     def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
 
     @overload
@@ -87,7 +83,6 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
         self,
         *,
         api_key: str | None = None,
-        base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ) -> None:

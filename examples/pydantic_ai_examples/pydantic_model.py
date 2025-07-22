@@ -29,7 +29,7 @@ class MyModel(BaseModel):
     country: str
 
 
-model = os.getenv('PYDANTIC_AI_MODEL', 'vercel-ai-gateway:claude-3.7-sonnet')
+model = os.getenv('PYDANTIC_AI_MODEL', 'vercel-ai-gateway:anthropic/claude-4-sonnet')
 print(f'Using model: {model}')
 agent = Agent(model, output_type=MyModel)
 

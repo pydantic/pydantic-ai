@@ -87,8 +87,8 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
-    profile = provider.model_profile('bedrock/anthropic.claude-3-sonnet')
-    amazon_mock.assert_called_with('anthropic.claude-3-sonnet')
+    profile = provider.model_profile('bedrock/claude-3-sonnet')
+    amazon_mock.assert_called_with('claude-3-sonnet')
     assert profile is not None
     assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
