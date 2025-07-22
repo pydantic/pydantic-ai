@@ -127,7 +127,7 @@ async def execute_traced_output_function(
                     m.tool_call_id = run_context.tool_call_id  # pragma: no cover
                 raise ToolRetryError(m) from r
             else:
-                raise  # pragma: no cover
+                raise
 
         # Record response if content inclusion is enabled
         if run_context.trace_include_content and span.is_recording():
