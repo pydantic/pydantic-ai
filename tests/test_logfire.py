@@ -248,13 +248,14 @@ def test_logfire(
                     snapshot(
                         [
                             {
+                                'event.name': 'gen_ai.user.message',
                                 'content': 'Hello',
                                 'role': 'user',
                                 'gen_ai.message.index': 0,
                                 'gen_ai.system': 'test',
-                                'event.name': 'gen_ai.user.message',
                             },
                             {
+                                'event.name': 'gen_ai.choice',
                                 'index': 0,
                                 'message': {
                                     'role': 'assistant',
@@ -267,7 +268,6 @@ def test_logfire(
                                     ],
                                 },
                                 'gen_ai.system': 'test',
-                                'event.name': 'gen_ai.choice',
                             },
                         ]
                     )
@@ -395,13 +395,14 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
                         'event.name': 'gen_ai.system.message',
                     },
                     {
+                        'event.name': 'gen_ai.user.message',
                         'content': 'Hello',
                         'role': 'user',
                         'gen_ai.message.index': 0,
                         'gen_ai.system': 'test',
-                        'event.name': 'gen_ai.user.message',
                     },
                     {
+                        'event.name': 'gen_ai.choice',
                         'index': 0,
                         'message': {
                             'role': 'assistant',
@@ -414,7 +415,6 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
                             ],
                         },
                         'gen_ai.system': 'test',
-                        'event.name': 'gen_ai.choice',
                     },
                 ]
             )
@@ -447,7 +447,10 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'all_messages_events': IsJson(
                 snapshot(
                     [
-                        {'role': 'system', 'event.name': 'gen_ai.system.message'},
+                        {
+                            'role': 'system',
+                            'event.name': 'gen_ai.system.message',
+                        },
                         {
                             'content': {'kind': 'text'},
                             'role': 'user',
@@ -491,15 +494,20 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
         IsJson(
             snapshot(
                 [
-                    {'role': 'system', 'gen_ai.system': 'test', 'event.name': 'gen_ai.system.message'},
                     {
+                        'role': 'system',
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.system.message',
+                    },
+                    {
+                        'event.name': 'gen_ai.user.message',
                         'content': {'kind': 'text'},
                         'role': 'user',
                         'gen_ai.message.index': 0,
                         'gen_ai.system': 'test',
-                        'event.name': 'gen_ai.user.message',
                     },
                     {
+                        'event.name': 'gen_ai.choice',
                         'index': 0,
                         'message': {
                             'role': 'assistant',
@@ -512,7 +520,6 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                             ],
                         },
                         'gen_ai.system': 'test',
-                        'event.name': 'gen_ai.choice',
                     },
                 ]
             )

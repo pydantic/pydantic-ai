@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
-from opentelemetry._logs import LogRecord  # pyright: ignore[reportPrivateImportUsage]
+from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import TypeAlias, deprecated
 
 from . import _utils
@@ -76,9 +76,9 @@ class SystemPromptPart:
     part_kind: Literal['system-prompt'] = 'system-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
-        return LogRecord(
-            attributes={'event.name': 'gen_ai.system.message'},
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
+        return Event(
+            'gen_ai.system.message',
             body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
         )
 
@@ -418,7 +418,7 @@ class UserPromptPart:
     part_kind: Literal['user-prompt'] = 'user-prompt'
     """Part type identifier, this is available on all parts as a discriminator."""
 
-    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         content: str | list[dict[str, Any] | str] | dict[str, Any]
         if isinstance(self.content, str):
             content = self.content if settings.include_content else {'kind': 'text'}
@@ -436,7 +436,7 @@ class UserPromptPart:
                     content.append(converted_part)
                 else:
                     content.append({'kind': part.kind})  # pragma: no cover
-        return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
+        return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -483,9 +483,9 @@ class ToolReturnPart:
         else:
             return {'return_value': tool_return_ta.dump_python(self.content, mode='json')}
 
-    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
-        return LogRecord(
-            attributes={'event.name': 'gen_ai.tool.message'},
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
+        return Event(
+            'gen_ai.tool.message',
             body={
                 **({'content': self.content} if settings.include_content else {}),
                 'role': 'tool',
@@ -550,15 +550,12 @@ class RetryPromptPart:
             description = f'{len(self.content)} validation errors: {json_errors.decode()}'
         return f'{description}\n\nFix the errors and try again.'
 
-    def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
+    def otel_event(self, settings: InstrumentationSettings) -> Event:
         if self.tool_name is None:
-            return LogRecord(
-                attributes={'event.name': 'gen_ai.user.message'},
-                body={'content': self.model_response(), 'role': 'user'},
-            )
+            return Event('gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
         else:
-            return LogRecord(
-                attributes={'event.name': 'gen_ai.tool.message'},
+            return Event(
+                'gen_ai.tool.message',
                 body={
                     **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
@@ -737,13 +734,13 @@ class ModelResponse:
     vendor_id: str | None = None
     """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
-    def otel_events(self, settings: InstrumentationSettings) -> list[LogRecord]:
+    def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
-        result: list[LogRecord] = []
+        result: list[Event] = []
 
         def new_event_body():
             new_body: dict[str, Any] = {'role': 'assistant'}
-            ev = LogRecord(attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body)
+            ev = Event('gen_ai.assistant.message', body=new_body)
             result.append(ev)
             return new_body
 
