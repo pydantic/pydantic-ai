@@ -443,14 +443,14 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
 @pytest.mark.vcr()
 async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
     async with agent:
-        result = await agent.run('Get me the product name')
+        result = await agent.run('Get me the product name via get_product_name_link')
         assert result.output == snapshot('The product name is "Pydantic AI".')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
                     parts=[
                         UserPromptPart(
-                            content='Get me the product name',
+                            content='Get me the product name via get_product_name_link',
                             timestamp=IsDatetime(),
                         )
                     ]
@@ -460,14 +460,14 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                         ToolCallPart(
                             tool_name='get_product_name_link',
                             args='{}',
-                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
+                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
                         )
                     ],
                     usage=Usage(
                         requests=1,
-                        request_tokens=200,
+                        request_tokens=305,
                         response_tokens=12,
-                        total_tokens=212,
+                        total_tokens=317,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -478,25 +478,25 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
+                    vendor_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_product_name_link',
-                            content='PydanticAI',
-                            tool_call_id='call_LaiWltzI39sdquflqeuF0EyE',
+                            content='Pydantic AI\n',
+                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
                             timestamp=IsDatetime(),
                         )
                     ]
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='The product name is "PydanticAI".')],
+                    parts=[TextPart(content='The product name is "Pydantic AI".')],
                     usage=Usage(
                         requests=1,
-                        request_tokens=224,
-                        response_tokens=12,
-                        total_tokens=236,
+                        request_tokens=332,
+                        response_tokens=11,
+                        total_tokens=343,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -507,7 +507,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
+                    vendor_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
                 ),
             ]
         )
@@ -598,16 +598,16 @@ async def test_tool_returning_image_resource_link(
     allow_model_requests: None, agent: Agent, image_content: BinaryContent
 ):
     async with agent:
-        result = await agent.run('Get me the image resource')
+        result = await agent.run('Get me the image resource via get_image_resource_link')
         assert result.output == snapshot(
-            'This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
+            'This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
         )
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
                     parts=[
                         UserPromptPart(
-                            content='Get me the image resource',
+                            content='Get me the image resource via get_image_resource_link',
                             timestamp=IsDatetime(),
                         )
                     ]
@@ -617,14 +617,14 @@ async def test_tool_returning_image_resource_link(
                         ToolCallPart(
                             tool_name='get_image_resource_link',
                             args='{}',
-                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
+                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                         )
                     ],
                     usage=Usage(
                         requests=1,
-                        request_tokens=191,
+                        request_tokens=305,
                         response_tokens=12,
-                        total_tokens=203,
+                        total_tokens=317,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -635,14 +635,14 @@ async def test_tool_returning_image_resource_link(
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
+                    vendor_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
                 ),
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
                             tool_name='get_image_resource_link',
                             content='See file 1c8566',
-                            tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
+                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
@@ -651,14 +651,14 @@ async def test_tool_returning_image_resource_link(
                 ModelResponse(
                     parts=[
                         TextPart(
-                            content='This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
+                            content='This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
                         )
                     ],
                     usage=Usage(
                         requests=1,
-                        request_tokens=1332,
-                        response_tokens=19,
-                        total_tokens=1351,
+                        request_tokens=1452,
+                        response_tokens=29,
+                        total_tokens=1481,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -669,7 +669,7 @@ async def test_tool_returning_image_resource_link(
                     ),
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
-                    vendor_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
+                    vendor_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
                 ),
             ]
         )
@@ -735,23 +735,33 @@ async def test_tool_returning_audio_resource_link(
 ):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
-        result = await agent.run("What's the content of the audio resource?", model=model)
-        assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
+        result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
+        assert result.output == snapshot('00:05')
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())]
+                    parts=[
+                        UserPromptPart(
+                            content="What's the content of the audio resource via get_audio_resource_link?",
+                            timestamp=IsDatetime(),
+                        )
+                    ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr())],
+                    parts=[
+                        TextPart(
+                            content='The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.'
+                        ),
+                        ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr()),
+                    ],
                     usage=Usage(
                         requests=1,
-                        request_tokens=383,
-                        response_tokens=12,
-                        total_tokens=520,
-                        details={'thoughts_tokens': 125, 'text_prompt_tokens': 383},
+                        request_tokens=561,
+                        response_tokens=41,
+                        total_tokens=797,
+                        details={'thoughts_tokens': 195, 'text_prompt_tokens': 561},
                     ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    model_name='models/gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     vendor_details={'finish_reason': 'STOP'},
                 ),
@@ -767,15 +777,15 @@ async def test_tool_returning_audio_resource_link(
                     ]
                 ),
                 ModelResponse(
-                    parts=[TextPart(content='The audio resource contains a voice saying "Hello, my name is Marcelo."')],
+                    parts=[TextPart(content='00:05')],
                     usage=Usage(
                         requests=1,
-                        request_tokens=575,
-                        response_tokens=15,
-                        total_tokens=590,
-                        details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
+                        request_tokens=784,
+                        response_tokens=5,
+                        total_tokens=789,
+                        details={'text_prompt_tokens': 640, 'audio_prompt_tokens': 144},
                     ),
-                    model_name='models/gemini-2.5-pro-preview-05-06',
+                    model_name='models/gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     vendor_details={'finish_reason': 'STOP'},
                 ),
