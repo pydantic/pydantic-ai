@@ -185,6 +185,14 @@ KnownModelName = TypeAliasType(
         'gpt-4o-mini-search-preview-2025-03-11',
         'gpt-4o-search-preview',
         'gpt-4o-search-preview-2025-03-11',
+        'grok:grok-4',
+        'grok:grok-4-0709',
+        'grok:grok-3',
+        'grok:grok-3-mini',
+        'grok:grok-3-fast',
+        'grok:grok-3-mini-fast',
+        'grok:grok-2-vision-1212',
+        'grok:grok-2-image-1212',
         'groq:distil-whisper-large-v3-en',
         'groq:gemma2-9b-it',
         'groq:llama-3.3-70b-versatile',
@@ -192,6 +200,7 @@ KnownModelName = TypeAliasType(
         'groq:llama-guard-3-8b',
         'groq:llama3-70b-8192',
         'groq:llama3-8b-8192',
+        'groq:moonshotai/kimi-k2-instruct',
         'groq:whisper-large-v3',
         'groq:whisper-large-v3-turbo',
         'groq:playai-tts',
@@ -759,7 +768,7 @@ async def download_item(
 
     data_type = media_type
     if type_format == 'extension':
-        data_type = data_type.split('/')[1]
+        data_type = item.format
 
     data = response.content
     if data_format in ('base64', 'base64_uri'):

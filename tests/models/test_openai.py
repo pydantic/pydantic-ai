@@ -46,7 +46,7 @@ from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -2538,4 +2538,44 @@ Don't include any text or Markdown fencing before or after.\
                 vendor_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
             ),
         ]
+    )
+
+
+async def test_valid_response(env: TestEnv, allow_model_requests: None):
+    """VCR recording is of a valid response."""
+    env.set('OPENAI_API_KEY', 'foobar')
+    agent = Agent('openai:gpt-4o')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_invalid_response(allow_model_requests: None):
+    """VCR recording is of an invalid JSON response."""
+    m = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(
+            api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/content-type/application/json'
+        ),
+    )
+    agent = Agent(m)
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await agent.run('What is the capital of France?')
+    assert exc_info.value.message.startswith(
+        'Invalid response from OpenAI chat completions endpoint: 5 validation errors for ChatCompletion'
+    )
+
+
+async def test_text_response(allow_model_requests: None):
+    """VCR recording is of a text response."""
+    m = OpenAIModel(
+        'gpt-4o', provider=OpenAIProvider(api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/')
+    )
+    agent = Agent(m)
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await agent.run('What is the capital of France?')
+    assert exc_info.value.message == snapshot(
+        'Invalid response from OpenAI chat completions endpoint, expected JSON data'
     )

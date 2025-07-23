@@ -759,7 +759,7 @@ async def _call_function_tool(
                 )
             elif isinstance(content, _messages.MultiModalContentTypes):
                 if isinstance(content, _messages.BinaryContent):
-                    identifier = multi_modal_content_identifier(content.data)
+                    identifier = content.identifier or multi_modal_content_identifier(content.data)
                 else:
                     identifier = multi_modal_content_identifier(content.url)
 

@@ -56,6 +56,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
 * `duckduckgo` - installs `ddgs` [PyPI ↗](https://pypi.org/project/ddgs){:target="_blank"}
 * `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
+* `ag-ui` - installs `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 
 See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
 

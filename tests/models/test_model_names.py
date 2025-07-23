@@ -20,6 +20,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.mistral import MistralModelName
     from pydantic_ai.models.openai import OpenAIModelName
     from pydantic_ai.providers.moonshotai import MoonshotModelName
+    from pydantic_ai.providers.grok import GrokModelName
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='some model package was not installed'),
@@ -49,6 +50,7 @@ def test_known_model_names():
     google_names = [f'google-gla:{n}' for n in get_model_names(GeminiModelName)] + [
         f'google-vertex:{n}' for n in get_model_names(GeminiModelName)
     ]
+    grok_names = [f'grok:{n}' for n in get_model_names(GrokModelName)]
     groq_names = [f'groq:{n}' for n in get_model_names(GroqModelName)]
     moonshotai_names = [f'moonshotai:{n}' for n in get_model_names(MoonshotModelName)]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
@@ -65,6 +67,7 @@ def test_known_model_names():
         anthropic_names
         + cohere_names
         + google_names
+        + grok_names
         + groq_names
         + mistral_names
         + moonshotai_names
