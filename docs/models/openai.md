@@ -360,24 +360,24 @@ export VERCEL_AI_GATEWAY_API_KEY='your-ai-gateway-api-key'
 export VERCEL_OIDC_TOKEN='your-oidc-token'
 ```
 
-Once you have set the environment variable, you can use it with the [`VercelAIGatewayProvider`][pydantic_ai.providers.vercel.VercelAIGatewayProvider]:
+Once you have set the environment variable, you can use it with the [`VercelProvider`][pydantic_ai.providers.vercel.VercelProvider]:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.vercel import VercelAIGatewayProvider
+from pydantic_ai.providers.vercel import VercelProvider
 
 # Uses environment variable automatically
 model = OpenAIModel(
     'anthropic/claude-4-sonnet',
-    provider=VercelAIGatewayProvider(),
+    provider=VercelProvider(),
 )
 agent = Agent(model)
 
 # Or pass the API key directly
 model = OpenAIModel(
     'anthropic/claude-4-sonnet',
-    provider=VercelAIGatewayProvider(api_key='your-vercel-ai-gateway-api-key'),
+    provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
 )
 agent = Agent(model)
 ...

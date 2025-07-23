@@ -22,12 +22,12 @@ try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to use the Vercel AI Gateway provider, '
+        'Please install the `openai` package to use the Vercel provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 
-class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
+class VercelProvider(Provider[AsyncOpenAI]):
     """Provider for Vercel AI Gateway API."""
 
     @property
@@ -56,12 +56,15 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
 
         profile = None
 
-        if '/' in model_name:
+        try:
             provider, model_name = model_name.split('/', 1)
-            if provider in provider_to_profile:
-                profile = provider_to_profile[provider](model_name)
+        except ValueError:
+            raise UserError(f"Model name must be in 'provider/model' format, got: {model_name!r}")
 
-        # As VercelAIGatewayProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        if provider in provider_to_profile:
+            profile = provider_to_profile[provider](model_name)
+
+        # As VercelProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
@@ -92,7 +95,7 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
         if not api_key and openai_client is None:
             raise UserError(
                 'Set the `VERCEL_AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` environment variable '
-                'or pass the API key via `VercelAIGatewayProvider(api_key=...)` to use the Vercel AI Gateway provider.'
+                'or pass the API key via `VercelProvider(api_key=...)` to use the Vercel provider.'
             )
 
         if openai_client is not None:
