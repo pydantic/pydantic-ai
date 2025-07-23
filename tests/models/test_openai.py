@@ -2582,7 +2582,7 @@ async def test_text_response(allow_model_requests: None):
 
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
-        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'response', 'role': 'assistant'}),  # type: ignore
+        ChatCompletionMessage(content='world', role='assistant'),
     )
     c.created = None  # type: ignore
 
