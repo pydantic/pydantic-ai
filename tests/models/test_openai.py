@@ -2587,8 +2587,8 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     c.created = None  # type: ignore
 
     mock_client = MockOpenAI.create_mock(c)
-    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
     result = await agent.run('Hello')
     messages = result.all_messages()
     response_message = messages[1]
