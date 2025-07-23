@@ -448,7 +448,7 @@ def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> us
     if isinstance(completion, chat.ChatCompletion):
         response_usage = completion.usage
     elif completion.x_groq is not None:
-        response_usage = completion.x_groq.usage  # pragma: no cover
+        response_usage = completion.x_groq.usage
 
     if response_usage is None:
         return usage.Usage()
