@@ -39,7 +39,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, exceptions, messages, models
+from . import _mcp, _utils, exceptions, messages, models
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
@@ -636,6 +636,8 @@ class MCPServerSSE(_MCPServerHTTP):
                 "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
             )
             read_timeout = kwargs.pop('sse_read_timeout')
+
+        _utils.validate_empty_kwargs(kwargs)
 
         if read_timeout is None:
             read_timeout = 5 * 60
