@@ -350,10 +350,7 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        if response.created:
-            timestamp = number_to_datetime(response.created)
-        else:
-            timestamp = _now_utc()
+
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
         # * if the endpoint returns plain text, the return type is a string
@@ -361,6 +358,12 @@ class OpenAIModel(Model):
         if not isinstance(response, chat.ChatCompletion):
             raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
 
+        if response.created:
+            timestamp = number_to_datetime(response.created)
+        else:
+            timestamp = _now_utc()
+
+        # Some validation that was mentioned above
         try:
             response = chat.ChatCompletion.model_validate(response.model_dump())
         except ValidationError as e:
