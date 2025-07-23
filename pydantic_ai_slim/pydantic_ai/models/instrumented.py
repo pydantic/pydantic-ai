@@ -7,6 +7,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 from urllib.parse import urlparse
 
+from opentelemetry._events import (
+    EventLogger,  # pyright: ignore[reportPrivateImportUsage]
+    EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
+    Event,  # pyright: ignore[reportPrivateImportUsage]
+    get_event_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
+)
 from opentelemetry._logs import (
     Logger,  # pyright: ignore[reportPrivateImportUsage]
     LoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
@@ -90,7 +96,7 @@ class InstrumentationSettings:
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
-        event_logger_provider: LoggerProvider | None = None,
+        event_logger_provider: LoggerProvider | EventLoggerProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
     ):
@@ -121,7 +127,11 @@ class InstrumentationSettings:
         scope_name = 'pydantic-ai'
         self.tracer = tracer_provider.get_tracer(scope_name, __version__)
         self.meter = meter_provider.get_meter(scope_name, __version__)
-        self.event_logger = event_logger_provider.get_logger(scope_name, __version__)
+        try:
+            self.event_logger = event_logger_provider.get_logger(scope_name, __version__)
+        except AttributeError:
+            # Older OTel/logfire versions don't support LoggerProvider
+            self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
@@ -332,7 +342,7 @@ class InstrumentedModel(WrapperModel):
                 # to prevent them from being redundantly recorded in the span itself by logfire.
                 record_metrics()
 
-    def _emit_events(self, span: Span, events: list[LogRecord]) -> None:
+    def _emit_events(self, span: Span, events: list[LogRecord] | list[LogRecord]) -> None:
         if self.instrumentation_settings.event_mode == 'logs':
             for event in events:
                 self.instrumentation_settings.event_logger.emit(event)
