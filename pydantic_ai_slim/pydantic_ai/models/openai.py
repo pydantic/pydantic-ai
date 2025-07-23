@@ -1003,7 +1003,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content is not None:
+            if content:
                 yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
 
             # Handle reasoning part of the response, present in DeepSeek models
