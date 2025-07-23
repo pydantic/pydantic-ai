@@ -44,6 +44,16 @@ async def test_download_item_application_octet_stream() -> None:
 
 
 @pytest.mark.vcr()
+async def test_download_item_audio_mpeg() -> None:
+    downloaded_item = await download_item(
+        AudioUrl(url='https://smokeshow.helpmanual.io/4l1l1s0s6q4741012x1w/common_voice_en_537507.mp3'),
+        data_format='bytes',
+    )
+    assert downloaded_item['data_type'] == 'audio/mpeg'
+    assert downloaded_item['data'] == IsInstance(bytes)
+
+
+@pytest.mark.vcr()
 async def test_download_item_no_content_type() -> None:
     downloaded_item = await download_item(
         DocumentUrl(url='https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md'),
