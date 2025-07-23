@@ -155,25 +155,23 @@ def test_root_tag(input_obj: Any, output: str):
             ),
             True,
             snapshot("""\
-<examples>
-  <name description="The person's name">John</name>
-  <age title="Age" description="Years">42</age>
-  <children alias="child">
-    <ExamplePydanticModelFields>
-      <name description="The person's name">Liam</name>
-      <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
-      <location title="Location">null</location>
-    </ExamplePydanticModelFields>
-    <ExamplePydanticModelFields>
-      <name description="The person's name">Alice</name>
-      <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
-      <location title="Location">null</location>
-    </ExamplePydanticModelFields>
-  </children>
-  <location title="Location">Australia</location>
-</examples>\
+<name description="The person's name">John</name>
+<age title="Age" description="Years">42</age>
+<children alias="child">
+  <ExamplePydanticModelFields>
+    <name description="The person's name">Liam</name>
+    <age title="Age" description="Years">18</age>
+    <children alias="child">null</children>
+    <location title="Location">null</location>
+  </ExamplePydanticModelFields>
+  <ExamplePydanticModelFields>
+    <name description="The person's name">Alice</name>
+    <age title="Age" description="Years">18</age>
+    <children alias="child">null</children>
+    <location title="Location">null</location>
+  </ExamplePydanticModelFields>
+</children>
+<location title="Location">Australia</location>\
 """),
             id='pydantic model with fields',
         ),
@@ -191,27 +189,25 @@ def test_root_tag(input_obj: Any, output: str):
             ],
             True,
             snapshot("""\
-<examples>
-  <ExamplePydanticModelFields>
-    <name description="The person's name">John</name>
-    <age title="Age" description="Years">42</age>
-    <children alias="child">
-      <ExamplePydanticModelFields>
-        <name description="The person's name">Liam</name>
-        <age title="Age" description="Years">18</age>
-        <children alias="child">null</children>
-        <location title="Location">null</location>
-      </ExamplePydanticModelFields>
-      <ExamplePydanticModelFields>
-        <name description="The person's name">Alice</name>
-        <age title="Age" description="Years">18</age>
-        <children alias="child">null</children>
-        <location title="Location">null</location>
-      </ExamplePydanticModelFields>
-    </children>
-    <location title="Location">Australia</location>
-  </ExamplePydanticModelFields>
-</examples>\
+<ExamplePydanticModelFields>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children alias="child">
+    <ExamplePydanticModelFields>
+      <name description="The person's name">Liam</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticModelFields>
+    <ExamplePydanticModelFields>
+      <name description="The person's name">Alice</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticModelFields>
+  </children>
+  <location title="Location">Australia</location>
+</ExamplePydanticModelFields>\
 """),
             id='list[pydantic model with fields]',
         ),
@@ -227,25 +223,23 @@ def test_root_tag(input_obj: Any, output: str):
             ),
             False,
             snapshot("""\
-<examples>
-  <name>John</name>
-  <age>42</age>
-  <children>
-    <ExamplePydanticModelFields>
-      <name>Liam</name>
-      <age>18</age>
-      <children>null</children>
-      <location>null</location>
-    </ExamplePydanticModelFields>
-    <ExamplePydanticModelFields>
-      <name>Alice</name>
-      <age>18</age>
-      <children>null</children>
-      <location>null</location>
-    </ExamplePydanticModelFields>
-  </children>
-  <location>Australia</location>
-</examples>\
+<name>John</name>
+<age>42</age>
+<children>
+  <ExamplePydanticModelFields>
+    <name>Liam</name>
+    <age>18</age>
+    <children>null</children>
+    <location>null</location>
+  </ExamplePydanticModelFields>
+  <ExamplePydanticModelFields>
+    <name>Alice</name>
+    <age>18</age>
+    <children>null</children>
+    <location>null</location>
+  </ExamplePydanticModelFields>
+</children>
+<location>Australia</location>\
 """),
             id='pydantic model without fields',
         ),
