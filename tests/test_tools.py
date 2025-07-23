@@ -55,6 +55,26 @@ def test_tool_plain_with_ctx():
     )
 
 
+def test_builtin_tool_registration():
+    """
+    Test that built-in functions can't be registered as tools.
+    """
+
+    with pytest.raises(
+        UserError,
+        match='Error generating schema for min:\n  no signature found for builtin <built-in function min>',
+    ):
+        agent = Agent(TestModel())
+        agent.tool_plain(min)
+
+    with pytest.raises(
+        UserError,
+        match='Error generating schema for max:\n  no signature found for builtin <built-in function max>',
+    ):
+        agent = Agent(TestModel())
+        agent.tool_plain(max)
+
+
 def test_tool_ctx_second():
     agent = Agent(TestModel())
 
