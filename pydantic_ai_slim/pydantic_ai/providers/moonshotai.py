@@ -55,8 +55,8 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         # "Please note that the current version of Kimi API does not support the tool_choice=required parameter."
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
-            openai_supports_strict_tool_definition=False,
             openai_supports_tool_choice_required=False,
+            supports_json_object_output=True,
         ).update(profile)
 
     # ---------------------------------------------------------------------
