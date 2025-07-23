@@ -692,7 +692,7 @@ class MCPServerHTTP(MCPServerSSE):
     """
 
 
-@dataclass
+@dataclass(init=False)
 class MCPServerStreamableHTTP(_MCPServerHTTP):
     """An MCP server that connects over HTTP using the Streamable HTTP transport.
 
@@ -716,6 +716,53 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
             ...
     ```
     """
+
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        read_timeout: float | None = None,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        max_retries: int = 1,
+        sampling_model: models.Model | None = None,
+        **kwargs: Any,
+    ) -> None:
+        # Handle deprecated sse_read_timeout parameter
+        if 'sse_read_timeout' in kwargs:
+            if read_timeout is not None:
+                raise TypeError("'read_timeout' and 'sse_read_timeout' cannot be set at the same time.")
+
+            warnings.warn(
+                "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
+            )
+            read_timeout = kwargs.pop('sse_read_timeout')
+
+        _utils.validate_empty_kwargs(kwargs)
+
+        if read_timeout is None:
+            read_timeout = 5 * 60
+
+        super().__init__(
+            url=url,
+            headers=headers,
+            http_client=http_client,
+            read_timeout=read_timeout,
+            tool_prefix=tool_prefix,
+            log_level=log_level,
+            log_handler=log_handler,
+            timeout=timeout,
+            process_tool_call=process_tool_call,
+            allow_sampling=allow_sampling,
+            max_retries=max_retries,
+            sampling_model=sampling_model,
+        )
 
     @property
     def _transport_client(self):
