@@ -66,5 +66,5 @@ def test_moonshotai_model_profile():
     model = OpenAIModel('kimi-k2-0711-preview', provider=provider)
     assert isinstance(model.profile, OpenAIModelProfile)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
-    assert model.profile.openai_supports_strict_tool_definition is False
     assert model.profile.openai_supports_tool_choice_required is False
+    assert model.profile.supports_json_object_output is True
