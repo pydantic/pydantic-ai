@@ -87,6 +87,6 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                 200: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' there')),
                 201: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='!')),
             },
-            length=211,
+            length=210,
         )
     )
