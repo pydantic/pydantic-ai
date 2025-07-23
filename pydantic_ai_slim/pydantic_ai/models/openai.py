@@ -350,7 +350,6 @@ class OpenAIModel(Model):
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
         # * if the endpoint returns plain text, the return type is a string
@@ -362,13 +361,13 @@ class OpenAIModel(Model):
             timestamp = number_to_datetime(response.created)
         else:
             timestamp = _now_utc()
+            response.created = int(timestamp.timestamp())
 
-        # Some validation that was mentioned above
         try:
             response = chat.ChatCompletion.model_validate(response.model_dump())
         except ValidationError as e:
             raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
-        timestamp = number_to_datetime(response.created)
+
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         # The `reasoning_content` is only present in DeepSeek models.

@@ -2580,6 +2580,7 @@ async def test_text_response(allow_model_requests: None):
         'Invalid response from OpenAI chat completions endpoint, expected JSON data'
     )
 
+
 async def test_process_response_no_created_timestamp(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
