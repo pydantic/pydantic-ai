@@ -2579,3 +2579,18 @@ async def test_text_response(allow_model_requests: None):
     assert exc_info.value.message == snapshot(
         'Invalid response from OpenAI chat completions endpoint, expected JSON data'
     )
+
+async def test_process_response_no_created_timestamp(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionOutputMessage.parse_obj_as_instance({'content': 'response', 'role': 'assistant'}),  # type: ignore
+    )
+    c.created = None  # type: ignore
+
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model)
+    result = await agent.run('Hello')
+    messages = result.all_messages()
+    response_message = messages[1]
+    assert isinstance(response_message, ModelResponse)
+    assert response_message.timestamp == IsNow(tz=timezone.utc)
