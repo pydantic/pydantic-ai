@@ -126,7 +126,12 @@ def test_logfire(
             'all_messages_events': IsJson(
                 snapshot(
                     [
-                        {'content': 'Hello', 'role': 'user', 'gen_ai.message.index': 0},
+                        {
+                            'content': 'Hello',
+                            'role': 'user',
+                            'gen_ai.message.index': 0,
+                            'event.name': 'gen_ai.user.message',
+                        },
                         {
                             'role': 'assistant',
                             'tool_calls': [
@@ -140,9 +145,22 @@ def test_logfire(
                                 }
                             ],
                             'gen_ai.message.index': 1,
+                            'event.name': 'gen_ai.assistant.message',
                         },
-                        {'content': '1', 'role': 'tool', 'id': IsStr(), 'name': 'my_ret', 'gen_ai.message.index': 2},
-                        {'role': 'assistant', 'content': '{"my_ret":"1"}', 'gen_ai.message.index': 3},
+                        {
+                            'content': '1',
+                            'role': 'tool',
+                            'id': IsStr(),
+                            'name': 'my_ret',
+                            'gen_ai.message.index': 2,
+                            'event.name': 'gen_ai.tool.message',
+                        },
+                        {
+                            'role': 'assistant',
+                            'content': '{"my_ret":"1"}',
+                            'gen_ai.message.index': 3,
+                            'event.name': 'gen_ai.assistant.message',
+                        },
                     ]
                 )
             ),
@@ -234,6 +252,7 @@ def test_logfire(
                                 'role': 'user',
                                 'gen_ai.message.index': 0,
                                 'gen_ai.system': 'test',
+                                'event.name': 'gen_ai.user.message',
                             },
                             {
                                 'index': 0,
@@ -248,6 +267,7 @@ def test_logfire(
                                     ],
                                 },
                                 'gen_ai.system': 'test',
+                                'event.name': 'gen_ai.choice',
                             },
                         ]
                     )
@@ -318,8 +338,17 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
             'all_messages_events': IsJson(
                 snapshot(
                     [
-                        {'content': 'Here are some instructions', 'role': 'system'},
-                        {'content': 'Hello', 'role': 'user', 'gen_ai.message.index': 0},
+                        {
+                            'content': 'Here are some instructions',
+                            'role': 'system',
+                            'event.name': 'gen_ai.system.message',
+                        },
+                        {
+                            'content': 'Hello',
+                            'role': 'user',
+                            'gen_ai.message.index': 0,
+                            'event.name': 'gen_ai.user.message',
+                        },
                         {
                             'role': 'assistant',
                             'tool_calls': [
@@ -330,6 +359,7 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
                                 }
                             ],
                             'gen_ai.message.index': 1,
+                            'event.name': 'gen_ai.assistant.message',
                         },
                         {
                             'content': 'Final result processed.',
@@ -337,6 +367,7 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
                             'id': IsStr(),
                             'name': 'final_result',
                             'gen_ai.message.index': 2,
+                            'event.name': 'gen_ai.tool.message',
                         },
                     ]
                 )
@@ -357,12 +388,18 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
         IsJson(
             snapshot(
                 [
-                    {'content': 'Here are some instructions', 'role': 'system', 'gen_ai.system': 'test'},
+                    {
+                        'content': 'Here are some instructions',
+                        'role': 'system',
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.system.message',
+                    },
                     {
                         'content': 'Hello',
                         'role': 'user',
                         'gen_ai.message.index': 0,
                         'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.user.message',
                     },
                     {
                         'index': 0,
@@ -377,6 +414,7 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
                             ],
                         },
                         'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
                     },
                 ]
             )
@@ -409,8 +447,13 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
             'all_messages_events': IsJson(
                 snapshot(
                     [
-                        {'role': 'system'},
-                        {'content': {'kind': 'text'}, 'role': 'user', 'gen_ai.message.index': 0},
+                        {'role': 'system', 'event.name': 'gen_ai.system.message'},
+                        {
+                            'content': {'kind': 'text'},
+                            'role': 'user',
+                            'gen_ai.message.index': 0,
+                            'event.name': 'gen_ai.user.message',
+                        },
                         {
                             'role': 'assistant',
                             'tool_calls': [
@@ -421,8 +464,15 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                                 }
                             ],
                             'gen_ai.message.index': 1,
+                            'event.name': 'gen_ai.assistant.message',
                         },
-                        {'role': 'tool', 'id': IsStr(), 'name': 'final_result', 'gen_ai.message.index': 2},
+                        {
+                            'role': 'tool',
+                            'id': IsStr(),
+                            'name': 'final_result',
+                            'gen_ai.message.index': 2,
+                            'event.name': 'gen_ai.tool.message',
+                        },
                     ]
                 )
             ),
@@ -441,12 +491,13 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
         IsJson(
             snapshot(
                 [
-                    {'role': 'system', 'gen_ai.system': 'test'},
+                    {'role': 'system', 'gen_ai.system': 'test', 'event.name': 'gen_ai.system.message'},
                     {
                         'content': {'kind': 'text'},
                         'role': 'user',
                         'gen_ai.message.index': 0,
                         'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.user.message',
                     },
                     {
                         'index': 0,
@@ -461,6 +512,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
                             ],
                         },
                         'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.choice',
                     },
                 ]
             )
@@ -533,7 +585,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'gen_ai.response.model': 'test',
-                    'events': '[{"content": "Hello", "role": "user", "gen_ai.system": "test", "gen_ai.message.index": 0}, {"index": 0, "message": {"role": "assistant", "content": "success (no tool calls)"}, "gen_ai.system": "test"}]',
+                    'events': '[{"content": "Hello", "role": "user", "gen_ai.system": "test", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"index": 0, "message": {"role": "assistant", "content": "success (no tool calls)"}, "gen_ai.system": "test", "event.name": "gen_ai.choice"}]',
                     'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
                 },
             },
@@ -549,7 +601,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
-                    'all_messages_events': '[{"content": "Hello", "role": "user", "gen_ai.message.index": 0}, {"role": "assistant", "content": "success (no tool calls)", "gen_ai.message.index": 1}]',
+                    'all_messages_events': '[{"content": "Hello", "role": "user", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"role": "assistant", "content": "success (no tool calls)", "gen_ai.message.index": 1, "event.name": "gen_ai.assistant.message"}]',
                     'gen_ai.usage.output_tokens': 4,
                     'final_result': 'success (no tool calls)',
                     'logfire.json_schema': '{"type": "object", "properties": {"all_messages_events": {"type": "array"}, "final_result": {"type": "object"}}}',

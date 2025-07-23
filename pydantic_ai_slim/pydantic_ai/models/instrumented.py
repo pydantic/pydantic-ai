@@ -158,7 +158,7 @@ class InstrumentationSettings:
         if instructions is not None:
             events.append(
                 LogRecord(
-                    event_name='gen_ai.system.message',
+                    attributes={'event.name': 'gen_ai.system.message'},
                     body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
                 )
             )
@@ -303,7 +303,7 @@ class InstrumentedModel(WrapperModel):
                     for event in self.instrumentation_settings.messages_to_otel_events([response]):
                         events.append(
                             LogRecord(
-                                event_name='gen_ai.choice',
+                                attributes={'event.name': 'gen_ai.choice'},
                                 body={
                                     # TODO finish_reason
                                     'index': 0,

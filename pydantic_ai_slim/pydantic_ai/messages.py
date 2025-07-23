@@ -78,7 +78,7 @@ class SystemPromptPart:
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         return LogRecord(
-            event_name='gen_ai.system.message',
+            attributes={'event.name': 'gen_ai.system.message'},
             body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
         )
 
@@ -436,7 +436,7 @@ class UserPromptPart:
                     content.append(converted_part)
                 else:
                     content.append({'kind': part.kind})  # pragma: no cover
-        return LogRecord(event_name='gen_ai.user.message', body={'content': content, 'role': 'user'})
+        return LogRecord(attributes={'event.name': 'gen_ai.user.message'}, body={'content': content, 'role': 'user'})
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -485,7 +485,7 @@ class ToolReturnPart:
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         return LogRecord(
-            event_name='gen_ai.tool.message',
+            attributes={'event.name': 'gen_ai.tool.message'},
             body={
                 **({'content': self.content} if settings.include_content else {}),
                 'role': 'tool',
@@ -552,10 +552,13 @@ class RetryPromptPart:
 
     def otel_event(self, settings: InstrumentationSettings) -> LogRecord:
         if self.tool_name is None:
-            return LogRecord(event_name='gen_ai.user.message', body={'content': self.model_response(), 'role': 'user'})
+            return LogRecord(
+                attributes={'event.name': 'gen_ai.user.message'},
+                body={'content': self.model_response(), 'role': 'user'},
+            )
         else:
             return LogRecord(
-                event_name='gen_ai.tool.message',
+                attributes={'event.name': 'gen_ai.tool.message'},
                 body={
                     **({'content': self.model_response()} if settings.include_content else {}),
                     'role': 'tool',
@@ -740,7 +743,7 @@ class ModelResponse:
 
         def new_event_body():
             new_body: dict[str, Any] = {'role': 'assistant'}
-            ev = LogRecord(event_name='gen_ai.assistant.message', body=new_body)
+            ev = LogRecord(attributes={'event.name': 'gen_ai.assistant.message'}, body=new_body)
             result.append(ev)
             return new_body
 

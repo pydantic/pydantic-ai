@@ -172,7 +172,11 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'body': {'content': 'system_prompt', 'role': 'system'},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 0},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
+                    'event.name': 'gen_ai.system.message',
+                },
                 'timestamp': 2000000000,
                 'observed_timestamp': 3000000000,
                 'trace_id': 1,
@@ -183,7 +187,11 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'body': {'content': 'user_prompt', 'role': 'user'},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 0},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
+                    'event.name': 'gen_ai.user.message',
+                },
                 'timestamp': 4000000000,
                 'observed_timestamp': 5000000000,
                 'trace_id': 1,
@@ -194,7 +202,11 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3', 'name': 'tool3'},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 0},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
+                    'event.name': 'gen_ai.tool.message',
+                },
                 'timestamp': 6000000000,
                 'observed_timestamp': 7000000000,
                 'trace_id': 1,
@@ -214,7 +226,11 @@ Fix the errors and try again.\
                 },
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 0},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
+                    'event.name': 'gen_ai.tool.message',
+                },
                 'timestamp': 8000000000,
                 'observed_timestamp': 9000000000,
                 'trace_id': 1,
@@ -233,7 +249,11 @@ Fix the errors and try again.\
                 },
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 0},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
+                    'event.name': 'gen_ai.user.message',
+                },
                 'timestamp': 10000000000,
                 'observed_timestamp': 11000000000,
                 'trace_id': 1,
@@ -244,7 +264,11 @@ Fix the errors and try again.\
                 'body': {'role': 'assistant', 'content': 'text3'},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 1},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 1,
+                    'event.name': 'gen_ai.assistant.message',
+                },
                 'timestamp': 12000000000,
                 'observed_timestamp': 13000000000,
                 'trace_id': 1,
@@ -273,7 +297,7 @@ Fix the errors and try again.\
                 },
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system'},
+                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 14000000000,
                 'observed_timestamp': 15000000000,
                 'trace_id': 1,
@@ -284,7 +308,7 @@ Fix the errors and try again.\
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text2'}},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system'},
+                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 16000000000,
                 'observed_timestamp': 17000000000,
                 'trace_id': 1,
@@ -377,7 +401,11 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'body': {'content': 'user_prompt', 'role': 'user'},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 0},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
+                    'event.name': 'gen_ai.user.message',
+                },
                 'timestamp': 2000000000,
                 'observed_timestamp': 3000000000,
                 'trace_id': 1,
@@ -388,7 +416,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system'},
+                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 4000000000,
                 'observed_timestamp': 5000000000,
                 'trace_id': 1,
@@ -473,7 +501,11 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'body': {'content': 'user_prompt', 'role': 'user'},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'gen_ai.message.index': 0},
+                'attributes': {
+                    'gen_ai.system': 'my_system',
+                    'gen_ai.message.index': 0,
+                    'event.name': 'gen_ai.user.message',
+                },
                 'timestamp': 2000000000,
                 'observed_timestamp': 3000000000,
                 'trace_id': 1,
@@ -484,7 +516,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
                 'severity_number': None,
                 'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system'},
+                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 4000000000,
                 'observed_timestamp': 5000000000,
                 'trace_id': 1,
@@ -554,12 +586,14 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                                     'role': 'system',
                                     'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.system.message',
                                 },
                                 {
                                     'content': 'user_prompt',
                                     'role': 'user',
                                     'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.user.message',
                                 },
                                 {
                                     'content': 'tool_return_content',
@@ -568,6 +602,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire):
                                     'id': 'tool_call_3',
                                     'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.tool.message',
                                 },
                                 {
                                     'content': """\
@@ -580,6 +615,7 @@ Fix the errors and try again.\
                                     'id': 'tool_call_4',
                                     'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.tool.message',
                                 },
                                 {
                                     'content': """\
@@ -591,12 +627,14 @@ Fix the errors and try again.\
                                     'role': 'user',
                                     'gen_ai.message.index': 0,
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.user.message',
                                 },
                                 {
                                     'role': 'assistant',
                                     'content': 'text3',
                                     'gen_ai.message.index': 1,
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.assistant.message',
                                 },
                                 {
                                     'index': 0,
@@ -617,11 +655,13 @@ Fix the errors and try again.\
                                         ],
                                     },
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.choice',
                                 },
                                 {
                                     'index': 0,
                                     'message': {'role': 'assistant', 'content': 'text2'},
                                     'gen_ai.system': 'my_system',
+                                    'event.name': 'gen_ai.choice',
                                 },
                             ]
                         )
@@ -653,8 +693,9 @@ def test_messages_to_otel_events_serialization_errors():
             {
                 'body': "{'role': 'assistant', 'tool_calls': [{'id': 'tool_call_id', 'type': 'function', 'function': {'name': 'tool', 'arguments': {'arg': Foo()}}}]}",
                 'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.assistant.message',
             },
-            {'body': 'Unable to serialize: error!', 'gen_ai.message.index': 1},
+            {'body': 'Unable to serialize: error!', 'gen_ai.message.index': 1, 'event.name': 'gen_ai.tool.message'},
         ]
     )
 
@@ -667,9 +708,14 @@ def test_messages_to_otel_events_instructions():
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
-            {'content': 'instructions', 'role': 'system'},
-            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0},
-            {'role': 'assistant', 'content': 'text1', 'gen_ai.message.index': 1},
+            {'content': 'instructions', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
         ]
     )
 
@@ -683,10 +729,15 @@ def test_messages_to_otel_events_instructions_multiple_messages():
     settings = InstrumentationSettings()
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
-            {'content': 'instructions2', 'role': 'system'},
-            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0},
-            {'role': 'assistant', 'content': 'text1', 'gen_ai.message.index': 1},
-            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2},
+            {'content': 'instructions2', 'role': 'system', 'event.name': 'gen_ai.system.message'},
+            {'content': 'user_prompt', 'role': 'user', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.user.message'},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {'content': 'user_prompt2', 'role': 'user', 'gen_ai.message.index': 2, 'event.name': 'gen_ai.user.message'},
         ]
     )
 
@@ -720,21 +771,25 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 'content': ['user_prompt', {'kind': 'image-url', 'url': 'https://example.com/image.png'}],
                 'role': 'user',
                 'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
             },
             {
                 'content': ['user_prompt2', {'kind': 'audio-url', 'url': 'https://example.com/audio.mp3'}],
                 'role': 'user',
                 'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.user.message',
             },
             {
                 'content': ['user_prompt3', {'kind': 'document-url', 'url': 'https://example.com/document.pdf'}],
                 'role': 'user',
                 'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.user.message',
             },
             {
                 'content': ['user_prompt4', {'kind': 'video-url', 'url': 'https://example.com/video.mp4'}],
                 'role': 'user',
                 'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.user.message',
             },
             {
                 'content': [
@@ -746,6 +801,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 ],
                 'role': 'user',
                 'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.user.message',
             },
             {
                 'content': [
@@ -754,8 +810,14 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                 ],
                 'role': 'user',
                 'gen_ai.message.index': 5,
+                'event.name': 'gen_ai.user.message',
             },
-            {'role': 'assistant', 'content': 'text1', 'gen_ai.message.index': 6},
+            {
+                'role': 'assistant',
+                'content': 'text1',
+                'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.assistant.message',
+            },
         ]
     )
 
@@ -771,6 +833,7 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
                 'content': ['user_prompt6', {'kind': 'binary', 'media_type': 'application/pdf'}],
                 'role': 'user',
                 'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.user.message',
             }
         ]
     )
@@ -803,8 +866,8 @@ def test_messages_without_content(document_content: BinaryContent):
     settings = InstrumentationSettings(include_content=False)
     assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
         [
-            {'role': 'system', 'gen_ai.message.index': 0},
-            {'role': 'assistant', 'gen_ai.message.index': 1},
+            {'role': 'system', 'gen_ai.message.index': 0, 'event.name': 'gen_ai.system.message'},
+            {'role': 'assistant', 'gen_ai.message.index': 1, 'event.name': 'gen_ai.assistant.message'},
             {
                 'content': [
                     {'kind': 'text'},
@@ -816,6 +879,7 @@ def test_messages_without_content(document_content: BinaryContent):
                 ],
                 'role': 'user',
                 'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.user.message',
             },
             {
                 'role': 'assistant',
@@ -827,14 +891,33 @@ def test_messages_without_content(document_content: BinaryContent):
                     }
                 ],
                 'gen_ai.message.index': 3,
+                'event.name': 'gen_ai.assistant.message',
             },
-            {'role': 'tool', 'id': 'tool_call_1', 'name': 'tool', 'gen_ai.message.index': 4},
-            {'role': 'tool', 'id': 'tool_call_2', 'name': 'tool', 'gen_ai.message.index': 5},
+            {
+                'role': 'tool',
+                'id': 'tool_call_1',
+                'name': 'tool',
+                'gen_ai.message.index': 4,
+                'event.name': 'gen_ai.tool.message',
+            },
+            {
+                'role': 'tool',
+                'id': 'tool_call_2',
+                'name': 'tool',
+                'gen_ai.message.index': 5,
+                'event.name': 'gen_ai.tool.message',
+            },
             {
                 'content': [{'kind': 'text'}, {'kind': 'binary', 'media_type': 'application/pdf'}],
                 'role': 'user',
                 'gen_ai.message.index': 6,
+                'event.name': 'gen_ai.user.message',
             },
-            {'content': {'kind': 'text'}, 'role': 'user', 'gen_ai.message.index': 7},
+            {
+                'content': {'kind': 'text'},
+                'role': 'user',
+                'gen_ai.message.index': 7,
+                'event.name': 'gen_ai.user.message',
+            },
         ]
     )
