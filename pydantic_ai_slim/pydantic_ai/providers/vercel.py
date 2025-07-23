@@ -45,13 +45,13 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile = {
             'anthropic': anthropic_model_profile,
-            'bedrock': amazon_model_profile,   
-            'cohere': cohere_model_profile, 
+            'bedrock': amazon_model_profile,
+            'cohere': cohere_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
             'openai': openai_model_profile,
-            'vertex': google_model_profile,   
-            'xai': grok_model_profile, 
+            'vertex': google_model_profile,
+            'xai': grok_model_profile,
         }
 
         profile = None
@@ -60,7 +60,7 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
             provider, model_name = model_name.split('/', 1)
             if provider in provider_to_profile:
                 profile = provider_to_profile[provider](model_name)
-        
+
         # As VercelAIGatewayProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(
@@ -87,11 +87,11 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
         http_client: AsyncHTTPClient | None = None,
     ) -> None:
         # Support Vercel AI Gateway's standard environment variables
-        api_key = api_key or os.getenv('AI_GATEWAY_API_KEY') or os.getenv('VERCEL_OIDC_TOKEN')
-        
+        api_key = api_key or os.getenv('VERCEL_AI_GATEWAY_API_KEY') or os.getenv('VERCEL_OIDC_TOKEN')
+
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` environment variable '
+                'Set the `VERCEL_AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` environment variable '
                 'or pass the API key via `VercelAIGatewayProvider(api_key=...)` to use the Vercel AI Gateway provider.'
             )
 
@@ -101,4 +101,4 @@ class VercelAIGatewayProvider(Provider[AsyncOpenAI]):
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
             http_client = cached_async_http_client(provider='vercel-ai-gateway')
-            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client) 
+            self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)

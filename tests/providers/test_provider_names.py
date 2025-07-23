@@ -36,7 +36,7 @@ with try_import() as imports_successful:
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
-        ('vercel-ai-gateway', VercelAIGatewayProvider, 'AI_GATEWAY_API_KEY'),
+        ('vercel-ai-gateway', VercelAIGatewayProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
         ('google-vertex', GoogleVertexProvider, None),

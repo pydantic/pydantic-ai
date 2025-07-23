@@ -355,7 +355,7 @@ To use the [Vercel AI Gateway](https://vercel.com/docs/ai-gateway), first follow
 You can set your credentials using one of these environment variables:
 
 ```bash
-export AI_GATEWAY_API_KEY='your-ai-gateway-api-key'
+export VERCEL_AI_GATEWAY_API_KEY='your-ai-gateway-api-key'
 # OR
 export VERCEL_OIDC_TOKEN='your-oidc-token'
 ```

@@ -14,17 +14,17 @@ PydanticAI is model-agnostic and has built-in support for multiple model provide
 
 In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIModel` in PydanticAI:
 
-* [DeepSeek](openai.md#deepseek)
-* [Grok (xAI)](openai.md#grok-xai)
-* [Ollama](openai.md#ollama)
-* [OpenRouter](openai.md#openrouter)
-* [Vercel AI Gateway](openai.md#vercel-ai-gateway)
-* [Perplexity](openai.md#perplexity)
-* [Fireworks AI](openai.md#fireworks-ai)
-* [Together AI](openai.md#together-ai)
-* [Azure AI Foundry](openai.md#azure-ai-foundry)
-* [Heroku](openai.md#heroku-ai)
-* [GitHub Models](openai.md#github-models)
+- [DeepSeek](openai.md#deepseek)
+- [Grok (xAI)](openai.md#grok-xai)
+- [Ollama](openai.md#ollama)
+- [OpenRouter](openai.md#openrouter)
+- [Vercel AI Gateway](openai.md#vercel-ai-gateway)
+- [Perplexity](openai.md#perplexity)
+- [Fireworks AI](openai.md#fireworks-ai)
+- [Together AI](openai.md#together-ai)
+- [Azure AI Foundry](openai.md#azure-ai-foundry)
+- [Heroku](openai.md#heroku-ai)
+- [GitHub Models](openai.md#github-models)
 
 PydanticAI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.

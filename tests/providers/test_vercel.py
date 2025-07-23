@@ -2,27 +2,24 @@ import re
 
 import httpx
 import pytest
-from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
-from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile, GoogleJsonSchemaTransformer
+from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
-from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.vercel import VercelAIGatewayProvider
 
 
@@ -42,16 +39,17 @@ def test_vercel_provider():
 
 
 def test_vercel_provider_need_api_key(env: TestEnv) -> None:
-    env.remove('AI_GATEWAY_API_KEY')
+    env.remove('VERCEL_AI_GATEWAY_API_KEY')
     env.remove('VERCEL_OIDC_TOKEN')
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Set the `AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` environment variable '
+            'Set the `VERCEL_AI_GATEWAY_API_KEY` or `VERCEL_OIDC_TOKEN` environment variable '
             'or pass the API key via `VercelAIGatewayProvider(api_key=...)` to use the Vercel AI Gateway provider.'
         ),
     ):
         VercelAIGatewayProvider()
+
 
 def test_vercel_pass_openai_client() -> None:
     openai_client = openai.AsyncOpenAI(api_key='api-key')
@@ -63,7 +61,7 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     provider = VercelAIGatewayProvider(api_key='api-key')
 
     ns = 'pydantic_ai.providers.vercel'
-    
+
     # Mock all profile functions
     anthropic_mock = mocker.patch(f'{ns}.anthropic_model_profile', wraps=anthropic_model_profile)
     amazon_mock = mocker.patch(f'{ns}.amazon_model_profile', wraps=amazon_model_profile)
@@ -87,8 +85,8 @@ def test_vercel_provider_model_profile(mocker: MockerFixture):
     assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     # Test bedrock provider
-    profile = provider.model_profile('bedrock/claude-3-sonnet')
-    amazon_mock.assert_called_with('claude-3-sonnet')
+    profile = provider.model_profile('bedrock/anthropic.claude-3-sonnet')
+    amazon_mock.assert_called_with('anthropic.claude-3-sonnet')
     assert profile is not None
     assert profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
@@ -127,4 +125,4 @@ def test_vercel_with_http_client():
     http_client = httpx.AsyncClient()
     provider = VercelAIGatewayProvider(api_key='test-key', http_client=http_client)
     assert provider.client.api_key == 'test-key'
-    assert str(provider.client._base_url) == 'https://ai-gateway.vercel.sh/v1/'
+    assert str(provider.client.base_url) == 'https://ai-gateway.vercel.sh/v1/'

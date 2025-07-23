@@ -1,4 +1,4 @@
-"""Simple example of using PydanticAI to construct a Pydantic model from a text input.
+"""Simple example of using Pydantic AI to construct a Pydantic model from a text input.
 
 Run with:
 
@@ -6,13 +6,6 @@ Run with:
 """
 
 import os
-
-# Load environment variables from a .env file if present
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass  # If dotenv is not installed, continue without loading .env
 
 import logfire
 from pydantic import BaseModel
@@ -29,7 +22,7 @@ class MyModel(BaseModel):
     country: str
 
 
-model = os.getenv('PYDANTIC_AI_MODEL', 'vercel-ai-gateway:anthropic/claude-4-sonnet')
+model = os.getenv('PYDANTIC_AI_MODEL', 'openai:gpt-4o')
 print(f'Using model: {model}')
 agent = Agent(model, output_type=MyModel)
 
