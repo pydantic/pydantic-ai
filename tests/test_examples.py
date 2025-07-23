@@ -128,6 +128,20 @@ def test_docs_examples(  # noqa: C901
     mocker.patch('httpx.AsyncClient.post', side_effect=async_http_request)
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
+    # Avoid filesystem access when examples call ssl.create_default_context(cafile=...) with non-existent paths
+    import ssl as _ssl_module
+
+    def _mock_create_default_context(*args: Any, **kwargs: Any):
+        # Ignore cafile / capath parameters to prevent FileNotFoundError
+        return _ssl_module.SSLContext(_ssl_module.PROTOCOL_TLS_CLIENT)
+
+    mocker.patch('ssl.create_default_context', side_effect=_mock_create_default_context)
+
+    # Prevent FileNotFoundError when examples call ssl_ctx.load_cert_chain(...)
+    def _mock_load_cert_chain(self: _ssl_module.SSLContext, *args: Any, **kwargs: Any) -> None:
+        """No-op replacement for SSLContext.load_cert_chain used in docs examples."""
+
+    mocker.patch('ssl.SSLContext.load_cert_chain', _mock_load_cert_chain)
 
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
