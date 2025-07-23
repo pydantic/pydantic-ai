@@ -16,6 +16,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -123,7 +124,7 @@ def completion_message(
     return MistralChatCompletionResponse(
         id='123',
         choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
-        created=1704067200 if with_created else None,  # 2024-01-01
+        created=1704067200 if with_created else 0,  # 2024-01-01
         model='mistral-large-123',
         object='chat.completion',
         usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -142,7 +143,7 @@ def chunk(
                 MistralCompletionResponseStreamChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
-            created=1704067200 if with_created else None,  # 2024-01-01
+            created=1704067200 if with_created else 0,  # 2024-01-01
             model='gpt-4',
             object='chat.completion.chunk',
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -188,11 +189,13 @@ def test_init():
 
 async def test_multiple_completions(allow_model_requests: None):
     completions = [
+        # First completion: created is "now" (simulate IsNow)
         completion_message(
             MistralAssistantMessage(content='world'),
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
             with_created=False,
         ),
+        # Second completion: created is fixed 2024-01-01 00:00:00 UTC
         completion_message(MistralAssistantMessage(content='hello again')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
@@ -1909,6 +1912,87 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
     )
 
 
+async def test_pdf_url_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'),
+        ]
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'hello',
+                            DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                model_name='mistral-large-123',
+                timestamp=IsDatetime(),
+                vendor_id='123',
+            ),
+        ]
+    )
+
+
+async def test_pdf_as_binary_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    base64_content = b'%PDF-1.\rtrailer<</Root<</Pages<</Kids[<</MediaBox[0 0 3 3]>>>>>>>>>'
+
+    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='application/pdf')])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['hello', BinaryContent(data=base64_content, media_type='application/pdf')],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                model_name='mistral-large-123',
+                timestamp=IsDatetime(),
+                vendor_id='123',
+            ),
+        ]
+    )
+
+
+async def test_txt_url_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='DocumentUrl other than PDF is not supported in Mistral.'):
+        await agent.run(
+            [
+                'hello',
+                DocumentUrl(url='https://examplefiles.org/files/documents/plaintext-example-file-download.txt'),
+            ]
+        )
+
+
 async def test_audio_as_binary_content_input(allow_model_requests: None):
     c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
     mock_client = MockMistralAI.create_mock(c)
@@ -1917,7 +2001,7 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='Only image binary content is supported for Mistral.'):
+    with pytest.raises(RuntimeError, match='BinaryContent other than image or PDF is not supported in Mistral.'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
 
 

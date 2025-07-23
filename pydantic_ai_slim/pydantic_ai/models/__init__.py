@@ -758,7 +758,7 @@ async def download_item(
 
     data_type = media_type
     if type_format == 'extension':
-        data_type = data_type.split('/')[1]
+        data_type = item.format
 
     data = response.content
     if data_format in ('base64', 'base64_uri'):

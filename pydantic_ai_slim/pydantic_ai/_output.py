@@ -69,12 +69,31 @@ DEFAULT_OUTPUT_TOOL_NAME = 'final_result'
 DEFAULT_OUTPUT_TOOL_DESCRIPTION = 'The final response which ends this conversation'
 
 
-async def execute_output_function_with_span(
+async def execute_traced_output_function(
     function_schema: _function_schema.FunctionSchema,
     run_context: RunContext[AgentDepsT],
     args: dict[str, Any] | Any,
+    wrap_validation_errors: bool = True,
 ) -> Any:
-    """Execute a function call within a traced span, automatically recording the response."""
+    """Execute an output function within a traced span with error handling.
+
+    This function executes the output function within an OpenTelemetry span for observability,
+    automatically records the function response, and handles ModelRetry exceptions by converting
+    them to ToolRetryError when wrap_validation_errors is True.
+
+    Args:
+        function_schema: The function schema containing the function to execute
+        run_context: The current run context containing tracing and tool information
+        args: Arguments to pass to the function
+        wrap_validation_errors: If True, wrap ModelRetry exceptions in ToolRetryError
+
+    Returns:
+        The result of the function execution
+
+    Raises:
+        ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
+        ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
+    """
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
@@ -96,7 +115,19 @@ async def execute_output_function_with_span(
         )
 
     with run_context.tracer.start_as_current_span('running output function', attributes=attributes) as span:
-        output = await function_schema.call(args, run_context)
+        try:
+            output = await function_schema.call(args, run_context)
+        except ModelRetry as r:
+            if wrap_validation_errors:
+                m = _messages.RetryPromptPart(
+                    content=r.message,
+                    tool_name=run_context.tool_name,
+                )
+                if run_context.tool_call_id:
+                    m.tool_call_id = run_context.tool_call_id  # pragma: no cover
+                raise ToolRetryError(m) from r
+            else:
+                raise
 
         # Record response if content inclusion is enabled
         if run_context.trace_include_content and span.is_recording():
@@ -663,16 +694,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             else:
                 raise
 
-        try:
-            output = await self.call(output, run_context)
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                )
-                raise ToolRetryError(m) from r
-            else:
-                raise  # pragma: no cover
+        output = await self.call(output, run_context, wrap_validation_errors)
 
         return output
 
@@ -691,12 +713,15 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         self,
         output: Any,
         run_context: RunContext[AgentDepsT],
+        wrap_validation_errors: bool = True,
     ):
         if k := self.outer_typed_dict_key:
             output = output[k]
 
         if self._function_schema:
-            output = await execute_output_function_with_span(self._function_schema, run_context, output)
+            output = await execute_traced_output_function(
+                self._function_schema, run_context, output, wrap_validation_errors
+            )
 
         return output
 
@@ -856,16 +881,7 @@ class PlainTextOutputProcessor(BaseOutputProcessor[OutputDataT]):
         wrap_validation_errors: bool = True,
     ) -> OutputDataT:
         args = {self._str_argument_name: data}
-        try:
-            output = await execute_output_function_with_span(self._function_schema, run_context, args)
-        except ModelRetry as r:
-            if wrap_validation_errors:
-                m = _messages.RetryPromptPart(
-                    content=r.message,
-                )
-                raise ToolRetryError(m) from r
-            else:
-                raise  # pragma: no cover
+        output = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
 
         return cast(OutputDataT, output)
 
@@ -975,7 +991,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        output = await self.processors[name].call(tool_args, ctx)
+        output = await self.processors[name].call(tool_args, ctx, wrap_validation_errors=False)
         for validator in self.output_validators:
             output = await validator.validate(output, ctx, wrap_validation_errors=False)
         return output

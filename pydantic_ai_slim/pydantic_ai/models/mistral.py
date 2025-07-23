@@ -52,6 +52,7 @@ try:
         CompletionChunk as MistralCompletionChunk,
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
+        DocumentURLChunk as MistralDocumentURLChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
@@ -539,10 +540,19 @@ class MistralModel(Model):
                     if item.is_image:
                         image_url = MistralImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
+                    elif item.media_type == 'application/pdf':
+                        content.append(
+                            MistralDocumentURLChunk(
+                                document_url=f'data:application/pdf;base64,{base64_encoded}', type='document_url'
+                            )
+                        )
                     else:
-                        raise RuntimeError('Only image binary content is supported for Mistral.')
+                        raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
                 elif isinstance(item, DocumentUrl):
-                    raise RuntimeError('DocumentUrl is not supported in Mistral.')  # pragma: no cover
+                    if item.media_type == 'application/pdf':
+                        content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
+                    else:
+                        raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
                 else:  # pragma: no cover
