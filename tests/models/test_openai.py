@@ -2599,7 +2599,7 @@ async def test_invalid_response(allow_model_requests: None):
     with pytest.raises(UnexpectedModelBehavior) as exc_info:
         await agent.run('What is the capital of France?')
     assert exc_info.value.message.startswith(
-        'Invalid response from OpenAI chat completions endpoint: 5 validation errors for ChatCompletion'
+        'Invalid response from OpenAI chat completions endpoint: 4 validation errors for ChatCompletion'
     )
 
 
@@ -2615,3 +2615,19 @@ async def test_text_response(allow_model_requests: None):
     assert exc_info.value.message == snapshot(
         'Invalid response from OpenAI chat completions endpoint, expected JSON data'
     )
+
+
+async def test_process_response_no_created_timestamp(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+    )
+    c.created = None  # type: ignore
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    messages = result.all_messages()
+    response_message = messages[1]
+    assert isinstance(response_message, ModelResponse)
+    assert response_message.timestamp == IsNow(tz=timezone.utc)
