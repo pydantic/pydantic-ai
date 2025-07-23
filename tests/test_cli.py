@@ -144,6 +144,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'cohere',
         'deepseek',
         'heroku',
+        'grok',
         'huggingface',
     )
     models = {line.strip().split(' ')[0] for line in output[3:]}

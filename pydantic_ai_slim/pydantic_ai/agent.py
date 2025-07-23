@@ -5,7 +5,7 @@ import inspect
 import json
 import warnings
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -36,7 +36,7 @@ from ._tool_manager import ToolManager
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
 from .profiles import ModelProfile
-from .result import FinalResult, StreamedRunResult
+from .result import AgentStream, FinalResult, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -55,6 +55,7 @@ from .toolsets import AbstractToolset
 from .toolsets.combined import CombinedToolset
 from .toolsets.function import FunctionToolset
 from .toolsets.prepared import PreparedToolset
+from .usage import Usage, UsageLimits
 
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
@@ -69,11 +70,12 @@ if TYPE_CHECKING:
     from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
     from starlette.middleware import Middleware
-    from starlette.routing import Route
+    from starlette.routing import BaseRoute, Route
     from starlette.types import ExceptionHandler, Lifespan
 
     from pydantic_ai.mcp import MCPServer
 
+    from .ag_ui import AGUIApp
 
 __all__ = (
     'Agent',
@@ -841,14 +843,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 agent_run = AgentRun(graph_run)
                 yield agent_run
                 if (final_result := agent_run.result) is not None and run_span.is_recording():
-                    run_span.set_attribute(
-                        'final_result',
-                        (
-                            final_result.output
-                            if isinstance(final_result.output, str)
-                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                        ),
-                    )
+                    if instrumentation_settings and instrumentation_settings.include_content:
+                        run_span.set_attribute(
+                            'final_result',
+                            (
+                                final_result.output
+                                if isinstance(final_result.output, str)
+                                else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                            ),
+                        )
         finally:
             try:
                 if instrumentation_settings and run_span.is_recording():
@@ -1124,29 +1127,15 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             while True:
                 if self.is_model_request_node(node):
                     graph_ctx = agent_run.ctx
-                    async with node._stream(graph_ctx) as streamed_response:  # pyright: ignore[reportPrivateUsage]
+                    async with node.stream(graph_ctx) as stream:
 
-                        async def stream_to_final(
-                            s: models.StreamedResponse,
-                        ) -> FinalResult[models.StreamedResponse] | None:
-                            output_schema = graph_ctx.deps.output_schema
-                            async for maybe_part_event in streamed_response:
-                                if isinstance(maybe_part_event, _messages.PartStartEvent):
-                                    new_part = maybe_part_event.part
-                                    if isinstance(new_part, _messages.TextPart) and isinstance(
-                                        output_schema, _output.TextOutputSchema
-                                    ):
-                                        return FinalResult(s, None, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart) and (
-                                        tool_def := graph_ctx.deps.tool_manager.get_tool_def(new_part.tool_name)
-                                    ):
-                                        if tool_def.kind == 'output':
-                                            return FinalResult(s, new_part.tool_name, new_part.tool_call_id)
-                                        elif tool_def.kind == 'deferred':
-                                            return FinalResult(s, None, None)
+                        async def stream_to_final(s: AgentStream) -> FinalResult[AgentStream] | None:
+                            async for event in stream:
+                                if isinstance(event, _messages.FinalResultEvent):
+                                    return FinalResult(s, event.tool_name, event.tool_call_id)
                             return None
 
-                        final_result = await stream_to_final(streamed_response)
+                        final_result = await stream_to_final(stream)
                         if final_result is not None:
                             if yielded:
                                 raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
@@ -1181,14 +1170,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                             yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
-                                graph_ctx.deps.usage_limits,
-                                streamed_response,
-                                graph_ctx.deps.output_schema,
-                                _agent_graph.build_run_context(graph_ctx),
-                                graph_ctx.deps.output_validators,
-                                final_result.tool_name,
+                                stream,
                                 on_complete,
-                                graph_ctx.deps.tool_manager,
                             )
                             break
                 next_node = await agent_run.next(node)
@@ -1862,6 +1845,105 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         async with self:
             yield
+
+    def to_ag_ui(
+        self,
+        *,
+        # Agent.iter parameters
+        output_type: OutputSpec[OutputDataT] | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: Usage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[BaseRoute] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+        on_startup: Sequence[Callable[[], Any]] | None = None,
+        on_shutdown: Sequence[Callable[[], Any]] | None = None,
+        lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
+    ) -> AGUIApp[AgentDepsT, OutputDataT]:
+        """Convert the agent to an AG-UI application.
+
+        This allows you to use the agent with a compatible AG-UI frontend.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+        app = agent.to_ag_ui()
+        ```
+
+        The `app` is an ASGI application that can be used with any ASGI server.
+
+        To run the application, you can use the following command:
+
+        ```bash
+        uvicorn app:app --host 0.0.0.0 --port 8000
+        ```
+
+        See [AG-UI docs](../ag-ui.md) for more information.
+
+        Args:
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
+                no output validators since output validators would expect an argument that matches the agent's
+                output type.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
+
+            debug: Boolean indicating if debug tracebacks should be returned on errors.
+            routes: A list of routes to serve incoming HTTP and WebSocket requests.
+            middleware: A list of middleware to run for every request. A starlette application will always
+                automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
+                outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
+                `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
+                exception cases occurring in the routing or endpoints.
+            exception_handlers: A mapping of either integer status codes, or exception class types onto
+                callables which handle the exceptions. Exception handler callables should be of the form
+                `handler(request, exc) -> response` and may be either standard functions, or async functions.
+            on_startup: A list of callables to run on application startup. Startup handler callables do not
+                take any arguments, and may be either standard functions, or async functions.
+            on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
+                not take any arguments, and may be either standard functions, or async functions.
+            lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
+                This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
+                the other, not both.
+
+        Returns:
+            An ASGI application for running Pydantic AI agents with AG-UI protocol support.
+        """
+        from .ag_ui import AGUIApp
+
+        return AGUIApp(
+            agent=self,
+            # Agent.iter parameters
+            output_type=output_type,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            # Starlette
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            lifespan=lifespan,
+        )
 
     def to_a2a(
         self,

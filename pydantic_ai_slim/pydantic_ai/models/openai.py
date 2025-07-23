@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
+from pydantic import ValidationError
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
@@ -347,8 +348,19 @@ class OpenAIModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: no cover
 
-    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
+        # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
+        # * if the endpoint returns plain text, the return type is a string
+        # Thus we validate it fully here.
+        if not isinstance(response, chat.ChatCompletion):
+            raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
+
+        try:
+            response = chat.ChatCompletion.model_validate(response.model_dump())
+        except ValidationError as e:
+            raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
         timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
