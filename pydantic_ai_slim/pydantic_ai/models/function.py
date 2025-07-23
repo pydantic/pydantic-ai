@@ -16,9 +16,7 @@ from pydantic_ai.profiles import ModelProfileSpec
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
-    AudioUrl,
     BinaryContent,
-    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -345,18 +343,19 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
 def _estimate_string_tokens(content: str | Sequence[UserContent]) -> int:
     if not content:
         return 0
+
     if isinstance(content, str):
-        return len(re.split(r'[\s",.:]+', content.strip()))
-    else:
-        tokens = 0
-        for part in content:
-            if isinstance(part, str):
-                tokens += len(re.split(r'[\s",.:]+', part.strip()))
-            # TODO(Marcelo): We need to study how we can estimate the tokens for these types of content.
-            if isinstance(part, (AudioUrl, ImageUrl)):
-                tokens += 0
-            elif isinstance(part, BinaryContent):
-                tokens += len(part.data)
-            else:
-                tokens += 0
-        return tokens
+        return len(_TOKEN_SPLIT_RE.split(content.strip()))
+
+    tokens = 0
+    for part in content:
+        if isinstance(part, str):
+            tokens += len(_TOKEN_SPLIT_RE.split(part.strip()))
+        elif isinstance(part, BinaryContent):
+            tokens += len(part.data)
+        # TODO(Marcelo): We need to study how we can estimate the tokens for AudioUrl or ImageUrl.
+
+    return tokens
+
+
+_TOKEN_SPLIT_RE = re.compile(r'[\s",.:]+')
