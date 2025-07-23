@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import functools
+import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -37,7 +39,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, exceptions, messages, models
+from . import _mcp, _utils, exceptions, messages, models
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
@@ -59,6 +61,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     log_level: mcp_types.LoggingLevel | None = None
     log_handler: LoggingFnT | None = None
     timeout: float = 5
+    read_timeout: float = 5 * 60
     process_tool_call: ProcessToolCallback | None = None
     allow_sampling: bool = True
     max_retries: int = 1
@@ -208,6 +211,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     write_stream=self._write_stream,
                     sampling_callback=self._sampling_callback if self.allow_sampling else None,
                     logging_callback=self.log_handler,
+                    read_timeout_seconds=timedelta(seconds=self.read_timeout),
                 )
                 self._client = await self._exit_stack.enter_async_context(client)
 
@@ -401,7 +405,7 @@ class MCPServerStdio(MCPServer):
         return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
 
 
-@dataclass
+@dataclass(init=False)
 class _MCPServerHTTP(MCPServer):
     url: str
     """The URL of the endpoint on the MCP server."""
@@ -438,10 +442,10 @@ class _MCPServerHTTP(MCPServer):
         ```
     """
 
-    sse_read_timeout: float = 5 * 60
-    """Maximum time in seconds to wait for new SSE messages before timing out.
+    read_timeout: float = 5 * 60
+    """Maximum time in seconds to wait for new messages before timing out.
 
-    This timeout applies to the long-lived SSE connection after it's established.
+    This timeout applies to the long-lived connection after it's established.
     If no new messages are received within this time, the connection will be considered stale
     and may be closed. Defaults to 5 minutes (300 seconds).
     """
@@ -485,6 +489,51 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        read_timeout: float | None = None,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        max_retries: int = 1,
+        sampling_model: models.Model | None = None,
+        **kwargs: Any,
+    ):
+        # Handle deprecated sse_read_timeout parameter
+        if 'sse_read_timeout' in kwargs:
+            if read_timeout is not None:
+                raise TypeError("'read_timeout' and 'sse_read_timeout' cannot be set at the same time.")
+
+            warnings.warn(
+                "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
+            )
+            read_timeout = kwargs.pop('sse_read_timeout')
+
+        _utils.validate_empty_kwargs(kwargs)
+
+        if read_timeout is None:
+            read_timeout = 5 * 60
+
+        self.url = url
+        self.headers = headers
+        self.http_client = http_client
+        self.tool_prefix = tool_prefix
+        self.log_level = log_level
+        self.log_handler = log_handler
+        self.timeout = timeout
+        self.process_tool_call = process_tool_call
+        self.allow_sampling = allow_sampling
+        self.max_retries = max_retries
+        self.sampling_model = sampling_model
+        self.read_timeout = read_timeout
+
     @property
     @abstractmethod
     def _transport_client(
@@ -522,7 +571,7 @@ class _MCPServerHTTP(MCPServer):
             self._transport_client,
             url=self.url,
             timeout=self.timeout,
-            sse_read_timeout=self.sse_read_timeout,
+            sse_read_timeout=self.read_timeout,
         )
 
         if self.http_client is not None:
@@ -549,7 +598,7 @@ class _MCPServerHTTP(MCPServer):
         return f'{self.__class__.__name__}(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
 
 
-@dataclass
+@dataclass(init=False)
 class MCPServerSSE(_MCPServerHTTP):
     """An MCP server that connects over streamable HTTP connections.
 
