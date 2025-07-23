@@ -16,7 +16,7 @@ from pydantic_ai.profiles.openai import (
 )
 from pydantic_ai.providers import Provider
 
-MoonshotModelName = Literal[
+MoonshotAIModelName = Literal[
     'moonshot-v1-8k',
     'moonshot-v1-32k',
     'moonshot-v1-128k',
