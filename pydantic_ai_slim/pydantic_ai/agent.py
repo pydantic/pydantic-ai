@@ -262,7 +262,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
-    def __init__(  # noqa: C901 adding builtin tools
+    def __init__(  # noqa: C901
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
