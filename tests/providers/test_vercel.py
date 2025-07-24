@@ -32,7 +32,7 @@ pytestmark = [
 
 def test_vercel_provider():
     provider = VercelProvider(api_key='api-key')
-    assert provider.name == 'vercel-ai-gateway'
+    assert provider.name == 'vercel'
     assert provider.base_url == 'https://ai-gateway.vercel.sh/v1'
     assert isinstance(provider.client, openai.AsyncOpenAI)
     assert provider.client.api_key == 'api-key'

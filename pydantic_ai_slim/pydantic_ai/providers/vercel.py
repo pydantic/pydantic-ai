@@ -32,7 +32,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
 
     @property
     def name(self) -> str:
-        return 'vercel-ai-gateway'
+        return 'vercel'
 
     @property
     def base_url(self) -> str:
@@ -103,5 +103,5 @@ class VercelProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='vercel-ai-gateway')
+            http_client = cached_async_http_client(provider='vercel')
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)

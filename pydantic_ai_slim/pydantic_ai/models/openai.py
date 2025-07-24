@@ -194,7 +194,7 @@ class OpenAIModel(Model):
             'deepseek',
             'azure',
             'openrouter',
-            'vercel-ai-gateway',
+            'vercel',
             'grok',
             'fireworks',
             'together',
