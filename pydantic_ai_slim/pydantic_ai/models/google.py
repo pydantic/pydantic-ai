@@ -90,6 +90,14 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
+def _bytes_to_base64_string(data: bytes) -> str:
+    return base64.b64encode(data).decode("utf-8")
+
+
+def _base64_string_to_bytes(string: str) -> bytes:
+    return base64.b64decode(string)
+
+
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
 
@@ -493,7 +501,13 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
         elif isinstance(item, ThinkingPart):  # pragma: no cover
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.
-            # parts.append({'text': item.content, 'thought': True})
+            # parts.append(
+            #     PartDict(
+            #         thought=True,
+            #         thought_signature=_base64_string_to_bytes(item.signature),
+            #         text=item.content,
+            #     )
+            # )
             pass
         else:
             assert_never(item)
@@ -511,7 +525,7 @@ def _process_response_from_parts(
     for part in parts:
         if part.text is not None:
             if part.thought:
-                items.append(ThinkingPart(content=part.text))
+                items.append(ThinkingPart(content=part.text, signature=_bytes_to_base64_string(part.thought_signature)))
             else:
                 items.append(TextPart(content=part.text))
         elif part.function_call:
