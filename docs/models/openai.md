@@ -348,6 +348,41 @@ agent = Agent(model)
 ...
 ```
 
+### Vercel AI Gateway
+
+To use [Vercel's AI Gateway](https://vercel.com/docs/ai-gateway), first follow the [documentation](https://vercel.com/docs/ai-gateway) instructions on obtaining an API key or OIDC token.
+
+You can set your credentials using one of these environment variables:
+
+```bash
+export VERCEL_AI_GATEWAY_API_KEY='your-ai-gateway-api-key'
+# OR
+export VERCEL_OIDC_TOKEN='your-oidc-token'
+```
+
+Once you have set the environment variable, you can use it with the [`VercelProvider`][pydantic_ai.providers.vercel.VercelProvider]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.vercel import VercelProvider
+
+# Uses environment variable automatically
+model = OpenAIModel(
+    'anthropic/claude-4-sonnet',
+    provider=VercelProvider(),
+)
+agent = Agent(model)
+
+# Or pass the API key directly
+model = OpenAIModel(
+    'anthropic/claude-4-sonnet',
+    provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
+)
+agent = Agent(model)
+...
+```
+
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
