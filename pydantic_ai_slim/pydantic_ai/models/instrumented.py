@@ -4,18 +4,20 @@ import json
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Union
+from typing import Any, Callable, Literal
 from urllib.parse import urlparse
 
 from opentelemetry._events import (
-    Event,  # pyright: ignore[reportPrivateImportUsage]
-    EventLogger,  # pyright: ignore[reportPrivateImportUsage]
     EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
+    NoOpEventLogger,  # pyright: ignore[reportPrivateImportUsage]
+    ProxyEventLogger,  # pyright: ignore[reportPrivateImportUsage]
 )
 from opentelemetry._logs import (
     Logger,  # pyright: ignore[reportPrivateImportUsage]
     LoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
     LogRecord,  # pyright: ignore[reportPrivateImportUsage]
+    NoOpLogger,  # pyright: ignore[reportPrivateImportUsage]
+    ProxyLogger,  # pyright: ignore[reportPrivateImportUsage]
     get_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
@@ -59,8 +61,6 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 
-EventLogs = Union[list[Event], list[LogRecord]]
-
 
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
     """Instrument a model with OpenTelemetry/logfire."""
@@ -87,7 +87,7 @@ class InstrumentationSettings:
     """
 
     tracer: Tracer = field(repr=False)
-    event_logger: EventLogger | Logger = field(repr=False)
+    event_logger: Logger = field(repr=False)
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
 
@@ -129,9 +129,31 @@ class InstrumentationSettings:
         self.tracer = tracer_provider.get_tracer(scope_name, __version__)
         self.meter = meter_provider.get_meter(scope_name, __version__)
         if isinstance(event_logger_provider, EventLoggerProvider):
-            self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
-        elif isinstance(event_logger_provider, LoggerProvider):
-            self.event_logger = event_logger_provider.get_logger(scope_name, __version__)
+            _cast_event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
+            if isinstance(_cast_event_logger, NoOpEventLogger):
+                _event_logger = NoOpLogger(
+                    name=_cast_event_logger.name,
+                    attributes=_cast_event_logger.attributes,
+                    version=_cast_event_logger.version,
+                    schema_url=_cast_event_logger.schema_url,
+                )
+            elif isinstance(_cast_event_logger, ProxyEventLogger):
+                _event_logger = ProxyLogger(
+                    name=_cast_event_logger.name,
+                    attributes=_cast_event_logger.attributes,
+                    version=_cast_event_logger.version,
+                    schema_url=_cast_event_logger.schema_url,
+                )
+            else:
+                _event_logger = Logger(
+                    name=_cast_event_logger.name,
+                    attributes=_cast_event_logger.attributes,
+                    version=_cast_event_logger.version,
+                    schema_url=_cast_event_logger.schema_url,
+                )
+        else:
+            _event_logger = event_logger_provider.get_logger(scope_name, __version__)
+        self.event_logger = _event_logger
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
@@ -154,7 +176,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,  # pyright: ignore
             )
 
-    def messages_to_otel_events(self, messages: list[ModelMessage]) -> EventLogs:
+    def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[LogRecord]:
         """Convert a list of model messages to OpenTelemetry events.
 
         Args:
@@ -163,26 +185,18 @@ class InstrumentationSettings:
         Returns:
             A list of OpenTelemetry events.
         """
-        events: EventLogs = []
+        events: list[LogRecord] = []
         instructions = InstrumentedModel._get_instructions(messages)  # pyright: ignore [reportPrivateUsage]
         if instructions is not None:
-            if isinstance(self.event_logger, EventLogger):
-                events.append(
-                    Event(
-                        'gen_ai.system.message',
-                        body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
-                    )
+            events.append(
+                LogRecord(
+                    attributes={'event.name': 'gen_ai.system.message'},
+                    body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
                 )
-            else:
-                events.append(
-                    LogRecord(
-                        attributes={'event.name': 'gen_ai.system.message'},
-                        body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
-                    )
-                )
+            )
 
         for message_index, message in enumerate(messages):
-            message_events: EventLogs = []
+            message_events: list[LogRecord] = []
             if isinstance(message, ModelRequest):
                 for part in message.parts:
                     if hasattr(part, 'otel_event'):
@@ -319,28 +333,16 @@ class InstrumentedModel(WrapperModel):
 
                     events = self.instrumentation_settings.messages_to_otel_events(messages)
                     for event in self.instrumentation_settings.messages_to_otel_events([response]):
-                        if isinstance(self.instrumentation_settings.event_logger, EventLogger):
-                            events.append(
-                                Event(
-                                    'gen_ai.choice',
-                                    body={
-                                        # TODO finish_reason
-                                        'index': 0,
-                                        'message': event.body,
-                                    },
-                                )
+                        events.append(
+                            LogRecord(
+                                attributes={'event.name': 'gen_ai.choice'},
+                                body={
+                                    # TODO finish_reason
+                                    'index': 0,
+                                    'message': event.body,
+                                },
                             )
-                        else:
-                            events.append(
-                                LogRecord(
-                                    attributes={'event.name': 'gen_ai.choice'},
-                                    body={
-                                        # TODO finish_reason
-                                        'index': 0,
-                                        'message': event.body,
-                                    },
-                                )
-                            )
+                        )
                     span.set_attributes(
                         {
                             **response.usage.opentelemetry_attributes(),
@@ -362,7 +364,7 @@ class InstrumentedModel(WrapperModel):
                 # to prevent them from being redundantly recorded in the span itself by logfire.
                 record_metrics()
 
-    def _emit_events(self, span: Span, events: EventLogs) -> None:
+    def _emit_events(self, span: Span, events: list[LogRecord]) -> None:
         if self.instrumentation_settings.event_mode == 'logs':
             for event in events:
                 self.instrumentation_settings.event_logger.emit(event)
@@ -403,7 +405,7 @@ class InstrumentedModel(WrapperModel):
         return attributes
 
     @staticmethod
-    def event_to_dict(event: Union[LogRecord, Event]) -> dict[str, Any]:
+    def event_to_dict(event: LogRecord) -> dict[str, Any]:
         if not event.body:
             body = {}  # pragma: no cover
         elif isinstance(event.body, Mapping):
