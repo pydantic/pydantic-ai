@@ -724,6 +724,8 @@ def my_flaky_tool(query: str) -> str:
 
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
+When the LLM requests multiple tool executions, they are run concurrently via `asyncio.create_task`. For this concurrency to be effective, the tools must be defined as async functions and use non-blocking clients (e.g., `httpx.AsyncClient` instead of `httpx.Client`).
+
 ## Third-Party Tools
 
 ### MCP Tools {#mcp-tools}
