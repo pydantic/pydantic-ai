@@ -26,6 +26,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.groq import GroqProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.mistral import MistralProvider
+    from pydantic_ai.providers.moonshotai import MoonshotAIProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.together import TogetherProvider
@@ -44,6 +45,7 @@ with try_import() as imports_successful:
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
         ('grok', GrokProvider, 'GROK_API_KEY'),
+        ('moonshotai', MoonshotAIProvider, 'MOONSHOTAI_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),

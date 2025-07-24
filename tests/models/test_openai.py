@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
@@ -2631,3 +2632,22 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     response_message = messages[1]
     assert isinstance(response_message, ModelResponse)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
+
+
+@pytest.mark.anyio()
+async def test_tool_choice_fallback(allow_model_requests: None) -> None:
+    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
+
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
+
+    await model._completions_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
