@@ -62,6 +62,36 @@ else:
         return _IsNow(*args, **kwargs)
 
     class IsSameStr(IsStr):
+        """
+        Checks if the value is a string, and that subsequent uses have the same value as the first one.
+
+        Example:
+        ```python {test="skip"}
+        assert events == snapshot(
+            [
+                {
+                    'type': 'RUN_STARTED',
+                    'threadId': (thread_id := IsSameStr()),
+                    'runId': (run_id := IsSameStr()),
+                },
+                {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+                {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': '(no tool calls)',
+                },
+                {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+                {
+                    'type': 'RUN_FINISHED',
+                    'threadId': thread_id,
+                    'runId': run_id,
+                },
+            ]
+        )
+        ```
+        """
+
         def __init__(
             self,
             *,
