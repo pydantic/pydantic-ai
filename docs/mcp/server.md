@@ -117,7 +117,10 @@ async def sampling_callback(
         SamplingMessage(
             role='user',
             content=TextContent(
-                type='text', text='write a poem about socks', annotations=None
+                type='text',
+                text='write a poem about socks',
+                annotations=None,
+                meta=None,
             ),
         )
     ]

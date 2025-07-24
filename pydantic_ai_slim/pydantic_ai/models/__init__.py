@@ -233,6 +233,15 @@ KnownModelName = TypeAliasType(
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
         'mistral:mistral-small-latest',
+        'moonshotai:moonshot-v1-8k',
+        'moonshotai:moonshot-v1-32k',
+        'moonshotai:moonshot-v1-128k',
+        'moonshotai:moonshot-v1-8k-vision-preview',
+        'moonshotai:moonshot-v1-32k-vision-preview',
+        'moonshotai:moonshot-v1-128k-vision-preview',
+        'moonshotai:kimi-latest',
+        'moonshotai:kimi-thinking-preview',
+        'moonshotai:kimi-k2-0711-preview',
         'o1',
         'o1-2024-12-17',
         'o1-mini',
@@ -615,7 +624,9 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'deepseek',
         'azure',
         'openrouter',
+        'vercel',
         'grok',
+        'moonshotai',
         'fireworks',
         'together',
         'heroku',
@@ -758,7 +769,7 @@ async def download_item(
 
     data_type = media_type
     if type_format == 'extension':
-        data_type = data_type.split('/')[1]
+        data_type = item.format
 
     data = response.content
     if data_format in ('base64', 'base64_uri'):
