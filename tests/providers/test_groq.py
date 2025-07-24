@@ -12,6 +12,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -74,6 +75,7 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     google_model_profile_mock = mocker.patch(f'{ns}.google_model_profile', wraps=google_model_profile)
     mistral_model_profile_mock = mocker.patch(f'{ns}.mistral_model_profile', wraps=mistral_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
+    moonshotai_model_profile_mock = mocker.patch(f'{ns}.moonshotai_model_profile', wraps=moonshotai_model_profile)
 
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
     meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
@@ -102,6 +104,11 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     qwen_model_profile_mock.assert_called_with('qwen-qwq-32b')
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+
+    # MoonshotAI model should remove the "moonshotai/" prefix before passing to profile
+    moonshotai_profile = provider.model_profile('moonshotai/kimi-k2-instruct')
+    moonshotai_model_profile_mock.assert_called_with('kimi-k2-instruct')
+    assert moonshotai_profile is None
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is None

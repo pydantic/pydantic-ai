@@ -46,7 +46,7 @@ from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -572,6 +572,42 @@ async def test_stream_native_output(allow_model_requests: None):
             ]
         )
         assert result.is_complete
+
+
+async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
+    stream = [
+        chunk(
+            [
+                ChoiceDelta(
+                    content='',  # Ollama will include an empty text delta even when it's going to call a tool
+                    tool_calls=[
+                        ChoiceDeltaToolCall(
+                            index=0, function=ChoiceDeltaToolCallFunction(name='final_result', arguments=None)
+                        )
+                    ],
+                ),
+            ]
+        ),
+        struc_chunk(None, '{"first": "One'),
+        struc_chunk(None, '", "second": "Two"'),
+        struc_chunk(None, '}'),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, output_type=[str, MyTypedDict])
+
+    async with agent.run_stream('') as result:
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            [
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
+        )
+    assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
 async def test_no_content(allow_model_requests: None):
@@ -2539,3 +2575,59 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+async def test_valid_response(env: TestEnv, allow_model_requests: None):
+    """VCR recording is of a valid response."""
+    env.set('OPENAI_API_KEY', 'foobar')
+    agent = Agent('openai:gpt-4o')
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_invalid_response(allow_model_requests: None):
+    """VCR recording is of an invalid JSON response."""
+    m = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(
+            api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/content-type/application/json'
+        ),
+    )
+    agent = Agent(m)
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await agent.run('What is the capital of France?')
+    assert exc_info.value.message.startswith(
+        'Invalid response from OpenAI chat completions endpoint: 4 validation errors for ChatCompletion'
+    )
+
+
+async def test_text_response(allow_model_requests: None):
+    """VCR recording is of a text response."""
+    m = OpenAIModel(
+        'gpt-4o', provider=OpenAIProvider(api_key='foobar', base_url='https://demo-endpoints.pydantic.workers.dev/bin/')
+    )
+    agent = Agent(m)
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        await agent.run('What is the capital of France?')
+    assert exc_info.value.message == snapshot(
+        'Invalid response from OpenAI chat completions endpoint, expected JSON data'
+    )
+
+
+async def test_process_response_no_created_timestamp(allow_model_requests: None):
+    c = completion_message(
+        ChatCompletionMessage(content='world', role='assistant'),
+    )
+    c.created = None  # type: ignore
+
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+    result = await agent.run('Hello')
+    messages = result.all_messages()
+    response_message = messages[1]
+    assert isinstance(response_message, ModelResponse)
+    assert response_message.timestamp == IsNow(tz=timezone.utc)

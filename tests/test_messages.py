@@ -2,14 +2,7 @@ import sys
 
 import pytest
 
-from pydantic_ai.messages import (
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ThinkingPartDelta,
-    VideoUrl,
-)
+from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, ThinkingPartDelta, VideoUrl
 
 
 def test_image_url():

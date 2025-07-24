@@ -8,7 +8,7 @@
 
 (pronounced "clay")
 
-Command line interface to chat to LLMs, part of the [PydanticAI project](https://github.com/pydantic/pydantic-ai).
+Command line interface to chat to LLMs, part of the [Pydantic AI project](https://github.com/pydantic/pydantic-ai).
 
 ## Usage
 
@@ -55,7 +55,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 ```
 usage: clai [-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [prompt]
 
-PydanticAI CLI v...
+Pydantic AI CLI v...
 
 Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
@@ -68,7 +68,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   -m [MODEL], --model [MODEL]
-                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".
+                        Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "openai:gpt-4.1".
   -a AGENT, --agent AGENT
                         Custom Agent to use, in format "module:variable", e.g. "mymodule.submodule:my_agent"
   -l, --list-models     List all available models and exit

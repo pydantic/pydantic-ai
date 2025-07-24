@@ -13,8 +13,14 @@ bump = true
 [project]
 name = "pydantic-ai-examples"
 dynamic = ["version", "dependencies"]
-description = "Examples of how to use PydanticAI and what it can do."
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+description = "Examples of how to use Pydantic AI and what it can do."
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -42,7 +48,7 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,ag-ui]=={{ version }}",
     "pydantic-evals=={{ version }}",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",

@@ -6,7 +6,7 @@ from inline_snapshot import snapshot
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import Agent
-from pydantic_ai.ext.langchain import tool_from_langchain
+from pydantic_ai.ext.langchain import LangChainToolset, tool_from_langchain
 
 
 @dataclass
@@ -49,27 +49,36 @@ class SimulatedLangChainTool:
         }
 
 
-def test_langchain_tool_conversion():
-    langchain_tool = SimulatedLangChainTool(
-        name='file_search',
-        description='Recursively search for files in a subdirectory that match the regex pattern',
-        args={
-            'dir_path': {
-                'default': '.',
-                'description': 'Subdirectory to search in.',
-                'title': 'Dir Path',
-                'type': 'string',
-            },
-            'pattern': {
-                'description': 'Unix shell regex, where * matches everything.',
-                'title': 'Pattern',
-                'type': 'string',
-            },
+langchain_tool = SimulatedLangChainTool(
+    name='file_search',
+    description='Recursively search for files in a subdirectory that match the regex pattern',
+    args={
+        'dir_path': {
+            'default': '.',
+            'description': 'Subdirectory to search in.',
+            'title': 'Dir Path',
+            'type': 'string',
         },
-    )
+        'pattern': {
+            'description': 'Unix shell regex, where * matches everything.',
+            'title': 'Pattern',
+            'type': 'string',
+        },
+    },
+)
+
+
+def test_langchain_tool_conversion():
     pydantic_tool = tool_from_langchain(langchain_tool)
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
+
+
+def test_langchain_toolset():
+    toolset = LangChainToolset([langchain_tool])
+    agent = Agent('test', toolsets=[toolset], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 

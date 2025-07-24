@@ -48,18 +48,10 @@ from . import (
 )
 
 LatestGeminiModelNames = Literal[
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro',
     'gemini-2.0-flash',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite-preview-06-17',
-    'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-05-06',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
@@ -97,15 +89,6 @@ class GeminiModelSettings(ModelSettings, total=False):
     """User-defined metadata to break down billed charges. Only supported by the Vertex AI provider.
 
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
-    """
-
-    gemini_thinking_config: ThinkingConfig
-    """Thinking is on by default in both the API and AI Studio.
-
-    Being on by default doesn't mean the model will send back thoughts. For that, you need to set `include_thoughts`
-    to `True`. If you want to turn it off, set `thinking_budget` to `0`.
-
-    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
     """
 
 

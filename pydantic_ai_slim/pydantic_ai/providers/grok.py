@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
 from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
@@ -20,6 +20,18 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Grok provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+# https://docs.x.ai/docs/models
+GrokModelName = Literal[
+    'grok-4',
+    'grok-4-0709',
+    'grok-3',
+    'grok-3-mini',
+    'grok-3-fast',
+    'grok-3-mini-fast',
+    'grok-2-vision-1212',
+    'grok-2-image-1212',
+]
 
 
 class GrokProvider(Provider[AsyncOpenAI]):
