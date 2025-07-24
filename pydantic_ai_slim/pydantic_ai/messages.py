@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import InitVar, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
 from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
@@ -85,15 +85,12 @@ class SystemPromptPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
     url: str
     """The URL of the file."""
-
-    media_type_: InitVar[str | None] = None
-    """Optional override for the media type of the file, in case it cannot be inferred from the URL."""
 
     force_download: bool = False
     """If the model supports it:
@@ -111,8 +108,17 @@ class FileUrl(ABC):
 
     _media_type: str | None = field(init=False, repr=False)
 
-    def __post_init__(self, media_type_: str | None = None) -> None:
-        self._media_type = media_type_
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+    ) -> None:
+        self.url = url
+        self.vendor_metadata = vendor_metadata
+        self.force_download = force_download
+        self._media_type = media_type
 
     @abstractmethod
     def _infer_media_type(self) -> str:
@@ -131,7 +137,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -140,6 +146,17 @@ class VideoUrl(FileUrl):
 
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['video-url'] = 'video-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
 
     def _infer_media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
@@ -181,7 +198,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -190,6 +207,17 @@ class AudioUrl(FileUrl):
 
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['audio-url'] = 'audio-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
 
     def _infer_media_type(self) -> AudioMediaType:
         """Return the media type of the audio file, based on the url.
@@ -218,7 +246,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -227,6 +255,17 @@ class ImageUrl(FileUrl):
 
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['image-url'] = 'image-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
 
     def _infer_media_type(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
@@ -250,7 +289,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 
@@ -259,6 +298,17 @@ class DocumentUrl(FileUrl):
 
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
+
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['document-url'] = 'document-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""

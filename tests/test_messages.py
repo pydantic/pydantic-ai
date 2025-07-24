@@ -17,7 +17,7 @@ def test_image_url():
     assert image_url.media_type == 'image/jpeg'
     assert image_url.format == 'jpeg'
 
-    image_url = ImageUrl(url='https://example.com/image', media_type_='image/jpeg')
+    image_url = ImageUrl(url='https://example.com/image', media_type='image/jpeg')
     assert image_url.media_type == 'image/jpeg'
     assert image_url.format == 'jpeg'
 
@@ -27,7 +27,7 @@ def test_video_url():
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
 
-    video_url = VideoUrl(url='https://example.com/video', media_type_='video/mp4')
+    video_url = VideoUrl(url='https://example.com/video', media_type='video/mp4')
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
 
@@ -53,7 +53,7 @@ def test_document_url():
     assert document_url.media_type == 'application/pdf'
     assert document_url.format == 'pdf'
 
-    document_url = DocumentUrl(url='https://example.com/document', media_type_='application/pdf')
+    document_url = DocumentUrl(url='https://example.com/document', media_type='application/pdf')
     assert document_url.media_type == 'application/pdf'
     assert document_url.format == 'pdf'
 
@@ -133,7 +133,7 @@ def test_binary_content_document(media_type: str, format: str):
         pytest.param(AudioUrl('foobar.flac'), 'audio/flac', 'flac', id='flac'),
         pytest.param(AudioUrl('foobar.aiff'), 'audio/aiff', 'aiff', id='aiff'),
         pytest.param(AudioUrl('foobar.aac'), 'audio/aac', 'aac', id='aac'),
-        pytest.param(AudioUrl('foobar', 'audio/mpeg'), 'audio/mpeg', 'mp3', id='mp3'),
+        pytest.param(AudioUrl('foobar', media_type='audio/mpeg'), 'audio/mpeg', 'mp3', id='mp3'),
     ],
 )
 def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
