@@ -250,9 +250,9 @@ parameter that lets you pass your own pre-configured
 ```python {title="mcp_custom_tls_client.py" py="3.10"}
 import httpx
 import ssl
-from pydantic_ai.mcp import MCPServerSSE
-from pydantic_ai import Agent
 
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerSSE
 
 
 # Trust an internal / self-signed CA
