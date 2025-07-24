@@ -13,9 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
-from re import Pattern
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable
 
 import httpx
 import pytest
@@ -67,55 +66,37 @@ else:
 
         Example:
         ```python {test="skip"}
-        assert events == snapshot(
-            [
-                {
-                    'type': 'RUN_STARTED',
-                    'threadId': (thread_id := IsSameStr()),
-                    'runId': (run_id := IsSameStr()),
-                },
-                {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
-                {
-                    'type': 'TEXT_MESSAGE_CONTENT',
-                    'messageId': message_id,
-                    'delta': '(no tool calls)',
-                },
-                {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
-                {
-                    'type': 'RUN_FINISHED',
-                    'threadId': thread_id,
-                    'runId': run_id,
-                },
-            ]
-        )
+        assert events == [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '(no tool calls)',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
         ```
         """
 
-        def __init__(
-            self,
-            *,
-            min_length: int | None = None,
-            max_length: int | None = None,
-            case: Literal['upper', 'lower', None] = None,
-            regex: str | Pattern[str] | None = None,
-            regex_flags: int = 0,
-        ):
-            super().__init__(
-                min_length=min_length,
-                max_length=max_length,
-                case=case,
-                regex=regex,
-                regex_flags=regex_flags,
-            )
-            self._first_value = None
+        _first_other: str | None = None
 
         def equals(self, other: Any) -> bool:
-            if self._first_value is None:
-                self._first_value = other
+            if self._first_other is None:
+                self._first_other = other
                 return super().equals(other)
             else:
-                return other == self._first_value
+                return other == self._first_other
 
 
 class TestEnv:
