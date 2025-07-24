@@ -97,10 +97,8 @@ class JsonSchemaTransformer(ABC):
         elif type_ == 'array':
             schema = self._handle_array(schema)
         elif type_ is None:
-            if 'anyOf' in schema:
-                schema = self._handle_union(schema, 'anyOf')
-            if 'oneOf' in schema:
-                schema = self._handle_union(schema, 'oneOf')
+            schema = self._handle_union(schema, 'anyOf')
+            schema = self._handle_union(schema, 'oneOf')
 
         # Apply the base transform
         schema = self.transform(schema)
