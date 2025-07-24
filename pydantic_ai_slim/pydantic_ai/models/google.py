@@ -458,7 +458,9 @@ class GeminiStreamedResponse(StreamedResponse):
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
                     else:
-                        yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
+                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),

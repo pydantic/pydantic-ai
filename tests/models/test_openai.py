@@ -611,6 +611,38 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
+async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model_requests: None):
+    # Ollama + Qwen3 will emit `<think>\n</think>\n\n` ahead of tool calls,
+    # which we don't want to end up treating as a final result.
+    stream = [
+        text_chunk('<think>'),
+        text_chunk('\n'),
+        text_chunk('</think>'),
+        text_chunk('\n\n'),
+        struc_chunk('final_result', None),
+        struc_chunk(None, '{"first": "One'),
+        struc_chunk(None, '", "second": "Two"'),
+        struc_chunk(None, '}'),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, output_type=[str, MyTypedDict])
+
+    async with agent.run_stream('') as result:
+        assert not result.is_complete
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            [
+                {},
+                {'first': 'One'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+                {'first': 'One', 'second': 'Two'},
+            ]
+        )
+    assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
+
+
 async def test_no_content(allow_model_requests: None):
     stream = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
     mock_client = MockOpenAI.create_mock_stream(stream)

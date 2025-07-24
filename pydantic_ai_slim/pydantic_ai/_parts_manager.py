@@ -15,7 +15,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
-from typing import Any, Literal, Union, overload
+from typing import Any, Union
 
 from pydantic_ai._thinking_part import END_THINK_TAG, START_THINK_TAG
 from pydantic_ai.exceptions import UnexpectedModelBehavior
@@ -67,23 +67,6 @@ class ModelResponsePartsManager:
         """
         return [p for p in self._parts if not isinstance(p, ToolCallPartDelta)]
 
-    @overload
-    def handle_text_delta(
-        self,
-        *,
-        vendor_part_id: VendorId | None,
-        content: str,
-    ) -> ModelResponseStreamEvent: ...
-
-    @overload
-    def handle_text_delta(
-        self,
-        *,
-        vendor_part_id: VendorId,
-        content: str,
-        extract_think_tags: Literal[True],
-    ) -> ModelResponseStreamEvent | None: ...
-
     def handle_text_delta(
         self,
         *,
@@ -105,7 +88,9 @@ class ModelResponsePartsManager:
             extract_think_tags: Whether to extract `<think>` tags from the text content and handle them as thinking parts.
 
         Returns:
-            A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
+            - A `PartStartEvent` if a new part was created.
+            - A `PartDeltaEvent` if an existing part was updated.
+            - `None` if no new event is emitted (e.g., the first text part was all whitespace).
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
@@ -144,6 +129,12 @@ class ModelResponsePartsManager:
             return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
 
         if existing_text_part_and_index is None:
+            # If the first text delta is all whitespace, don't emit a new part yet.
+            # This is a workaround for models that emit `<think>\n</think>\n\n` ahead of tool calls (e.g. Ollama + Qwen3),
+            # which we don't want to end up treating as a final result.
+            if content.isspace():
+                return None
+
             # There is no existing text part that should be updated, so create a new one
             new_part_index = len(self._parts)
             part = TextPart(content=content)
