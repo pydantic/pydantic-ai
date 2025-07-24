@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
+from re import Pattern
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import httpx
 import pytest
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
 else:
     from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
@@ -58,6 +60,32 @@ else:
         if 'delta' not in kwargs:  # pragma: no branch
             kwargs['delta'] = 10
         return _IsNow(*args, **kwargs)
+
+    class IsSameStr(IsStr):
+        def __init__(
+            self,
+            *,
+            min_length: int | None = None,
+            max_length: int | None = None,
+            case: Literal['upper', 'lower', None] = None,
+            regex: str | Pattern[str] | None = None,
+            regex_flags: int = 0,
+        ):
+            super().__init__(
+                min_length=min_length,
+                max_length=max_length,
+                case=case,
+                regex=regex,
+                regex_flags=regex_flags,
+            )
+            self._first_value = None
+
+        def equals(self, other: Any) -> bool:
+            if self._first_value is None:
+                self._first_value = other
+                return super().equals(other)
+            else:
+                return other == self._first_value
 
 
 class TestEnv:
