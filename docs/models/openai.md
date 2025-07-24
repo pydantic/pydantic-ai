@@ -348,7 +348,7 @@ agent = Agent(model)
 ...
 ```
 
-### Vercel
+### Vercel AI Gateway
 
 To use [Vercel's AI Gateway](https://vercel.com/docs/ai-gateway), first follow the [documentation](https://vercel.com/docs/ai-gateway) instructions on obtaining an API key or OIDC token.
 
