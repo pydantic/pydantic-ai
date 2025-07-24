@@ -126,3 +126,18 @@ def test_vercel_with_http_client():
     provider = VercelProvider(api_key='test-key', http_client=http_client)
     assert provider.client.api_key == 'test-key'
     assert str(provider.client.base_url) == 'https://ai-gateway.vercel.sh/v1/'
+
+
+def test_vercel_provider_invalid_model_name():
+    provider = VercelProvider(api_key='api-key')
+
+    with pytest.raises(UserError, match="Model name must be in 'provider/model' format"):
+        provider.model_profile('invalid-model-name')
+
+
+def test_vercel_provider_unknown_provider():
+    provider = VercelProvider(api_key='api-key')
+
+    profile = provider.model_profile('unknown/gpt-4')
+    assert profile is not None
+    assert profile.json_schema_transformer == OpenAIJsonSchemaTransformer
