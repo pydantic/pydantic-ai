@@ -118,6 +118,7 @@ def test_docs_examples(  # noqa: C901
     allow_model_requests: None,
     env: TestEnv,
     tmp_path_cwd: Path,
+    benchmark: Any,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -222,9 +223,19 @@ def test_docs_examples(  # noqa: C901
         test_globals: dict[str, str] = {'__name__': dunder_name}
 
         if eval_example.update_examples:  # pragma: lax no cover
-            eval_example.run_print_update(example, call=call_name, module_globals=test_globals)
+            benchmark(
+                eval_example.run_print_update,
+                example,
+                call=call_name,
+                module_globals=test_globals,
+            )
         else:
-            eval_example.run_print_check(example, call=call_name, module_globals=test_globals)
+            benchmark(
+                eval_example.run_print_check,
+                example,
+                call=call_name,
+                module_globals=test_globals,
+            )
 
 
 def print_callback(s: str) -> str:
