@@ -29,12 +29,14 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.together import TogetherProvider
+    from pydantic_ai.providers.vercel import VercelProvider
 
     test_infer_provider_params = [
         ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('cohere', CohereProvider, 'CO_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
+        ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),
         ('openai', OpenAIProvider, 'OPENAI_API_KEY'),
         ('azure', AzureProvider, 'AZURE_OPENAI'),
         ('google-vertex', GoogleVertexProvider, None),

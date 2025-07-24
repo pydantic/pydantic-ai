@@ -615,6 +615,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'deepseek',
         'azure',
         'openrouter',
+        'vercel',
         'grok',
         'fireworks',
         'together',
