@@ -289,7 +289,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             else:
                 return self._get_content(resource_result.contents[0])
         else:
-            assert_never(part)
+            assert_never(part)  # pragma: no cover
 
     def _get_content(
         self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
