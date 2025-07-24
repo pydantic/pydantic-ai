@@ -10,7 +10,7 @@ from .common import (
     Python,
 )
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorOutput
+from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput
 
 __all__ = (
     # common
@@ -28,6 +28,7 @@ __all__ = (
     # evaluator
     'Evaluator',
     'EvaluationReason',
+    'EvaluatorFailure',
     'EvaluatorOutput',
     'EvaluationResult',
 )

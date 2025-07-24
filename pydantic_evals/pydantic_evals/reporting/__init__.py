@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from io import StringIO
 from typing import Any, Callable, Generic, Literal, Protocol
 
@@ -32,6 +32,8 @@ __all__ = (
     'RenderNumberConfig',
     'ReportCaseAggregate',
 )
+
+from ..evaluators.evaluator import EvaluatorFailure
 
 MISSING_VALUE_STR = '[i]<missing>[/i]'
 EMPTY_CELL_STR = '-'
@@ -71,8 +73,29 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     trace_id: str
     span_id: str
 
+    evaluator_failures: list[EvaluatorFailure] = field(default_factory=list)
+
+
+@dataclass
+class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
+    name: str
+    """The name of the [case][pydantic_evals.Case]."""
+    inputs: InputsT
+    """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
+    metadata: MetadataT | None
+    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
+    expected_output: OutputT | None
+    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
+
+    error_msg: str
+
+    # TODO(DavidM): Drop these once we can reference child spans in details panel:
+    trace_id: str
+    span_id: str
+
 
 ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
+ReportCaseFailureAdapter = TypeAdapter(ReportCaseFailure[Any, Any, Any])
 
 
 class ReportCaseAggregate(BaseModel):
@@ -160,9 +183,14 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """The name of the report."""
     cases: list[ReportCase[InputsT, OutputT, MetadataT]]
     """The cases in the report."""
+    failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
+    """The failures in the report. These are cases where task execution raised an exception."""
+    # TODO: Need to add failures to the print-out
 
-    def averages(self) -> ReportCaseAggregate:
-        return ReportCaseAggregate.average(self.cases)
+    def averages(self) -> ReportCaseAggregate | None:
+        if self.cases:
+            return ReportCaseAggregate.average(self.cases)
+        return None
 
     def print(
         self,
@@ -924,7 +952,8 @@ class EvaluationRenderer:
 
         if self.include_averages:  # pragma: no branch
             average = report.averages()
-            table.add_row(*case_renderer.build_aggregate_row(average))
+            if average:
+                table.add_row(*case_renderer.build_aggregate_row(average))
         return table
 
     def build_diff_table(self, report: EvaluationReport, baseline: EvaluationReport) -> Table:

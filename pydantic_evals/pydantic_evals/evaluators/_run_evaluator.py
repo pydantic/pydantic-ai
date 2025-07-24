@@ -10,7 +10,14 @@ from pydantic import (
 from typing_extensions import TypeVar
 
 from .context import EvaluatorContext
-from .evaluator import EvaluationReason, EvaluationResult, EvaluationScalar, Evaluator, EvaluatorOutput
+from .evaluator import (
+    EvaluationReason,
+    EvaluationResult,
+    EvaluationScalar,
+    Evaluator,
+    EvaluatorFailure,
+    EvaluatorOutput,
+)
 
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
@@ -19,7 +26,7 @@ MetadataT = TypeVar('MetadataT', default=Any, contravariant=True)
 
 async def run_evaluator(
     evaluator: Evaluator[InputsT, OutputT, MetadataT], ctx: EvaluatorContext[InputsT, OutputT, MetadataT]
-) -> list[EvaluationResult]:
+) -> list[EvaluationResult] | list[EvaluatorFailure]:
     """Run an evaluator and return the results.
 
     This function runs an evaluator on the given context and processes the results into
@@ -35,22 +42,29 @@ async def run_evaluator(
     Raises:
         ValueError: If the evaluator returns a value of an invalid type.
     """
-    raw_results = await evaluator.evaluate_async(ctx)
-
     try:
-        results = _EVALUATOR_OUTPUT_ADAPTER.validate_python(raw_results)
-    except ValidationError as e:
-        raise ValueError(f'{evaluator!r}.evaluate returned a value of an invalid type: {raw_results!r}.') from e
+        raw_results = await evaluator.evaluate_async(ctx)
 
-    results = _convert_to_mapping(results, scalar_name=evaluator.get_default_evaluation_name())
+        try:
+            results = _EVALUATOR_OUTPUT_ADAPTER.validate_python(raw_results)
+        except ValidationError as e:
+            raise ValueError(f'{evaluator!r}.evaluate returned a value of an invalid type: {raw_results!r}.') from e
 
-    details: list[EvaluationResult] = []
-    for name, result in results.items():
-        if not isinstance(result, EvaluationReason):
-            result = EvaluationReason(value=result)
-        details.append(EvaluationResult(name=name, value=result.value, reason=result.reason, source=evaluator))
+        results = _convert_to_mapping(results, scalar_name=evaluator.get_default_evaluation_name())
 
-    return details
+        details: list[EvaluationResult] = []
+        for name, result in results.items():
+            if not isinstance(result, EvaluationReason):
+                result = EvaluationReason(value=result)
+            details.append(EvaluationResult(name=name, value=result.value, reason=result.reason, source=evaluator))
+
+        return details
+    except Exception as e:
+        return [
+            EvaluatorFailure(
+                name=evaluator.get_default_evaluation_name(), error_msg=f'{type(e).__name__}: {e}', source=evaluator
+            )
+        ]
 
 
 _EVALUATOR_OUTPUT_ADAPTER = TypeAdapter[EvaluatorOutput](EvaluatorOutput)
