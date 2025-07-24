@@ -1,4 +1,4 @@
-"""Tenacity integration for HTTP requests with retry functionality.
+"""Retries utilities based on tenacity, especially for HTTP requests.
 
 This module provides HTTP transport wrappers and wait strategies that integrate with
 the tenacity library to add retry capabilities to HTTP requests. The transports can be
@@ -19,8 +19,8 @@ try:
     from tenacity import AsyncRetrying, Retrying
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `tenacity` to use the tenacity utilities, '
-        'you can use the `tenacity` optional group — `pip install "pydantic-ai-slim[tenacity]"`'
+        'Please install `tenacity` to use the retries utilities, '
+        'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
     ) from _import_error
 
 

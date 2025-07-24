@@ -10,10 +10,10 @@ seamlessly with httpx clients. You can configure retry behavior for any provider
 
 ## Installation
 
-To use the retry transports, you need to install the `tenacity` dependency:
+To use the retry transports, you need to install `tenacity`, which you can do via the `retries` dependency group:
 
 ```bash
-pip/uv-add 'pydantic-ai-slim[tenacity]'
+pip/uv-add 'pydantic-ai-slim[retries]'
 ```
 
 ## Usage Example

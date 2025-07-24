@@ -102,7 +102,7 @@ nav:
       - api/models/mcp-sampling.md
       - api/profiles.md
       - api/providers.md
-      - api/tenacity.md
+      - api/retries.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
       - api/pydantic_graph/persistence.md
