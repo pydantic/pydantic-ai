@@ -288,8 +288,6 @@ class MCPServer(AbstractToolset[Any], ABC):
                 return [self._get_content(resource) for resource in resource_result.contents]
             else:
                 return self._get_content(resource_result.contents[0])
-        else:  # pragma: no cover
-            assert_never(part)
 
     def _get_content(
         self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
