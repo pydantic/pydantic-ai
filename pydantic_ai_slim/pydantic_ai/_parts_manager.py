@@ -144,6 +144,9 @@ class ModelResponsePartsManager:
             return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
 
         if existing_text_part_and_index is None:
+            if content.isspace():
+                return None
+
             # There is no existing text part that should be updated, so create a new one
             new_part_index = len(self._parts)
             part = TextPart(content=content)
