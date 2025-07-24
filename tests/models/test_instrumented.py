@@ -8,7 +8,7 @@ import pytest
 from dirty_equals import IsJson
 from inline_snapshot import snapshot
 from logfire_api import DEFAULT_LOGFIRE_INSTANCE
-from opentelemetry._events import NoOpEventLoggerProvider
+from opentelemetry._logs import NoOpLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
 from pydantic_ai.messages import (
@@ -170,7 +170,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
         [
             {
                 'body': {'content': 'system_prompt', 'role': 'system'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -179,13 +179,13 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 },
                 'timestamp': 2000000000,
                 'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -194,13 +194,13 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 },
                 'timestamp': 4000000000,
                 'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3', 'name': 'tool3'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -209,9 +209,9 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 },
                 'timestamp': 6000000000,
                 'observed_timestamp': 7000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {
@@ -224,7 +224,7 @@ Fix the errors and try again.\
                     'id': 'tool_call_4',
                     'name': 'tool4',
                 },
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -233,9 +233,9 @@ Fix the errors and try again.\
                 },
                 'timestamp': 8000000000,
                 'observed_timestamp': 9000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {
@@ -247,7 +247,7 @@ Fix the errors and try again.\
 """,
                     'role': 'user',
                 },
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -256,13 +256,13 @@ Fix the errors and try again.\
                 },
                 'timestamp': 10000000000,
                 'observed_timestamp': 11000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {'role': 'assistant', 'content': 'text3'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -271,9 +271,9 @@ Fix the errors and try again.\
                 },
                 'timestamp': 12000000000,
                 'observed_timestamp': 13000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {
@@ -295,25 +295,25 @@ Fix the errors and try again.\
                         ],
                     },
                 },
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 14000000000,
                 'observed_timestamp': 15000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text2'}},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 16000000000,
                 'observed_timestamp': 17000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
         ]
     )
@@ -322,7 +322,7 @@ Fix the errors and try again.\
 async def test_instrumented_model_not_recording():
     model = InstrumentedModel(
         MyModel(),
-        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()),
+        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpLoggerProvider()),
     )
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
@@ -399,7 +399,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         [
             {
                 'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -408,20 +408,20 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                 },
                 'timestamp': 2000000000,
                 'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 4000000000,
                 'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
         ]
     )
@@ -499,7 +499,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
         [
             {
                 'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {
                     'gen_ai.system': 'my_system',
@@ -508,20 +508,20 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 },
                 'timestamp': 2000000000,
                 'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
             {
                 'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
-                'severity_number': 9,
+                'severity_number': None,
                 'severity_text': None,
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 4000000000,
                 'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
+                'trace_id': None,
+                'span_id': None,
+                'trace_flags': None,
             },
         ]
     )
