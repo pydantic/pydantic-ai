@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import date
-from itertools import chain
 from typing import Any
 from xml.etree import ElementTree
 
@@ -11,7 +10,7 @@ from pydantic import BaseModel
 
 __all__ = ('format_as_xml',)
 
-from pydantic.fields import ComputedFieldInfo
+from pydantic.fields import ComputedFieldInfo, FieldInfo
 
 
 def format_as_xml(
@@ -20,7 +19,7 @@ def format_as_xml(
     item_tag: str = 'item',
     none_str: str = 'null',
     indent: str | None = '  ',
-    fields_attributes: bool = True,
+    add_attributes: bool = False,
 ) -> str:
     """Format a Python object as XML.
 
@@ -37,8 +36,8 @@ def format_as_xml(
             for dataclasses and Pydantic models.
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
-        fields_attributes: Whether to include field attributes (title, description, alias) as attributes
-            on the XML elements for Pydantic models.
+        add_attributes: Whether to include attributes like Pydantic Field attributes (title, description, alias)
+            as XML attributes in the elements.
 
     Returns:
         XML representation of the object.
@@ -57,7 +56,7 @@ def format_as_xml(
     '''
     ```
     """
-    el = _ToXml(item_tag=item_tag, none_str=none_str, add_fields_attributes=fields_attributes).to_xml(obj, root_tag)
+    el = _ToXml(data=obj, item_tag=item_tag, none_str=none_str, add_attributes=add_attributes).to_xml(root_tag)
     if root_tag is None and el.text is None:
         join = '' if indent is None else '\n'
         return join.join(_rootless_xml_elements(el, indent))
@@ -69,15 +68,19 @@ def format_as_xml(
 
 @dataclass
 class _ToXml:
+    data: Any
     item_tag: str
     none_str: str
-    add_fields_attributes: bool
+    add_attributes: bool
+    _attributes: dict[str, dict[str, str]] | None = None
+    _element_names: dict[str, str] | None = None
+    _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
 
-    def to_xml(self, value: Any, tag: str | None, attributes: dict[str, str] | None = None) -> ElementTree.Element:
-        element = ElementTree.Element(self.item_tag if tag is None else tag)
-        if attributes is not None:
-            for k, v in attributes.items():
-                element.set(k, v)
+    def to_xml(self, tag: str | None) -> ElementTree.Element:
+        return self._to_xml(self.data, tag)
+
+    def _to_xml(self, value: Any, tag: str | None, path: str = '') -> ElementTree.Element:
+        element = self._create_element(self.item_tag if tag is None else tag, path)
         if value is None:
             element.text = self.none_str
         elif isinstance(value, str):
@@ -89,76 +92,99 @@ class _ToXml:
         elif isinstance(value, date):
             element.text = value.isoformat()
         elif isinstance(value, Mapping):
-            self._mapping_to_xml(element, value)  # pyright: ignore[reportUnknownArgumentType]
+            if tag is None and self._element_names and path in self._element_names:
+                element = self._create_element(self._element_names[path], path)
+            self._mapping_to_xml(element, value, path)  # pyright: ignore[reportUnknownArgumentType]
         elif is_dataclass(value) and not isinstance(value, type):
+            self._init_element_names()
             if tag is None:
-                element = ElementTree.Element(value.__class__.__name__)
-            dc_dict = asdict(value)
-            self._mapping_to_xml(element, dc_dict)
+                element = self._create_element(value.__class__.__name__, path)
+            self._mapping_to_xml(element, asdict(value), path)
         elif isinstance(value, BaseModel):
+            self._init_attributes()
+            self._init_element_names()
             if tag is None:
-                element = ElementTree.Element(value.__class__.__name__)
-            self._mapping_to_xml(
-                element=element,
-                mapping=self._partial_model_dump(value),
-                fields_attributes=self._fields_attributes(value) if self.add_fields_attributes else None,
-            )
+                element = self._create_element(value.__class__.__name__, path)
+            self._mapping_to_xml(element, value.model_dump(mode='python'), path)
         elif isinstance(value, Iterable):
             for item in value:  # pyright: ignore[reportUnknownVariableType]
-                item_el = self.to_xml(item, None)
-                element.append(item_el)
+                element.append(self._to_xml(item, None, f'{path}.[]' if path else '[]'))
         else:
             raise TypeError(f'Unsupported type for XML formatting: {type(value)}')
         return element
+
+    def _create_element(self, tag: str, path: str) -> ElementTree.Element:
+        element = ElementTree.Element(tag)
+        if self._attributes:
+            for k, v in self._attributes.get(path, {}).items():
+                element.set(k, v)
+        return element
+
+    def _init_attributes(self):
+        if self.add_attributes and self._attributes is None:
+            self._attributes = {}
+            self._parse_data_structures(self.data, attributes=self._attributes)
+
+    def _init_element_names(self):
+        if self._element_names is None:
+            self._element_names = {}
+            self._parse_data_structures(self.data, element_names=self._element_names)
 
     def _mapping_to_xml(
         self,
         element: ElementTree.Element,
         mapping: Mapping[Any, Any],
-        fields_attributes: dict[str, dict[str, str]] | None = None,
+        path: str = '',
     ) -> None:
-        fields_attributes = fields_attributes or {}
         for key, value in mapping.items():
             if isinstance(key, int):
                 key = str(key)
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
-            element.append(self.to_xml(value, key, fields_attributes.get(key)))
+            element.append(self._to_xml(value, key, f'{path}.{key}' if path else key))
 
-    @staticmethod
-    def _partial_model_dump(model: BaseModel) -> dict[str, Any]:
-        """Dump only primitive types in order to keep fields information on models in sub-fields."""
-        exclude: set[str] = set()
-        for field in chain(
-            (k for k, v in model.model_fields.items() if not v.exclude), model.model_computed_fields.keys()
-        ):
-            value = getattr(model, field)
-            if value is not None and (
-                not isinstance(value, (str, int, float, date, bytearray, bytes, bool))
-                or not (is_dataclass(value) and not isinstance(value, type))
-            ):
-                exclude.add(field)
-        # FIXME we iteratively dump again sub-fields, we could set exclude parameter, but we would lost fields order
-        dump: dict[str, Any] = model.model_dump(mode='python')
-        # FIXME what is excluded won't follow serialization rules defined in the model
-        for field in exclude:
-            dump[field] = getattr(model, field)
-        return dump
+    @classmethod
+    def _parse_data_structures(
+        cls,
+        value: Any,
+        element_names: dict[str, str] | None = None,
+        attributes: dict[str, dict[str, str]] | None = None,
+        path: str = '',
+    ):
+        if value is None or isinstance(value, (str, int, float, date, bytearray, bytes, bool)):
+            return
+        elif isinstance(value, Mapping):
+            for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
+                cls._parse_data_structures(v, element_names, attributes, f'{path}.{k}' if path else f'{k}')
+        elif is_dataclass(value) and not isinstance(value, type):
+            if element_names is not None:
+                element_names[path] = value.__class__.__name__
+            for k, v in asdict(value).items():
+                cls._parse_data_structures(v, element_names, attributes, f'{path}.{k}' if path else f'{k}')
+        elif isinstance(value, BaseModel):
+            if element_names is not None:
+                element_names[path] = value.__class__.__name__
+            for model_fields in (value.model_fields, value.model_computed_fields):
+                for field, info in model_fields.items():
+                    new_path = f'{path}.{field}' if path else field
+                    if (attributes is not None) and (isinstance(info, ComputedFieldInfo) or not info.exclude):
+                        attributes.update(cls._extract_attributes(info, new_path))
+                    cls._parse_data_structures(getattr(value, field), element_names, attributes, new_path)
+        elif isinstance(value, Iterable):
+            new_path = f'{path}.[]' if path else '[]'
+            for item in value:  # pyright: ignore[reportUnknownVariableType]
+                cls._parse_data_structures(item, element_names, attributes, new_path)
 
-    @staticmethod
-    def _fields_attributes(value: BaseModel) -> dict[str, dict[str, str]]:
-        """Obtain a map of xml attributes for each Pydantic field."""
+    @classmethod
+    def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo, path: str) -> dict[str, dict[str, str]]:
         ret: dict[str, dict[str, str]] = {}
-        for model_fields in (value.model_fields, value.model_computed_fields):
-            for field, info in model_fields.items():
-                if isinstance(info, ComputedFieldInfo) or not info.exclude:
-                    attributes = {}
-                    for attr in ('title', 'description', 'alias'):
-                        attr_value = getattr(info, attr, None)
-                        if attr_value is not None:
-                            attributes[attr] = str(attr_value)
-                    if attributes:
-                        ret[field] = attributes
+        attributes = {}
+        for attr in cls._FIELD_ATTRIBUTES:
+            attr_value = getattr(info, attr, None)
+            if attr_value is not None:
+                attributes[attr] = str(attr_value)
+        if attributes:
+            ret[path] = attributes
         return ret
 
 

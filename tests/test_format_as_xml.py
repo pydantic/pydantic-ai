@@ -20,7 +20,7 @@ class ExamplePydanticModel(BaseModel):
     age: int
 
 
-class ExamplePydanticModelFields(BaseModel):
+class ExamplePydanticFields(BaseModel):
     name: str = Field(description="The person's name")
     age: int = Field(description='Years', title='Age', default=18)
     height: float = Field(description="The person's height", exclude=True)
@@ -137,20 +137,20 @@ class ExamplePydanticModelFields(BaseModel):
     ],
 )
 def test_root_tag(input_obj: Any, output: str):
-    assert format_as_xml(input_obj, root_tag='examples', item_tag='example') == output
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', add_attributes=True) == output
 
 
 @pytest.mark.parametrize(
     'input_obj,use_fields,output',
     [
         pytest.param(
-            ExamplePydanticModelFields(
+            ExamplePydanticFields(
                 name='John',
                 age=42,
                 height=160.0,
                 child=[
-                    ExamplePydanticModelFields(name='Liam', height=150),
-                    ExamplePydanticModelFields(name='Alice', height=160),
+                    ExamplePydanticFields(name='Liam', height=150),
+                    ExamplePydanticFields(name='Alice', height=160),
                 ],
             ),
             True,
@@ -158,18 +158,18 @@ def test_root_tag(input_obj: Any, output: str):
 <name description="The person's name">John</name>
 <age title="Age" description="Years">42</age>
 <children alias="child">
-  <ExamplePydanticModelFields>
+  <ExamplePydanticFields>
     <name description="The person's name">Liam</name>
     <age title="Age" description="Years">18</age>
     <children alias="child">null</children>
     <location title="Location">null</location>
-  </ExamplePydanticModelFields>
-  <ExamplePydanticModelFields>
+  </ExamplePydanticFields>
+  <ExamplePydanticFields>
     <name description="The person's name">Alice</name>
     <age title="Age" description="Years">18</age>
     <children alias="child">null</children>
     <location title="Location">null</location>
-  </ExamplePydanticModelFields>
+  </ExamplePydanticFields>
 </children>
 <location title="Location">Australia</location>\
 """),
@@ -177,48 +177,48 @@ def test_root_tag(input_obj: Any, output: str):
         ),
         pytest.param(
             [
-                ExamplePydanticModelFields(
+                ExamplePydanticFields(
                     name='John',
                     age=42,
                     height=160.0,
                     child=[
-                        ExamplePydanticModelFields(name='Liam', height=150),
-                        ExamplePydanticModelFields(name='Alice', height=160),
+                        ExamplePydanticFields(name='Liam', height=150),
+                        ExamplePydanticFields(name='Alice', height=160),
                     ],
                 )
             ],
             True,
             snapshot("""\
-<ExamplePydanticModelFields>
+<ExamplePydanticFields>
   <name description="The person's name">John</name>
   <age title="Age" description="Years">42</age>
   <children alias="child">
-    <ExamplePydanticModelFields>
+    <ExamplePydanticFields>
       <name description="The person's name">Liam</name>
       <age title="Age" description="Years">18</age>
       <children alias="child">null</children>
       <location title="Location">null</location>
-    </ExamplePydanticModelFields>
-    <ExamplePydanticModelFields>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
       <name description="The person's name">Alice</name>
       <age title="Age" description="Years">18</age>
       <children alias="child">null</children>
       <location title="Location">null</location>
-    </ExamplePydanticModelFields>
+    </ExamplePydanticFields>
   </children>
   <location title="Location">Australia</location>
-</ExamplePydanticModelFields>\
+</ExamplePydanticFields>\
 """),
             id='list[pydantic model with fields]',
         ),
         pytest.param(
-            ExamplePydanticModelFields(
+            ExamplePydanticFields(
                 name='John',
                 age=42,
                 height=160.0,
                 child=[
-                    ExamplePydanticModelFields(name='Liam', height=150),
-                    ExamplePydanticModelFields(name='Alice', height=160),
+                    ExamplePydanticFields(name='Liam', height=150),
+                    ExamplePydanticFields(name='Alice', height=160),
                 ],
             ),
             False,
@@ -226,18 +226,18 @@ def test_root_tag(input_obj: Any, output: str):
 <name>John</name>
 <age>42</age>
 <children>
-  <ExamplePydanticModelFields>
+  <ExamplePydanticFields>
     <name>Liam</name>
     <age>18</age>
     <children>null</children>
     <location>null</location>
-  </ExamplePydanticModelFields>
-  <ExamplePydanticModelFields>
+  </ExamplePydanticFields>
+  <ExamplePydanticFields>
     <name>Alice</name>
     <age>18</age>
     <children>null</children>
     <location>null</location>
-  </ExamplePydanticModelFields>
+  </ExamplePydanticFields>
 </children>
 <location>Australia</location>\
 """),
@@ -246,7 +246,7 @@ def test_root_tag(input_obj: Any, output: str):
     ],
 )
 def test_fields(input_obj: Any, use_fields: bool, output: str):
-    assert format_as_xml(input_obj, fields_attributes=use_fields) == output
+    assert format_as_xml(input_obj, add_attributes=use_fields) == output
 
 
 @pytest.mark.parametrize(
