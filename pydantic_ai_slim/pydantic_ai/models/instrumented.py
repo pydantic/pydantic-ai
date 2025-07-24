@@ -9,15 +9,12 @@ from urllib.parse import urlparse
 
 from opentelemetry._events import (
     EventLoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
-    NoOpEventLogger,  # pyright: ignore[reportPrivateImportUsage]
-    ProxyEventLogger,  # pyright: ignore[reportPrivateImportUsage]
 )
 from opentelemetry._logs import (
     Logger,  # pyright: ignore[reportPrivateImportUsage]
     LoggerProvider,  # pyright: ignore[reportPrivateImportUsage]
     LogRecord,  # pyright: ignore[reportPrivateImportUsage]
     NoOpLogger,  # pyright: ignore[reportPrivateImportUsage]
-    ProxyLogger,  # pyright: ignore[reportPrivateImportUsage]
     get_logger_provider,  # pyright: ignore[reportPrivateImportUsage]
 )
 from opentelemetry.metrics import MeterProvider, get_meter_provider
@@ -129,31 +126,15 @@ class InstrumentationSettings:
         self.tracer = tracer_provider.get_tracer(scope_name, __version__)
         self.meter = meter_provider.get_meter(scope_name, __version__)
         if isinstance(event_logger_provider, EventLoggerProvider):
-            _cast_event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
-            if isinstance(_cast_event_logger, NoOpEventLogger):
-                _event_logger = NoOpLogger(
-                    name=_cast_event_logger.name,
-                    attributes=_cast_event_logger.attributes,
-                    version=_cast_event_logger.version,
-                    schema_url=_cast_event_logger.schema_url,
-                )
-            elif isinstance(_cast_event_logger, ProxyEventLogger):
-                _event_logger = ProxyLogger(
-                    name=_cast_event_logger.name,
-                    attributes=_cast_event_logger.attributes,
-                    version=_cast_event_logger.version,
-                    schema_url=_cast_event_logger.schema_url,
-                )
-            else:
-                _event_logger = Logger(
-                    name=_cast_event_logger.name,
-                    attributes=_cast_event_logger.attributes,
-                    version=_cast_event_logger.version,
-                    schema_url=_cast_event_logger.schema_url,
-                )
+            _event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
+            self.event_logger = NoOpLogger(
+                name=_event_logger._name,  # pyright: ignore[reportPrivateUsage]
+                attributes=_event_logger._attributes,  # pyright: ignore[reportPrivateUsage]
+                version=_event_logger._version,  # pyright: ignore[reportPrivateUsage]
+                schema_url=_event_logger._schema_url,  # pyright: ignore[reportPrivateUsage]
+            )
         else:
-            _event_logger = event_logger_provider.get_logger(scope_name, __version__)
-        self.event_logger = _event_logger
+            self.event_logger = event_logger_provider.get_logger(scope_name, __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
