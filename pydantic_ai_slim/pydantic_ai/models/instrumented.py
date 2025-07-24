@@ -4,7 +4,7 @@ import json
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, Union
 from urllib.parse import urlparse
 
 from opentelemetry._events import (
@@ -59,7 +59,7 @@ ANY_ADAPTER = TypeAdapter[Any](Any)
 # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
 TOKEN_HISTOGRAM_BOUNDARIES = (1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864)
 
-EventLogs = list[LogRecord] | list[Event]
+EventLogs = Union[list[Event], list[LogRecord]]
 
 
 def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -> Model:
@@ -403,7 +403,7 @@ class InstrumentedModel(WrapperModel):
         return attributes
 
     @staticmethod
-    def event_to_dict(event: LogRecord | Event) -> dict[str, Any]:
+    def event_to_dict(event: Union[LogRecord, Event]) -> dict[str, Any]:
         if not event.body:
             body = {}  # pragma: no cover
         elif isinstance(event.body, Mapping):
