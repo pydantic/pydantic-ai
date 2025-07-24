@@ -243,7 +243,7 @@ certificate for **mTLS**, or (during local development only!) disable
 certificate verification altogether.
 All HTTP-based MCP client classes
 ([`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] and
-[`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE]) expose a `http_client`
+[`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE]) expose an `http_client`
 parameter that lets you pass your own pre-configured
 [`httpx.AsyncClient`](https://www.python-httpx.org/async/).
 
@@ -262,18 +262,18 @@ ssl_ctx = ssl.create_default_context(cafile="/etc/ssl/private/my_company_ca.pem"
 ssl_ctx.load_cert_chain(certfile="/etc/ssl/certs/client.crt", keyfile="/etc/ssl/private/client.key",)
 
 http_client = httpx.AsyncClient(
-    verify=ssl_ctx,  # ‑- pass the context instead of the path string
+    verify=ssl_ctx,
     timeout=httpx.Timeout(10.0),
 )
 
 server = MCPServerSSE(
-    url="https://mcp.internal.example.com/sse",
+    url="http://localhost:3001/sse",
     http_client=http_client,  # (1)!
 )
 agent = Agent("openai:gpt-4o", toolsets=[server])
 
 async def main():
-    async with agent:  # (3)!
+    async with agent:
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
