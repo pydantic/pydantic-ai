@@ -303,8 +303,8 @@ async def test_tool_ag_ui() -> None:
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First call - make a tool call
-            yield {0: DeltaToolCall(name='get_weather')}
-            yield {0: DeltaToolCall(json_args='{"location": "Paris"}')}
+            yield {0: DeltaToolCall(name='get_weather', json_args='{"location": ')}
+            yield {0: DeltaToolCall(json_args='"Paris"}')}
         else:
             # Second call - return text result
             yield '{"get_weather": "Tool result"}'
@@ -369,8 +369,9 @@ async def test_tool_ag_ui() -> None:
             {
                 'type': 'TOOL_CALL_ARGS',
                 'toolCallId': tool_call_id,
-                'delta': '{"location": "Paris"}',
+                'delta': '{"location": ',
             },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '"Paris"}'},
             {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
             {
                 'type': 'RUN_FINISHED',
