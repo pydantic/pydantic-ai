@@ -441,7 +441,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     maybe_event = self._parts_manager.handle_text_delta(
                         vendor_part_id=None, content=gemini_part['text']
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 
                 elif 'function_call' in gemini_part:

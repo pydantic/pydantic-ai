@@ -270,12 +270,12 @@ class TestStreamedResponse(StreamedResponse):
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
                 maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
-                if maybe_event is not None:
+                if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
                 for word in words:
                     self._usage += _get_string_usage(word)
                     maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
             elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(

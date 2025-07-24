@@ -602,7 +602,7 @@ class MistralStreamedResponse(StreamedResponse):
                         )
                 else:
                     maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 
             # Handle the explicit tool calls

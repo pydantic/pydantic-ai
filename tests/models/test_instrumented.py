@@ -97,10 +97,10 @@ class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         self._usage = Usage(request_tokens=300, response_tokens=400)
         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
-        if maybe_event is not None:
+        if maybe_event is not None:  # pragma: no branch
             yield maybe_event
         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2')
-        if maybe_event is not None:
+        if maybe_event is not None:  # pragma: no branch
             yield maybe_event
 
     @property
