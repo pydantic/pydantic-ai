@@ -28,11 +28,11 @@ def test_moonshotai_provider():
 
 def test_moonshotai_provider_need_api_key(env: TestEnv) -> None:
     """Test that MoonshotAI provider requires an API key."""
-    env.remove('MOONSHOT_API_KEY')
+    env.remove('MOONSHOTAI_API_KEY')
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Set the `MOONSHOT_API_KEY` environment variable or pass it via `MoonshotAIProvider(api_key=...)`'
+            'Set the `MOONSHOTAI_API_KEY` environment variable or pass it via `MoonshotAIProvider(api_key=...)`'
             ' to use the MoonshotAI provider.'
         ),
     ):

@@ -81,10 +81,10 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ) -> None:
-        api_key = api_key or os.getenv('MOONSHOT_API_KEY')
+        api_key = api_key or os.getenv('MOONSHOTAI_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `MOONSHOT_API_KEY` environment variable or pass it via '
+                'Set the `MOONSHOTAI_API_KEY` environment variable or pass it via '
                 '`MoonshotAIProvider(api_key=...)` to use the MoonshotAI provider.'
             )
 

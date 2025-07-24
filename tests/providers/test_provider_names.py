@@ -43,7 +43,7 @@ with try_import() as imports_successful:
         ('groq', GroqProvider, 'GROQ_API_KEY'),
         ('mistral', MistralProvider, 'MISTRAL_API_KEY'),
         ('grok', GrokProvider, 'GROK_API_KEY'),
-        ('moonshotai', MoonshotAIProvider, 'MOONSHOT_API_KEY'),
+        ('moonshotai', MoonshotAIProvider, 'MOONSHOTAI_API_KEY'),
         ('fireworks', FireworksProvider, 'FIREWORKS_API_KEY'),
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
