@@ -401,6 +401,24 @@ agent = Agent(model)
 ...
 ```
 
+### MoonshotAI
+
+Create an API key in the [Moonshot Console](https://platform.moonshot.ai/console).
+With that key you can instantiate the [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+
+model = OpenAIModel(
+    'kimi-k2-0711-preview',
+    provider=MoonshotAIProvider(api_key='your-moonshot-api-key'),
+)
+agent = Agent(model)
+...
+```
+
 ### GitHub Models
 
 To use [GitHub Models](https://docs.github.com/en/github-models), you'll need a GitHub personal access token with the `models: read` permission.

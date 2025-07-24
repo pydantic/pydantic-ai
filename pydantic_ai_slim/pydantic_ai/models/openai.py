@@ -195,6 +195,7 @@ class OpenAIModel(Model):
             'deepseek',
             'azure',
             'openrouter',
+            'moonshotai',
             'vercel',
             'grok',
             'fireworks',
@@ -299,7 +300,10 @@ class OpenAIModel(Model):
         tools = self._get_tools(model_request_parameters)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
