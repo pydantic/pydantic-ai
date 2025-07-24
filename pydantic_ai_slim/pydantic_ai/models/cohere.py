@@ -38,7 +38,6 @@ try:
         AssistantChatMessageV2,
         AsyncClientV2,
         ChatMessageV2,
-        ChatResponse,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentItem,
         ToolCallV2,
@@ -47,6 +46,7 @@ try:
         ToolV2,
         ToolV2Function,
         UserChatMessageV2,
+        V2ChatResponse,
     )
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
@@ -164,7 +164,7 @@ class CohereModel(Model):
         messages: list[ModelMessage],
         model_settings: CohereModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> ChatResponse:
+    ) -> V2ChatResponse:
         tools = self._get_tools(model_request_parameters)
         cohere_messages = self._map_messages(messages)
         try:
@@ -185,7 +185,7 @@ class CohereModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: no cover
 
-    def _process_response(self, response: ChatResponse) -> ModelResponse:
+    def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
         if response.message.content is not None and len(response.message.content) > 0:
@@ -294,7 +294,7 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: ChatResponse) -> usage.Usage:
+def _map_usage(response: V2ChatResponse) -> usage.Usage:
     u = response.usage
     if u is None:
         return usage.Usage()
