@@ -284,10 +284,13 @@ class MCPServer(AbstractToolset[Any], ABC):
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
             resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
-            if len(resource_result.contents) > 1:
-                return [self._get_content(resource) for resource in resource_result.contents]
-            else:
-                return self._get_content(resource_result.contents[0])
+            return (
+                self._get_content(resource_result.contents[0])
+                if len(resource_result.contents) == 1
+                else [self._get_content(resource) for resource in resource_result.contents]
+            )
+        else:
+            assert_never(part)
 
     def _get_content(
         self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
