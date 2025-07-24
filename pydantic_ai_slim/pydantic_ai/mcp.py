@@ -151,7 +151,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        content = [self._map_tool_result_part(part) for part in result.content]
+        content = [await self._map_tool_result_part(part) for part in result.content]
 
         if result.isError:
             text = '\n'.join(str(part) for part in content)
@@ -262,8 +262,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             model=self.sampling_model.model_name,
         )
 
-    def _map_tool_result_part(
-        self, part: mcp_types.Content
+    async def _map_tool_result_part(
+        self, part: mcp_types.ContentBlock
     ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
@@ -285,17 +285,28 @@ class MCPServer(AbstractToolset[Any], ABC):
             )  # pragma: no cover
         elif isinstance(part, mcp_types.EmbeddedResource):
             resource = part.resource
-            if isinstance(resource, mcp_types.TextResourceContents):
-                return resource.text
-            elif isinstance(resource, mcp_types.BlobResourceContents):
-                return messages.BinaryContent(
-                    data=base64.b64decode(resource.blob),
-                    media_type=resource.mimeType or 'application/octet-stream',
-                )
-            else:
-                assert_never(resource)
+            return self._get_content(resource)
+        elif isinstance(part, mcp_types.ResourceLink):
+            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
+            return (
+                self._get_content(resource_result.contents[0])
+                if len(resource_result.contents) == 1
+                else [self._get_content(resource) for resource in resource_result.contents]
+            )
         else:
             assert_never(part)
+
+    def _get_content(
+        self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
+    ) -> str | messages.BinaryContent:
+        if isinstance(resource, mcp_types.TextResourceContents):
+            return resource.text
+        elif isinstance(resource, mcp_types.BlobResourceContents):
+            return messages.BinaryContent(
+                data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+            )
+        else:
+            assert_never(resource)
 
 
 @dataclass
