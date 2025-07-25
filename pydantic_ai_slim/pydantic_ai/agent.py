@@ -1792,9 +1792,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         async with self._enter_lock:
             if self._entered_count == 0:
-                self._exit_stack = AsyncExitStack()
-                toolset = self._get_toolset()
-                await self._exit_stack.enter_async_context(toolset)
+                async with AsyncExitStack() as exit_stack:
+                    toolset = self._get_toolset()
+                    await exit_stack.enter_async_context(toolset)
+
+                    self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
         return self
 
