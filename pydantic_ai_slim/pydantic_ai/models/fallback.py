@@ -3,10 +3,11 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from opentelemetry.trace import get_current_span
 
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
@@ -83,6 +84,7 @@ class FallbackModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Try each model in sequence until one succeeds."""
         exceptions: list[Exception] = []
@@ -92,7 +94,7 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 try:
                     response = await stack.enter_async_context(
-                        model.request_stream(messages, model_settings, customized_model_request_parameters)
+                        model.request_stream(messages, model_settings, customized_model_request_parameters, run_context)
                     )
                 except Exception as exc:
                     if self._fallback_on(exc):

@@ -84,7 +84,10 @@ def temperature_fahrenheit(city: str) -> float:
     return 69.8
 
 
-weather_toolset = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
+weather_toolset = FunctionToolset(
+    tools=[temperature_celsius, temperature_fahrenheit],
+    id='weather',  # (1)!
+)
 
 
 @weather_toolset.tool
@@ -95,10 +98,10 @@ def conditions(ctx: RunContext, city: str) -> str:
         return "It's raining"
 
 
-datetime_toolset = FunctionToolset()
+datetime_toolset = FunctionToolset(id='datetime')
 datetime_toolset.add_function(lambda: datetime.now(), name='now')
 
-test_model = TestModel() # (1)!
+test_model = TestModel()  # (2)!
 agent = Agent(test_model)
 
 result = agent.run_sync('What tools are available?', toolsets=[weather_toolset])
@@ -110,7 +113,8 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['now']
 ```
 
-1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
+1. `FunctionToolset` supports an optional `id` argument that can help to identify the toolset in error messages. A toolset also needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+2. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
 
 _(This example is complete, it can be run "as is")_
 
@@ -609,7 +613,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 
 
 toolkit = SlackToolkit()
-toolset = LangChainToolset(toolkit.get_tools())
+toolset = LangChainToolset(toolkit.get_tools(), id='slack')
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])
 # ...
@@ -634,6 +638,7 @@ toolset = ACIToolset(
         'OPEN_WEATHER_MAP__FORECAST',
     ],
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
+    id='open_weather_map',
 )
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])

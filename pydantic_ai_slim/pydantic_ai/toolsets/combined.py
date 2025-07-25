@@ -40,6 +40,14 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self._entered_count = 0
         self._exit_stack = None
 
+    @property
+    def id(self) -> str | None:
+        return None
+
+    @property
+    def label(self) -> str:
+        return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'
+
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._entered_count == 0:
@@ -65,7 +73,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
             for name, tool in tools.items():
                 if existing_tools := all_tools.get(name):
                     raise UserError(
-                        f'{toolset.name} defines a tool whose name conflicts with existing tool from {existing_tools.toolset.name}: {name!r}. {toolset.tool_name_conflict_hint}'
+                        f'{toolset.label} defines a tool whose name conflicts with existing tool from {existing_tools.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
                     )
 
                 all_tools[name] = _CombinedToolsetTool(

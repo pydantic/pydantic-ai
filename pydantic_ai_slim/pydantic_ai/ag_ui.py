@@ -273,7 +273,8 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                         parameters_json_schema=tool.parameters,
                     )
                     for tool in run_input.tools
-                ]
+                ],
+                id='ag_ui_frontend',
             )
             toolsets = [*toolsets, toolset] if toolsets else [toolset]
 

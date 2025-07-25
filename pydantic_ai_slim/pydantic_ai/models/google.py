@@ -12,6 +12,7 @@ from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
+from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -44,7 +45,7 @@ from . import (
 )
 
 try:
-    from google import genai
+    from google.genai import Client
     from google.genai.types import (
         ContentDict,
         ContentUnionDict,
@@ -130,10 +131,10 @@ class GoogleModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: genai.Client = field(repr=False)
+    client: Client = field(repr=False)
 
     _model_name: GoogleModelName = field(repr=False)
-    _provider: Provider[genai.Client] = field(repr=False)
+    _provider: Provider[Client] = field(repr=False)
     _url: str | None = field(repr=False)
     _system: str = field(default='google', repr=False)
 
@@ -141,7 +142,7 @@ class GoogleModel(Model):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -187,6 +188,7 @@ class GoogleModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         model_settings = cast(GoogleModelSettings, model_settings or {})

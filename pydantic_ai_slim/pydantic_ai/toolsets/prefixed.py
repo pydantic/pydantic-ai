@@ -17,6 +17,10 @@ class PrefixedToolset(WrapperToolset[AgentDepsT]):
 
     prefix: str
 
+    @property
+    def tool_name_conflict_hint(self) -> str:
+        return 'Change the `prefix` attribute to avoid name conflicts.'
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return {
             new_name: replace(

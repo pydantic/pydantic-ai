@@ -15,6 +15,7 @@ import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, usage
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -264,6 +265,7 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)

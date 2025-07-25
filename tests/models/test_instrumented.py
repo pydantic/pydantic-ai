@@ -11,6 +11,7 @@ from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 from opentelemetry._events import NoOpEventLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -89,6 +90,7 @@ class MyModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         yield MyResponseStream()
 

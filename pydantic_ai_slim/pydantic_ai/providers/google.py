@@ -10,8 +10,8 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from google import genai
     from google.auth.credentials import Credentials
+    from google.genai import Client
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -19,7 +19,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-class GoogleProvider(Provider[genai.Client]):
+class GoogleProvider(Provider[Client]):
     """Provider for Google."""
 
     @property
@@ -31,7 +31,7 @@ class GoogleProvider(Provider[genai.Client]):
         return str(self._client._api_client._http_options.base_url)  # type: ignore[reportPrivateUsage]
 
     @property
-    def client(self) -> genai.Client:
+    def client(self) -> Client:
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
@@ -50,7 +50,7 @@ class GoogleProvider(Provider[genai.Client]):
     ) -> None: ...
 
     @overload
-    def __init__(self, *, client: genai.Client) -> None: ...
+    def __init__(self, *, client: Client) -> None: ...
 
     @overload
     def __init__(self, *, vertexai: bool = False) -> None: ...
@@ -62,7 +62,7 @@ class GoogleProvider(Provider[genai.Client]):
         credentials: Credentials | None = None,
         project: str | None = None,
         location: VertexAILocation | Literal['global'] | None = None,
-        client: genai.Client | None = None,
+        client: Client | None = None,
         vertexai: bool | None = None,
     ) -> None:
         """Create a new Google provider.
@@ -95,13 +95,13 @@ class GoogleProvider(Provider[genai.Client]):
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                         'to use the Google Generative Language API.'
                     )
-                self._client = genai.Client(
+                self._client = Client(
                     vertexai=vertexai,
                     api_key=api_key,
                     http_options={'headers': {'User-Agent': get_user_agent()}},
                 )
             else:
-                self._client = genai.Client(
+                self._client = Client(
                     vertexai=vertexai,
                     project=project or os.environ.get('GOOGLE_CLOUD_PROJECT'),
                     # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:

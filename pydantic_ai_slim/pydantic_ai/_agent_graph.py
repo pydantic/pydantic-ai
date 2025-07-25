@@ -325,13 +325,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> AsyncIterator[models.StreamedResponse]:
         assert not self._did_stream, 'stream() should only be called once per node'
 
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
         async with ctx.deps.model.request_stream(
-            message_history, model_settings, model_request_parameters
+            message_history, model_settings, model_request_parameters, run_context
         ) as streamed_response:
             self._did_stream = True
             ctx.state.usage.requests += 1
@@ -351,11 +347,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -363,7 +355,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> tuple[ModelSettings | None, models.ModelRequestParameters]:
+    ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         ctx.state.message_history.append(self.request)
 
         # Check usage
@@ -373,9 +365,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Increment run_step
         ctx.state.run_step += 1
 
+        run_context = build_run_context(ctx)
+
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
+
         model_request_parameters = await _prepare_request_parameters(ctx)
-        return model_settings, model_request_parameters
+        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
+
+        message_history = await _process_message_history(
+            ctx.state.message_history, ctx.deps.history_processors, run_context
+        )
+
+        return model_settings, model_request_parameters, message_history, run_context
 
     def _finish_handling(
         self,

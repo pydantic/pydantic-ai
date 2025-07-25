@@ -13,10 +13,9 @@ import pydantic
 from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
 from typing_extensions import NotRequired, TypedDict, assert_never
 
-from pydantic_ai.providers import Provider, infer_provider
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
+from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -36,6 +35,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -164,6 +164,7 @@ class GeminiModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         async with self._make_request(

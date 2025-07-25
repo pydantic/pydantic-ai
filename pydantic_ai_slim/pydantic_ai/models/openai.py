@@ -11,12 +11,10 @@ from typing import Any, Literal, Union, cast, overload
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-from pydantic_ai.profiles.openai import OpenAIModelProfile
-from pydantic_ai.providers import Provider, infer_provider
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
+from .._run_context import RunContext
+from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     AudioUrl,
@@ -38,6 +36,8 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..profiles.openai import OpenAIModelProfile
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -254,6 +254,7 @@ class OpenAIModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
@@ -678,6 +679,7 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._responses_create(

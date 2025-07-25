@@ -11,9 +11,9 @@ import pydantic_core
 from httpx import Timeout
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .._run_context import RunContext
+from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     BinaryContent,
@@ -173,6 +173,7 @@ class MistralModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()

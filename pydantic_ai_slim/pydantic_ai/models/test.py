@@ -12,6 +12,7 @@ import pydantic_core
 from typing_extensions import assert_never
 
 from .. import _utils
+from .._run_context import RunContext
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -118,6 +119,7 @@ class TestModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         self.last_model_request_parameters = model_request_parameters
 

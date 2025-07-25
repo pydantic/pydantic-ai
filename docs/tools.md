@@ -770,7 +770,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 
 
 toolkit = SlackToolkit()
-toolset = LangChainToolset(toolkit.get_tools())
+toolset = LangChainToolset(toolkit.get_tools(), id='slack')
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])
 # ...
@@ -823,6 +823,7 @@ toolset = ACIToolset(
         'OPEN_WEATHER_MAP__FORECAST',
     ],
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
+    id='open_weather_map',
 )
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])

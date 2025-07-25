@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Callable, Literal, Union
 
@@ -606,7 +607,9 @@ def test_tool_return_conflict():
     # this raises an error
     with pytest.raises(
         UserError,
-        match="Function toolset defines a tool whose name conflicts with existing tool from Output toolset: 'ctx_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.",
+        match=re.escape(
+            "FunctionToolset 'agent' defines a tool whose name conflicts with existing tool from OutputToolset 'output': 'ctx_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts."
+        ),
     ):
         Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool')).run_sync(
             '', deps=0
@@ -616,7 +619,9 @@ def test_tool_return_conflict():
 def test_tool_name_conflict_hint():
     with pytest.raises(
         UserError,
-        match="Prefixed toolset defines a tool whose name conflicts with existing tool from Function toolset: 'foo_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.",
+        match=re.escape(
+            "PrefixedToolset(FunctionToolset 'tool') defines a tool whose name conflicts with existing tool from FunctionToolset 'agent': 'foo_tool'. Change the `prefix` attribute to avoid name conflicts."
+        ),
     ):
 
         def tool(x: int) -> int:
@@ -625,7 +630,7 @@ def test_tool_name_conflict_hint():
         def foo_tool(x: str) -> str:
             return x + 'foo'  # pragma: no cover
 
-        function_toolset = FunctionToolset([tool])
+        function_toolset = FunctionToolset([tool], id='tool')
         prefixed_toolset = PrefixedToolset(function_toolset, 'foo')
         Agent('test', tools=[foo_tool], toolsets=[prefixed_toolset]).run_sync('')
 

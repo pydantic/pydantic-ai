@@ -7,13 +7,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Callable, Union
+from typing import Any, Callable, Union
 
 from typing_extensions import TypeAlias, assert_never, overload
 
-from pydantic_ai.profiles import ModelProfileSpec
-
 from .. import _utils, usage
+from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
 from ..messages import (
     BinaryContent,
@@ -30,6 +29,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -145,6 +145,7 @@ class FunctionModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,

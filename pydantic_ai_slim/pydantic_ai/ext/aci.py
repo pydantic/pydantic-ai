@@ -71,5 +71,7 @@ def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
 class ACIToolset(FunctionToolset):
     """A toolset that wraps ACI.dev tools."""
 
-    def __init__(self, aci_functions: Sequence[str], linked_account_owner_id: str):
-        super().__init__([tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions])
+    def __init__(self, aci_functions: Sequence[str], linked_account_owner_id: str, id: str | None = None):
+        super().__init__(
+            [tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions], id=id
+        )

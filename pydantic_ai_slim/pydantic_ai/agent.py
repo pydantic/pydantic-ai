@@ -5,7 +5,7 @@ import inspect
 import json
 import warnings
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Generic, cast, final,
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
+from typing_extensions import Literal, Never, Self, TypeAlias, TypeIs, TypeVar, deprecated
 
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
@@ -96,6 +96,14 @@ NoneType = type(None)
 RunOutputDataT = TypeVar('RunOutputDataT')
 """Type variable for the result data of a run where `output_type` was customized on the run call."""
 
+EventStreamHandler: TypeAlias = Callable[
+    [
+        RunContext[AgentDepsT],
+        AsyncIterable[_messages.AgentStreamEvent | _messages.HandleResponseEvent],
+    ],
+    Awaitable[None],
+]
+
 
 @final
 @dataclasses.dataclass(init=False)
@@ -168,6 +176,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
+    _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
     _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
@@ -197,6 +206,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> None: ...
 
     @overload
@@ -257,6 +267,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> None: ...
 
     def __init__(
@@ -283,6 +294,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -331,6 +343,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
+            event_stream_handler: TODO: Optional handler for events from the agent stream.
         """
         if model is None or defer_model_check:
             self.model = model
@@ -420,10 +433,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         if self._output_toolset:
             self._output_toolset.max_retries = self._max_result_retries
 
-        self._function_toolset = FunctionToolset(tools, max_retries=retries)
+        self._function_toolset = FunctionToolset(tools, max_retries=retries, id='agent')
         self._user_toolsets = toolsets or ()
 
         self.history_processors = history_processors or []
+
+        self._event_stream_handler = event_stream_handler
 
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
@@ -559,8 +574,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage=usage,
             toolsets=toolsets,
         ) as agent_run:
-            async for _ in agent_run:
-                pass
+            async for node in agent_run:
+                if self._event_stream_handler is not None and (
+                    self.is_model_request_node(node) or self.is_call_tools_node(node)
+                ):
+                    async with node.stream(agent_run.ctx) as stream:
+                        await self._event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
@@ -1697,6 +1716,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             all_toolsets = [output_toolset, *all_toolsets]
 
         return CombinedToolset(all_toolsets)
+
+    @property
+    def toolset(self) -> AbstractToolset[AgentDepsT]:
+        """The complete toolset that will be available to the model during an agent run.
+
+        This will include function tools registered directly to the agent, output tools, and user-provided toolsets including MCP servers.
+        """
+        return self._get_toolset()
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.

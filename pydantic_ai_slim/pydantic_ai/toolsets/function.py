@@ -35,14 +35,22 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
     max_retries: int = field(default=1)
     tools: dict[str, Tool[Any]] = field(default_factory=dict)
+    _id: str | None = field(init=False, default=None)
 
-    def __init__(self, tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [], max_retries: int = 1):
+    def __init__(
+        self,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
+        max_retries: int = 1,
+        id: str | None = None,
+    ):
         """Build a new function toolset.
 
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
+            id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
         """
+        self._id = id
         self.max_retries = max_retries
         self.tools = {}
         for tool in tools:
@@ -50,6 +58,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 self.add_tool(tool)
             else:
                 self.add_function(tool)
+
+    @property
+    def id(self) -> str | None:
+        return self._id
 
     @overload
     def tool(self, func: ToolFuncEither[AgentDepsT, ToolParams], /) -> ToolFuncEither[AgentDepsT, ToolParams]: ...
