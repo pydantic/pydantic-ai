@@ -29,6 +29,6 @@ jobs:
         with:
           deno-version: v2.x
       - name: 📦 Install Dependencies
-        run: uv sync --frozen --all-extras --all-packages --group lint --group docs
+        run: uv sync --all-extras --all-packages --group lint --group docs
       - name: ⚡️Codeflash Optimization
         run: uv run codeflash --benchmark
