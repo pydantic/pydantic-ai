@@ -16,7 +16,6 @@ from pydantic_ai.profiles import ModelProfileSpec
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
-    AudioUrl,
     BaseCountTokensResponse,
     BinaryContent,
     ModelMessage,
