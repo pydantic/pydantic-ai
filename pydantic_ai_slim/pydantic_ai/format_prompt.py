@@ -168,7 +168,7 @@ class _ToXml:
         elif isinstance(value, BaseModel):
             if element_names is not None:
                 element_names[path] = value.__class__.__name__
-            for model_fields in (value.model_fields, value.model_computed_fields):
+            for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
                 for field, info in model_fields.items():
                     new_path = f'{path}.{field}' if path else field
                     if (attributes is not None) and (isinstance(info, ComputedFieldInfo) or not info.exclude):
