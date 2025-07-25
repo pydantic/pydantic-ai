@@ -11,6 +11,7 @@ from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BaseCountTokensResponse,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -148,6 +149,13 @@ class CohereModel(Model):
         model_response = self._process_response(response)
         model_response.usage.requests = 1
         return model_response
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+    ) -> BaseCountTokensResponse:
+        """Token counting is not supported by the CohereModel."""
+        raise NotImplementedError('Token counting is not supported by CohereModel')
 
     @property
     def model_name(self) -> CohereModelName:

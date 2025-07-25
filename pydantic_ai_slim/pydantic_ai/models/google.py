@@ -14,6 +14,7 @@ from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from ..exceptions import UserError
 from ..messages import (
+    BaseCountTokensResponse,
     BinaryContent,
     FileUrl,
     ModelMessage,
@@ -48,6 +49,7 @@ try:
     from google.genai.types import (
         ContentDict,
         ContentUnionDict,
+        CountTokensResponse,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -180,6 +182,18 @@ class GoogleModel(Model):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+    ) -> BaseCountTokensResponse:
+        check_allow_model_requests()
+        _, contents = await self._map_messages(messages)
+        response = self.client.models.count_tokens(
+            model=self._model_name,
+            contents=contents,
+        )
+        return self._process_count_tokens_response(response)
 
     @asynccontextmanager
     async def request_stream(
@@ -336,6 +350,26 @@ class GoogleModel(Model):
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
+        )
+
+    def _process_count_tokens_response(
+        self,
+        response: CountTokensResponse,
+    ) -> BaseCountTokensResponse:
+        """Process Gemini token count response into BaseCountTokensResponse."""
+        if not hasattr(response, 'total_tokens') or response.total_tokens is None:
+            raise UnexpectedModelBehavior('Total tokens missing from Gemini response', str(response))
+
+        vendor_details: dict[str, Any] | None = None
+        if hasattr(response, 'cached_content_token_count'):
+            vendor_details = {}
+            vendor_details['cached_content_token_count'] = response.cached_content_token_count
+
+        return BaseCountTokensResponse(
+            total_tokens=response.total_tokens,
+            model_name=self._model_name,
+            vendor_details=vendor_details if vendor_details else None,
+            vendor_id=getattr(response, 'request_id', None),
         )
 
     async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:

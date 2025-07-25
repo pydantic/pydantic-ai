@@ -16,6 +16,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
 from ..messages import (
     AudioUrl,
+    BaseCountTokensResponse,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -139,6 +140,13 @@ class HuggingFaceModel(Model):
         model_response = self._process_response(response)
         model_response.usage.requests = 1
         return model_response
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+    ) -> BaseCountTokensResponse:
+        """Token counting is not supported by the HuggingFaceModel."""
+        raise NotImplementedError('Token counting is not supported by HuggingFaceModel')
 
     @asynccontextmanager
     async def request_stream(

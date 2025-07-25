@@ -1143,3 +1143,30 @@ class FunctionToolResultEvent:
 HandleResponseEvent = Annotated[
     Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('event_kind')
 ]
+
+
+@dataclass(repr=False)
+class BaseCountTokensResponse:
+    """Structured response for token count API calls from various model providers."""
+
+    total_tokens: int | None = field(
+        default=None, metadata={'description': 'Total number of tokens counted in the messages.'}
+    )
+    """Total number of tokens counted in the messages."""
+
+    model_name: str | None = field(default=None)
+    """Name of the model that provided the token count."""
+
+    vendor_details: dict[str, Any] | None = field(default=None)
+    """Vendor-specific token count details (e.g., cached_content_token_count for Gemini)."""
+
+    vendor_id: str | None = field(default=None)
+    """Vendor request ID for tracking the token count request."""
+
+    timestamp: datetime = field(default_factory=_now_utc)
+    """Timestamp of the token count response."""
+
+    error: str | None = field(default=None)
+    """Error message if the token count request failed."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr

@@ -356,6 +356,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         message_history = await _process_message_history(
             ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
         )
+
+        if ctx.deps.usage_limits and ctx.deps.usage_limits.pre_request_token_check_with_overhead:
+            token_count = await ctx.deps.model.count_tokens(message_history)
+
+            ctx.deps.usage_limits.check_tokens(_usage.Usage(request_tokens=token_count.total_tokens))
+
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 

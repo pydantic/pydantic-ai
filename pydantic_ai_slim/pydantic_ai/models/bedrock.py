@@ -17,6 +17,7 @@ from typing_extensions import ParamSpec, assert_never
 from pydantic_ai import _utils, usage
 from pydantic_ai.messages import (
     AudioUrl,
+    BaseCountTokensResponse,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -257,6 +258,13 @@ class BedrockConverseModel(Model):
         model_response = await self._process_response(response)
         model_response.usage.requests = 1
         return model_response
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+    ) -> BaseCountTokensResponse:
+        """Token counting is not supported by the BedrockConverseModel."""
+        raise NotImplementedError('Token counting is not supported by BedrockConverseModel')
 
     @asynccontextmanager
     async def request_stream(

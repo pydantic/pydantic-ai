@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-from ..messages import ModelMessage, ModelResponse
+from ..messages import BaseCountTokensResponse, ModelMessage, ModelResponse
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
@@ -28,6 +28,9 @@ class WrapperModel(Model):
 
     async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
         return await self.wrapped.request(*args, **kwargs)
+
+    async def count_tokens(self, *args: Any, **kwargs: Any) -> BaseCountTokensResponse:
+        return await self.wrapped.count_tokens(*args, **kwargs)
 
     @asynccontextmanager
     async def request_stream(

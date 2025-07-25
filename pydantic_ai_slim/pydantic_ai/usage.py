@@ -28,6 +28,8 @@ class Usage:
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
     details: dict[str, int] | None = None
     """Any extra details returned by the model."""
+    eager_request_tokens_check: bool = False
+    """Any extra details returned by the model."""
 
     def incr(self, incr_usage: Usage) -> None:
         """Increment the usage in place.
@@ -96,6 +98,10 @@ class UsageLimits:
     """The maximum number of tokens allowed in responses from the model."""
     total_tokens_limit: int | None = None
     """The maximum number of tokens allowed in requests and responses combined."""
+    pre_request_token_check_with_overhead: bool = False
+    """If True, perform a token counting pass before sending the request to the model,
+    to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
+    (from calling the model's `count_tokens` method) and is disabled by default."""
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.

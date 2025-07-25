@@ -1393,3 +1393,30 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+async def test_google_model_count_tokens(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+
+    messages = [
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                UserPromptPart(content='What was the temperature in London 1st January 2022?', timestamp=IsDatetime()),
+            ]
+        ),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='temperature',
+                    args={'date': '2022-01-01', 'city': 'London'},
+                    tool_call_id='test_id',
+                )
+            ],
+            model_name='gemini-1.5-flash',
+            timestamp=IsDatetime(),
+            vendor_details={'finish_reason': 'STOP'},
+        ),
+    ]
+    result = await model.count_tokens(messages)
+    assert result.total_tokens == snapshot(7)
