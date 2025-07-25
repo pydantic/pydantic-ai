@@ -12,7 +12,7 @@ import { type LoggingLevel, SetLevelRequestSchema } from '@modelcontextprotocol/
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 import { Buffer } from 'node:buffer'
-import { asXml, runCode, runCodeWithToolInjection, type ToolInjectionConfig } from './runCode.ts'
+import { asXml, runCode, type RunError, type RunSuccess, type ToolInjectionConfig } from './runCode.ts'
 
 const VERSION = '0.0.14'
 
@@ -47,6 +47,85 @@ options:
   --port <port>  Port to run the SSE server on (default: 3001)`,
     )
     Deno?.exit(1)
+  }
+}
+
+/*
+ * Helper function to create a logging handler
+ */
+function createLogHandler(
+  setLogLevel: LoggingLevel,
+  logPromises: Promise<void>[],
+  server: McpServer,
+) {
+  return (level: LoggingLevel, data: string) => {
+    if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
+      logPromises.push(server.server.sendLoggingMessage({ level, data }))
+    }
+  }
+}
+
+/*
+ * Helper function to build unified response
+ */
+async function buildResponse(
+  result: RunSuccess | RunError,
+  logPromises: Promise<void>[],
+) {
+  await Promise.all(logPromises)
+  return {
+    content: [{ type: 'text' as const, text: asXml(result) }],
+  }
+}
+
+/*
+ * Create elicitation callback for tool execution
+ */
+function createElicitationCallback(
+  server: McpServer,
+  logPromises: Promise<void>[],
+) {
+  // deno-lint-ignore no-explicit-any
+  return async (elicitationRequest: any) => {
+    // Convert Python dict to JavaScript object if needed
+    let jsRequest
+    if (elicitationRequest && typeof elicitationRequest === 'object' && elicitationRequest.toJs) {
+      jsRequest = elicitationRequest.toJs()
+    } else if (elicitationRequest && typeof elicitationRequest === 'object') {
+      // Handle Python dict-like objects
+      jsRequest = {
+        message: elicitationRequest.message || elicitationRequest.get?.('message'),
+        requestedSchema: elicitationRequest.requestedSchema || elicitationRequest.get?.('requestedSchema'),
+      }
+    } else {
+      jsRequest = elicitationRequest
+    }
+
+    try {
+      const elicitationResult = await server.server.request(
+        {
+          method: 'elicitation/create',
+          params: {
+            message: jsRequest.message,
+            requestedSchema: jsRequest.requestedSchema,
+          },
+        },
+        z.object({
+          action: z.enum(['accept', 'decline', 'cancel']),
+          content: z.optional(z.record(z.string(), z.unknown())),
+        }),
+      )
+
+      return elicitationResult
+    } catch (error) {
+      logPromises.push(
+        server.server.sendLoggingMessage({
+          level: 'error',
+          data: `Elicitation error: ${error}`,
+        }),
+      )
+      throw error
+    }
   }
 }
 
@@ -118,52 +197,10 @@ The tools are injected into the global namespace automatically - no discovery fu
 
       // Check if tools are provided
       if (tools.length > 0) {
-        // Create elicitation callback
-        // deno-lint-ignore no-explicit-any
-        const elicitationCallback = async (elicitationRequest: any) => {
-          // Convert Python dict to JavaScript object if needed
-          let jsRequest
-          if (elicitationRequest && typeof elicitationRequest === 'object' && elicitationRequest.toJs) {
-            jsRequest = elicitationRequest.toJs()
-          } else if (elicitationRequest && typeof elicitationRequest === 'object') {
-            // Handle Python dict-like objects
-            jsRequest = {
-              message: elicitationRequest.message || elicitationRequest.get?.('message'),
-              requestedSchema: elicitationRequest.requestedSchema || elicitationRequest.get?.('requestedSchema'),
-            }
-          } else {
-            jsRequest = elicitationRequest
-          }
-
-          try {
-            const elicitationResult = await server.server.request(
-              {
-                method: 'elicitation/create',
-                params: {
-                  message: jsRequest.message,
-                  requestedSchema: jsRequest.requestedSchema,
-                },
-              },
-              z.object({
-                action: z.enum(['accept', 'decline', 'cancel']),
-                content: z.optional(z.record(z.string(), z.unknown())),
-              }),
-            )
-
-            return elicitationResult
-          } catch (error) {
-            logPromises.push(
-              server.server.sendLoggingMessage({
-                level: 'error',
-                data: `Elicitation error: ${error}`,
-              }),
-            )
-            throw error
-          }
-        }
+        const elicitationCallback = createElicitationCallback(server, logPromises)
 
         // Use tool injection mode
-        const result = await runCodeWithToolInjection(
+        const result = await runCode(
           [
             {
               name: 'main.py',
@@ -171,11 +208,7 @@ The tools are injected into the global namespace automatically - no discovery fu
               active: true,
             },
           ],
-          (level, data) => {
-            if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
-              logPromises.push(server.server.sendLoggingMessage({ level, data }))
-            }
-          },
+          createLogHandler(setLogLevel, logPromises, server),
           {
             enableToolInjection: true,
             availableTools: tools,
@@ -184,11 +217,7 @@ The tools are injected into the global namespace automatically - no discovery fu
           } as ToolInjectionConfig,
         )
 
-        await Promise.all(logPromises)
-
-        return {
-          content: [{ type: 'text', text: asXml(result) }],
-        }
+        return await buildResponse(result, logPromises)
       } else {
         // Use basic mode without tool injection
         const result = await runCode(
@@ -199,16 +228,10 @@ The tools are injected into the global namespace automatically - no discovery fu
               active: true,
             },
           ],
-          (level, data) => {
-            if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
-              logPromises.push(server.server.sendLoggingMessage({ level, data }))
-            }
-          },
+          createLogHandler(setLogLevel, logPromises, server),
+          undefined,
         )
-        await Promise.all(logPromises)
-        return {
-          content: [{ type: 'text', text: asXml(result) }],
-        }
+        return await buildResponse(result, logPromises)
       }
     },
   )
@@ -439,7 +462,7 @@ print(f"Tool result: {result}")
 `
 
   try {
-    const toolResult = await runCodeWithToolInjection(
+    const toolResult = await runCode(
       [
         {
           name: 'tool_test.py',

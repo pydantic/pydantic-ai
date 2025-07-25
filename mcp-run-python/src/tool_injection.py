@@ -1,48 +1,46 @@
 """Tool injection for MCP elicitation support."""
 
 import json
+from functools import lru_cache
 from typing import Any, Callable, cast
+
+from pyodide.webloop import run_sync  # type: ignore[import-untyped]
 
 
 def _create_elicitation_request(tool_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
     """Create an elicitation request object for tool execution."""
-    tool_args: dict[str, Any] = {}
+    if args and len(args) == 1:
+        first_arg = args[0]
+        if isinstance(first_arg, str):
+            tool_args = {'query': first_arg, **kwargs}
+        elif isinstance(first_arg, dict):
+            tool_args = {**first_arg, **kwargs}  # type: ignore[arg-type]
+        else:
+            tool_args = kwargs.copy()
+    else:
+        tool_args = kwargs.copy()
 
-    # Handle positional arguments
-    if args:
-        if len(args) == 1 and isinstance(args[0], str):
-            # Single string argument - assume it's a query
-            tool_args['query'] = args[0]
-        elif len(args) == 1 and isinstance(args[0], dict):
-            # Single dict argument
-            tool_args.update(args[0])  # type: ignore[arg-type]
-
-    # Add keyword arguments
-    tool_args.update(kwargs)
-
-    tool_execution_data: dict[str, Any] = {'tool_name': tool_name, 'arguments': tool_args}
     return {
-        'message': json.dumps(tool_execution_data),
-        'requestedSchema': {
-            'type': 'object',
-            'properties': {'result': {'type': 'string', 'description': f'Result of executing {tool_name} tool'}},
-            'required': ['result'],
-        },
+        'message': json.dumps({'tool_name': tool_name, 'arguments': tool_args}),
+        'requestedSchema': _get_tool_schema(tool_name),
+    }
+
+
+@lru_cache(maxsize=128)
+def _get_tool_schema(tool_name: str) -> dict[str, Any]:
+    """Get cached schema for a tool."""
+    return {
+        'type': 'object',
+        'properties': {'result': {'type': 'string', 'description': f'Result of executing {tool_name} tool'}},
+        'required': ['result'],
     }
 
 
 def _handle_tool_callback_result(result: Any, tool_name: str) -> Any:
     """Handle the result from a tool callback, including promise resolution."""
-    # Handle PyodideFuture (JavaScript Promise)
     if hasattr(result, 'then'):
         try:
-            # Import at runtime to avoid dependency issues
-            from pyodide.webloop import run_sync  # type: ignore[import-untyped]
-
-            # Use cast to tell the type checker what we expect
             resolved_result = cast(dict[str, Any], run_sync(result))
-
-            # Extract result from elicitation response
             if isinstance(resolved_result, dict):
                 if resolved_result.get('action') == 'accept':
                     content = cast(dict[str, Any], resolved_result.get('content', {}))

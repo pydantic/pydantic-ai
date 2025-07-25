@@ -21,18 +21,6 @@ export interface ToolInjectionConfig {
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
-): Promise<RunSuccess | RunError> {
-  // Use enhanced version without tool injection for backwards compatibility
-  const result = await runCodeWithToolInjection(files, log, undefined)
-
-  // Convert to original format
-  return result
-}
-
-// Enhanced version that supports optional tool injection
-export async function runCodeWithToolInjection(
-  files: CodeFile[],
-  log: (level: LoggingLevel, data: string) => void,
   toolConfig?: ToolInjectionConfig,
 ): Promise<RunSuccess | RunError> {
   // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
@@ -71,7 +59,11 @@ export async function runCodeWithToolInjection(
   const dirPath = '/tmp/mcp_run_python'
   sys.path.append(dirPath)
   const pathlib = pyodide.pyimport('pathlib')
-  pathlib.Path(dirPath).mkdir()
+  try {
+    pathlib.Path(dirPath).mkdir()
+  } catch (_error) {
+    // Directory already exists, which is fine
+  }
   const moduleName = '_prepare_env'
 
   pathlib.Path(`${dirPath}/${moduleName}.py`).write_text(preparePythonCode)
@@ -162,7 +154,7 @@ function injectToolFunctions(
   log('info', `Tool injection complete. Available tools: ${config.availableTools.join(', ')}`)
 }
 
-interface RunSuccess {
+export interface RunSuccess {
   status: 'success'
   // we could record stdout and stderr separately, but I suspect simplicity is more important
   output: string[]
@@ -170,7 +162,7 @@ interface RunSuccess {
   returnValueJson: string | null
 }
 
-interface RunError {
+export interface RunError {
   status: 'install-error' | 'run-error'
   output: string[]
   dependencies?: string[]
