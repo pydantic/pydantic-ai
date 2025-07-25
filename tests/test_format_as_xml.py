@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Self
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, computed_field
+from typing_extensions import Self
 
 from pydantic_ai import format_as_xml
 
