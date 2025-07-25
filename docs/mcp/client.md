@@ -235,6 +235,54 @@ calculator_server = MCPServerSSE(
 agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
 ```
 
+## Custom TLS / SSL configuration
+
+In some environments you need to tweak how HTTPS connections are established –
+for example to trust an internal Certificate Authority, present a client
+certificate for **mTLS**, or (during local development only!) disable
+certificate verification altogether.
+All HTTP-based MCP client classes
+([`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] and
+[`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE]) expose an `http_client`
+parameter that lets you pass your own pre-configured
+[`httpx.AsyncClient`](https://www.python-httpx.org/async/).
+
+```python {title="mcp_custom_tls_client.py" py="3.10"}
+import httpx
+import ssl
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerSSE
+
+
+# Trust an internal / self-signed CA
+ssl_ctx = ssl.create_default_context(cafile="/etc/ssl/private/my_company_ca.pem")
+
+# OPTIONAL: if the server requires **mutual TLS** load your client certificate
+ssl_ctx.load_cert_chain(certfile="/etc/ssl/certs/client.crt", keyfile="/etc/ssl/private/client.key",)
+
+http_client = httpx.AsyncClient(
+    verify=ssl_ctx,
+    timeout=httpx.Timeout(10.0),
+)
+
+server = MCPServerSSE(
+    url="http://localhost:3001/sse",
+    http_client=http_client,  # (1)!
+)
+agent = Agent("openai:gpt-4o", toolsets=[server])
+
+async def main():
+    async with agent:
+        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+    print(result.output)
+    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+```
+
+1. When you supply `http_client`, Pydantic AI re-uses this client for every
+   request.  Anything supported by **httpx** (`verify`, `cert`, custom
+   proxies, timeouts, etc.) therefore applies to all MCP traffic.
+
 ## MCP Sampling
 
 !!! info "What is MCP Sampling?"
