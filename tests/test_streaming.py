@@ -1228,20 +1228,17 @@ async def test_iter_stream_output_tool_validation_retries():
         assert len(agent_info.output_tools) == 1
         name = agent_info.output_tools[0].name
 
-        # Stream JSON data in chunks that will initially fail validation
+        # Create complete JSON and split it to ensure only final chunk is valid
         json_data = json.dumps({'city': 'Mexico City', 'country': 'Mexico'})
-
-        # First chunk - just the tool name (no args yet, will fail validation)
+        
+        # First chunk - just the tool name (no args yet)
         yield {0: DeltaToolCall(name=name)}
 
-        # Second chunk - partial JSON that's incomplete (will fail validation)
-        yield {0: DeltaToolCall(json_args='{"cit')}
+        # Second chunk - incomplete JSON (syntactically invalid)
+        yield {0: DeltaToolCall(json_args=json_data[:15])}
 
-        # Third chunk - still incomplete JSON (will fail validation)
-        yield {0: DeltaToolCall(json_args='y": "Mexico Cit')}
-
-        # Fourth chunk - complete valid JSON (will pass validation)
-        yield {0: DeltaToolCall(json_args='y", "country": "Mexico"}')}
+        # Third chunk - complete the JSON (now syntactically valid)
+        yield {0: DeltaToolCall(json_args=json_data[15:])}
 
     agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
 
