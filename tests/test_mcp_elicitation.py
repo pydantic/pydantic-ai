@@ -6,8 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets.function import FunctionToolset
 
 from .conftest import try_import
 
@@ -16,7 +17,12 @@ with try_import() as imports_successful:
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
 
-    from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio
+    from pydantic_ai.mcp import (
+        MCPServerSSE,
+        MCPServerStdio,
+        create_auto_tool_injection_callback,
+        create_tool_elicitation_callback,
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp not installed'),
@@ -1086,3 +1092,205 @@ str(arr.sum())
             assert isinstance(result, str)
             assert '<status>success</status>' in result
             assert 'Timeout test' in result
+
+
+class TestMCPElicitationRefactored:
+    """Test the new explicit MCP elicitation setup approach."""
+
+    async def test_helper_functions_exist(self):
+        """Test that the new helper functions are available and callable."""
+        # Test function imports work
+        assert callable(create_tool_elicitation_callback)
+        assert callable(create_auto_tool_injection_callback)
+
+        # Test helper functions can be instantiated
+        def test_tool(ctx: RunContext, query: str) -> str:
+            return f'Result: {query}'
+
+        toolset = FunctionToolset([test_tool])
+        elicit_callback = create_tool_elicitation_callback(toolset)
+        inject_callback = create_auto_tool_injection_callback(toolset)
+
+        assert callable(elicit_callback)
+        assert callable(inject_callback)
+
+    async def test_no_auto_magic_setup(self):
+        """Test that elicitation callbacks are not automatically set up."""
+        server = MCPServerStdio(command='python', args=['-c', 'print("test")'], allow_elicitation=True)
+
+        model = TestModel(custom_output_text='Test response')
+        agent = Agent(model, toolsets=[server])
+
+        @agent.tool_plain
+        def search_tool(query: str) -> str:
+            """Search for information."""
+            return f'Search result: {query}'
+
+        # Verify no callbacks are automatically set
+        assert server.elicitation_callback is None
+        assert server.process_tool_call is None
+
+    async def test_explicit_setup_method(self):
+        """Test the new set_mcp_elicitation_toolset method."""
+        server = MCPServerStdio(command='python', args=['-c', 'print("test")'], allow_elicitation=True)
+
+        model = TestModel(custom_output_text='Test response')
+        agent = Agent(model, toolsets=[server])
+
+        @agent.tool_plain
+        def search_tool(query: str) -> str:
+            """Search for information."""
+            return f'Search result: {query}'
+
+        # Verify method exists
+        assert hasattr(agent, 'set_mcp_elicitation_toolset')
+        assert callable(agent.set_mcp_elicitation_toolset)
+
+        # Call explicit setup
+        agent.set_mcp_elicitation_toolset()
+
+        # Verify callbacks are now set
+        assert server.elicitation_callback is not None
+        assert server.process_tool_call is not None
+
+    async def test_explicit_setup_with_custom_toolset(self):
+        """Test explicit setup with a custom toolset."""
+        server = MCPServerStdio(command='python', args=['-c', 'print("test")'], allow_elicitation=True)
+
+        model = TestModel(custom_output_text='Test response')
+        agent = Agent(model, toolsets=[server])
+
+        @agent.tool_plain
+        def agent_tool(query: str) -> str:
+            """Agent tool."""
+            return f'Agent result: {query}'
+
+        # Create custom toolset with different tools
+        def custom_tool(ctx: RunContext, text: str) -> str:
+            return f'Custom result: {text}'
+
+        custom_toolset = FunctionToolset([custom_tool])
+
+        # Use custom toolset for elicitation
+        agent.set_mcp_elicitation_toolset(custom_toolset)
+
+        # Verify callbacks are set
+        assert server.elicitation_callback is not None
+        assert server.process_tool_call is not None
+
+    async def test_explicit_setup_only_affects_elicitation_servers(self):
+        """Test that explicit setup only affects servers with allow_elicitation=True."""
+        elicitation_server = MCPServerStdio(command='python', args=['-c', 'print("test1")'], allow_elicitation=True)
+
+        regular_server = MCPServerStdio(command='python', args=['-c', 'print("test2")'], allow_elicitation=False)
+
+        model = TestModel(custom_output_text='Test response')
+        agent = Agent(model, toolsets=[elicitation_server, regular_server])
+
+        # Call explicit setup
+        agent.set_mcp_elicitation_toolset()
+
+        # Only elicitation server should have callbacks
+        assert elicitation_server.elicitation_callback is not None
+        assert elicitation_server.process_tool_call is not None
+
+        # Regular server should not be affected
+        assert regular_server.elicitation_callback is None
+        assert regular_server.process_tool_call is None
+
+    async def test_explicit_setup_respects_existing_callbacks(self):
+        """Test that explicit setup doesn't override existing callbacks."""
+
+        # Mock existing callback
+        async def existing_callback(context: Any, params: Any) -> Any:
+            return types.ElicitResult(action='accept', content={'existing': True})
+
+        server = MCPServerStdio(
+            command='python',
+            args=['-c', 'print("test")'],
+            allow_elicitation=True,
+            elicitation_callback=existing_callback,
+        )
+
+        model = TestModel(custom_output_text='Test response')
+        agent = Agent(model, toolsets=[server])
+
+        # Call explicit setup
+        agent.set_mcp_elicitation_toolset()
+
+        # Existing callback should be preserved
+        assert server.elicitation_callback is existing_callback
+        # But process_tool_call should still be set if it wasn't before
+        assert server.process_tool_call is not None
+
+    async def test_helper_function_with_function_toolset(self):
+        """Test that helper functions work correctly with FunctionToolset."""
+
+        def test_tool_with_ctx(ctx: RunContext, query: str) -> str:
+            return f'Function result: {query}'
+
+        def test_tool_plain(query: str) -> str:
+            return f'Plain result: {query}'
+
+        # Test with context-aware tool
+        toolset_ctx = FunctionToolset([test_tool_with_ctx])
+        callback_ctx = create_tool_elicitation_callback(toolset_ctx)
+        assert callable(callback_ctx)
+
+        # Test with plain tool (this should work with our helper function logic)
+        # Note: This tests our helper function's ability to handle different tool types
+        injection_callback = create_auto_tool_injection_callback(toolset_ctx)
+        assert callable(injection_callback)
+
+    async def test_multiple_servers_independent_setup(self):
+        """Test that multiple servers can be set up independently."""
+        server1 = MCPServerStdio(command='python', args=['-c', 'print("test1")'], allow_elicitation=True)
+
+        server2 = MCPServerStdio(command='python', args=['-c', 'print("test2")'], allow_elicitation=True)
+
+        model = TestModel(custom_output_text='Test response')
+        agent = Agent(model, toolsets=[server1, server2])
+
+        # Both servers should start without callbacks
+        assert server1.elicitation_callback is None
+        assert server2.elicitation_callback is None
+
+        # Set up elicitation for both
+        agent.set_mcp_elicitation_toolset()
+
+        # Both should now have callbacks
+        assert server1.elicitation_callback is not None
+        assert server2.elicitation_callback is not None
+        assert server1.process_tool_call is not None
+        assert server2.process_tool_call is not None
+
+    async def test_explicit_setup_method_signature(self):
+        """Test the method signature and parameter handling."""
+        server = MCPServerStdio(command='python', args=['-c', 'print("test")'], allow_elicitation=True)
+
+        model = TestModel(custom_output_text='Test response')
+        agent = Agent(model, toolsets=[server])
+
+        # Test calling with no arguments (should use agent's complete toolset)
+        agent.set_mcp_elicitation_toolset()
+        assert server.elicitation_callback is not None
+
+        # Reset
+        server.elicitation_callback = None
+        server.process_tool_call = None
+
+        # Test calling with None (should also use agent's complete toolset)
+        agent.set_mcp_elicitation_toolset(None)
+        assert server.elicitation_callback is not None
+
+        # Reset
+        server.elicitation_callback = None
+        server.process_tool_call = None
+
+        # Test calling with custom toolset
+        def custom_tool(ctx: RunContext, text: str) -> str:
+            return f'Custom: {text}'
+
+        custom_toolset = FunctionToolset([custom_tool])
+        agent.set_mcp_elicitation_toolset(custom_toolset)
+        assert server.elicitation_callback is not None
