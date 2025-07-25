@@ -1217,7 +1217,7 @@ async def test_deferred_tool_iter():
 
 async def test_iter_stream_output_tool_validation_retries():
     """Test that partial validation failures during streaming don't increment retry counts incorrectly."""
-    
+
     class CityLocation(BaseModel):
         city: str
         country: str | None = None
@@ -1227,21 +1227,21 @@ async def test_iter_stream_output_tool_validation_retries():
         assert agent_info.output_tools is not None
         assert len(agent_info.output_tools) == 1
         name = agent_info.output_tools[0].name
-        
+
         # Stream JSON data in chunks that will initially fail validation
         json_data = json.dumps({'city': 'Mexico City', 'country': 'Mexico'})
-        
+
         # First chunk - just the tool name (no args yet, will fail validation)
         yield {0: DeltaToolCall(name=name)}
-        
-        # Second chunk - partial JSON that's incomplete (will fail validation)  
-        yield {0: DeltaToolCall(json_args='{"city":')}
-        
+
+        # Second chunk - partial JSON that's incomplete (will fail validation)
+        yield {0: DeltaToolCall(json_args='{"cit')}
+
         # Third chunk - still incomplete JSON (will fail validation)
-        yield {0: DeltaToolCall(json_args=' "Mexico')}
-        
+        yield {0: DeltaToolCall(json_args='y": "Mexico Cit')}
+
         # Fourth chunk - complete valid JSON (will pass validation)
-        yield {0: DeltaToolCall(json_args=' City", "country": "Mexico"}')}
+        yield {0: DeltaToolCall(json_args='y", "country": "Mexico"}')}
 
     agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
 
@@ -1256,7 +1256,7 @@ async def test_iter_stream_output_tool_validation_retries():
     # Should have valid output only when complete
     assert len(chunks) == 1  # Only the final valid chunk
     assert chunks[0] == CityLocation(city='Mexico City', country='Mexico')
-    
+
     # Verify that retry counts weren't incremented for partial validation failures
     # (This is the key test - before the fix, retry counts would be incremented)
     assert run.ctx.retries == {}  # No retries should have been recorded
