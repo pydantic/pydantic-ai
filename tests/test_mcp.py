@@ -91,6 +91,20 @@ async def test_reentrant_context_manager():
             pass
 
 
+async def test_context_manager_initialization_error() -> None:
+    """Test if streams are closed if client fails to initialize."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    from mcp.client.session import ClientSession
+
+    with patch.object(ClientSession, 'initialize', side_effect=Exception):
+        with pytest.raises(Exception):
+            async with server:
+                pass
+
+    assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
     async with server:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, replace
 from typing import TypeVar
+from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
@@ -469,3 +470,27 @@ async def test_context_manager():
         async with toolset:
             assert server1.is_running
             assert server2.is_running
+
+
+class InitializationError(Exception):
+    pass
+
+
+async def test_context_manager_failed_initialization():
+    """Test if MCP servers stop if any MCP server fails to initialize."""
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = AsyncMock()
+    server2.__aenter__.side_effect = InitializationError
+
+    toolset = CombinedToolset([server1, server2])
+
+    with pytest.raises(InitializationError):
+        async with toolset:
+            pass
+
+    assert server1.is_running is False
