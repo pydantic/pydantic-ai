@@ -106,7 +106,10 @@ from pydantic_ai.retries import AsyncTenacityTransport
 async_retrying = AsyncRetrying(stop=stop_after_attempt(3), reraise=True)
 
 def validator(response):
-    """Optional response validator."""
+    """Treat responses with HTTP status 4xx/5xx as failures that need to be retried.
+    
+    Without a response validator, only network errors and timeouts will result in a retry.
+    """
     response.raise_for_status()
 
 # Create the transport
@@ -132,7 +135,10 @@ from pydantic_ai.retries import TenacityTransport
 retrying = Retrying(stop=stop_after_attempt(3), reraise=True)
 
 def validator(response):
-    """Optional response validator."""
+    """Treat responses with HTTP status 4xx/5xx as failures that need to be retried.
+    
+    Without a response validator, only network errors and timeouts will result in a retry.
+    """
     response.raise_for_status()
 
 # Create the transport
