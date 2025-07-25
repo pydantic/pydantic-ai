@@ -28,8 +28,6 @@ class Usage:
     """Total tokens used in the whole run, should generally be equal to `request_tokens + response_tokens`."""
     details: dict[str, int] | None = None
     """Any extra details returned by the model."""
-    eager_request_tokens_check: bool = False
-    """Any extra details returned by the model."""
 
     def incr(self, incr_usage: Usage) -> None:
         """Increment the usage in place.
