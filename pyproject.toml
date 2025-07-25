@@ -84,7 +84,6 @@ members = [
 [dependency-groups]
 # dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
 lint = [
-    "codeflash>=0.15.6",
     "mypy>=1.11.2",
     "pyright>=1.1.390",
     "ruff>=0.6.9",

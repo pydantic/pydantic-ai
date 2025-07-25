@@ -103,6 +103,7 @@ dev = [
     "boto3-stubs[bedrock-runtime]",
     "strict-no-cover>=0.1.1",
     "pytest-xdist>=3.6.1",
+    "codeflash>=0.15.6",
 ]
 
 [tool.hatch.metadata]

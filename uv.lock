@@ -3476,7 +3476,6 @@ docs-upload = [
     { name = "pydantic" },
 ]
 lint = [
-    { name = "codeflash" },
     { name = "mypy" },
     { name = "pyright" },
     { name = "ruff" },
@@ -3506,7 +3505,6 @@ docs-upload = [
     { name = "pydantic", specifier = ">=2.10.1" },
 ]
 lint = [
-    { name = "codeflash", specifier = ">=0.15.6" },
     { name = "mypy", specifier = ">=1.11.2" },
     { name = "pyright", specifier = ">=1.1.390" },
     { name = "ruff", specifier = ">=0.6.9" },
@@ -3622,6 +3620,7 @@ dev = [
     { name = "anyio" },
     { name = "asgi-lifespan" },
     { name = "boto3-stubs", extra = ["bedrock-runtime"] },
+    { name = "codeflash" },
     { name = "coverage", extra = ["toml"] },
     { name = "devtools" },
     { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
@@ -3677,6 +3676,7 @@ dev = [
     { name = "anyio", specifier = ">=4.5.0" },
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "boto3-stubs", extras = ["bedrock-runtime"] },
+    { name = "codeflash", specifier = ">=0.15.6" },
     { name = "coverage", extras = ["toml"], specifier = ">=7.6.2" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "diff-cover", specifier = ">=9.2.0" },
