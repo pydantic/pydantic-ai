@@ -442,6 +442,15 @@ def test_invalid_key():
         format_as_xml({(1, 2): 42})
 
 
+def test_parse_invalid_value():
+    class Invalid(BaseModel):
+        name: str = Field(default='Alice', title='Name')
+        bad: Any = object()
+
+    with pytest.raises(TypeError, match='Unsupported type'):
+        format_as_xml(Invalid(), add_attributes=True)
+
+
 def test_set():
     assert '<example>1</example>' in format_as_xml({1, 2, 3}, item_tag='example')
 
