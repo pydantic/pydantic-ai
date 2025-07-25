@@ -9,6 +9,7 @@ from typing import Any, Literal, Union, cast
 from unittest.mock import Mock
 
 import pytest
+from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
@@ -18,13 +19,18 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
+    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -996,4 +1002,45 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 vendor_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
             ),
         ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingface_api_key: str):
+    m = HuggingFaceModel(
+        'Qwen/Qwen3-235B-A22B', provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key)
+    )
+    agent = Agent(m)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        IsListOrTuple(
+            positions={
+                0: PartStartEvent(index=0, part=ThinkingPart(content='')),
+                1: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\n')),
+                2: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
+                3: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
+                4: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' the')),
+                5: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user')),
+                6: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' is')),
+                7: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' asking')),
+                413: PartStartEvent(index=1, part=TextPart(content='Cross')),
+                414: FinalResultEvent(tool_name=None, tool_call_id=None),
+                415: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ing')),
+                416: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' the')),
+                417: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street')),
+                418: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' safely')),
+                419: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' requires')),
+                420: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' attent')),
+                421: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iveness')),
+            },
+            length=1059,
+        )
     )

@@ -63,21 +63,21 @@ dependencies = [
 logfire = ["logfire>=3.11.0"]
 # Models
 openai = ["openai>=1.92.0"]
-cohere = ["cohere>=5.13.11; platform_system != 'Emscripten'"]
+cohere = ["cohere>=5.16.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.24.0"]
 anthropic = ["anthropic>=0.52.0"]
 groq = ["groq>=0.19.0"]
 mistral = ["mistralai>=1.9.2"]
 bedrock = ["boto3>=1.37.24"]
-huggingface = ["huggingface-hub[inference]>=0.33.2"]
+huggingface = ["huggingface-hub[inference]>=0.33.5"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 # MCP
-mcp = ["mcp>=1.9.4; python_version >= '3.10'"]
+mcp = ["mcp>=1.10.0; python_version >= '3.10'"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # A2A

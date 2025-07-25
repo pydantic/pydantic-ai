@@ -85,7 +85,7 @@ class SystemPromptPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -106,10 +106,28 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
-    @property
+    _media_type: str | None = field(init=False, repr=False)
+
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+    ) -> None:
+        self.url = url
+        self.vendor_metadata = vendor_metadata
+        self.force_download = force_download
+        self._media_type = media_type
+
     @abstractmethod
-    def media_type(self) -> str:
+    def _infer_media_type(self) -> str:
         """Return the media type of the file, based on the url."""
+
+    @property
+    def media_type(self) -> str:
+        """Return the media type of the file, based on the url or the provided `_media_type`."""
+        return self._media_type or self._infer_media_type()
 
     @property
     @abstractmethod
@@ -119,7 +137,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -129,8 +147,18 @@ class VideoUrl(FileUrl):
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> VideoMediaType:
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['video-url'] = 'video-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
+
+    def _infer_media_type(self) -> VideoMediaType:
         """Return the media type of the video, based on the url."""
         if self.url.endswith('.mkv'):
             return 'video/x-matroska'
@@ -170,7 +198,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -180,8 +208,18 @@ class AudioUrl(FileUrl):
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> AudioMediaType:
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['audio-url'] = 'audio-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
+
+    def _infer_media_type(self) -> AudioMediaType:
         """Return the media type of the audio file, based on the url.
 
         References:
@@ -208,7 +246,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -218,8 +256,18 @@ class ImageUrl(FileUrl):
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> ImageMediaType:
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['image-url'] = 'image-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
+
+    def _infer_media_type(self) -> ImageMediaType:
         """Return the media type of the image, based on the url."""
         if self.url.endswith(('.jpg', '.jpeg')):
             return 'image/jpeg'
@@ -241,7 +289,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@dataclass(repr=False)
+@dataclass(init=False, repr=False)
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 
@@ -251,8 +299,18 @@ class DocumentUrl(FileUrl):
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
-    @property
-    def media_type(self) -> str:
+    def __init__(
+        self,
+        url: str,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        kind: Literal['document-url'] = 'document-url',
+    ) -> None:
+        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        self.kind = kind
+
+    def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
         type_, _ = guess_type(self.url)
         if type_ is None:
@@ -632,7 +690,7 @@ class ThinkingPart:
 
     def has_content(self) -> bool:
         """Return `True` if the thinking content is non-empty."""
-        return bool(self.content)  # pragma: no cover
+        return bool(self.content)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

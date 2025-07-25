@@ -264,7 +264,9 @@ class FunctionStreamedResponse(StreamedResponse):
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
                 self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
-                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
             elif isinstance(item, dict) and item:
                 for dtc_index, delta in item.items():
                     if isinstance(delta, DeltaThinkingPart):
@@ -286,7 +288,7 @@ class FunctionStreamedResponse(StreamedResponse):
                             args=delta.json_args,
                             tool_call_id=delta.tool_call_id,
                         )
-                        if maybe_event is not None:
+                        if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
                     else:
                         assert_never(delta)

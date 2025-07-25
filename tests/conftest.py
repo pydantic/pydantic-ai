@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
 else:
     from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
@@ -58,6 +59,44 @@ else:
         if 'delta' not in kwargs:  # pragma: no branch
             kwargs['delta'] = 10
         return _IsNow(*args, **kwargs)
+
+    class IsSameStr(IsStr):
+        """
+        Checks if the value is a string, and that subsequent uses have the same value as the first one.
+
+        Example:
+        ```python {test="skip"}
+        assert events == [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '(no tool calls)',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+        ```
+        """
+
+        _first_other: str | None = None
+
+        def equals(self, other: Any) -> bool:
+            if self._first_other is None:
+                self._first_other = other
+                return super().equals(other)
+            else:
+                return other == self._first_other
 
 
 class TestEnv:

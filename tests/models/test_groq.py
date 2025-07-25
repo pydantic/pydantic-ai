@@ -11,19 +11,25 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     BinaryContent,
+    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    TextPartDelta,
     ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -899,4 +905,45 @@ By following these steps, you'll create authentic Argentinian alfajores that cap
                 vendor_id=IsStr(),
             ),
         ]
+    )
+
+
+async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('deepseek-r1-distill-llama-70b', provider=GroqProvider(api_key=groq_api_key))
+    settings = GroqModelSettings(groq_reasoning_format='raw')
+    agent = Agent(m, instructions='You are a chef.', model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='I want a recipe to cook Uruguayan alfajores.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        IsListOrTuple(
+            positions={
+                0: PartStartEvent(index=0, part=ThinkingPart(content='')),
+                1: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='\n')),
+                2: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='Okay')),
+                3: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',')),
+                4: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' I')),
+                5: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' need')),
+                6: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' to')),
+                7: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' come')),
+                8: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' up')),
+                9: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with')),
+                589: PartStartEvent(index=1, part=TextPart(content='**')),
+                590: FinalResultEvent(tool_name=None, tool_call_id=None),
+                591: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Ur')),
+                592: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ugu')),
+                593: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ayan')),
+                594: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Alf')),
+                595: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='aj')),
+                596: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='ores')),
+                597: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Recipe')),
+            },
+            length=996,
+        )
     )
