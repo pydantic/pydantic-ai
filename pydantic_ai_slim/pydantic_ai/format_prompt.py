@@ -37,7 +37,7 @@ def format_as_xml(
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
         add_attributes: Whether to include attributes like Pydantic Field attributes (title, description, alias)
-            as XML attributes in the elements.
+            as XML attributes.
 
     Returns:
         XML representation of the object.
@@ -73,6 +73,7 @@ class _ToXml:
     none_str: str
     add_attributes: bool
     _attributes: dict[str, dict[str, str]] | None = None
+    # keep track of class names for dataclasses and Pydantic models in lists
     _element_names: dict[str, str] | None = None
     _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
 
@@ -101,6 +102,8 @@ class _ToXml:
                 element = self._create_element(value.__class__.__name__, path)
             self._mapping_to_xml(element, asdict(value), path)
         elif isinstance(value, BaseModel):
+            # before serializing the model and losing all the metadata of other data structures contained in it,
+            # we extract all the field attributes and class names
             self._init_attributes()
             self._init_element_names()
             if tag is None:
@@ -151,6 +154,7 @@ class _ToXml:
         attributes: dict[str, dict[str, str]] | None = None,
         path: str = '',
     ):
+        """Parse data structures as dataclasses or Pydantic models to extract element names and attributes."""
         if value is None or isinstance(value, (str, int, float, date, bytearray, bytes, bool)):
             return
         elif isinstance(value, Mapping):

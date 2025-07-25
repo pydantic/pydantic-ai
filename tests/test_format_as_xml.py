@@ -249,6 +249,129 @@ def test_fields(input_obj: Any, use_fields: bool, output: str):
     assert format_as_xml(input_obj, add_attributes=use_fields) == output
 
 
+def test_nested_data():
+    @dataclass
+    class DataItem1:
+        id: str | None = None
+
+    class ModelItem1(BaseModel):
+        name: str = Field(description='Name')
+        value: int
+        items: list[DataItem1] = Field(description='Items')
+
+    @dataclass
+    class DataItem2:
+        model: ModelItem1
+        others: tuple[ModelItem1] | None = None
+        count: int = 10
+
+    data = {
+        'values': [
+            DataItem2(
+                ModelItem1(name='Alice', value=42, items=[DataItem1('xyz')]),
+                (ModelItem1(name='Liam', value=3, items=[]),),
+            ),
+            DataItem2(
+                ModelItem1(
+                    name='Bob',
+                    value=7,
+                    items=[
+                        DataItem1('a'),
+                        DataItem1(),
+                    ],
+                ),
+                count=42,
+            ),
+        ]
+    }
+
+    assert (
+        format_as_xml(data, add_attributes=True)
+        == """
+<values>
+  <DataItem2>
+    <model>
+      <name description="Name">Alice</name>
+      <value>42</value>
+      <items description="Items">
+        <DataItem1>
+          <id>xyz</id>
+        </DataItem1>
+      </items>
+    </model>
+    <others>
+      <ModelItem1>
+        <name description="Name">Liam</name>
+        <value>3</value>
+        <items description="Items" />
+      </ModelItem1>
+    </others>
+    <count>10</count>
+  </DataItem2>
+  <DataItem2>
+    <model>
+      <name description="Name">Bob</name>
+      <value>7</value>
+      <items description="Items">
+        <DataItem1>
+          <id>a</id>
+        </DataItem1>
+        <DataItem1>
+          <id>null</id>
+        </DataItem1>
+      </items>
+    </model>
+    <others>null</others>
+    <count>42</count>
+  </DataItem2>
+</values>
+""".strip()
+    )
+
+    assert (
+        format_as_xml(data, add_attributes=False)
+        == """
+<values>
+  <DataItem2>
+    <model>
+      <name>Alice</name>
+      <value>42</value>
+      <items>
+        <DataItem1>
+          <id>xyz</id>
+        </DataItem1>
+      </items>
+    </model>
+    <others>
+      <ModelItem1>
+        <name>Liam</name>
+        <value>3</value>
+        <items />
+      </ModelItem1>
+    </others>
+    <count>10</count>
+  </DataItem2>
+  <DataItem2>
+    <model>
+      <name>Bob</name>
+      <value>7</value>
+      <items>
+        <DataItem1>
+          <id>a</id>
+        </DataItem1>
+        <DataItem1>
+          <id>null</id>
+        </DataItem1>
+      </items>
+    </model>
+    <others>null</others>
+    <count>42</count>
+  </DataItem2>
+</values>
+""".strip()
+    )
+
+
 @pytest.mark.parametrize(
     'input_obj,output',
     [
