@@ -697,6 +697,8 @@ class _MCPServerHTTP(MCPServer):
         allow_sampling: bool = True,
         max_retries: int = 1,
         sampling_model: models.Model | None = None,
+        allow_elicitation: bool = True,
+        elicitation_callback: ElicitationFnT | None = None,
         **kwargs: Any,
     ):
         # Handle deprecated sse_read_timeout parameter
@@ -725,6 +727,8 @@ class _MCPServerHTTP(MCPServer):
         self.allow_sampling = allow_sampling
         self.max_retries = max_retries
         self.sampling_model = sampling_model
+        self.allow_elicitation = allow_elicitation
+        self.elicitation_callback = elicitation_callback
         self.read_timeout = read_timeout
 
     @property
