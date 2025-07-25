@@ -378,6 +378,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
                         sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                        elicitation_callback=self.elicitation_callback if self.allow_elicitation else None,
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                     )
