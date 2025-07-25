@@ -67,7 +67,7 @@ agent = Agent(
 
 
 @agent.tool_plain
-def create_plan(steps: list[str]) -> StateSnapshotEvent:
+async def create_plan(steps: list[str]) -> StateSnapshotEvent:
     """Create a plan with multiple steps.
 
     Args:
@@ -86,7 +86,7 @@ def create_plan(steps: list[str]) -> StateSnapshotEvent:
 
 
 @agent.tool_plain
-def update_plan_step(
+async def update_plan_step(
     index: int, description: str | None = None, status: StepStatus | None = None
 ) -> StateDeltaEvent:
     """Update the plan with new steps or changes.

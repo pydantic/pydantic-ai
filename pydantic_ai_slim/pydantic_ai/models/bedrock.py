@@ -572,7 +572,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
@@ -618,7 +618,9 @@ class BedrockStreamedResponse(StreamedResponse):
                             UserWarning,
                         )
                 if 'text' in delta:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                    if maybe_event is not None:
+                        yield maybe_event
                 if 'toolUse' in delta:
                     tool_use = delta['toolUse']
                     maybe_event = self._parts_manager.handle_tool_call_delta(
