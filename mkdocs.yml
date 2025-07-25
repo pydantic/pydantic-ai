@@ -43,6 +43,7 @@ nav:
       - thinking.md
       - direct.md
       - common-tools.md
+      - retries.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
@@ -101,6 +102,7 @@ nav:
       - api/models/mcp-sampling.md
       - api/profiles.md
       - api/providers.md
+      - api/retries.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
       - api/pydantic_graph/persistence.md
