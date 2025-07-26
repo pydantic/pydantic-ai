@@ -327,9 +327,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, build_run_context(ctx))
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters
         ) as streamed_response:
@@ -353,9 +351,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         model_settings, model_request_parameters = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, build_run_context(ctx))
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -859,11 +855,12 @@ def build_agent_graph(
 
 
 async def _process_message_history(
-    messages: list[_messages.ModelMessage],
+    state: GraphAgentState,
     processors: Sequence[HistoryProcessor[DepsT]],
     run_context: RunContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
+    messages = state.message_history
     for processor in processors:
         takes_ctx = is_takes_ctx(processor)
 
@@ -880,4 +877,7 @@ async def _process_message_history(
             else:
                 sync_processor = cast(_HistoryProcessorSync, processor)
                 messages = await run_in_executor(sync_processor, messages)
+
+    # Replaces the message history in the state with the processed messages
+    state.message_history = messages
     return messages
