@@ -140,6 +140,7 @@ class ExamplePydanticFields(BaseModel):
     ],
 )
 def test_root_tag(input_obj: Any, output: str):
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', add_attributes=False) == output
     assert format_as_xml(input_obj, root_tag='examples', item_tag='example', add_attributes=True) == output
 
 
