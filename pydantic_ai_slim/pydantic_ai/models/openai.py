@@ -28,7 +28,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -481,7 +481,7 @@ class OpenAIModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return server tool calls
-                    elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, (ServerToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
                         continue
                     else:
                         assert_never(item)
@@ -929,7 +929,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     # OpenAI doesn't return server tool calls
-                    elif isinstance(item, (ServerToolCallPart, ServerToolReturnPart)):
+                    elif isinstance(item, (ServerToolCallPart, BuiltinToolReturnPart)):
                         continue
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,

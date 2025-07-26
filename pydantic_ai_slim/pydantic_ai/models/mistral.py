@@ -26,7 +26,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -508,8 +508,8 @@ class MistralModel(Model):
                         # Handle ServerToolCallPart the same as ToolCallPart
                         # This is currently never returned from mistral
                         pass
-                    elif isinstance(part, ServerToolReturnPart):  # pragma: no cover
-                        # For now, we'll add ServerToolReturnPart as text content
+                    elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
+                        # For now, we'll add BuiltinToolReturnPart as text content
                         # This is currently never returned from mistral
                         pass
                     else:

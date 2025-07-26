@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -1334,7 +1334,7 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
                             tool_call_id='srvtoolu_01MqVvTi9LWTrMRuZ2KttD3M',
                             model_name='anthropic',
                         ),
-                        ServerToolReturnPart(
+                        BuiltinToolReturnPart(
                             tool_name='web_search_tool_result',
                             content=[
                                 BetaWebSearchResultBlock(
@@ -1479,7 +1479,7 @@ print(f"3 * 12390 = {result}")\
                         tool_call_id=IsStr(),
                         model_name='anthropic',
                     ),
-                    ServerToolReturnPart(
+                    BuiltinToolReturnPart(
                         tool_name='code_execution_tool_result',
                         content=BetaCodeExecutionResultBlock(
                             content=[],
@@ -2024,7 +2024,7 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
 
     # Verify we have server tool parts in the history
     server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolReturnPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'web_search'
@@ -2076,7 +2076,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
     # Verify we have server tool parts in the history
     server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolCallPart)]
-    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolReturnPart)]
+    server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
     assert server_tool_calls[0].tool_name == 'code_execution'
@@ -2090,7 +2090,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
 async def test_anthropic_unsupported_server_tool_name_error():
     """Test that unsupported server tool names raise an error."""
-    from pydantic_ai.messages import ModelMessage, ModelResponse, ServerToolReturnPart
+    from pydantic_ai.messages import ModelMessage, ModelResponse, BuiltinToolReturnPart
 
     env = TestEnv()
     env.set('ANTHROPIC_API_KEY', 'test-key')
@@ -2100,7 +2100,7 @@ async def test_anthropic_unsupported_server_tool_name_error():
     messages: list[ModelMessage] = [
         ModelResponse(
             parts=[
-                ServerToolReturnPart(
+                BuiltinToolReturnPart(
                     tool_name='unsupported_tool',  # This should trigger the error
                     content='some content',
                     tool_call_id='test_id',

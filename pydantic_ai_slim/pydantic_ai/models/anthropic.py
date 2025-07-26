@@ -33,7 +33,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -286,7 +286,7 @@ class AnthropicModel(Model):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
                 items.append(
-                    ServerToolReturnPart(
+                    BuiltinToolReturnPart(
                         tool_name=item.type,
                         content=item.content,
                         tool_call_id=item.tool_use_id,
@@ -429,7 +429,7 @@ class AnthropicModel(Model):
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(server_tool_use_block_param)
-                    elif isinstance(response_part, ServerToolReturnPart):
+                    elif isinstance(response_part, BuiltinToolReturnPart):
                         tool_use_id = _guard_tool_call_id(t=response_part)
                         if response_part.tool_name == 'web_search_tool_result':
                             server_tool_result_block_param = BetaWebSearchToolResultBlockParam(

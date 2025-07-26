@@ -24,7 +24,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -266,7 +266,7 @@ class GroqModel(Model):
                         tool_name=tool.type, args=tool.arguments, model_name='groq', tool_call_id=tool_call_id
                     )
                 )
-                items.append(ServerToolReturnPart(tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id))
+                items.append(BuiltinToolReturnPart(tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id))
         # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
         if choice.message.reasoning is not None:
             items.append(ThinkingPart(content=choice.message.reasoning))
@@ -322,8 +322,8 @@ class GroqModel(Model):
                         # ServerToolCallPart is handled separately in server-side tools
                         # This is currently never returned from groq
                         pass
-                    elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
-                        # ServerToolReturnPart is handled separately in server-side tools
+                    elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
+                        # BuiltinToolReturnPart is handled separately in server-side tools
                         # This is currently never returned from groq
                         pass
                     else:

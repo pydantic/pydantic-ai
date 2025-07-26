@@ -448,7 +448,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         tool_calls.append(part)
                     elif isinstance(part, _messages.ServerToolCallPart):
                         yield _messages.ServerToolCallEvent(part)
-                    elif isinstance(part, _messages.ServerToolReturnPart):
+                    elif isinstance(part, _messages.BuiltinToolReturnPart):
                         yield _messages.ServerToolResultEvent(part)
                     elif isinstance(part, _messages.ThinkingPart):
                         # We don't need to do anything with thinking parts in this tool-calling node.

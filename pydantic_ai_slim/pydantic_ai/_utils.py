@@ -232,7 +232,7 @@ def guard_tool_call_id(
     | _messages.ToolReturnPart
     | _messages.RetryPromptPart
     | _messages.ServerToolCallPart
-    | _messages.ServerToolReturnPart,
+    | _messages.BuiltinToolReturnPart,
 ) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()

@@ -24,7 +24,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -510,7 +510,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
         elif isinstance(item, ServerToolCallPart):  # pragma: no cover
             # This is currently never returned from google
             pass
-        elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
+        elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
             # This is currently never returned from google
             pass
         else:
@@ -532,7 +532,7 @@ def _process_response_from_parts(
         elif part.code_execution_result is not None:
             # TODO(Marcelo): Is the idea to generate the tool_call_id on the `executable_code`, and then pass it here?
             items.append(
-                ServerToolReturnPart(
+                BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content=part.code_execution_result.output,
                     tool_call_id="It doesn't have.",

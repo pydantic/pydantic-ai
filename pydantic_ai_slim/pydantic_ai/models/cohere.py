@@ -17,7 +17,7 @@ from ..messages import (
     ModelResponsePart,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -229,8 +229,8 @@ class CohereModel(Model):
                         # ServerToolCallPart represents a tool call from a remote server
                         # This is currently never returned from cohere
                         pass
-                    elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
-                        # ServerToolReturnPart represents a tool return from a remote server
+                    elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
+                        # BuiltinToolReturnPart represents a tool return from a remote server
                         # This is currently never returned from cohere
                         pass
                     else:

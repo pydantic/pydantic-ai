@@ -565,10 +565,10 @@ class ToolReturnPart(BaseToolReturnPart):
 
 
 @dataclass(repr=False)
-class ServerToolReturnPart(BaseToolReturnPart):
+class BuiltinToolReturnPart(BaseToolReturnPart):
     """A tool return message from a server tool."""
 
-    part_kind: Literal['server-tool-return'] = 'server-tool-return'
+    part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
@@ -787,7 +787,7 @@ class ServerToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    Union[TextPart, ToolCallPart, ServerToolCallPart, ServerToolReturnPart, ThinkingPart],
+    Union[TextPart, ToolCallPart, ServerToolCallPart, BuiltinToolReturnPart, ThinkingPart],
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1196,7 +1196,7 @@ class ServerToolCallEvent:
 class ServerToolResultEvent:
     """An event indicating the result of a server tool call."""
 
-    result: ServerToolReturnPart
+    result: BuiltinToolReturnPart
     """The result of the call to the server tool."""
 
     event_kind: Literal['server_tool_result'] = 'server_tool_result'

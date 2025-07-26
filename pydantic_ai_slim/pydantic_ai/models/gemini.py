@@ -28,7 +28,7 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -615,8 +615,8 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
             # Handle ServerToolCallPart the same as ToolCallPart
             # This is currently never returned from gemini
             pass
-        elif isinstance(item, ServerToolReturnPart):  # pragma: no cover
-            # Convert ServerToolReturnPart to a function response part
+        elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
+            # Convert BuiltinToolReturnPart to a function response part
             # This is currently never returned from gemini
             pass
         else:

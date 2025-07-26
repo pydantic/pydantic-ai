@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    ServerToolReturnPart,
+    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -643,7 +643,7 @@ print(now_utrecht.strftime("%A, %Y-%m-%d"))
                         },
                         tool_call_id=IsStr(),
                     ),
-                    ServerToolReturnPart(
+                    BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content='Wednesday, 2025-05-28\n',
                         tool_call_id="It doesn't have.",
