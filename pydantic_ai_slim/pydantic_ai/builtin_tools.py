@@ -6,7 +6,7 @@ from typing import Literal
 
 from typing_extensions import TypedDict
 
-__all__ = ('AbstractBuiltinTool', 'WebSearchTool', 'UserLocation')
+__all__ = ('AbstractBuiltinTool', 'WebSearchTool', 'WebSearchUserLocation')
 
 
 @dataclass
@@ -38,7 +38,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * OpenAI
     """
 
-    user_location: UserLocation | None = None
+    user_location: WebSearchUserLocation | None = None
     """The `user_location` parameter allows you to localize search results based on a user's location.
 
     Supported by:
@@ -75,7 +75,7 @@ class WebSearchTool(AbstractBuiltinTool):
     """
 
 
-class UserLocation(TypedDict, total=False):
+class WebSearchUserLocation(TypedDict, total=False):
     """Allows you to localize search results based on a user's location.
 
     Supported by:
