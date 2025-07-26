@@ -262,7 +262,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
-    def __init__(  # noqa: C901
+    def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
@@ -422,7 +422,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._builtin_tools: list[AbstractBuiltinTool] = []
 
         for tool in builtin_tools:
-                self._builtin_tools.append(tool)
+            self._builtin_tools.append(tool)
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
