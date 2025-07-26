@@ -477,7 +477,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
 
 async def test_openai_responses_model_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=['web-search'])
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is it today?')
     assert result.output == snapshot("""\
@@ -529,7 +529,7 @@ Daily Forecast:
 
 async def test_openai_responses_model_web_search_tool_stream(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=['web-search'])
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='Give me the top 3 news in the world today.') as agent_run:
