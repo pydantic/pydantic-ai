@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -96,8 +97,12 @@ class MyModel(Model):
 class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         self._usage = Usage(request_tokens=300, response_tokens=400)
-        yield self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
-        yield self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2')
+        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
+        if maybe_event is not None:  # pragma: no branch
+            yield maybe_event
+        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2')
+        if maybe_event is not None:  # pragma: no branch
+            yield maybe_event
 
     @property
     def model_name(self) -> str:
@@ -146,7 +151,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 18000000000,
+                'end_time': 16000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
@@ -280,7 +285,7 @@ Fix the errors and try again.\
                     'index': 0,
                     'message': {
                         'role': 'assistant',
-                        'content': 'text1',
+                        'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'text', 'text': 'text2'}],
                         'tool_calls': [
                             {
                                 'id': 'tool_call_1',
@@ -300,17 +305,6 @@ Fix the errors and try again.\
                 'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
                 'timestamp': 14000000000,
                 'observed_timestamp': 15000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text2'}},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
-                'timestamp': 16000000000,
-                'observed_timestamp': 17000000000,
                 'trace_id': 1,
                 'span_id': 1,
                 'trace_flags': 1,
@@ -637,11 +631,13 @@ Fix the errors and try again.\
                                     'gen_ai.system': 'my_system',
                                 },
                                 {
-                                    'event.name': 'gen_ai.choice',
                                     'index': 0,
                                     'message': {
                                         'role': 'assistant',
-                                        'content': 'text1',
+                                        'content': [
+                                            {'kind': 'text', 'text': 'text1'},
+                                            {'kind': 'text', 'text': 'text2'},
+                                        ],
                                         'tool_calls': [
                                             {
                                                 'id': 'tool_call_1',
@@ -656,12 +652,7 @@ Fix the errors and try again.\
                                         ],
                                     },
                                     'gen_ai.system': 'my_system',
-                                },
-                                {
                                     'event.name': 'gen_ai.choice',
-                                    'index': 0,
-                                    'message': {'role': 'assistant', 'content': 'text2'},
-                                    'gen_ai.system': 'my_system',
                                 },
                             ]
                         )
@@ -875,6 +866,7 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
+                'content': [{'kind': 'text'}],
                 'gen_ai.message.index': 1,
                 'event.name': 'gen_ai.assistant.message',
             },
@@ -893,6 +885,7 @@ def test_messages_without_content(document_content: BinaryContent):
             },
             {
                 'role': 'assistant',
+                'content': [{'kind': 'text'}],
                 'tool_calls': [
                     {
                         'id': IsStr(),
@@ -928,6 +921,41 @@ def test_messages_without_content(document_content: BinaryContent):
                 'role': 'user',
                 'gen_ai.message.index': 7,
                 'event.name': 'gen_ai.user.message',
+            },
+        ]
+    )
+
+
+def test_message_with_thinking_parts():
+    messages: list[ModelMessage] = [
+        ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1'), TextPart('text2')]),
+        ModelResponse(parts=[ThinkingPart('thinking2')]),
+        ModelResponse(parts=[ThinkingPart('thinking3'), TextPart('text3')]),
+    ]
+    settings = InstrumentationSettings()
+    assert [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(messages)] == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': [
+                    {'kind': 'text', 'text': 'text1'},
+                    {'kind': 'thinking', 'text': 'thinking1'},
+                    {'kind': 'text', 'text': 'text2'},
+                ],
+                'gen_ai.message.index': 0,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'thinking', 'text': 'thinking2'}],
+                'gen_ai.message.index': 1,
+                'event.name': 'gen_ai.assistant.message',
+            },
+            {
+                'role': 'assistant',
+                'content': [{'kind': 'thinking', 'text': 'thinking3'}, {'kind': 'text', 'text': 'text3'}],
+                'gen_ai.message.index': 2,
+                'event.name': 'gen_ai.assistant.message',
             },
         ]
     )

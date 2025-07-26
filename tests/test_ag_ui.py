@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
+from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
@@ -29,7 +30,7 @@ from pydantic_ai.models.function import (
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT
 
-from .conftest import IsStr
+from .conftest import IsSameStr
 
 has_ag_ui: bool = False
 with contextlib.suppress(ImportError):
@@ -64,16 +65,30 @@ pytestmark = [
     pytest.mark.skipif(not has_ag_ui, reason='ag-ui-protocol not installed'),
 ]
 
-SIMPLE_RESULT: Any = snapshot(
-    [
-        {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-        {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-        {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': 'success '},
-        {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': '(no tool calls)'},
-        {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-        {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
-    ]
-)
+
+def simple_result() -> Any:
+    return snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '(no tool calls)',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )
 
 
 async def collect_events_from_adapter(
@@ -193,7 +208,7 @@ async def test_basic_user_message() -> None:
 
     events = await collect_events_from_adapter(adapter, run_input)
 
-    assert events == SIMPLE_RESULT
+    assert events == simple_result()
 
 
 async def test_empty_messages() -> None:
@@ -214,7 +229,11 @@ async def test_empty_messages() -> None:
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': IsStr(),
+                'runId': IsStr(),
+            },
             {'type': 'RUN_ERROR', 'message': 'no messages found in the input', 'code': 'no_messages'},
         ]
     )
@@ -251,7 +270,7 @@ async def test_multiple_messages() -> None:
 
     events = await collect_events_from_adapter(adapter, run_input)
 
-    assert events == SIMPLE_RESULT
+    assert events == simple_result()
 
 
 async def test_messages_with_history() -> None:
@@ -273,7 +292,7 @@ async def test_messages_with_history() -> None:
 
     events = await collect_events_from_adapter(adapter, run_input)
 
-    assert events == SIMPLE_RESULT
+    assert events == simple_result()
 
 
 async def test_tool_ag_ui() -> None:
@@ -284,8 +303,8 @@ async def test_tool_ag_ui() -> None:
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First call - make a tool call
-            yield {0: DeltaToolCall(name='get_weather')}
-            yield {0: DeltaToolCall(json_args='{"location": "Paris"}')}
+            yield {0: DeltaToolCall(name='get_weather', json_args='{"location": ')}
+            yield {0: DeltaToolCall(json_args='"Paris"}')}
         else:
             # Second call - return text result
             yield '{"get_weather": "Tool result"}'
@@ -336,16 +355,46 @@ async def test_tool_ag_ui() -> None:
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'get_weather'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{"location": "Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': '{"get_weather": "Tool result"}'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': thread_id,
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'get_weather',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'toolCallId': tool_call_id,
+                'delta': '{"location": ',
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '"Paris"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+            {
+                'type': 'RUN_STARTED',
+                'threadId': thread_id,
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '{"get_weather": "Tool result"}',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -378,12 +427,14 @@ async def test_tool_ag_ui_multiple() -> None:
     tool_call_id1 = uuid_str()
     tool_call_id2 = uuid_str()
     run_inputs = [
-        create_input(
-            UserMessage(
-                id='msg_1',
-                content='Please call get_weather and get_weather_parts for Paris',
-            ),
-            tools=[get_weather(), get_weather('get_weather_parts')],
+        (
+            first_input := create_input(
+                UserMessage(
+                    id='msg_1',
+                    content='Please call get_weather and get_weather_parts for Paris',
+                ),
+                tools=[get_weather(), get_weather('get_weather_parts')],
+            )
         ),
         create_input(
             UserMessage(
@@ -427,6 +478,7 @@ async def test_tool_ag_ui_multiple() -> None:
                 tool_call_id=tool_call_id2,
             ),
             tools=[get_weather(), get_weather('get_weather_parts')],
+            thread_id=first_input.thread_id,
         ),
     ]
 
@@ -434,24 +486,58 @@ async def test_tool_ag_ui_multiple() -> None:
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'get_weather'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{"location": "Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'get_weather_parts'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{"location": "'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': 'Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'get_weather',
+                'parentMessageId': (parent_message_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'toolCallId': tool_call_id,
+                'delta': '{"location": "Paris"}',
+            },
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'get_weather_parts',
+                'parentMessageId': parent_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'toolCallId': tool_call_id,
+                'delta': '{"location": "',
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+            {
+                'type': 'RUN_STARTED',
+                'threadId': thread_id,
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
-                'messageId': IsStr(),
+                'messageId': message_id,
                 'delta': '{"get_weather": "Tool result", "get_weather_parts": "Tool result"}',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -474,12 +560,14 @@ async def test_tool_ag_ui_parts() -> None:
     agent = Agent(model=FunctionModel(stream_function=stream_function))
     adapter = _Adapter(agent=agent)
     run_inputs = [
-        create_input(
-            UserMessage(
-                id='msg_1',
-                content='Please call get_weather_parts for Paris',
-            ),
-            tools=[get_weather('get_weather_parts')],
+        (
+            first_input := create_input(
+                UserMessage(
+                    id='msg_1',
+                    content='Please call get_weather_parts for Paris',
+                ),
+                tools=[get_weather('get_weather_parts')],
+            )
         ),
         create_input(
             UserMessage(
@@ -505,26 +593,60 @@ async def test_tool_ag_ui_parts() -> None:
                 tool_call_id='pyd_ai_00000000000000000000000000000003',
             ),
             tools=[get_weather('get_weather_parts')],
+            thread_id=first_input.thread_id,
         ),
     ]
     events = await collect_events_from_adapter(adapter, *run_inputs)
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'get_weather'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{"location":"'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': 'Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': '{"get_weather": "Tool result"}'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': '{"get_weather": "Tool result"}'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'get_weather',
+                'parentMessageId': IsStr(),
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'toolCallId': tool_call_id,
+                'delta': '{"location":"',
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': 'Paris"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '{"get_weather": "Tool result"}',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+            {
+                'type': 'RUN_STARTED',
+                'threadId': thread_id,
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '{"get_weather": "Tool result"}',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -560,22 +682,42 @@ async def test_tool_local_single_event() -> None:
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'send_snapshot'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'send_snapshot',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
-                'messageId': 'msg_1',
-                'toolCallId': IsStr(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
                 'content': '{"type":"STATE_SNAPSHOT","timestamp":null,"raw_event":null,"snapshot":{"key":"value"}}',
                 'role': 'tool',
             },
             {'type': 'STATE_SNAPSHOT', 'snapshot': {'key': 'value'}},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': IsStr()},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': """\
+data: {"type":"STATE_SNAPSHOT","snapshot":{"key":"value"}}
+
+""",
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -609,23 +751,40 @@ async def test_tool_local_multiple_events() -> None:
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'send_custom'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'send_custom',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
-                'messageId': 'msg_1',
-                'toolCallId': IsStr(),
-                'content': IsStr(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': '[{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event1","value":{"key1":"value1"}},{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event2","value":{"key2":"value2"}}]',
                 'role': 'tool',
             },
             {'type': 'CUSTOM', 'name': 'custom_event1', 'value': {'key1': 'value1'}},
             {'type': 'CUSTOM', 'name': 'custom_event2', 'value': {'key2': 'value2'}},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': 'success send_custom called'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': 'success send_custom called',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -661,21 +820,38 @@ async def test_tool_local_parts() -> None:
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'current_time'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'current_time',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
-                'messageId': 'msg_1',
-                'toolCallId': IsStr(),
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
                 'content': '2023-06-21T12:08:45.485981+00:00',
                 'role': 'tool',
             },
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': 'success current_time called'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': 'success current_time called',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -705,15 +881,27 @@ async def test_thinking() -> None:
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
             {'type': 'THINKING_TEXT_MESSAGE_START'},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking '},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'about the weather'},
             {'type': 'THINKING_TEXT_MESSAGE_END'},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': 'Thought about the weather'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': 'Thought about the weather',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -743,12 +931,14 @@ async def test_tool_local_then_ag_ui() -> None:
     )
     adapter = _Adapter(agent=agent)
     run_inputs = [
-        create_input(
-            UserMessage(
-                id='msg_1',
-                content='Please tell me the time and then call get_weather for Paris',
-            ),
-            tools=[get_weather()],
+        (
+            first_input := create_input(
+                UserMessage(
+                    id='msg_1',
+                    content='Please tell me the time and then call get_weather for Paris',
+                ),
+                tools=[get_weather()],
+            )
         ),
         create_input(
             UserMessage(
@@ -792,36 +982,67 @@ async def test_tool_local_then_ag_ui() -> None:
                 tool_call_id=tool_call_id2,
             ),
             tools=[get_weather()],
+            thread_id=first_input.thread_id,
         ),
     ]
     events = await collect_events_from_adapter(adapter, *run_inputs)
 
     assert events == snapshot(
         [
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'current_time'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
-            {'type': 'TOOL_CALL_START', 'toolCallId': IsStr(), 'toolCallName': 'get_weather'},
-            {'type': 'TOOL_CALL_ARGS', 'toolCallId': IsStr(), 'delta': '{"location": "Paris"}'},
-            {'type': 'TOOL_CALL_END', 'toolCallId': IsStr()},
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (first_tool_call_id := IsSameStr()),
+                'toolCallName': 'current_time',
+                'parentMessageId': (parent_message_id := IsSameStr()),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': first_tool_call_id, 'delta': '{}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': first_tool_call_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (second_tool_call_id := IsSameStr()),
+                'toolCallName': 'get_weather',
+                'parentMessageId': parent_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'toolCallId': second_tool_call_id,
+                'delta': '{"location": "Paris"}',
+            },
+            {'type': 'TOOL_CALL_END', 'toolCallId': second_tool_call_id},
             {
                 'type': 'TOOL_CALL_RESULT',
-                'messageId': 'msg_1',
-                'toolCallId': IsStr(),
+                'messageId': IsStr(),
+                'toolCallId': first_tool_call_id,
                 'content': '2023-06-21T12:08:45.485981+00:00',
                 'role': 'tool',
             },
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'RUN_STARTED', 'threadId': IsStr(), 'runId': IsStr()},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+            {
+                'type': 'RUN_STARTED',
+                'threadId': thread_id,
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
-                'messageId': IsStr(),
+                'messageId': message_id,
                 'delta': 'current time is 2023-06-21T12:08:45.485981+00:00 and the weather in Paris is bright and sunny',
             },
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': IsStr(), 'runId': IsStr()},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
         ]
     )
 
@@ -865,7 +1086,7 @@ async def test_request_with_state() -> None:
         async for event in adapter.run(run_input, deps=deps):
             events.append(json.loads(event.removeprefix('data: ')))
 
-        assert events == SIMPLE_RESULT
+        assert events == simple_result()
         assert deps.state.value == run_input.state.value if run_input.state is not None else last_value
         last_value = deps.state.value
 
@@ -899,12 +1120,12 @@ async def test_concurrent_runs() -> None:
     # Verify all runs completed successfully
     for i, events in enumerate(results):
         assert events == [
-            {'type': 'RUN_STARTED', 'threadId': f'test_thread_{i}', 'runId': IsStr()},
-            {'type': 'TEXT_MESSAGE_START', 'messageId': IsStr(), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': 'success '},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': IsStr(), 'delta': '(no tool calls)'},
-            {'type': 'TEXT_MESSAGE_END', 'messageId': IsStr()},
-            {'type': 'RUN_FINISHED', 'threadId': f'test_thread_{i}', 'runId': IsStr()},
+            {'type': 'RUN_STARTED', 'threadId': f'test_thread_{i}', 'runId': (run_id := IsSameStr())},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': '(no tool calls)'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'RUN_FINISHED', 'threadId': f'test_thread_{i}', 'runId': run_id},
         ]
 
 
@@ -936,4 +1157,4 @@ async def test_to_ag_ui() -> None:
                     if line:
                         events.append(json.loads(line.removeprefix('data: ')))
 
-            assert events == SIMPLE_RESULT
+            assert events == simple_result()

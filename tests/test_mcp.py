@@ -74,7 +74,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(13)
+        assert len(tools) == snapshot(16)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -89,6 +89,20 @@ async def test_reentrant_context_manager():
     async with server:
         async with server:
             pass
+
+
+async def test_context_manager_initialization_error() -> None:
+    """Test if streams are closed if client fails to initialize."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    from mcp.client.session import ClientSession
+
+    with patch.object(ClientSession, 'initialize', side_effect=Exception):
+        with pytest.raises(Exception):
+            async with server:
+                pass
+
+    assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
@@ -108,7 +122,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(13)
+        assert len(tools) == snapshot(16)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -140,18 +154,28 @@ def test_sse_server():
 
 
 def test_sse_server_with_header_and_timeout():
-    sse_server = MCPServerSSE(
-        url='http://localhost:8000/sse',
-        headers={'my-custom-header': 'my-header-value'},
-        timeout=10,
-        sse_read_timeout=100,
-        log_level='info',
-    )
+    with pytest.warns(DeprecationWarning, match="'sse_read_timeout' is deprecated, use 'read_timeout' instead."):
+        sse_server = MCPServerSSE(
+            url='http://localhost:8000/sse',
+            headers={'my-custom-header': 'my-header-value'},
+            timeout=10,
+            sse_read_timeout=100,
+            log_level='info',
+        )
     assert sse_server.url == 'http://localhost:8000/sse'
     assert sse_server.headers is not None and sse_server.headers['my-custom-header'] == 'my-header-value'
     assert sse_server.timeout == 10
-    assert sse_server.sse_read_timeout == 100
+    assert sse_server.read_timeout == 100
     assert sse_server.log_level == 'info'
+
+
+def test_sse_server_conflicting_timeout_params():
+    with pytest.raises(TypeError, match="'read_timeout' and 'sse_read_timeout' cannot be set at the same time."):
+        MCPServerSSE(
+            url='http://localhost:8000/sse',
+            read_timeout=50,
+            sse_read_timeout=100,
+        )
 
 
 @pytest.mark.vcr()
@@ -273,8 +297,8 @@ async def test_log_level_unset(run_context: RunContext[int]):
     assert server.log_level is None
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(13)
-        assert tools[10].name == 'get_log_level'
+        assert len(tools) == snapshot(16)
+        assert tools[13].name == 'get_log_level'
 
         result = await server.direct_call_tool('get_log_level', {})
         assert result == snapshot('unset')
@@ -441,6 +465,79 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
 
 
 @pytest.mark.vcr()
+async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
+    async with agent:
+        result = await agent.run('Get me the product name via get_product_name_link')
+        assert result.output == snapshot('The product name is "Pydantic AI".')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Get me the product name via get_product_name_link',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_product_name_link',
+                            args='{}',
+                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
+                        )
+                    ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=305,
+                        response_tokens=12,
+                        total_tokens=317,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_product_name_link',
+                            content='Pydantic AI\n',
+                            tool_call_id='call_qi5GtBeIEyT7Y3yJvVFIi062',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The product name is "Pydantic AI".')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=332,
+                        response_tokens=11,
+                        total_tokens=343,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
+                ),
+            ]
+        )
+
+
+@pytest.mark.vcr()
 async def test_tool_returning_image_resource(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me the image resource')
@@ -521,6 +618,88 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
 
 
 @pytest.mark.vcr()
+async def test_tool_returning_image_resource_link(
+    allow_model_requests: None, agent: Agent, image_content: BinaryContent
+):
+    async with agent:
+        result = await agent.run('Get me the image resource via get_image_resource_link')
+        assert result.output == snapshot(
+            'This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
+        )
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Get me the image resource via get_image_resource_link',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_image_resource_link',
+                            args='{}',
+                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
+                        )
+                    ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=305,
+                        response_tokens=12,
+                        total_tokens=317,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_image_resource_link',
+                            content='See file 1c8566',
+                            tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
+                        )
+                    ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=1452,
+                        response_tokens=29,
+                        total_tokens=1481,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                            'cached_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    vendor_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
+                ),
+            ]
+        )
+
+
+@pytest.mark.vcr()
 async def test_tool_returning_audio_resource(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
@@ -567,6 +746,70 @@ async def test_tool_returning_audio_resource(
                         details={'text_prompt_tokens': 431, 'audio_prompt_tokens': 144},
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
+                    timestamp=IsDatetime(),
+                    vendor_details={'finish_reason': 'STOP'},
+                ),
+            ]
+        )
+
+
+@pytest.mark.vcr()
+async def test_tool_returning_audio_resource_link(
+    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
+):
+    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    async with agent:
+        result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
+        assert result.output == snapshot('00:05')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content="What's the content of the audio resource via get_audio_resource_link?",
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.'
+                        ),
+                        ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr()),
+                    ],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=561,
+                        response_tokens=41,
+                        total_tokens=797,
+                        details={'thoughts_tokens': 195, 'text_prompt_tokens': 561},
+                    ),
+                    model_name='models/gemini-2.5-pro',
+                    timestamp=IsDatetime(),
+                    vendor_details={'finish_reason': 'STOP'},
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_audio_resource_link',
+                            content='See file 2d36ae',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='00:05')],
+                    usage=Usage(
+                        requests=1,
+                        request_tokens=784,
+                        response_tokens=5,
+                        total_tokens=789,
+                        details={'text_prompt_tokens': 640, 'audio_prompt_tokens': 144},
+                    ),
+                    model_name='models/gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     vendor_details={'finish_reason': 'STOP'},
                 ),
@@ -1002,7 +1245,7 @@ async def test_client_sampling(run_context: RunContext[int]):
             {
                 'meta': None,
                 'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None},
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, 'meta': None},
                 'model': 'test',
                 'stopReason': None,
             }

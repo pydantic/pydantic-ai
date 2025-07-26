@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
@@ -129,6 +130,10 @@ def test_docs_examples(  # noqa: C901
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
+    # Avoid filesystem access when examples call ssl.create_default_context(cafile=...) with non-existent paths
+    mocker.patch('ssl.create_default_context', return_value=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+    mocker.patch('ssl.SSLContext.load_cert_chain', return_value=None)
+
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
             if 'width' in kwargs:  # pragma: lax no cover
@@ -156,6 +161,7 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_ACCESS_KEY_ID', 'testing')
     env.set('AWS_SECRET_ACCESS_KEY', 'testing')
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')

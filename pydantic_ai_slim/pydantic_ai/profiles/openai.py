@@ -21,6 +21,14 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_sampling_settings: bool = True
     """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
 
+    # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
+    # `tool_choice="required"`.  This flag lets the calling model know whether it's
+    # safe to pass that value along.  Default is `True` to preserve existing
+    # behaviour for OpenAI itself and most providers.
+    openai_supports_tool_choice_required: bool = True
+    """Whether the provider accepts the value ``tool_choice='required'`` in the
+    request payload."""
+
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
