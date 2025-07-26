@@ -16,7 +16,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
-from pydantic_ai.builtin_tools import AbstractBuiltinTool, WebSearchTool
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -191,7 +191,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[Literal['web-search'] | AbstractBuiltinTool] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -223,7 +223,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[Literal['web-search'] | AbstractBuiltinTool] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -279,7 +279,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[Literal['web-search'] | AbstractBuiltinTool] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -422,9 +422,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._builtin_tools: list[AbstractBuiltinTool] = []
 
         for tool in builtin_tools:
-            if tool == 'web-search':
-                self._builtin_tools.append(WebSearchTool())
-            else:
                 self._builtin_tools.append(tool)
 
         self._prepare_tools = prepare_tools

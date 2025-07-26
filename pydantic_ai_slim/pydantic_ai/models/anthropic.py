@@ -284,7 +284,7 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
-            elif isinstance(item, BetaWebSearchToolResultBlock):
+            elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
                 items.append(
                     ServerToolReturnPart(
                         tool_name=item.type,
@@ -299,14 +299,6 @@ class AnthropicModel(Model):
                         tool_name=item.name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
-                    )
-                )
-            elif isinstance(item, BetaCodeExecutionToolResultBlock):
-                items.append(
-                    ServerToolReturnPart(
-                        tool_name=item.type,
-                        content=item.content,
-                        tool_call_id=item.tool_use_id,
                     )
                 )
             elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
