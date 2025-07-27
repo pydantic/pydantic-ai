@@ -792,6 +792,12 @@ class ModelResponse:
     vendor_id: str | None = None
     """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
 
+    id: str | None = None
+    """Unique identifier for the model response, e.g. as returned by the model provider (OpenAI, etc)."""
+
+    finish_reason: str | None = None
+    """The reason the model finished generating this response, e.g. 'stop', 'length', etc."""
+
     def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []

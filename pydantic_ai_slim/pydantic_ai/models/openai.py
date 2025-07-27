@@ -420,6 +420,8 @@ class OpenAIModel(Model):
             timestamp=timestamp,
             vendor_details=vendor_details,
             vendor_id=response.id,
+            id=response.id,
+            finish_reason=choice.finish_reason,
         )
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
