@@ -253,7 +253,7 @@ class HuggingFaceModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            vendor_id=response.id,
+            id=response.id,
         )
 
     async def _process_streamed_response(self, response: AsyncIterable[ChatCompletionStreamOutput]) -> StreamedResponse:

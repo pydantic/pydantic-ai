@@ -5,7 +5,7 @@ interactions:
       accept:
       - '*/*'
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br
       connection:
       - keep-alive
       host:

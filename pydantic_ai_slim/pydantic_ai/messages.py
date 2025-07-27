@@ -789,8 +789,40 @@ class ModelResponse:
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    vendor_id: str | None = None
-    """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
+    id: str | None = None
+    """Unique identifier for the model response, e.g. as returned by the model provider (OpenAI, etc)."""
+
+    finish_reason: str | None = None
+    """The reason the model finished generating this response, e.g. 'stop', 'length', etc."""
+
+    @property
+    def vendor_id(self) -> str | None:
+        """Vendor ID as specified by the model provider. This can be used to track the specific request to the model.
+
+        This is deprecated, use `id` instead.
+        """
+        import warnings
+
+        warnings.warn('vendor_id is deprecated, use id instead', DeprecationWarning, stacklevel=2)
+        return self.id
+
+    @vendor_id.setter
+    def vendor_id(self, value: str | None) -> None:
+        """Set the vendor ID.
+
+        This is deprecated, use `id` instead.
+        """
+        import warnings
+
+        warnings.warn('vendor_id is deprecated, use id instead', DeprecationWarning, stacklevel=2)
+        self.id = value
+
+    def __post_init__(self) -> None:
+        """Ensure vendor_details contains finish_reason for backward compatibility."""
+        if self.finish_reason and self.vendor_details is None:
+            self.vendor_details = {}
+        if self.finish_reason and self.vendor_details is not None:
+            self.vendor_details['finish_reason'] = self.finish_reason
 
     def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""

@@ -2963,10 +2963,11 @@ def test_binary_content_all_messages_json():
                     'details': None,
                 },
                 'model_name': 'test',
-                'vendor_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'vendor_details': None,
+                'id': None,
+                'finish_reason': None,
             },
         ]
     )

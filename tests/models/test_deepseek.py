@@ -58,7 +58,9 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),
-                vendor_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
+                vendor_details={'finish_reason': 'stop'},
+                id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
+                finish_reason='stop',
             ),
         ]
     )

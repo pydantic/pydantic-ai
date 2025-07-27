@@ -796,7 +796,7 @@ async def test_google_url_input(
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
         ]
     )
@@ -833,7 +833,7 @@ async def test_google_url_input_force_download(allow_model_requests: None) -> No
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
         ]
     )

@@ -169,7 +169,7 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
         usage=Usage(requests=1, request_tokens=30, response_tokens=29, total_tokens=59),
         model_name='Qwen/Qwen2.5-72B-Instruct-fast',
         timestamp=datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
-        vendor_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
+        id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
     )
 
 
@@ -235,7 +235,7 @@ async def test_request_structured_response(
         usage=Usage(requests=1),
         model_name='hf-model',
         timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-        vendor_id='123',
+        id='123',
     )
 
 
@@ -366,7 +366,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=2),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                id='123',
             ),
             ModelRequest(
                 parts=[
@@ -389,7 +389,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                id='123',
             ),
             ModelRequest(
                 parts=[
@@ -406,7 +406,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                id='123',
             ),
         ]
     )
@@ -653,7 +653,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 usage=Usage(requests=1, request_tokens=269, response_tokens=15, total_tokens=284),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
-                vendor_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
+                id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
             ),
         ]
     )
@@ -719,7 +719,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 usage=Usage(requests=1, request_tokens=26, response_tokens=2, total_tokens=28),
                 model_name='Qwen/Qwen2.5-72B-Instruct-fast',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-b3936940372c481b8d886e596dc75524',
+                id='chatcmpl-b3936940372c481b8d886e596dc75524',
             ),
         ]
     )
@@ -811,7 +811,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                id='123',
             ),
             ModelRequest(
                 parts=[
@@ -828,7 +828,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                id='123',
             ),
         ]
     )
@@ -958,7 +958,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=Usage(requests=1, request_tokens=15, response_tokens=1090, total_tokens=1105),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+                id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
             ),
         ]
     )
@@ -981,7 +981,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=Usage(requests=1, request_tokens=15, response_tokens=1090, total_tokens=1105),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
+                id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
             ),
             ModelRequest(
                 parts=[
@@ -999,7 +999,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=Usage(requests=1, request_tokens=691, response_tokens=1860, total_tokens=2551),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
+                id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
             ),
         ]
     )

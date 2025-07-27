@@ -341,7 +341,7 @@ class MistralModel(Model):
                 parts.append(tool)
 
         return ModelResponse(
-            parts, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+            parts, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, id=response.id
         )
 
     async def _process_streamed_response(

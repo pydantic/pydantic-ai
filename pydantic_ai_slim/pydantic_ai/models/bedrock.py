@@ -296,7 +296,7 @@ class BedrockConverseModel(Model):
             total_tokens=response['usage']['totalTokens'],
         )
         vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, vendor_id=vendor_id)
+        return ModelResponse(items, usage=u, model_name=self.model_name, id=vendor_id)
 
     @overload
     async def _messages_create(

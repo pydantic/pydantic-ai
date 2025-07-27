@@ -188,7 +188,9 @@ async def test_request_simple_success(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                vendor_details={'finish_reason': 'stop'},
+                id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -196,7 +198,9 @@ async def test_request_simple_success(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                vendor_details={'finish_reason': 'stop'},
+                id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -268,7 +272,9 @@ async def test_request_structured_response(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                vendor_details={'finish_reason': 'stop'},
+                id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -360,7 +366,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                vendor_details={'finish_reason': 'stop'},
+                id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -385,7 +393,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                vendor_details={'finish_reason': 'stop'},
+                id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -402,7 +412,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                vendor_details={'finish_reason': 'stop'},
+                id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -834,7 +846,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -872,7 +886,9 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
+                finish_reason='stop',
             ),
         ]
     )
@@ -917,7 +933,9 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -953,7 +971,9 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1598,7 +1618,9 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1645,7 +1667,9 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -1672,7 +1696,9 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1704,7 +1730,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
         ]
     )
@@ -1732,7 +1758,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
             ModelRequest(
                 parts=[
@@ -1757,7 +1783,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
+                id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
             ),
         ]
     )
@@ -1790,7 +1816,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
+                id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
         ]
     )
@@ -1819,7 +1845,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
+                id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
             ModelRequest(
                 parts=[
@@ -1846,7 +1872,9 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
+                finish_reason='stop',
             ),
         ]
     )
@@ -2109,7 +2137,9 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -2144,7 +2174,9 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -2205,7 +2237,9 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -2234,7 +2268,9 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
+                finish_reason='stop',
             ),
         ]
     )
@@ -2288,7 +2324,9 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -2317,7 +2355,9 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
+                finish_reason='stop',
             ),
         ]
     )
@@ -2373,7 +2413,9 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -2406,7 +2448,9 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
+                finish_reason='stop',
             ),
         ]
     )
@@ -2465,7 +2509,9 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -2501,7 +2547,9 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
+                finish_reason='stop',
             ),
         ]
     )
@@ -2564,7 +2612,9 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
+                vendor_details={'finish_reason': 'tool_calls'},
+                id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
+                finish_reason='tool_calls',
             ),
             ModelRequest(
                 parts=[
@@ -2604,7 +2654,9 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
+                vendor_details={'finish_reason': 'stop'},
+                id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
+                finish_reason='stop',
             ),
         ]
     )

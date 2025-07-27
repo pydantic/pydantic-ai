@@ -137,6 +137,8 @@ class FunctionModel(Model):
         if not response.usage.has_values():  # pragma: no branch
             response.usage = _estimate_usage(chain(messages, [response]))
             response.usage.requests = 1
+        response.id = getattr(response, 'id', None)
+        response.finish_reason = getattr(response, 'finish_reason', None)
         return response
 
     @asynccontextmanager

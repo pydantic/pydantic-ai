@@ -273,15 +273,16 @@ class GeminiModel(Model):
         parts = response['candidates'][0]['content']['parts']
         vendor_id = response.get('vendor_id', None)
         finish_reason = response['candidates'][0].get('finish_reason')
+        vendor_details = {}
         if finish_reason:
-            vendor_details = {'finish_reason': finish_reason}
+            vendor_details['finish_reason'] = finish_reason
         usage = _metadata_as_usage(response)
         usage.requests = 1
         return _process_response_from_parts(
             parts,
             response.get('model_version', self._model_name),
             usage,
-            vendor_id=vendor_id,
+            id=vendor_id,
             vendor_details=vendor_details,
         )
 
@@ -662,7 +663,7 @@ def _process_response_from_parts(
     parts: Sequence[_GeminiPartUnion],
     model_name: GeminiModelName,
     usage: usage.Usage,
-    vendor_id: str | None,
+    id: str | None,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
@@ -680,9 +681,7 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, vendor_id=vendor_id, vendor_details=vendor_details
-    )
+    return ModelResponse(parts=items, usage=usage, model_name=model_name, id=id, vendor_details=vendor_details)
 
 
 class _GeminiFunctionCall(TypedDict):

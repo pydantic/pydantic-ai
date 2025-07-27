@@ -419,7 +419,8 @@ class OpenAIModel(Model):
             model_name=response.model,
             timestamp=timestamp,
             vendor_details=vendor_details,
-            vendor_id=response.id,
+            id=response.id,
+            finish_reason=choice.finish_reason,
         )
 
     async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
@@ -706,7 +707,7 @@ class OpenAIResponsesModel(Model):
             items,
             usage=_map_usage(response),
             model_name=response.model,
-            vendor_id=response.id,
+            id=response.id,
             timestamp=timestamp,
         )
 

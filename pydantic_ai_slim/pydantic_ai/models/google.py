@@ -322,7 +322,7 @@ class GoogleModel(Model):
         usage = _metadata_as_usage(response)
         usage.requests = 1
         return _process_response_from_parts(
-            parts, response.model_version or self._model_name, usage, vendor_id=vendor_id, vendor_details=vendor_details
+            parts, response.model_version or self._model_name, usage, id=vendor_id, vendor_details=vendor_details
         )
 
     async def _process_streamed_response(self, response: AsyncIterator[GenerateContentResponse]) -> StreamedResponse:
@@ -506,7 +506,7 @@ def _process_response_from_parts(
     parts: list[Part],
     model_name: GoogleModelName,
     usage: usage.Usage,
-    vendor_id: str | None,
+    id: str | None,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
@@ -526,9 +526,7 @@ def _process_response_from_parts(
             raise UnexpectedModelBehavior(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
-    return ModelResponse(
-        parts=items, model_name=model_name, usage=usage, vendor_id=vendor_id, vendor_details=vendor_details
-    )
+    return ModelResponse(parts=items, model_name=model_name, usage=usage, id=id, vendor_details=vendor_details)
 
 
 def _function_declaration_from_tool(tool: ToolDefinition) -> FunctionDeclarationDict:

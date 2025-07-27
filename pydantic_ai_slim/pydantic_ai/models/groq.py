@@ -266,7 +266,7 @@ class GroqModel(Model):
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
         return ModelResponse(
-            items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+            items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, id=response.id
         )
 
     async def _process_streamed_response(self, response: AsyncStream[chat.ChatCompletionChunk]) -> GroqStreamedResponse:
