@@ -477,7 +477,6 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
                 if isinstance(item, BaseEvent):  # pragma: no branch
                     yield item
 
-
 def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
     """Convert a AG-UI history to a Pydantic AI one."""
     result: list[ModelMessage] = []
@@ -486,6 +485,9 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
         if isinstance(msg, UserMessage):
             result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
         elif isinstance(msg, AssistantMessage):
+            if msg.content:
+                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+
             if msg.tool_calls:
                 for tool_call in msg.tool_calls:
                     tool_calls[tool_call.id] = tool_call.function.name
@@ -502,9 +504,6 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
                         ]
                     )
                 )
-
-            if msg.content:
-                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
         elif isinstance(msg, SystemMessage):
             result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
         elif isinstance(msg, ToolMessage):
@@ -527,7 +526,6 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
             result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
 
     return result
-
 
 @runtime_checkable
 class StateHandler(Protocol):
