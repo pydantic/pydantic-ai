@@ -63,7 +63,12 @@ dependencies = [
 logfire = ["logfire>=3.11.0"]
 # Models
 openai = ["openai>=1.92.0"]
-cohere = ["cohere>=5.16.0; platform_system != 'Emscripten'"]
+cohere = [
+    "cohere>=5.16.0; platform_system != 'Emscripten'",
+    # Remove once all wheels for 0.21.4+ are built successfully
+    # https://github.com/huggingface/tokenizers/actions/runs/16570140346/job/46860152621
+    "tokenizers<=0.21.2",
+]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
 google = ["google-genai>=1.24.0"]
 anthropic = ["anthropic>=0.52.0"]
