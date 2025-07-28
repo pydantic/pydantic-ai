@@ -9,17 +9,24 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import Field, dataclass, field, replace
 from http import HTTPStatus
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
+    ClassVar,
     Final,
     Generic,
     Protocol,
     TypeVar,
     runtime_checkable,
 )
+
+from pydantic_ai.exceptions import UserError
+
+if TYPE_CHECKING:
+    pass
 
 try:
     from ag_ui.core import (
@@ -288,8 +295,24 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             if not run_input.messages:
                 raise _NoMessagesError
 
+            raw_state: dict[str, Any] = run_input.state or {}
             if isinstance(deps, StateHandler):
-                deps.state = run_input.state
+                if isinstance(deps.state, BaseModel):
+                    try:
+                        state = type(deps.state).model_validate(raw_state)
+                    except ValidationError as e:  # pragma: no cover
+                        raise _InvalidStateError from e
+                else:
+                    state = raw_state
+
+                deps = replace(deps, state=state)
+            elif raw_state:
+                raise UserError(
+                    f'AG-UI state is provided but `deps` of type `{type(deps).__name__}` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.'
+                )
+            else:
+                # `deps` not being a `StateHandler` is OK if there is no state.
+                pass
 
             messages = _messages_from_ag_ui(run_input.messages)
 
@@ -311,7 +334,7 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             yield encoder.encode(
                 RunErrorEvent(message=e.message, code=e.code),
             )
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             yield encoder.encode(
                 RunErrorEvent(message=str(e)),
             )
@@ -486,6 +509,9 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
         if isinstance(msg, UserMessage):
             result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
         elif isinstance(msg, AssistantMessage):
+            if msg.content:
+                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+
             if msg.tool_calls:
                 for tool_call in msg.tool_calls:
                     tool_calls[tool_call.id] = tool_call.function.name
@@ -502,9 +528,6 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
                         ]
                     )
                 )
-
-            if msg.content:
-                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
         elif isinstance(msg, SystemMessage):
             result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
         elif isinstance(msg, ToolMessage):
@@ -531,7 +554,11 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
 
 @runtime_checkable
 class StateHandler(Protocol):
-    """Protocol for state handlers in agent runs."""
+    """Protocol for state handlers in agent runs. Requires the class to be a dataclass with a `state` field."""
+
+    # Has to be a dataclass so we can use `replace` to update the state.
+    # From https://github.com/python/typeshed/blob/9ab7fde0a0cd24ed7a72837fcb21093b811b80d8/stdlib/_typeshed/__init__.pyi#L352
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
 
     @property
     def state(self) -> State:
@@ -558,6 +585,7 @@ StateT = TypeVar('StateT', bound=BaseModel)
 """Type variable for the state type, which must be a subclass of `BaseModel`."""
 
 
+@dataclass
 class StateDeps(Generic[StateT]):
     """Provides AG-UI state management.
 
@@ -570,42 +598,7 @@ class StateDeps(Generic[StateT]):
     Implements the `StateHandler` protocol.
     """
 
-    def __init__(self, default: StateT) -> None:
-        """Initialize the state with the provided state type."""
-        self._state = default
-
-    @property
-    def state(self) -> StateT:
-        """Get the current state of the agent run.
-
-        Returns:
-            The current run state.
-        """
-        return self._state
-
-    @state.setter
-    def state(self, state: State) -> None:
-        """Set the state of the agent run.
-
-        This method is called to update the state of the agent run with the
-        provided state.
-
-        Implements the `StateHandler` protocol.
-
-        Args:
-            state: The run state, which must be `None` or model validate for the state type.
-
-        Raises:
-            InvalidStateError: If `state` does not validate.
-        """
-        if state is None:
-            # If state is None, we keep the current state, which will be the default state.
-            return
-
-        try:
-            self._state = type(self._state).model_validate(state)
-        except ValidationError as e:  # pragma: no cover
-            raise _InvalidStateError from e
+    state: StateT
 
 
 @dataclass(repr=False)
