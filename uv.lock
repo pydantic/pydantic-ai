@@ -3153,6 +3153,7 @@ cli = [
 ]
 cohere = [
     { name = "cohere", marker = "sys_platform != 'emscripten'" },
+    { name = "tokenizers" },
 ]
 duckduckgo = [
     { name = "ddgs" },
@@ -3244,6 +3245,7 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.45.3" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
+    { name = "tokenizers", marker = "extra == 'cohere'", specifier = "<=0.21.2" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "vertexai"]
