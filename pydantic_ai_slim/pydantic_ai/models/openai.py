@@ -376,24 +376,27 @@ class OpenAIModel(Model):
             timestamp = _now_utc()
             response.created = int(timestamp.timestamp())
 
-        try:
-            response = chat.ChatCompletion.model_validate(response.model_dump())
-        except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
-
-        choice = response.choices[0]
+        model_dump = response.model_dump()
         
-        # Handle missing finish_reason (specifically for Kimi-K2 via OpenRouter)
-        if choice.finish_reason is None:
+        # Handle missing finish_reason before validation (specifically for Kimi-K2 via OpenRouter)
+        # This needs to happen before validation, not after
+        if response.choices[0].finish_reason is None:
             # Check if there's evidence of an attempted tool call
             tool_call_attempt = (
-                hasattr(choice.message, 'tool_calls') and 
-                choice.message.tool_calls
+                hasattr(response.choices[0].message, 'tool_calls') and 
+                response.choices[0].message.tool_calls
             )
             
             # Set finish_reason to 'tool_calls' if there's evidence of tool calls
             # Otherwise default to 'stop'
-            choice.finish_reason = 'tool_calls' if tool_call_attempt else 'stop'
+            model_dump['choices'][0]['finish_reason'] = 'tool_calls' if tool_call_attempt else 'stop'
+
+        try:
+            response = chat.ChatCompletion.model_validate(model_dump)
+        except ValidationError as e:
+            raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
+
+        choice = response.choices[0]
         
         items: list[ModelResponsePart] = []
         # The `reasoning_content` is only present in DeepSeek models.
