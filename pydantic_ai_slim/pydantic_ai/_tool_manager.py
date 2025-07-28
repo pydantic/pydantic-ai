@@ -54,20 +54,25 @@ class ToolManager(Generic[AgentDepsT]):
         except KeyError:
             return None
 
-    async def handle_call(self, call: ToolCallPart, allow_partial: bool = False) -> Any:
+    async def handle_call(
+        self, call: ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
+    ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
         Args:
             call: The tool call part to handle.
             allow_partial: Whether to allow partial validation of the tool arguments.
+            wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
         """
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
             # Output tool calls are not traced
-            return await self._call_tool(call, allow_partial)
+            return await self._call_tool(call, allow_partial, wrap_validation_errors)
         else:
-            return await self._call_tool_traced(call, allow_partial)
+            return await self._call_tool_traced(call, allow_partial, wrap_validation_errors)
 
-    async def _call_tool(self, call: ToolCallPart, allow_partial: bool = False) -> Any:
+    async def _call_tool(
+        self, call: ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
+    ) -> Any:
         name = call.tool_name
         tool = self.tools.get(name)
         try:
@@ -100,30 +105,35 @@ class ToolManager(Generic[AgentDepsT]):
             if current_retry == max_retries:
                 raise UnexpectedModelBehavior(f'Tool {name!r} exceeded max retries count of {max_retries}') from e
             else:
-                if isinstance(e, ValidationError):
-                    m = _messages.RetryPromptPart(
-                        tool_name=name,
-                        content=e.errors(include_url=False, include_context=False),
-                        tool_call_id=call.tool_call_id,
-                    )
-                    e = ToolRetryError(m)
-                elif isinstance(e, ModelRetry):
-                    m = _messages.RetryPromptPart(
-                        tool_name=name,
-                        content=e.message,
-                        tool_call_id=call.tool_call_id,
-                    )
-                    e = ToolRetryError(m)
-                else:
-                    assert_never(e)
+                if wrap_validation_errors:
+                    if isinstance(e, ValidationError):
+                        m = _messages.RetryPromptPart(
+                            tool_name=name,
+                            content=e.errors(include_url=False, include_context=False),
+                            tool_call_id=call.tool_call_id,
+                        )
+                        e = ToolRetryError(m)
+                    elif isinstance(e, ModelRetry):
+                        m = _messages.RetryPromptPart(
+                            tool_name=name,
+                            content=e.message,
+                            tool_call_id=call.tool_call_id,
+                        )
+                        e = ToolRetryError(m)
+                    else:
+                        assert_never(e)
 
-                self.ctx.retries[name] = current_retry + 1
+                if not allow_partial:
+                    self.ctx.retries[name] = current_retry + 1
+
                 raise e
         else:
             self.ctx.retries.pop(name, None)
             return output
 
-    async def _call_tool_traced(self, call: ToolCallPart, allow_partial: bool = False) -> Any:
+    async def _call_tool_traced(
+        self, call: ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
+    ) -> Any:
         """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
         span_attributes = {
             'gen_ai.tool.name': call.tool_name,
@@ -152,7 +162,7 @@ class ToolManager(Generic[AgentDepsT]):
         }
         with self.ctx.tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
             try:
-                tool_result = await self._call_tool(call, allow_partial)
+                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
             except ToolRetryError as e:
                 part = e.tool_retry
                 if self.ctx.trace_include_content and span.is_recording():
