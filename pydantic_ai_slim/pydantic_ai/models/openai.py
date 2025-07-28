@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, Optional, Union, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import assert_never
@@ -382,19 +382,17 @@ class OpenAIModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
-        
+
         # Handle missing finish_reason (specifically for Kimi-K2 via OpenRouter)
-        if choice.finish_reason is None:
+        finish_reason = cast(Optional[str], choice.finish_reason)
+        if finish_reason is None:
             # Check if there's evidence of an attempted tool call
-            tool_call_attempt = (
-                hasattr(choice.message, 'tool_calls') and 
-                choice.message.tool_calls
-            )
-            
+            tool_call_attempt = hasattr(choice.message, 'tool_calls') and choice.message.tool_calls
+
             # Set finish_reason to 'tool_calls' if there's evidence of tool calls
             # Otherwise default to 'stop'
             choice.finish_reason = 'tool_calls' if tool_call_attempt else 'stop'
-        
+
         items: list[ModelResponsePart] = []
         # The `reasoning_content` is only present in DeepSeek models.
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
