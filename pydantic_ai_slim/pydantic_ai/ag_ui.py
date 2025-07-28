@@ -486,6 +486,9 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
         if isinstance(msg, UserMessage):
             result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
         elif isinstance(msg, AssistantMessage):
+            if msg.content:
+                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+
             if msg.tool_calls:
                 for tool_call in msg.tool_calls:
                     tool_calls[tool_call.id] = tool_call.function.name
@@ -502,9 +505,6 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
                         ]
                     )
                 )
-
-            if msg.content:
-                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
         elif isinstance(msg, SystemMessage):
             result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
         elif isinstance(msg, ToolMessage):
