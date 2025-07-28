@@ -17,6 +17,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     BinaryContent,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -26,7 +27,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,

@@ -18,6 +18,7 @@ from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
@@ -27,7 +28,6 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -2090,7 +2090,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
 
 async def test_anthropic_unsupported_server_tool_name_error():
     """Test that unsupported server tool names raise an error."""
-    from pydantic_ai.messages import ModelMessage, ModelResponse, BuiltinToolReturnPart
+    from pydantic_ai.messages import BuiltinToolReturnPart, ModelMessage, ModelResponse
 
     env = TestEnv()
     env.set('ANTHROPIC_API_KEY', 'test-key')

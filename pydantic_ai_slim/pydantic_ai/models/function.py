@@ -17,13 +17,13 @@ from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
     BinaryContent,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,

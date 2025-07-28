@@ -19,6 +19,7 @@ from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavi
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BinaryContent,
+    BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
     ModelRequest,
@@ -27,7 +28,6 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,

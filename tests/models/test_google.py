@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserErro
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -27,7 +28,6 @@ from pydantic_ai.messages import (
     PartStartEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,

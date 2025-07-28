@@ -17,6 +17,7 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -26,7 +27,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,

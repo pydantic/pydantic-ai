@@ -19,6 +19,7 @@ from ..builtin_tools import WebSearchTool
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -28,7 +29,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,

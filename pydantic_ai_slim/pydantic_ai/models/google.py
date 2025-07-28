@@ -16,6 +16,7 @@ from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolReturnPart,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -24,7 +25,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,

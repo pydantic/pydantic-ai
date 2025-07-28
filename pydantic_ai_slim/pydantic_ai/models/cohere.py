@@ -11,13 +11,13 @@ from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,

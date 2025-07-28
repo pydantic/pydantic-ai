@@ -13,6 +13,7 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -20,7 +21,6 @@ from ..messages import (
     ModelResponseStreamEvent,
     RetryPromptPart,
     ServerToolCallPart,
-    BuiltinToolReturnPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
