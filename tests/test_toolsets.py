@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from typing import TypeVar
 from unittest.mock import AsyncMock
@@ -10,7 +11,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -498,16 +499,14 @@ async def test_context_manager_failed_initialization():
 
 async def test_tool_manager_retry_logic():
     """Test the retry logic with failed_tools and for_run_step method."""
-    from pydantic import ValidationError
-    from pydantic_ai.exceptions import ModelRetry, ToolRetryError
-    
+
     @dataclass
     class TestDeps:
         pass
 
     # Create a toolset with tools that can fail
-    toolset = FunctionToolset[TestDeps]()
-    call_count = {'failing_tool': 0, 'other_tool': 0}
+    toolset = FunctionToolset[TestDeps](max_retries=2)
+    call_count: defaultdict[str, int] = defaultdict(int)
 
     @toolset.tool
     def failing_tool(x: int) -> int:
@@ -515,7 +514,7 @@ async def test_tool_manager_retry_logic():
         call_count['failing_tool'] += 1
         raise ModelRetry('This tool always fails')
 
-    @toolset.tool  
+    @toolset.tool
     def other_tool(x: int) -> int:
         """A tool that works"""
         call_count['other_tool'] += 1
@@ -532,7 +531,7 @@ async def test_tool_manager_retry_logic():
     # Call the failing tool - should add to failed_tools
     with pytest.raises(ToolRetryError):
         await tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
-    
+
     assert tool_manager.failed_tools == {'failing_tool'}
     assert call_count['failing_tool'] == 1
 
@@ -553,21 +552,34 @@ async def test_tool_manager_retry_logic():
     # Call the failing tool again in the new manager - should have retry=1
     with pytest.raises(ToolRetryError):
         await new_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
-    
+
+    # Call the failing tool another time in the new manager
+    with pytest.raises(ToolRetryError):
+        await new_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
+    # Call the failing tool a third time in the new manager
+    with pytest.raises(ToolRetryError):
+        await new_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
     assert new_tool_manager.failed_tools == {'failing_tool'}
-    assert call_count['failing_tool'] == 2
+    assert call_count['failing_tool'] == 4
 
     # Create another run step
-    another_context = build_run_context(TestDeps()) 
+    another_context = build_run_context(TestDeps())
     another_tool_manager = await new_tool_manager.for_run_step(another_context)
 
     # Should now have retry count of 2 for failing_tool
     assert another_tool_manager.ctx.retries == {'failing_tool': 2}
     assert another_tool_manager.failed_tools == set()
 
+    # Call the failing tool _again_, now we should finally hit the limit
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'failing_tool' exceeded max retries count of 2"):
+        await another_tool_manager.handle_call(ToolCallPart(tool_name='failing_tool', args={'x': 1}))
+
 
 async def test_tool_manager_multiple_failed_tools():
     """Test retry logic when multiple tools fail in the same run step."""
+
     @dataclass
     class TestDeps:
         pass
@@ -580,9 +592,9 @@ async def test_tool_manager_multiple_failed_tools():
         raise ModelRetry('Tool A fails')
 
     @toolset.tool
-    def tool_b(x: int) -> int:  
+    def tool_b(x: int) -> int:
         """Tool B that fails"""
-        raise ValidationError.from_exception_data('tool_b', [])
+        raise ModelRetry('Tool B fails')
 
     @toolset.tool
     def tool_c(x: int) -> int:
@@ -611,6 +623,6 @@ async def test_tool_manager_multiple_failed_tools():
     # Create next run step - should have retry counts for both failed tools
     new_context = build_run_context(TestDeps())
     new_tool_manager = await tool_manager.for_run_step(new_context)
-    
+
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
