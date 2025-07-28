@@ -334,7 +334,7 @@ class _Adapter(Generic[AgentDepsT, OutputDataT]):
             yield encoder.encode(
                 RunErrorEvent(message=e.message, code=e.code),
             )
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             yield encoder.encode(
                 RunErrorEvent(message=str(e)),
             )
