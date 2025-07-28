@@ -543,6 +543,7 @@ class _MCPServerHTTP(MCPServer):
         self.max_retries = max_retries
         self.sampling_model = sampling_model
         self.read_timeout = read_timeout
+        self.__post_init__()
 
     @property
     @abstractmethod
