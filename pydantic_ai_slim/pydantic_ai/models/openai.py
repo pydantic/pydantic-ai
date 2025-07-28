@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, Optional, Union, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import assert_never
