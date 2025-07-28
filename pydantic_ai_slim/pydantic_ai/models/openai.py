@@ -380,11 +380,10 @@ class OpenAIModel(Model):
         
         # Handle missing finish_reason before validation (specifically for Kimi-K2 via OpenRouter)
         # This needs to happen before validation, not after
-        if response.choices[0].finish_reason is None:
+        if cast(Optional[str], response.choices[0].finish_reason) is None:
             # Check if there's evidence of an attempted tool call
             tool_call_attempt = (
-                hasattr(response.choices[0].message, 'tool_calls') and 
-                response.choices[0].message.tool_calls
+                hasattr(response.choices[0].message, 'tool_calls') and response.choices[0].message.tool_calls
             )
             
             # Set finish_reason to 'tool_calls' if there's evidence of tool calls
