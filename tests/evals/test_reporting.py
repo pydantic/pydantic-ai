@@ -120,6 +120,7 @@ async def test_evaluation_renderer_basic(sample_report: EvaluationReport):
         label_configs={},
         metric_configs={},
         duration_config={},
+        include_reasons=False,
     )
 
     table = renderer.build_table(sample_report)
@@ -191,6 +192,7 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
         label_configs={},
         metric_configs={},
         duration_config={},
+        include_reasons=False,
     )
 
     table = renderer.build_diff_table(sample_report, baseline_report)
@@ -248,6 +250,7 @@ async def test_evaluation_renderer_with_removed_cases(sample_report: EvaluationR
         label_configs={},
         metric_configs={},
         duration_config={},
+        include_reasons=False,
     )
 
     table = renderer.build_diff_table(sample_report, baseline_report)
@@ -311,6 +314,7 @@ async def test_evaluation_renderer_with_custom_configs(sample_report: Evaluation
             'diff_increase_style': 'bold red',
             'diff_decrease_style': 'bold green',
         },
+        include_reasons=False,
     )
 
     table = renderer.build_table(sample_report)
