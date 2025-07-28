@@ -1108,6 +1108,42 @@ async def test_iter_stream_structured_output():
                     )
 
 
+async def test_iter_stream_output_tool_dont_hit_retry_limit():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream partial JSON data that will initially fail validation."""
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(json_args='{"c')}
+        yield {0: DeltaToolCall(json_args='ity":')}
+        yield {0: DeltaToolCall(json_args=' "Mex')}
+        yield {0: DeltaToolCall(json_args='ico City",')}
+        yield {0: DeltaToolCall(json_args=' "cou')}
+        yield {0: DeltaToolCall(json_args='ntry": "Mexico"}')}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
+
+    async with agent.iter('Generate city info') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    assert [c async for c in stream.stream_output(debounce_by=None)] == snapshot(
+                        [
+                            CityLocation(city='Mex'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                        ]
+                    )
+
+
 def test_function_tool_event_tool_call_id_properties():
     """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
     # Prepare a ToolCallPart with a fixed ID
@@ -1213,50 +1249,3 @@ async def test_deferred_tool_iter():
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
         ]
     )
-
-
-async def test_iter_stream_output_tool_validation_retries():
-    """Test that partial validation failures during streaming don't increment retry counts incorrectly."""
-
-    class CityLocation(BaseModel):
-        city: str
-        country: str | None = None
-
-    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        """Stream partial JSON data that will initially fail validation."""
-        assert agent_info.output_tools is not None
-        assert len(agent_info.output_tools) == 1
-        name = agent_info.output_tools[0].name
-
-        # Create complete JSON and split it to ensure intermediate chunks fail validation
-        json_data = json.dumps({'city': 'Mexico City', 'country': 'Mexico'})
-        
-        # First chunk - just the tool name (no args yet)
-        yield {0: DeltaToolCall(name=name)}
-
-        # Second chunk - incomplete JSON that will fail validation 
-        # Split at a point that creates invalid JSON structure
-        yield {0: DeltaToolCall(json_args=json_data[:10])}  # '{"city": "'
-
-        # Third chunk - complete the rest of the JSON
-        yield {0: DeltaToolCall(json_args=json_data[10:])}  # 'Mexico City", "country": "Mexico"}'
-
-    agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
-
-    chunks: list[CityLocation] = []
-    async with agent.iter('Generate city info') as run:
-        async for node in run:
-            if agent.is_model_request_node(node):
-                async with node.stream(run.ctx) as stream:
-                    async for output in stream.stream_output(debounce_by=None):
-                        chunks.append(output)
-
-    # The test should pass regardless of how many intermediate chunks are produced
-    # The key test is that stream_output completes successfully without errors
-    assert len(chunks) >= 1  # At least one valid chunk should be produced
-    assert chunks[-1] == CityLocation(city='Mexico City', country='Mexico')  # Final chunk should be correct
-
-    # The fact that this test completes without raising UnexpectedModelBehavior
-    # about exceeding max retries is evidence that the fix is working correctly.
-    # Before the fix, partial validation failures would incorrectly increment
-    # retry counts and eventually cause the agent to exceed max retries.
