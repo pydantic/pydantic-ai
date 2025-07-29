@@ -7,7 +7,7 @@ query tool is a `DataFrame` with certain named columns, but not
 necessarily the content of every single row.
 
 With Pydantic AI, you can use a [dependencies object](../dependencies.md) to
-store the result from one tool and use it in another tool. 
+store the result from one tool and use it in another tool.
 
 In this example, we'll build an agent that analyzes the [Rotten Tomatoes movie review dataset from Cornell](https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes).
 
@@ -25,11 +25,6 @@ python/uv-run -m pydantic_ai_examples.data_analyst
 ```
 
 
-## Example Code
-
-```snippet {path="/examples/pydantic_ai_examples/data_analyst.py"}```
-
-
 Output (debug):
 
 ```
@@ -39,6 +34,13 @@ examples/pydantic_ai_examples/data_analyst.py:103 <module>
         'ments** in the training split. The dataset is balanced, with an equal number of positive comments.'
     ) (str) len=207
 ```
+
+
+## Example Code
+
+```snippet {path="/examples/pydantic_ai_examples/data_analyst.py"}```
+
+
 ## Appendix
 
 ### Choosing a Model
