@@ -20,7 +20,7 @@ pip/uv-add  nest-asyncio
 
 Then add this at the start of your notebook:
 
-```python
+```python {test="skip"}
 import nest_asyncio
 nest_asyncio.apply()
 ```
@@ -78,6 +78,8 @@ _(This example is complete, it can be run "as is" )_
 ### Checking Job Status
 
 ```python
+from pydantic_ai.batches.openai import OpenAIBatchModel
+
 async def check_batch_status(batch_id: str):
     batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
 
@@ -99,10 +101,9 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ```python
 from pydantic_ai.batches.openai import OpenAIBatchModel
-import asyncio
 
 async def get_batch_results(batch_id: str):
-    batch_model = OpenAIBatchModel('openai:gpt-4.1-mini')
+    batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
 
     # Check if completed
     job_info = await batch_model.batch_get_status(batch_id)
@@ -200,6 +201,7 @@ The batch API supports all structured output modes available in pydantic-ai:
 
 ```python
 from pydantic import BaseModel
+from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
 
 class WeatherResult(BaseModel):
     location: str
@@ -236,6 +238,15 @@ async def batch_with_structured_output():
 ### Tool Mode
 
 ```python
+from pydantic import BaseModel
+from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
+
+class WeatherResult(BaseModel):
+    location: str
+    temperature: float
+    condition: str
+    humidity: int
+
 async def batch_with_tool_mode():
     batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
 
@@ -265,6 +276,15 @@ async def batch_with_tool_mode():
 ### Prompted Mode
 
 ```python
+from pydantic import BaseModel
+from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
+
+class WeatherResult(BaseModel):
+    location: str
+    temperature: float
+    condition: str
+    humidity: int
+
 async def batch_with_prompted_mode():
     batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
 
@@ -294,6 +314,8 @@ async def batch_with_prompted_mode():
 ### Getting result for tools (tool requests by LLM)
 
 ```python
+from pydantic_ai.batches.openai import OpenAIBatchModel
+
 async def get_batch_results_with_tools(batch_id: str):
     batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
 
@@ -367,8 +389,28 @@ The `OpenAIBatchModel` class provides several methods for managing batch jobs:
 ### Error Handling
 
 ```python
+import asyncio
+import time
+from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
+
 async def robust_batch_processing():
     batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
+
+    # Example requests
+    requests = [
+        create_chat_request(
+            custom_id='example-1',
+            prompt='Hello world',
+            model='gpt-4o-mini',
+            max_tokens=50
+        ),
+        create_chat_request(
+            custom_id='example-2',
+            prompt='Write a haiku',
+            model='gpt-4o-mini',
+            max_tokens=100
+        ),
+    ]
 
     try:
         # Submit batch
@@ -408,26 +450,58 @@ async def robust_batch_processing():
 Batch results have a nested structure:
 
 ```python
-# Correct way to extract content
-content = result.output  # Use the convenience property
+from pydantic_ai.batches.openai import OpenAIBatchModel
 
-# Alternative way to make it
-content =result.response['body']['choices'][0]['message']['content']  # Manual access
+async def extract_content_example(batch_id: str):
+    batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
+    results = await batch_model.batch_retrieve_job(batch_id)
+
+    for result in results:
+        # Correct way to extract content
+        content = result.output  # Use the convenience property
+
+        # Alternative way to access it
+        # content = result.response['body']['choices'][0]['message']['content']  # Manual access
+
+        print(f"Content: {content}")
 ```
 
 ### Debugging Tools
 
 ```python
-# Inspect request structure
-print(f"Request body: {request.body}")
+from pydantic_ai.batches.openai import create_chat_request
+from pydantic_ai.tools import Tool
+from pydantic_ai import RunContext
 
-# Check tool definitions
-for tool in tools:
-    print(f"Tool: {tool.name} - {tool.description}")
+# Example debugging code
+def debug_batch_job():
+    # Example request creation
+    request = create_chat_request(
+        custom_id='debug-example',
+        prompt='Test prompt',
+        model='gpt-4o-mini',
+        max_tokens=50
+    )
 
-# Monitor job progress
-if job_info.request_counts:
-    completed = job_info.request_counts.get('completed', 0)
-    total = job_info.request_counts.get('total', 0)
-    print(f"Progress: {completed}/{total}")
+    # Inspect request structure
+    print(f"Request body: {request.body}")
+
+    # Example tool creation
+    def example_tool(ctx: RunContext[None], query: str) -> str:
+        return f"Example tool result for: {query}"
+
+    tool = Tool(example_tool)
+    tools = [tool.tool_def]
+
+    # Check tool definitions
+    for tool_def in tools:
+        print(f"Tool: {tool_def.name} - {tool_def.description}")
+
+async def monitor_job_progress(batch_model, batch_id: str):
+    """Example function showing how to monitor job progress."""
+    job_info = await batch_model.batch_get_status(batch_id)
+    if job_info.request_counts:
+        completed = job_info.request_counts.get('completed', 0)
+        total = job_info.request_counts.get('total', 0)
+        print(f"Progress: {completed}/{total}")
 ```

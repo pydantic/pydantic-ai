@@ -325,21 +325,31 @@ class OpenAIBatchModel(WrapperModel):
 
     Example:
         ```python
-        import asyncio
-        from pydantic_ai.batches.openai import OpenAIBatchModel, BatchRequest
-        from pydantic_ai.messages import UserPrompt
+        from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
 
         async def main():
-            # Create directly from model name
+            # Initialize batch model
             batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
 
-            # Use as regular model
-            messages = [UserPrompt("Hello")]
-            response = await batch_model.request(messages)
+            # Create batch requests (minimum 2 required)
+            requests = [
+                create_chat_request(
+                    custom_id='math-question',
+                    prompt='What is 2+2?',
+                    model='gpt-4o-mini',
+                    max_tokens=50
+                ),
+                create_chat_request(
+                    custom_id='creative-writing',
+                    prompt='Write a short poem about coding',
+                    model='gpt-4o-mini',
+                    max_tokens=100
+                ),
+            ]
 
-            # Or use batch functionality
-            requests = [BatchRequest(custom_id="1", body={"model": "gpt-4o-mini", "messages": []})]
+            # Submit batch job
             batch_id = await batch_model.batch_create_job(requests)
+            print(f'Batch job created: {batch_id}')
         ```
     """
 
