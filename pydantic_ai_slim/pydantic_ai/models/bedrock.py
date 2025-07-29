@@ -35,7 +35,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
-from pydantic_ai.profiles import ModelProfileSpec
+from pydantic_ai.profiles import ModelProfile, ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings
@@ -267,7 +267,7 @@ class BedrockConverseModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
+        yield BedrockStreamedResponse(_model_name=self.model_name, _model_profile=self.profile, _event_stream=response)
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
@@ -569,6 +569,7 @@ class BedrockStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Bedrock models."""
 
     _model_name: BedrockModelName
+    _model_profile: ModelProfile
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
@@ -618,7 +619,9 @@ class BedrockStreamedResponse(StreamedResponse):
                             UserWarning,
                         )
                 if 'text' in delta:
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id=index, content=delta['text'], model_profile=self._model_profile
+                    )
                     if maybe_event is not None:
                         yield maybe_event
                 if 'toolUse' in delta:

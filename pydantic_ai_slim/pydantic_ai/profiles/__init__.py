@@ -35,6 +35,11 @@ class ModelProfile:
     json_schema_transformer: type[JsonSchemaTransformer] | None = None
     """The transformer to use to make JSON schemas for tools and structured output compatible with the model."""
 
+    thinking_start_tag: str = '<think>'
+    """The tag used to indicate thinking parts in the model's output. Defaults to '<think>'."""
+    thinking_end_tag: str = '</think>'
+    """The tag used to indicate the end of thinking parts in the model's output. Defaults to '</think>'."""
+
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
         """Build a ModelProfile subclass instance from a ModelProfile instance."""
