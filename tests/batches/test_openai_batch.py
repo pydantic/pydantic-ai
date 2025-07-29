@@ -9,12 +9,17 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import RunContext
-from pydantic_ai.batches.openai import (
-    BatchJob,
-    BatchResult,
-    OpenAIBatchModel,
-    create_chat_request,
-)
+
+try:
+    from pydantic_ai.batches.openai import (
+        BatchJob,
+        BatchResult,
+        OpenAIBatchModel,
+        create_chat_request,
+    )
+except ImportError:
+    pytest.skip('openai is not installed', allow_module_level=True)
+
 from pydantic_ai.tools import Tool
 
 
