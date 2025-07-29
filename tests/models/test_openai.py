@@ -284,6 +284,43 @@ async def test_request_structured_response(allow_model_requests: None):
     )
 
 
+async def test_model_response_without_text_part(allow_model_requests: None):
+    messages = [
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='get_location',
+                    args='{"loc_name": "San Fransisco"}',
+                    tool_call_id='1',
+                )
+            ],
+            usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3, details={'cached_tokens': 1}),
+            model_name='gpt-4o-123',
+            timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            vendor_id='123',
+        )
+    ]
+    mock_client = MockOpenAI.create_mock([])
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    openai_messages = await m._map_messages(messages)  # type: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'content': '',
+                'tool_calls': [
+                    {
+                        'id': '1',
+                        'type': 'function',
+                        'function': {'name': 'get_location', 'arguments': '{"loc_name": "San Fransisco"}'},
+                    }
+                ],
+            }
+        ]
+    )
+
+
 async def test_request_tool_call(allow_model_requests: None):
     responses = [
         completion_message(
