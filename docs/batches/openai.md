@@ -30,7 +30,7 @@ nest_asyncio.apply()
 
 ### Creating and Submitting a Batch Job
 
-```python
+```python {test="ci_only"}
 import asyncio
 from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
 
@@ -129,7 +129,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 You can include tools in batch requests by extracting `ToolDefinition` objects from pydantic-ai `Tool` instances:
 
-```python
+```python {test="ci_only"}
 import asyncio
 from pydantic_ai import RunContext
 from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
@@ -464,44 +464,4 @@ async def extract_content_example(batch_id: str):
         # content = result.response['body']['choices'][0]['message']['content']  # Manual access
 
         print(f"Content: {content}")
-```
-
-### Debugging Tools
-
-```python
-from pydantic_ai.batches.openai import create_chat_request
-from pydantic_ai.tools import Tool
-from pydantic_ai import RunContext
-
-# Example debugging code
-def debug_batch_job():
-    # Example request creation
-    request = create_chat_request(
-        custom_id='debug-example',
-        prompt='Test prompt',
-        model='gpt-4o-mini',
-        max_tokens=50
-    )
-
-    # Inspect request structure
-    print(f"Request body: {request.body}")
-
-    # Example tool creation
-    def example_tool(ctx: RunContext[None], query: str) -> str:
-        return f"Example tool result for: {query}"
-
-    tool = Tool(example_tool)
-    tools = [tool.tool_def]
-
-    # Check tool definitions
-    for tool_def in tools:
-        print(f"Tool: {tool_def.name} - {tool_def.description}")
-
-async def monitor_job_progress(batch_model, batch_id: str):
-    """Example function showing how to monitor job progress."""
-    job_info = await batch_model.batch_get_status(batch_id)
-    if job_info.request_counts:
-        completed = job_info.request_counts.get('completed', 0)
-        total = job_info.request_counts.get('total', 0)
-        print(f"Progress: {completed}/{total}")
 ```

@@ -323,34 +323,7 @@ class OpenAIBatchModel(WrapperModel):
     all the original functionality. Provides 50% cost savings compared to synchronous
     API calls with a 24-hour processing window.
 
-    Example:
-        ```python
-        from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
-
-        async def main():
-            # Initialize batch model
-            batch_model = OpenAIBatchModel('openai:gpt-4o-mini')
-
-            # Create batch requests (minimum 2 required)
-            requests = [
-                create_chat_request(
-                    custom_id='math-question',
-                    prompt='What is 2+2?',
-                    model='gpt-4o-mini',
-                    max_tokens=50
-                ),
-                create_chat_request(
-                    custom_id='creative-writing',
-                    prompt='Write a short poem about coding',
-                    model='gpt-4o-mini',
-                    max_tokens=100
-                ),
-            ]
-
-            # Submit batch job
-            batch_id = await batch_model.batch_create_job(requests)
-            print(f'Batch job created: {batch_id}')
-        ```
+    See the batch processing documentation for detailed examples and usage patterns.
     """
 
     def __init__(self, wrapped: Model | KnownModelName):
