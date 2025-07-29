@@ -277,6 +277,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'logfire.level_num': 17,
+                    'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },
                 'events': [
                     {
