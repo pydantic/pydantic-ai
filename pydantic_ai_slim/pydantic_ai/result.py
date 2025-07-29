@@ -67,7 +67,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 except ValidationError:
                     pass
         if self._final_result_event is not None:  # pragma: no branch
-            yield await self._validate_response(self._raw_stream_response.get(), allow_partial=False)
+            yield await self._validate_response(self._raw_stream_response.get())
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
@@ -128,7 +128,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async for _ in self:
             pass
 
-        return await self._validate_response(self._raw_stream_response.get(), allow_partial=False)
+        return await self._validate_response(self._raw_stream_response.get())
 
     async def _validate_response(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
@@ -150,7 +150,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                     f'Invalid response, unable to find tool call for {output_tool_name!r}'
                 )
-            return await self._tool_manager.handle_call(tool_call, allow_partial=allow_partial)
+            return await self._tool_manager.handle_call(
+                tool_call, allow_partial=allow_partial, wrap_validation_errors=False
+            )
         elif deferred_tool_calls := self._tool_manager.get_deferred_tool_calls(message.parts):
             if not self._output_schema.allows_deferred_tool_calls:
                 raise exceptions.UserError(

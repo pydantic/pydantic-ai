@@ -7,6 +7,7 @@ import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 
@@ -17,7 +18,9 @@ from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import (
     AgentInfo,
@@ -27,8 +30,9 @@ from pydantic_ai.models.function import (
     DeltaToolCalls,
     FunctionModel,
 )
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
 from .conftest import IsSameStr
 
@@ -180,7 +184,7 @@ def create_input(
         thread_id=thread_id,
         run_id=uuid_str(),
         messages=list(messages),
-        state=state,
+        state=dict(state) if state else {},
         context=[],
         tools=tools or [],
         forwarded_props=None,
@@ -1050,9 +1054,19 @@ async def test_tool_local_then_ag_ui() -> None:
 async def test_request_with_state() -> None:
     """Test request with state modification."""
 
+    seen_states: list[int] = []
+
+    async def store_state(
+        ctx: RunContext[StateDeps[StateInt]], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        seen_states.append(ctx.deps.state.value)
+        ctx.deps.state.value += 1
+        return tool_defs
+
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
+        prepare_tools=store_state,
     )
     adapter = _Adapter(agent=agent)
     run_inputs = [
@@ -1074,32 +1088,101 @@ async def test_request_with_state() -> None:
                 id='msg_3',
                 content='Hello, how are you?',
             ),
+        ),
+        create_input(
+            UserMessage(
+                id='msg_4',
+                content='Hello, how are you?',
+            ),
             state=StateInt(value=42),
         ),
     ]
 
-    deps = StateDeps(StateInt())
+    deps = StateDeps(StateInt(value=0))
 
-    last_value = deps.state.value
     for run_input in run_inputs:
         events = list[dict[str, Any]]()
         async for event in adapter.run(run_input, deps=deps):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
-        assert deps.state.value == run_input.state.value if run_input.state is not None else last_value
-        last_value = deps.state.value
+    assert seen_states == snapshot(
+        [
+            41,  # run msg_1, prepare_tools call 1
+            42,  # run msg_1, prepare_tools call 2
+            0,  # run msg_2, prepare_tools call 1
+            1,  # run msg_2, prepare_tools call 2
+            0,  # run msg_3, prepare_tools call 1
+            1,  # run msg_3, prepare_tools call 2
+            42,  # run msg_4, prepare_tools call 1
+            43,  # run msg_4, prepare_tools call 2
+        ]
+    )
 
-    assert deps.state.value == 42
+
+async def test_request_with_state_without_handler() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    adapter = _Adapter(agent=agent)
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        ),
+        state=StateInt(value=41),
+    )
+
+    with pytest.raises(
+        UserError,
+        match='AG-UI state is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
+    ):
+        async for _ in adapter.run(run_input):
+            pass
+
+
+async def test_request_with_state_with_custom_handler() -> None:
+    @dataclass
+    class CustomStateDeps:
+        state: dict[str, Any]
+
+    seen_states: list[dict[str, Any]] = []
+
+    async def store_state(ctx: RunContext[CustomStateDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_states.append(ctx.deps.state)
+        return tool_defs
+
+    agent: Agent[CustomStateDeps, str] = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+        deps_type=CustomStateDeps,
+        prepare_tools=store_state,
+    )
+    adapter = _Adapter(agent=agent)
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        ),
+        state={'value': 42},
+    )
+
+    async for _ in adapter.run(run_input, deps=CustomStateDeps(state={'value': 0})):
+        pass
+
+    assert seen_states[-1] == {'value': 42}
 
 
 async def test_concurrent_runs() -> None:
     """Test concurrent execution of multiple runs."""
     import asyncio
 
-    agent = Agent(
-        model=FunctionModel(stream_function=simple_stream),
+    agent: Agent[StateDeps[StateInt], str] = Agent(
+        model=TestModel(),
+        deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
     )
+
+    @agent.tool
+    async def get_state(ctx: RunContext[StateDeps[StateInt]]) -> int:
+        return ctx.deps.state.value
+
     adapter = _Adapter(agent=agent)
     concurrent_tasks: list[asyncio.Task[list[dict[str, Any]]]] = []
 
@@ -1109,10 +1192,11 @@ async def test_concurrent_runs() -> None:
                 id=f'msg_{i}',
                 content=f'Message {i}',
             ),
+            state=StateInt(value=i),
             thread_id=f'test_thread_{i}',
         )
 
-        task = asyncio.create_task(collect_events_from_adapter(adapter, run_input))
+        task = asyncio.create_task(collect_events_from_adapter(adapter, run_input, deps=StateDeps(StateInt())))
         concurrent_tasks.append(task)
 
     results = await asyncio.gather(*concurrent_tasks)
@@ -1121,9 +1205,23 @@ async def test_concurrent_runs() -> None:
     for i, events in enumerate(results):
         assert events == [
             {'type': 'RUN_STARTED', 'threadId': f'test_thread_{i}', 'runId': (run_id := IsSameStr())},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'get_state',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': str(i),
+                'role': 'tool',
+            },
             {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': '(no tool calls)'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': '{"get_s'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'tate":' + str(i) + '}'},
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
             {'type': 'RUN_FINISHED', 'threadId': f'test_thread_{i}', 'runId': run_id},
         ]
