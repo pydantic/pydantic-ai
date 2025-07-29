@@ -142,6 +142,12 @@ As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloud
 
 You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
 
+## OpenAI Batch API
+
+Pydantic AI supports OpenAI's [Batch API](https://platform.openai.com/docs/guides/batch) for cost-effective bulk processing with 50% savings and 24-hour processing windows.
+
+[Learn more about Batch API →](../batches/openai.md)
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIModel` in Pydantic AI.

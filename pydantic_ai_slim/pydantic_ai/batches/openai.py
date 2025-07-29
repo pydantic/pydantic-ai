@@ -6,49 +6,40 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 from .. import ModelHTTPError
+from .._output import OutputSchema
 from ..messages import UserPromptPart
 from ..models import KnownModelName, Model, check_allow_model_requests
-from ..models.openai import OpenAIModel
+from ..models.openai import APIStatusError, AsyncOpenAI, OpenAIModel
 from ..models.wrapper import WrapperModel
+from ..output import OutputSpec, StructuredOutputMode
+from ..tools import ToolDefinition
 
-try:
-    from openai import APIStatusError, AsyncOpenAI
-except ImportError as _import_error:
-    raise ImportError('Please install "pydantic-ai-slim[openai]"`') from _import_error
+__all__ = (
+    'BatchRequest',
+    'BatchJob',
+    'BatchResult',
+    'OpenAIBatchModel',
+    'create_chat_request',
+)
 
 
-def create_chat_request(
-    custom_id: str,
+def _map_tool_definition(tool_def: ToolDefinition) -> dict[str, Any]:
+    """Convert a ToolDefinition to OpenAI tool parameter format."""
+    return {
+        'type': 'function',
+        'function': {
+            'name': tool_def.name,
+            'description': tool_def.description or '',
+            'parameters': tool_def.parameters_json_schema,
+        },
+    }
+
+
+def _build_messages(
     prompt: str | UserPromptPart | list[UserPromptPart],
-    model: str,
-    max_tokens: int | None = None,
-    temperature: float | None = None,
     system_prompt: str | None = None,
-) -> BatchRequest:
-    """Create a chat completion batch request with pydantic-ai style parameters.
-
-    Args:
-        custom_id: Unique identifier for this request
-        prompt: User prompt (string or UserPromptPart)
-        model: Model name (e.g., "gpt-4o-mini")
-        max_tokens: Maximum tokens to generate
-        temperature: Sampling temperature
-        system_prompt: Optional system prompt
-
-    Returns:
-        BatchRequest: Configured batch request
-
-    Example:
-        ```python
-        from pydantic_ai.batches.openai import create_chat_request
-
-        requests = [
-            create_chat_request("req-1", "What is 2+2?", "gpt-4o-mini", max_tokens=50),
-            create_chat_request("req-2", "Write a haiku", "gpt-4o-mini", max_tokens=100),
-        ]
-        ```
-    """
-    # Build messages list
+) -> list[dict[str, Any]]:
+    """Build messages list from prompt and system prompt."""
     messages: list[dict[str, Any]] = []
 
     if system_prompt:
@@ -67,6 +58,127 @@ def create_chat_request(
             content_parts.append(str(part))
         messages.append({'role': 'user', 'content': ' '.join(content_parts)})
 
+    return messages
+
+
+def _handle_native_output(output_schema: OutputSchema, body: dict[str, Any]) -> None:
+    """Handle native structured output mode."""
+    from .._output import StructuredTextOutputSchema
+
+    if isinstance(output_schema, StructuredTextOutputSchema):
+        object_def = output_schema.object_def
+        json_schema_dict: dict[str, Any] = {
+            'name': object_def.name or 'response',
+            'schema': object_def.json_schema,
+        }
+        if object_def.description:
+            json_schema_dict['description'] = object_def.description
+        if object_def.strict:
+            json_schema_dict['strict'] = True
+
+        response_format = {
+            'type': 'json_schema',
+            'json_schema': json_schema_dict,
+        }
+
+        body['response_format'] = response_format
+
+
+def _handle_tool_output(output_schema: OutputSchema, body: dict[str, Any]) -> None:
+    """Handle tool-based structured output mode."""
+    if output_schema.toolset:
+        # Access tool definitions through the internal attribute (needed for batch mode)
+        # This is safe since we're in the same package
+        tool_defs = getattr(output_schema.toolset, '_tool_defs', [])
+        output_tools = [_map_tool_definition(tool_def) for tool_def in tool_defs]
+        if 'tools' in body:
+            body['tools'].extend(output_tools)
+        else:
+            body['tools'] = output_tools
+
+        # Force tool usage for output
+        if len(output_tools) == 1:
+            body['tool_choice'] = {
+                'type': 'function',
+                'function': {'name': output_tools[0]['function']['name']},
+            }
+
+
+def _handle_prompted_output(output_schema: OutputSchema, body: dict[str, Any], system_prompt: str | None) -> None:
+    """Handle prompted structured output mode."""
+    from .._output import PromptedOutputSchema
+
+    if isinstance(output_schema, PromptedOutputSchema):
+        schema_instructions = output_schema.instructions('Respond with JSON that matches this schema:\n{schema}')
+
+        # Add to system prompt or create one
+        if system_prompt:
+            enhanced_system_prompt = f'{system_prompt}\n\n{schema_instructions}'
+        else:
+            enhanced_system_prompt = schema_instructions
+
+        # Update messages with enhanced system prompt
+        messages = [msg for msg in body['messages'] if msg.get('role') != 'system']
+        messages.insert(0, {'role': 'system', 'content': enhanced_system_prompt})
+        body['messages'] = messages
+
+
+def create_chat_request(
+    custom_id: str,
+    prompt: str | UserPromptPart | list[UserPromptPart],
+    model: str,
+    max_tokens: int | None = None,
+    temperature: float | None = None,
+    system_prompt: str | None = None,
+    output_type: OutputSpec[Any] | None = None,
+    output_mode: StructuredOutputMode | None = None,
+    tools: list[ToolDefinition] | None = None,
+) -> BatchRequest:
+    """Create a chat completion batch request with pydantic-ai style parameters.
+
+    Args:
+        custom_id: Unique identifier for this request
+        prompt: User prompt (string or UserPromptPart)
+        model: Model name (e.g., "gpt-4o-mini")
+        max_tokens: Maximum tokens to generate
+        temperature: Sampling temperature
+        system_prompt: Optional system prompt
+        output_type: Structured output specification (Pydantic models, functions, etc.)
+        output_mode: Mode for structured output ('tool', 'native', 'prompted')
+        tools: List of tool definitions for the model to use
+
+    Returns:
+        BatchRequest: Configured batch request
+
+    Example:
+        ```python
+        from pydantic import BaseModel
+        from pydantic_ai.batches.openai import create_chat_request
+
+        class Response(BaseModel):
+            answer: int
+            explanation: str
+
+        # Simple text request
+        requests = [
+            create_chat_request("req-1", "What is 2+2?", "gpt-4o-mini", max_tokens=50),
+        ]
+
+        # Structured output request
+        requests = [
+            create_chat_request(
+                "req-2",
+                "What is 2+2?",
+                "gpt-4o-mini",
+                output_type=Response,
+                output_mode='native'
+            ),
+        ]
+        ```
+    """
+    # Build messages list
+    messages = _build_messages(prompt, system_prompt)
+
     # Build request body
     body: dict[str, Any] = {
         'model': model,
@@ -77,16 +189,25 @@ def create_chat_request(
     if temperature is not None:
         body['temperature'] = temperature
 
+    # Handle tools
+    if tools:
+        body['tools'] = [_map_tool_definition(tool) for tool in tools]
+
+    # Handle structured output
+    if output_type is not None:
+        if output_mode is None:
+            output_mode = 'tool'  # Default mode
+
+        output_schema = OutputSchema.build(output_type, default_mode=output_mode)
+
+        if output_schema.mode == 'native':
+            _handle_native_output(output_schema, body)
+        elif output_schema.mode == 'tool':
+            _handle_tool_output(output_schema, body)
+        elif output_schema.mode == 'prompted':
+            _handle_prompted_output(output_schema, body, system_prompt)
+
     return BatchRequest(custom_id=custom_id, body=body)
-
-
-__all__ = (
-    'BatchRequest',
-    'BatchJob',
-    'BatchResult',
-    'OpenAIBatchModel',
-    'create_chat_request',
-)
 
 
 @dataclass
@@ -142,6 +263,56 @@ class BatchResult:
     custom_id: str | None
     response: dict[str, Any] | None
     error: dict[str, Any] | None
+
+    @property
+    def output(self) -> str | None:
+        """Get the text content from the response message.
+
+        Returns:
+            The message content as a string, or None if not available.
+        """
+        if not self.response:
+            return None
+
+        try:
+            return self.response['body']['choices'][0]['message']['content']
+        except (KeyError, IndexError, TypeError):
+            return None
+
+    @property
+    def tool_calls(self) -> list[dict[str, Any]]:
+        """Get tool calls from the response message.
+
+        Returns:
+            List of tool call objects, or empty list if none available.
+        """
+        if not self.response:
+            return []
+
+        try:
+            message = self.response['body']['choices'][0]['message']
+            return message.get('tool_calls', [])
+        except (KeyError, IndexError, TypeError):
+            return []
+
+    def get_tool_call_arguments(self, index: int = 0) -> dict[str, Any] | None:
+        """Get parsed arguments from a specific tool call.
+
+        Args:
+            index: Index of the tool call (default: 0 for first call)
+
+        Returns:
+            Parsed arguments as a dictionary, or None if not available.
+        """
+        tool_calls = self.tool_calls
+        if not tool_calls or index >= len(tool_calls):
+            return None
+
+        try:
+            args_json = tool_calls[index]['function']['arguments']
+            return json.loads(args_json)
+        except (KeyError, json.JSONDecodeError, TypeError):
+            return None
 
 
 @dataclass(init=False)
@@ -253,7 +424,7 @@ class OpenAIBatchModel(WrapperModel):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: no cover
 
-    async def batch_retrieve_job(self, batch_id: str) -> BatchJob:
+    async def batch_get_status(self, batch_id: str) -> BatchJob:
         """Retrieve the status and details of a batch job.
 
         Args:
@@ -298,7 +469,7 @@ class OpenAIBatchModel(WrapperModel):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: no cover
 
-    async def batch_get_results(self, batch_id: str) -> list[BatchResult]:
+    async def batch_retrieve_job(self, batch_id: str) -> list[BatchResult]:
         """Get the results of a completed batch job.
 
         Args:
@@ -314,7 +485,7 @@ class OpenAIBatchModel(WrapperModel):
         check_allow_model_requests()
 
         # First check if batch is completed
-        batch_info = await self.batch_retrieve_job(batch_id)
+        batch_info = await self.batch_get_status(batch_id)
 
         if batch_info.status != 'completed':
             raise ValueError(f'Batch {batch_id} is not completed. Status: {batch_info.status}')
