@@ -526,3 +526,23 @@ You can set the `HEROKU_INFERENCE_KEY` and `HEROKU_INFERENCE_URL` environment va
 export HEROKU_INFERENCE_KEY='your-heroku-inference-key'
 export HEROKU_INFERENCE_URL='https://us.inference.heroku.com'
 ```
+### TrueFoundry AI Gateway
+
+To use [TrueFoundry's AI Gateway](https://www.truefoundry.com/ai-gateway), first follow the [documentation](https://docs.truefoundry.com/gateway/quick-start) instructions on obtaining your Personal Access Token [here](https://docs.truefoundry.com/gateway/authentication).
+
+Once you have your Personal Access Token, you can use the OpenAI custom provider by configuring the model name, base URL, and API key to route pydantic requests through TrueFoundry gateway:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+model = OpenAIModel(
+    'model_name',
+    provider=OpenAIProvider(
+        base_url='https://internal.devtest.truefoundry.tech/api/llm/api/inference/openai', api_key='your-PAT'
+    ),
+)
+agent = Agent(model)
+...
+```
