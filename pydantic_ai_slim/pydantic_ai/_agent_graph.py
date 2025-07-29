@@ -659,11 +659,11 @@ async def process_function_tools(  # noqa: C901
     for call in calls_to_run:
         yield _messages.FunctionToolCallEvent(call)
 
-    user_parts: list[_messages.UserPromptPart] = []
+    user_parts_by_index: dict[int, list[_messages.UserPromptPart]] = defaultdict(list)
 
     if calls_to_run:
         # Run all tool tasks in parallel
-        parts_by_index: dict[int, list[_messages.ModelRequestPart]] = {}
+        tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
         with ctx.deps.tracer.start_as_current_span(
             'running tools',
             attributes={
@@ -681,15 +681,16 @@ async def process_function_tools(  # noqa: C901
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     index = tasks.index(task)
-                    tool_result_part, extra_parts = task.result()
-                    yield _messages.FunctionToolResultEvent(tool_result_part)
+                    tool_part, tool_user_parts = task.result()
+                    yield _messages.FunctionToolResultEvent(tool_part)
 
-                    parts_by_index[index] = [tool_result_part, *extra_parts]
+                    tool_parts_by_index[index] = tool_part
+                    user_parts_by_index[index] = tool_user_parts
 
         # We append the results at the end, rather than as they are received, to retain a consistent ordering
         # This is mostly just to simplify testing
-        for k in sorted(parts_by_index):
-            output_parts.extend(parts_by_index[k])
+        for k in sorted(tool_parts_by_index):
+            output_parts.append(tool_parts_by_index[k])
 
     # Finally, we handle deferred tool calls
     for call in tool_calls_by_kind['deferred']:
@@ -704,7 +705,8 @@ async def process_function_tools(  # noqa: C901
         else:
             yield _messages.FunctionToolCallEvent(call)
 
-    output_parts.extend(user_parts)
+    for k in sorted(user_parts_by_index):
+        output_parts.extend(user_parts_by_index[k])
 
     if final_result:
         output_final_result.append(final_result)
@@ -713,18 +715,18 @@ async def process_function_tools(  # noqa: C901
 async def _call_function_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
-) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, list[_messages.ModelRequestPart]]:
+) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, list[_messages.UserPromptPart]]:
     try:
         tool_result = await tool_manager.handle_call(tool_call)
     except ToolRetryError as e:
         return (e.tool_retry, [])
 
-    part = _messages.ToolReturnPart(
+    tool_part = _messages.ToolReturnPart(
         tool_name=tool_call.tool_name,
         content=tool_result,
         tool_call_id=tool_call.tool_call_id,
     )
-    extra_parts: list[_messages.ModelRequestPart] = []
+    user_parts: list[_messages.UserPromptPart] = []
 
     if isinstance(tool_result, _messages.ToolReturn):
         if (
@@ -740,12 +742,12 @@ async def _call_function_tool(
                 f'Please use `content` instead.'
             )
 
-        part.content = tool_result.return_value  # type: ignore
-        part.metadata = tool_result.metadata
+        tool_part.content = tool_result.return_value  # type: ignore
+        tool_part.metadata = tool_result.metadata
         if tool_result.content:
-            extra_parts.append(
+            user_parts.append(
                 _messages.UserPromptPart(
-                    content=list(tool_result.content),
+                    content=tool_result.content,
                     part_kind='user-prompt',
                 )
             )
@@ -763,7 +765,7 @@ async def _call_function_tool(
                 else:
                     identifier = multi_modal_content_identifier(content.url)
 
-                extra_parts.append(
+                user_parts.append(
                     _messages.UserPromptPart(
                         content=[f'This is file {identifier}:', content],
                         part_kind='user-prompt',
@@ -775,11 +777,11 @@ async def _call_function_tool(
 
         if isinstance(tool_result, list):
             contents = cast(list[Any], tool_result)
-            part.content = [process_content(content) for content in contents]
+            tool_part.content = [process_content(content) for content in contents]
         else:
-            part.content = process_content(tool_result)
+            tool_part.content = process_content(tool_result)
 
-    return (part, extra_parts)
+    return (tool_part, user_parts)
 
 
 @dataclasses.dataclass
