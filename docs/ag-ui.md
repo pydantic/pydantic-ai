@@ -82,10 +82,15 @@ The adapter provides full support for
 real-time synchronization between agents and frontend applications.
 
 In the example below we have document state which is shared between the UI and
-server using the [`StateDeps`][pydantic_ai.ag_ui.StateDeps] which implements the
-[`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol that can be used to automatically
-decode state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput)
-when processing requests.
+server using the [`StateDeps`][pydantic_ai.ag_ui.StateDeps] [dependencies type](./dependencies.md) that can be used to automatically
+validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/js/core/types#runagentinput) using a Pydantic `BaseModel` specified as a generic parameter.
+
+!!! note "Custom dependencies type with AG-UI state"
+    If you want to use your own dependencies type to hold AG-UI state as well as other things, it needs to implements the
+    [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol, meaning it needs to be a [dataclass](https://docs.python.org/3/library/dataclasses.html) with a non-optional `state` field. This lets Pydantic AI ensure that state is properly isolated between requests by building a new dependencies object each time.
+
+    If the `state` field's type is a Pydantic `BaseModel` subclass, the raw state dictionary on the request is automatically validated. If not, you can validate the raw value yourself in your dependencies dataclass's `__post_init__` method.
+
 
 ```python {title="ag_ui_state.py" py="3.10"}
 from pydantic import BaseModel

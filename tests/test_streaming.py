@@ -1108,6 +1108,42 @@ async def test_iter_stream_structured_output():
                     )
 
 
+async def test_iter_stream_output_tool_dont_hit_retry_limit():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream partial JSON data that will initially fail validation."""
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(json_args='{"c')}
+        yield {0: DeltaToolCall(json_args='ity":')}
+        yield {0: DeltaToolCall(json_args=' "Mex')}
+        yield {0: DeltaToolCall(json_args='ico City",')}
+        yield {0: DeltaToolCall(json_args=' "cou')}
+        yield {0: DeltaToolCall(json_args='ntry": "Mexico"}')}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
+
+    async with agent.iter('Generate city info') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    assert [c async for c in stream.stream_output(debounce_by=None)] == snapshot(
+                        [
+                            CityLocation(city='Mex'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                        ]
+                    )
+
+
 def test_function_tool_event_tool_call_id_properties():
     """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
     # Prepare a ToolCallPart with a fixed ID

@@ -470,7 +470,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _timestamp: datetime
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
 
         async for event in self._response:
@@ -479,7 +479,11 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id='content', content=current_block.text
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                 elif isinstance(current_block, BetaThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
@@ -498,7 +502,11 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id='content', content=event.delta.text
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking', content=event.delta.thinking

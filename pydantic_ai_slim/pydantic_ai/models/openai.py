@@ -195,6 +195,7 @@ class OpenAIModel(Model):
             'deepseek',
             'azure',
             'openrouter',
+            'moonshotai',
             'vercel',
             'grok',
             'fireworks',
@@ -299,7 +300,10 @@ class OpenAIModel(Model):
         tools = self._get_tools(model_request_parameters)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -1019,7 +1023,11 @@ class OpenAIStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content:
-                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content', content=content, extract_think_tags=True
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             # Handle reasoning part of the response, present in DeepSeek models
             if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
@@ -1136,7 +1144,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id=chunk.content_index, content=chunk.delta
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
                 pass  # there's nothing we need to do here
