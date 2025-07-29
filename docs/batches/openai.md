@@ -30,7 +30,7 @@ nest_asyncio.apply()
 
 ### Creating and Submitting a Batch Job
 
-```python {test="ci_only"}
+```python
 import asyncio
 from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
 
@@ -68,6 +68,7 @@ async def basic_batch_example():
         metadata={'project': 'my-batch-job', 'version': '1.0'}
     )
     print(f'Batch job created: {batch_id}')
+    #> Batch job created: batch_test_123
 
     return batch_id
 
@@ -129,7 +130,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 You can include tools in batch requests by extracting `ToolDefinition` objects from pydantic-ai `Tool` instances:
 
-```python {test="ci_only"}
+```python
 import asyncio
 from pydantic_ai import RunContext
 from pydantic_ai.batches.openai import OpenAIBatchModel, create_chat_request
@@ -186,6 +187,7 @@ async def batch_with_tools():
     # Submit batch job
     batch_id = await batch_model.batch_create_job(requests)
     print(f'Batch with tools submitted: {batch_id}')
+    #> Batch with tools submitted: batch_test_123
 
     return batch_id
 
