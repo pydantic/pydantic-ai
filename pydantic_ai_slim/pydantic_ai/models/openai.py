@@ -377,7 +377,7 @@ class OpenAIModel(Model):
             response.created = int(timestamp.timestamp())
 
         model_dump = response.model_dump()
-        
+
         # Handle missing finish_reason before validation (specifically for Kimi-K2 via OpenRouter)
         # This needs to happen before validation, not after
         if cast(Optional[str], response.choices[0].finish_reason) is None:
@@ -385,7 +385,7 @@ class OpenAIModel(Model):
             tool_call_attempt = (
                 hasattr(response.choices[0].message, 'tool_calls') and response.choices[0].message.tool_calls
             )
-            
+
             # Set finish_reason to 'tool_calls' if there's evidence of tool calls
             # Otherwise default to 'stop'
             model_dump['choices'][0]['finish_reason'] = 'tool_calls' if tool_call_attempt else 'stop'
@@ -396,7 +396,7 @@ class OpenAIModel(Model):
             raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
-        
+
         items: list[ModelResponsePart] = []
         # The `reasoning_content` is only present in DeepSeek models.
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
