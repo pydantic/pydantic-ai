@@ -1950,6 +1950,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     def to_a2a(
         self,
         *,
+        enable_streaming: bool = False,
         storage: Storage | None = None,
         broker: Broker | None = None,
         # Agent card
@@ -1988,6 +1989,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         return agent_to_a2a(
             self,
+            enable_streaming=enable_streaming,
             storage=storage,
             broker=broker,
             name=name,

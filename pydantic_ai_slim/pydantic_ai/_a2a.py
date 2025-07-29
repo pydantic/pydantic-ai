@@ -42,8 +42,10 @@ try:
         Message,
         Part,
         Skill,
+        TaskArtifactUpdateEvent,
         TaskIdParams,
         TaskSendParams,
+        TaskStatusUpdateEvent,
         TextPart as A2ATextPart,
     )
     from fasta2a.storage import InMemoryStorage, Storage
@@ -72,6 +74,7 @@ async def worker_lifespan(app: FastA2A, worker: Worker, agent: Agent[AgentDepsT,
 def agent_to_a2a(
     agent: Agent[AgentDepsT, OutputDataT],
     *,
+    enable_streaming: bool = False,
     storage: Storage | None = None,
     broker: Broker | None = None,
     # Agent card
@@ -91,7 +94,7 @@ def agent_to_a2a(
     """Create a FastA2A server from an agent."""
     storage = storage or InMemoryStorage()
     broker = broker or InMemoryBroker()
-    worker = AgentWorker(agent=agent, broker=broker, storage=storage)
+    worker = AgentWorker(agent=agent, broker=broker, storage=storage, enable_streaming=enable_streaming)
 
     lifespan = lifespan or partial(worker_lifespan, worker=worker, agent=agent)
 
@@ -104,6 +107,7 @@ def agent_to_a2a(
         description=description,
         provider=provider,
         skills=skills,
+        streaming=enable_streaming,
         debug=debug,
         routes=routes,
         middleware=middleware,
@@ -117,6 +121,7 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
     """A worker that uses an agent to execute tasks."""
 
     agent: Agent[AgentDepsT, WorkerOutputT]
+    enable_streaming: bool = False
 
     async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'])
@@ -132,37 +137,117 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
 
         await self.storage.update_task(task['id'], state='working')
 
+        # Send working status streaming event
+        await self.broker.send_stream_event(
+            task['id'],
+            TaskStatusUpdateEvent(
+                task_id=task['id'],
+                context_id=task['context_id'],
+                kind='status-update',
+                status={'state': 'working'},
+                final=False,
+            ),
+        )
+
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
         message_history = await self.storage.load_context(task['context_id']) or []
         message_history.extend(self.build_message_history(task.get('history', [])))
 
         try:
-            result = await self.agent.run(message_history=message_history)  # type: ignore
+            # Stream processing with agent.iter()
+            async with self.agent.iter(message_history=message_history, deps=None) as run:  # type: ignore
+                node = run.next_node
+                while not self.agent.is_end_node(node):
+                    # Check if this node has a model response
+                    if hasattr(node, 'model_response'):
+                        model_response = getattr(node, 'model_response')
+                        # Convert model response parts to A2A parts
+                        a2a_parts = self._response_parts_to_a2a(model_response.parts)
 
-            await self.storage.update_context(task['context_id'], result.all_messages())
+                        if a2a_parts and self.enable_streaming:
+                            # Send incremental message event with unique ID
+                            incremental_message = Message(
+                                role='agent',
+                                parts=a2a_parts,
+                                kind='message',
+                                message_id=str(uuid.uuid4()),  # Generate unique ID per message
+                            )
+                            # Stream the incremental message
+                            await self.broker.send_stream_event(task['id'], incremental_message)
 
-            # Convert new messages to A2A format for task history
-            a2a_messages: list[Message] = []
+                    # Move to next node
+                    current = node
+                    node = await run.next(current)
 
-            for message in result.new_messages():
-                if isinstance(message, ModelRequest):
-                    # Skip user prompts - they're already in task history
-                    continue
-                else:
-                    # Convert response parts to A2A format
-                    a2a_parts = self._response_parts_to_a2a(message.parts)
-                    if a2a_parts:  # Add if there are visible parts (text/thinking)
-                        a2a_messages.append(
-                            Message(role='agent', parts=a2a_parts, kind='message', message_id=str(uuid.uuid4()))
+                    if self.enable_streaming:
+                        # Update context with current messages after each step
+                        await self.storage.update_context(task['context_id'], run.ctx.state.message_history)
+
+                # Run finished - get the final result and update context with final messages
+                assert run.result is not None  # Agent iteration should always produce a result
+                await self.storage.update_context(task['context_id'], run.result.all_messages())
+
+                # Convert new messages to A2A format for task history
+                a2a_messages: list[Message] = []
+
+                for message in run.result.new_messages():
+                    if isinstance(message, ModelRequest):
+                        # Skip user prompts - they're already in task history
+                        continue
+                    else:
+                        # Convert response parts to A2A format
+                        a2a_parts = self._response_parts_to_a2a(message.parts)
+                        if a2a_parts:  # Add if there are visible parts (text/thinking)
+                            a2a_messages.append(
+                                Message(role='agent', parts=a2a_parts, kind='message', message_id=str(uuid.uuid4()))
+                            )
+
+                # Handle final result and create artifacts using build_artifacts method
+                artifacts = self.build_artifacts(run.result.output)
+
+                # Send artifact update events for all artifacts (only for structured outputs)
+                if not isinstance(run.result.output, str):
+                    for artifact in artifacts:
+                        await self.broker.send_stream_event(
+                            task['id'],
+                            TaskArtifactUpdateEvent(
+                                task_id=task['id'],
+                                context_id=task['context_id'],
+                                kind='artifact-update',
+                                artifact=artifact,
+                                last_chunk=True,
+                            ),
                         )
-
-            artifacts = self.build_artifacts(result.output)
         except Exception:
             await self.storage.update_task(task['id'], state='failed')
+
+            # Send failure status streaming event
+            await self.broker.send_stream_event(
+                task['id'],
+                TaskStatusUpdateEvent(
+                    task_id=task['id'],
+                    context_id=task['context_id'],
+                    kind='status-update',
+                    status={'state': 'failed'},
+                    final=True,
+                ),
+            )
             raise
         else:
             await self.storage.update_task(
                 task['id'], state='completed', new_artifacts=artifacts, new_messages=a2a_messages
+            )
+
+            # Send completion status streaming event
+            await self.broker.send_stream_event(
+                task['id'],
+                TaskStatusUpdateEvent(
+                    task_id=task['id'],
+                    context_id=task['context_id'],
+                    kind='status-update',
+                    status={'state': 'completed'},
+                    final=True,
+                ),
             )
 
     async def cancel_task(self, params: TaskIdParams) -> None:
