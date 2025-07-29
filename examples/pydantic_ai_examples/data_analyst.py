@@ -24,14 +24,8 @@ class AnalystAgentDeps:
 analyst_agent = Agent(
     'openai:gpt-4o',
     deps_type=AnalystAgentDeps,
+    instructions='You are a data analyst and your job is to analyze the data according to the user request.',
 )
-
-
-@analyst_agent.system_prompt
-def system_prompt() -> str:
-    return """\
-You are a data analyst and your job is to analyze the data according to the user request.
-"""
 
 
 @analyst_agent.tool

@@ -1,24 +1,24 @@
-# Data Analyst (Referencing Variables in `RunContext` like Jupyter)
+# Data Analyst
 
-Sometimes in an agent workflow, the agent does not need to know exact the tool
-output, but they need to process the tool output in some ways. This is
-especially common in data analytics. The agent needs to know the result of a
-query (tool result) is a DataFrame with certain named columns, but not
+Sometimes in an agent workflow, the agent does not need to know the exact tool
+output, but still needs to process the tool output in some ways. This is
+especially common in data analytics: the agent needs to know that the result of a
+query tool is a `DataFrame` with certain named columns, but not
 necessarily the content of every single row.
 
-With `pydantic-ai`, [`RunContext`][pydantic_ai.tools.RunContext] can be used to
-store output and pass the reference to the other tool. Here is an example of
-building an agent to analyze [Rotten Tomatoes movie review dataset from Cornell](https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes)
-on Hugging Face Hub.
+With Pydantic AI, you can use a [dependencies object](../dependencies.md) to
+store the result from one tool and use it in another tool. 
+
+In this example, we'll build an agent that analyzes the [Rotten Tomatoes movie review dataset from Cornell](https://huggingface.co/datasets/cornell-movie-review-data/rotten_tomatoes).
 
 
 Demonstrates:
-- [structured `output_type`](../output.md#structured-output)
 - [agent dependencies](../dependencies.md)
 
 
 ## Running the Example
 
+With [dependencies installed and environment variables set](./index.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.data_analyst
@@ -44,7 +44,7 @@ examples/pydantic_ai_examples/data_analyst.py:103 <module>
 ### Choosing a Model
 
 This example requires using a model that understands DuckDB SQL. I am using
-Anthropic Claude 3.7. You can use other models but check with `clai`
+Anthropic Claude 3.7. You can use other models but check with `clai`:
 
 ```sh
 > clai -m bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0
