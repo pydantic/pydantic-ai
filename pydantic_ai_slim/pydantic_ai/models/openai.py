@@ -467,7 +467,7 @@ class OpenAIModel(Model):
                         assert_never(item)
                 # Note: model responses from this model should only have one text item, so the following
                 # shouldn't merge multiple texts into one unless you switch models between runs:
-                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant', content= '\n\n'.join(texts))
+                message_param = chat.ChatCompletionAssistantMessageParam(role='assistant', content='\n\n'.join(texts))
                 if tool_calls:
                     message_param['tool_calls'] = tool_calls
                 openai_messages.append(message_param)
