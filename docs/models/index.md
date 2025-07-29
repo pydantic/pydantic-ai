@@ -220,3 +220,5 @@ contains all the exceptions encountered during the `run` execution.
 By default, the `FallbackModel` only moves on to the next model if the current model raises a
 [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]. You can customize this behavior by
 passing a custom `fallback_on` argument to the `FallbackModel` constructor.
+
+
