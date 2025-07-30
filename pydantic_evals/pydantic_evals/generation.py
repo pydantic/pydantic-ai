@@ -47,7 +47,7 @@ async def generate_dataset(
         path: Optional path to save the generated dataset. If provided, the dataset will be saved to this location.
         dataset_type: The type of dataset to generate, with the desired input, output, and metadata types.
         custom_evaluator_types: Optional sequence of custom evaluator classes to include in the schema.
-        model: The PydanticAI model to use for generation. Defaults to 'gpt-4o'.
+        model: The Pydantic AI model to use for generation. Defaults to 'gpt-4o'.
         n_examples: Number of examples to generate. Defaults to 3.
         extra_instructions: Optional additional instructions to provide to the LLM.
 
@@ -59,7 +59,7 @@ async def generate_dataset(
     """
     output_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
 
-    # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to PydanticAI
+    # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to Pydantic AI
     agent = Agent(
         model,
         system_prompt=(

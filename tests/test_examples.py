@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from pytest_mock import MockerFixture
 from rich.console import Console
 
 from pydantic_ai import ModelHTTPError
+from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import group_by_temporal
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -36,6 +38,8 @@ from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
@@ -126,6 +130,10 @@ def test_docs_examples(  # noqa: C901
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
+    # Avoid filesystem access when examples call ssl.create_default_context(cafile=...) with non-existent paths
+    mocker.patch('ssl.create_default_context', return_value=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+    mocker.patch('ssl.SSLContext.load_cert_chain', return_value=None)
+
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
             if 'width' in kwargs:  # pragma: lax no cover
@@ -149,9 +157,11 @@ def test_docs_examples(  # noqa: C901
     env.set('CO_API_KEY', 'testing')
     env.set('MISTRAL_API_KEY', 'testing')
     env.set('ANTHROPIC_API_KEY', 'testing')
+    env.set('HF_TOKEN', 'hf_testing')
     env.set('AWS_ACCESS_KEY_ID', 'testing')
     env.set('AWS_SECRET_ACCESS_KEY', 'testing')
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -205,7 +215,9 @@ def test_docs_examples(  # noqa: C901
             eval_example.lint_ruff(example)
 
     if opt_test.startswith('skip'):
-        print(opt_test[4:].lstrip(' -') or 'running code skipped')
+        pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
+    elif opt_test.startswith('ci_only') and os.environ.get('GITHUB_ACTIONS', '').lower() != 'true':
+        pytest.skip(opt_test[7:].lstrip(' -') or 'running code skipped in local tests')  # pragma: no cover
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
 
@@ -256,18 +268,20 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
         raise ValueError(f'Unexpected prompt: {prompt}')
 
 
-class MockMCPServer:
-    is_running = True
-
+class MockMCPServer(AbstractToolset[Any]):
     async def __aenter__(self) -> MockMCPServer:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
         pass
 
-    @staticmethod
-    async def list_tools() -> list[None]:
-        return []
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        return {}
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        return None  # pragma: lax no cover
 
 
 text_responses: dict[str, str | ToolCallPart] = {
@@ -444,6 +458,10 @@ text_responses: dict[str, str | ToolCallPart] = {
     'What is a Ford Explorer?': '{"result": {"kind": "Vehicle", "data": {"name": "Ford Explorer", "wheels": 4}}}',
     'What is a MacBook?': '{"result": {"kind": "Device", "data": {"name": "MacBook", "kind": "laptop"}}}',
     'Write a creative story about space exploration': 'In the year 2157, Captain Maya Chen piloted her spacecraft through the vast expanse of the Andromeda Galaxy. As she discovered a planet with crystalline mountains that sang in harmony with the cosmic winds, she realized that space exploration was not just about finding new worlds, but about finding new ways to understand the universe and our place within it.',
+    'Create a person': ToolCallPart(
+        tool_name='final_result',
+        args={'name': 'John Doe', 'age': 30},
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -490,7 +508,7 @@ async def model_logic(  # noqa: C901
             )
         elif m.content.startswith('Write a list of 5 very rude things that I might say'):
             raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
-        elif m.content.startswith('<examples>\n  <user>'):
+        elif m.content.startswith('<user>\n  <name>John Doe</name>'):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )
@@ -546,6 +564,21 @@ async def model_logic(  # noqa: C901
                     )
                 ]
             )
+        elif m.content == 'Greet the user in a personalized way':
+            if any(t.name == 'get_preferred_language' for t in info.function_tools):
+                part = ToolCallPart(
+                    tool_name='get_preferred_language',
+                    args={'default_language': 'en-US'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            else:
+                part = ToolCallPart(
+                    tool_name='final_result',
+                    args={'greeting': 'Hello, David!', 'language_code': 'en-US'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+
+            return ModelResponse(parts=[part])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -690,6 +723,16 @@ async def model_logic(  # noqa: C901
         )
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'image_generator':
         return ModelResponse(parts=[TextPart('Image file written to robot_punk.svg.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'get_preferred_language':
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'greeting': 'Hola, David! Espero que tengas un gran día!', 'language_code': 'es-MX'},
+                    tool_call_id='pyd_ai_tool_call_id',
+                )
+            ]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')

@@ -1,4 +1,4 @@
-"""Example demonstrating how to use PydanticAI to create a simple roulette game.
+"""Example demonstrating how to use Pydantic AI to create a simple roulette game.
 
 Run with:
     uv run -m pydantic_ai_examples.roulette_wheel

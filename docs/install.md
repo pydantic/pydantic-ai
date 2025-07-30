@@ -1,6 +1,6 @@
 # Installation
 
-PydanticAI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pydantic-ai/) so installation is as simple as:
+Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pydantic-ai/) so installation is as simple as:
 
 ```bash
 pip/uv-add pydantic-ai
@@ -9,13 +9,13 @@ pip/uv-add pydantic-ai
 (Requires Python 3.9+)
 
 This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models
-included in PydanticAI. If you want to use a specific model, you can install the ["slim"](#slim-install) version of PydanticAI.
+included in Pydantic AI. If you want to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
 
 ## Use with Pydantic Logfire
 
-PydanticAI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
+Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
 
-To use Logfire with PydanticAI, install `pydantic-ai` or `pydantic-ai-slim` with the `logfire` optional group:
+To use Logfire with Pydantic AI, install `pydantic-ai` or `pydantic-ai-slim` with the `logfire` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai[logfire]"
@@ -54,8 +54,9 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `groq` — installs `groq` [PyPI ↗](https://pypi.org/project/groq){:target="_blank"}
 * `mistral` — installs `mistralai` [PyPI ↗](https://pypi.org/project/mistralai){:target="_blank"}
 * `cohere` - installs `cohere` [PyPI ↗](https://pypi.org/project/cohere){:target="_blank"}
-* `duckduckgo` - installs `duckduckgo-search` [PyPI ↗](https://pypi.org/project/duckduckgo-search){:target="_blank"}
+* `duckduckgo` - installs `ddgs` [PyPI ↗](https://pypi.org/project/ddgs){:target="_blank"}
 * `tavily` - installs `tavily-python` [PyPI ↗](https://pypi.org/project/tavily-python){:target="_blank"}
+* `ag-ui` - installs `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 
 See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
 

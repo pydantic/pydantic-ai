@@ -134,31 +134,15 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
-        'google-gla:gemini-1.5-flash',
-        'google-gla:gemini-1.5-flash-8b',
-        'google-gla:gemini-1.5-pro',
-        'google-gla:gemini-1.0-pro',
         'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.0-flash-lite-preview-02-05',
-        'google-gla:gemini-2.0-pro-exp-02-05',
-        'google-gla:gemini-2.5-flash-preview-05-20',
+        'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
         'google-gla:gemini-2.5-flash-lite-preview-06-17',
-        'google-gla:gemini-2.5-pro-exp-03-25',
-        'google-gla:gemini-2.5-pro-preview-05-06',
         'google-gla:gemini-2.5-pro',
-        'google-vertex:gemini-1.5-flash',
-        'google-vertex:gemini-1.5-flash-8b',
-        'google-vertex:gemini-1.5-pro',
-        'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.0-flash-lite-preview-02-05',
-        'google-vertex:gemini-2.0-pro-exp-02-05',
-        'google-vertex:gemini-2.5-flash-preview-05-20',
+        'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
         'google-vertex:gemini-2.5-flash-lite-preview-06-17',
-        'google-vertex:gemini-2.5-pro-exp-03-25',
-        'google-vertex:gemini-2.5-pro-preview-05-06',
         'google-vertex:gemini-2.5-pro',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
@@ -192,6 +176,7 @@ KnownModelName = TypeAliasType(
         'gpt-4o-audio-preview',
         'gpt-4o-audio-preview-2024-10-01',
         'gpt-4o-audio-preview-2024-12-17',
+        'gpt-4o-audio-preview-2025-06-03',
         'gpt-4o-mini',
         'gpt-4o-mini-2024-07-18',
         'gpt-4o-mini-audio-preview',
@@ -200,6 +185,14 @@ KnownModelName = TypeAliasType(
         'gpt-4o-mini-search-preview-2025-03-11',
         'gpt-4o-search-preview',
         'gpt-4o-search-preview-2025-03-11',
+        'grok:grok-4',
+        'grok:grok-4-0709',
+        'grok:grok-3',
+        'grok:grok-3-mini',
+        'grok:grok-3-fast',
+        'grok:grok-3-mini-fast',
+        'grok:grok-2-vision-1212',
+        'grok:grok-2-image-1212',
         'groq:distil-whisper-large-v3-en',
         'groq:gemma2-9b-it',
         'groq:llama-3.3-70b-versatile',
@@ -207,6 +200,7 @@ KnownModelName = TypeAliasType(
         'groq:llama-guard-3-8b',
         'groq:llama3-70b-8192',
         'groq:llama3-8b-8192',
+        'groq:moonshotai/kimi-k2-instruct',
         'groq:whisper-large-v3',
         'groq:whisper-large-v3-turbo',
         'groq:playai-tts',
@@ -227,21 +221,45 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-7-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-3-haiku',
+        'huggingface:Qwen/QwQ-32B',
+        'huggingface:Qwen/Qwen2.5-72B-Instruct',
+        'huggingface:Qwen/Qwen3-235B-A22B',
+        'huggingface:Qwen/Qwen3-32B',
+        'huggingface:deepseek-ai/DeepSeek-R1',
+        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
+        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
+        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
         'mistral:mistral-small-latest',
+        'moonshotai:moonshot-v1-8k',
+        'moonshotai:moonshot-v1-32k',
+        'moonshotai:moonshot-v1-128k',
+        'moonshotai:moonshot-v1-8k-vision-preview',
+        'moonshotai:moonshot-v1-32k-vision-preview',
+        'moonshotai:moonshot-v1-128k-vision-preview',
+        'moonshotai:kimi-latest',
+        'moonshotai:kimi-thinking-preview',
+        'moonshotai:kimi-k2-0711-preview',
         'o1',
         'o1-2024-12-17',
         'o1-mini',
         'o1-mini-2024-09-12',
         'o1-preview',
         'o1-preview-2024-09-12',
+        'o1-pro',
+        'o1-pro-2025-03-19',
         'o3',
         'o3-2025-04-16',
+        'o3-deep-research',
+        'o3-deep-research-2025-06-26',
         'o3-mini',
         'o3-mini-2025-01-31',
+        'o3-pro',
+        'o3-pro-2025-06-10',
         'openai:chatgpt-4o-latest',
+        'openai:codex-mini-latest',
         'openai:gpt-3.5-turbo',
         'openai:gpt-3.5-turbo-0125',
         'openai:gpt-3.5-turbo-0301',
@@ -274,6 +292,7 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-audio-preview',
         'openai:gpt-4o-audio-preview-2024-10-01',
         'openai:gpt-4o-audio-preview-2024-12-17',
+        'openai:gpt-4o-audio-preview-2025-06-03',
         'openai:gpt-4o-mini',
         'openai:gpt-4o-mini-2024-07-18',
         'openai:gpt-4o-mini-audio-preview',
@@ -288,12 +307,22 @@ KnownModelName = TypeAliasType(
         'openai:o1-mini-2024-09-12',
         'openai:o1-preview',
         'openai:o1-preview-2024-09-12',
+        'openai:o1-pro',
+        'openai:o1-pro-2025-03-19',
         'openai:o3',
         'openai:o3-2025-04-16',
+        'openai:o3-deep-research',
+        'openai:o3-deep-research-2025-06-26',
         'openai:o3-mini',
         'openai:o3-mini-2025-01-31',
         'openai:o4-mini',
         'openai:o4-mini-2025-04-16',
+        'openai:o4-mini-deep-research',
+        'openai:o4-mini-deep-research-2025-06-26',
+        'openai:o3-pro',
+        'openai:o3-pro-2025-06-10',
+        'openai:computer-use-preview',
+        'openai:computer-use-preview-2025-03-11',
         'test',
     ],
 )
@@ -560,7 +589,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:
+def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model
@@ -595,7 +624,9 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         'deepseek',
         'azure',
         'openrouter',
+        'vercel',
         'grok',
+        'moonshotai',
         'fireworks',
         'together',
         'heroku',
@@ -624,6 +655,10 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceModel
+
+        return HuggingFaceModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
@@ -734,7 +769,7 @@ async def download_item(
 
     data_type = media_type
     if type_format == 'extension':
-        data_type = data_type.split('/')[1]
+        data_type = item.format
 
     data = response.content
     if data_format in ('base64', 'base64_uri'):

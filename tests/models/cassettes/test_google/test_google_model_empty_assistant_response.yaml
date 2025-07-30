@@ -1,0 +1,60 @@
+interactions:
+- request:
+    headers:
+      content-type:
+      - application/json
+    method: post
+    parsed_body:
+      contents:
+      - parts:
+        - text: Hi
+        role: user
+      - parts:
+        - text: ''
+        role: model
+      - parts:
+        - text: Empty?
+        role: user
+      generationConfig: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '724'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=387
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - avgLogprobs: -0.02701732359434429
+        content:
+          parts:
+          - text: |
+              Yes, your previous message was empty.  Is there anything I can help you with?
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-1.5-flash
+      responseId: NHt4aPycNfzcnvgP1q6EgQw
+      usageMetadata:
+        candidatesTokenCount: 19
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 19
+        promptTokenCount: 3
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 3
+        totalTokenCount: 22
+    status:
+      code: 200
+      message: OK
+version: 1

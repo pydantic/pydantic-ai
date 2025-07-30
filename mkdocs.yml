@@ -1,4 +1,4 @@
-site_name: PydanticAI
+site_name: Pydantic AI
 site_description: Agent Framework / shim to use Pydantic with LLMs
 strict: true
 site_url: https://ai.pydantic.dev
@@ -28,9 +28,10 @@ nav:
           - models/cohere.md
           - models/groq.md
           - models/mistral.md
+          - models/huggingface.md
       - dependencies.md
       - tools.md
-      - common-tools.md
+      - toolsets.md
       - output.md
       - message-history.md
       - testing.md
@@ -41,15 +42,19 @@ nav:
       - input.md
       - thinking.md
       - direct.md
+      - common-tools.md
+      - retries.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
           - mcp/server.md
           - mcp/run-python.md
       - A2A: a2a.md
+      - AG-UI: ag-ui.md
       - cli.md
   - Examples:
       - examples/index.md
+      - examples/ag-ui.md
       - examples/pydantic-model.md
       - examples/weather-agent.md
       - examples/bank-support.md
@@ -61,9 +66,12 @@ nav:
       - examples/chat-app.md
       - examples/question-graph.md
       - examples/slack-lead-qualifier.md
+
   - API Reference:
+      - api/ag_ui.md
       - api/agent.md
       - api/tools.md
+      - api/toolsets.md
       - api/common_tools.md
       - api/output.md
       - api/result.md
@@ -75,6 +83,7 @@ nav:
       - api/format_as_xml.md
       - api/format_prompt.md
       - api/direct.md
+      - api/ext.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md
@@ -83,6 +92,7 @@ nav:
       - api/models/gemini.md
       - api/models/google.md
       - api/models/groq.md
+      - api/models/huggingface.md
       - api/models/instrumented.md
       - api/models/mistral.md
       - api/models/test.md
@@ -92,6 +102,7 @@ nav:
       - api/models/mcp-sampling.md
       - api/profiles.md
       - api/providers.md
+      - api/retries.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
       - api/pydantic_graph/persistence.md
@@ -109,29 +120,29 @@ extra:
   generator: false
 
 theme:
-  name: "material"
+  name: 'material'
   custom_dir: docs/.overrides
   palette:
-    - media: "(prefers-color-scheme)"
+    - media: '(prefers-color-scheme)'
       primary: pink
       accent: pink
       toggle:
         icon: material/brightness-auto
-        name: "Switch to light mode"
-    - media: "(prefers-color-scheme: light)"
+        name: 'Switch to light mode'
+    - media: '(prefers-color-scheme: light)'
       scheme: default
       primary: pink
       accent: pink
       toggle:
         icon: material/brightness-7
-        name: "Switch to dark mode"
-    - media: "(prefers-color-scheme: dark)"
+        name: 'Switch to dark mode'
+    - media: '(prefers-color-scheme: dark)'
       scheme: slate
       primary: pink
       accent: pink
       toggle:
         icon: material/brightness-4
-        name: "Switch to system preference"
+        name: 'Switch to system preference'
   features:
     - search.suggest
     - search.highlight
@@ -144,8 +155,8 @@ theme:
     - navigation.sections
     - navigation.tracking
     - toc.follow
-  logo: "img/logo-white.svg"
-  favicon: "favicon.ico"
+  logo: 'img/logo-white.svg'
+  favicon: 'favicon.ico'
 
 # https://www.mkdocs.org/user-guide/configuration/#validation
 validation:
@@ -155,13 +166,13 @@ validation:
   anchors: warn
 
 extra_css:
-  - "extra/tweaks.css"
+  - 'extra/tweaks.css'
 # used for analytics
 extra_javascript:
-  - "/flarelytics/client.js"
-  - "https://cdn.jsdelivr.net/npm/algoliasearch@5.20.0/dist/lite/builds/browser.umd.js"
-  - "https://cdn.jsdelivr.net/npm/instantsearch.js@4.77.3/dist/instantsearch.production.min.js"
-  - "/javascripts/algolia-search.js"
+  - '/flarelytics/client.js'
+  - 'https://cdn.jsdelivr.net/npm/algoliasearch@5.20.0/dist/lite/builds/browser.umd.js'
+  - 'https://cdn.jsdelivr.net/npm/instantsearch.js@4.77.3/dist/instantsearch.production.min.js'
+  - '/javascripts/algolia-search.js'
 
 markdown_extensions:
   - tables
@@ -231,7 +242,7 @@ plugins:
       enabled: !ENV [CI, false]
       full_output: llms-full.txt
       markdown_description: |-
-        PydanticAI is a Python agent framework designed to make it less painful to build production grade
+        Pydantic AI is a Python agent framework designed to make it less painful to build production grade
         applications with Generative AI.
       sections:
         Concepts documentation:
@@ -259,5 +270,5 @@ plugins:
           - examples/*.md
 
 hooks:
-  - "docs/.hooks/main.py"
-  - "docs/.hooks/algolia.py"
+  - 'docs/.hooks/main.py'
+  - 'docs/.hooks/algolia.py'

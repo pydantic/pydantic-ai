@@ -11,7 +11,7 @@ from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
@@ -1086,3 +1086,134 @@ def test_evaluate_non_serializable_inputs():
 │ Averages │                                                                                    │     1.0s │
 └──────────┴────────────────────────────────────────────────────────────────────────────────────┴──────────┘
 """)
+
+
+async def test_evaluate_async_logfire(
+    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
+    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
+    capfire: CaptureLogfire,
+):
+    """Test evaluating a dataset."""
+    example_dataset.add_evaluator(simple_evaluator())
+
+    async def mock_async_task(inputs: TaskInput) -> TaskOutput:
+        if inputs.query == 'What is 2+2?':
+            return TaskOutput(answer='4')
+        elif inputs.query == 'What is the capital of France?':
+            return TaskOutput(answer='Paris')
+        return TaskOutput(answer='Unknown')  # pragma: no cover
+
+    await example_dataset.evaluate(mock_async_task)
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    spans.sort(key=lambda s: s['start_time'])
+    assert spans == [
+        {
+            'attributes': {
+                'averages': '{"name":"Averages","scores":{"confidence":1.0},"labels":{},"metrics":{},"assertions":1.0,"task_duration":1.0,"total_duration":5.0}',
+                'cases': '[{"name":"case1","inputs":{"query":"What is '
+                '2+2?"},"metadata":{"difficulty":"easy","category":"general"},"expected_output":{"answer":"4","confidence":1.0},"output":{"answer":"4","confidence":1.0},"metrics":{},"attributes":{},"scores":{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}},"labels":{},"assertions":{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}},"task_duration":1.0,"total_duration":6.0,"trace_id":"00000000000000000000000000000001","span_id":"0000000000000003"},{"name":"case2","inputs":{"query":"What '
+                'is the capital of '
+                'France?"},"metadata":{"difficulty":"medium","category":"geography"},"expected_output":{"answer":"Paris","confidence":1.0},"output":{"answer":"Paris","confidence":1.0},"metrics":{},"attributes":{},"scores":{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}},"labels":{},"assertions":{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}},"task_duration":1.0,"total_duration":4.0,"trace_id":"00000000000000000000000000000001","span_id":"0000000000000007"}]',
+                'code.filepath': 'test_dataset.py',
+                'code.function': 'test_evaluate_async_logfire',
+                'code.lineno': 123,
+                'logfire.json_schema': '{"type":"object","properties":{"name":{},"cases":{"type":"array"},"averages":{"type":"object"}}}',
+                'logfire.msg': 'evaluate mock_async_task',
+                'logfire.msg_template': 'evaluate {name}',
+                'logfire.span_type': 'span',
+                'name': 'mock_async_task',
+            },
+            'context': {'is_remote': False, 'span_id': 1, 'trace_id': 1},
+            'end_time': 10000000000,
+            'name': 'evaluate {name}',
+            'parent': None,
+            'start_time': 1000000000,
+        },
+        {
+            'attributes': {
+                'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                'attributes': '{}',
+                'case_name': 'case1',
+                'code.filepath': IsStr(),
+                'code.lineno': 123,
+                'expected_output': '{"answer":"4","confidence":1.0}',
+                'inputs': '{"query":"What is 2+2?"}',
+                'labels': '{}',
+                'logfire.json_schema': '{"type":"object","properties":{"task_name":{},"case_name":{},"inputs":{"type":"object","title":"TaskInput","x-python-datatype":"PydanticModel"},"metadata":{"type":"object","title":"TaskMetadata","x-python-datatype":"PydanticModel"},"expected_output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"task_duration":{},"metrics":{"type":"object"},"attributes":{"type":"object"},"assertions":{"type":"object"},"scores":{"type":"object"},"labels":{"type":"object"}}}',
+                'logfire.msg': 'case: case1',
+                'logfire.msg_template': 'case: {case_name}',
+                'logfire.span_type': 'span',
+                'metadata': '{"difficulty":"easy","category":"general"}',
+                'metrics': '{}',
+                'output': '{"answer":"4","confidence":1.0}',
+                'scores': '{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                'task_duration': 1.0,
+                'task_name': 'mock_async_task',
+            },
+            'context': {'is_remote': False, 'span_id': 3, 'trace_id': 1},
+            'end_time': 8000000000,
+            'name': 'case: {case_name}',
+            'parent': {'is_remote': False, 'span_id': 1, 'trace_id': 1},
+            'start_time': 2000000000,
+        },
+        {
+            'attributes': {
+                'code.filepath': IsStr(),
+                'code.lineno': 123,
+                'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
+                'logfire.msg': 'execute mock_async_task',
+                'logfire.msg_template': 'execute {task}',
+                'logfire.span_type': 'span',
+                'task': 'mock_async_task',
+            },
+            'context': {'is_remote': False, 'span_id': 5, 'trace_id': 1},
+            'end_time': 4000000000,
+            'name': 'execute {task}',
+            'parent': {'is_remote': False, 'span_id': 3, 'trace_id': 1},
+            'start_time': 3000000000,
+        },
+        {
+            'attributes': {
+                'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                'attributes': '{}',
+                'case_name': 'case2',
+                'code.filepath': IsStr(),
+                'code.lineno': 123,
+                'expected_output': '{"answer":"Paris","confidence":1.0}',
+                'inputs': '{"query":"What is the capital of France?"}',
+                'labels': '{}',
+                'logfire.json_schema': '{"type":"object","properties":{"task_name":{},"case_name":{},"inputs":{"type":"object","title":"TaskInput","x-python-datatype":"PydanticModel"},"metadata":{"type":"object","title":"TaskMetadata","x-python-datatype":"PydanticModel"},"expected_output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"task_duration":{},"metrics":{"type":"object"},"attributes":{"type":"object"},"assertions":{"type":"object"},"scores":{"type":"object"},"labels":{"type":"object"}}}',
+                'logfire.msg': 'case: case2',
+                'logfire.msg_template': 'case: {case_name}',
+                'logfire.span_type': 'span',
+                'metadata': '{"difficulty":"medium","category":"geography"}',
+                'metrics': '{}',
+                'output': '{"answer":"Paris","confidence":1.0}',
+                'scores': '{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                'task_duration': 1.0,
+                'task_name': 'mock_async_task',
+            },
+            'context': {'is_remote': False, 'span_id': 7, 'trace_id': 1},
+            'end_time': 9000000000,
+            'name': 'case: {case_name}',
+            'parent': {'is_remote': False, 'span_id': 1, 'trace_id': 1},
+            'start_time': 5000000000,
+        },
+        {
+            'attributes': {
+                'code.filepath': IsStr(),
+                'code.lineno': 123,
+                'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
+                'logfire.msg': 'execute mock_async_task',
+                'logfire.msg_template': 'execute {task}',
+                'logfire.span_type': 'span',
+                'task': 'mock_async_task',
+            },
+            'context': {'is_remote': False, 'span_id': 9, 'trace_id': 1},
+            'end_time': 7000000000,
+            'name': 'execute {task}',
+            'parent': {'is_remote': False, 'span_id': 7, 'trace_id': 1},
+            'start_time': 6000000000,
+        },
+    ]

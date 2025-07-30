@@ -204,9 +204,10 @@ jobs:
           enable-cache: true
 
       - run: uv sync --package pydantic-ai-slim --only-dev
+      - run: rm coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
       - run: uv run coverage combine coverage
 
-      - run: uv run coverage html --show-contexts --title "PydanticAI coverage for ${{ github.sha }}"
+      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
 
       - name: Store coverage html
         uses: actions/upload-artifact@v4
@@ -416,7 +417,7 @@ jobs:
         env:
           VERSION: ${{ needs.release.outputs.package-version }}
           TWEET: |
-            PydanticAI version {version} is out! 🎉
+            Pydantic AI version {version} is out! 🎉
 
             https://github.com/pydantic/pydantic-ai/releases/tag/v{version}
           TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}

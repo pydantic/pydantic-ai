@@ -2,10 +2,10 @@
 
 The manager tracks which parts (in particular, text and tool calls) correspond to which
 vendor-specific identifiers (e.g., `index`, `tool_call_id`, etc., as appropriate for a given model),
-and produces PydanticAI-format events as appropriate for consumers of the streaming APIs.
+and produces Pydantic AI-format events as appropriate for consumers of the streaming APIs.
 
 The "vendor-specific identifiers" to use depend on the semantics of the responses of the responses from the vendor,
-and are tightly coupled to the specific model being used, and the PydanticAI Model subclass implementation.
+and are tightly coupled to the specific model being used, and the Pydantic AI Model subclass implementation.
 
 This `ModelResponsePartsManager` is used in each of the subclasses of `StreamedResponse` as a way to consolidate
 event-emitting logic.
@@ -17,6 +17,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
 from typing import Any, Union
 
+from pydantic_ai._thinking_part import END_THINK_TAG, START_THINK_TAG
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelResponsePart,
@@ -69,9 +70,10 @@ class ModelResponsePartsManager:
     def handle_text_delta(
         self,
         *,
-        vendor_part_id: Hashable | None,
+        vendor_part_id: VendorId | None,
         content: str,
-    ) -> ModelResponseStreamEvent:
+        extract_think_tags: bool = False,
+    ) -> ModelResponseStreamEvent | None:
         """Handle incoming text content, creating or updating a TextPart in the manager as appropriate.
 
         When `vendor_part_id` is None, the latest part is updated if it exists and is a TextPart;
@@ -83,9 +85,12 @@ class ModelResponsePartsManager:
                 of text. If None, a new part will be created unless the latest part is already
                 a TextPart.
             content: The text content to append to the appropriate TextPart.
+            extract_think_tags: Whether to extract `<think>` tags from the text content and handle them as thinking parts.
 
         Returns:
-            A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
+            - A `PartStartEvent` if a new part was created.
+            - A `PartDeltaEvent` if an existing part was updated.
+            - `None` if no new event is emitted (e.g., the first text part was all whitespace).
 
         Raises:
             UnexpectedModelBehavior: If attempting to apply text content to a part that is not a TextPart.
@@ -104,11 +109,32 @@ class ModelResponsePartsManager:
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
-                if not isinstance(existing_part, TextPart):
+
+                if extract_think_tags and isinstance(existing_part, ThinkingPart):
+                    # We may be building a thinking part instead of a text part if we had previously seen a `<think>` tag
+                    if content == END_THINK_TAG:
+                        # When we see `</think>`, we're done with the thinking part and the next text delta will need a new part
+                        self._vendor_id_to_part_index.pop(vendor_part_id)
+                        return None
+                    else:
+                        return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content=content)
+                elif isinstance(existing_part, TextPart):
+                    existing_text_part_and_index = existing_part, part_index
+                else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
-                existing_text_part_and_index = existing_part, part_index
+
+        if extract_think_tags and content == START_THINK_TAG:
+            # When we see a `<think>` tag (which is a single token), we'll build a new thinking part instead
+            self._vendor_id_to_part_index.pop(vendor_part_id, None)
+            return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
 
         if existing_text_part_and_index is None:
+            # If the first text delta is all whitespace, don't emit a new part yet.
+            # This is a workaround for models that emit `<think>\n</think>\n\n` ahead of tool calls (e.g. Ollama + Qwen3),
+            # which we don't want to end up treating as a final result.
+            if content.isspace():
+                return None
+
             # There is no existing text part that should be updated, so create a new one
             new_part_index = len(self._parts)
             part = TextPart(content=content)

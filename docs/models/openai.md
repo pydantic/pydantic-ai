@@ -100,7 +100,7 @@ agent = Agent(model)
 
 ## OpenAI Responses API
 
-PydanticAI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the `OpenAIResponsesModel` class.
+Pydantic AI also supports OpenAI's [Responses API](https://platform.openai.com/docs/api-reference/responses) through the `OpenAIResponsesModel` class.
 
 ```python
 from pydantic_ai import Agent
@@ -144,7 +144,7 @@ You can learn more about the differences between the Responses API and Chat Comp
 
 ## OpenAI-compatible Models
 
-Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIModel` in PydanticAI.
+Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIModel` in Pydantic AI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
 To use another OpenAI-compatible API, you can make use of the `base_url` and `api_key` arguments from `OpenAIProvider`:
@@ -171,7 +171,7 @@ When a provider has its own provider class, you can use the `Agent("<provider>:<
 
 Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
 
-When using an alternative provider class provided by PydanticAI, an appropriate model profile is typically selected automatically based on the model name.
+When using an alternative provider class provided by Pydantic AI, an appropriate model profile is typically selected automatically based on the model name.
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIModel`):
 
 ```py
@@ -348,6 +348,41 @@ agent = Agent(model)
 ...
 ```
 
+### Vercel AI Gateway
+
+To use [Vercel's AI Gateway](https://vercel.com/docs/ai-gateway), first follow the [documentation](https://vercel.com/docs/ai-gateway) instructions on obtaining an API key or OIDC token.
+
+You can set your credentials using one of these environment variables:
+
+```bash
+export VERCEL_AI_GATEWAY_API_KEY='your-ai-gateway-api-key'
+# OR
+export VERCEL_OIDC_TOKEN='your-oidc-token'
+```
+
+Once you have set the environment variable, you can use it with the [`VercelProvider`][pydantic_ai.providers.vercel.VercelProvider]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.vercel import VercelProvider
+
+# Uses environment variable automatically
+model = OpenAIModel(
+    'anthropic/claude-4-sonnet',
+    provider=VercelProvider(),
+)
+agent = Agent(model)
+
+# Or pass the API key directly
+model = OpenAIModel(
+    'anthropic/claude-4-sonnet',
+    provider=VercelProvider(api_key='your-vercel-ai-gateway-api-key'),
+)
+agent = Agent(model)
+...
+```
+
 ### Grok (xAI)
 
 Go to [xAI API Console](https://console.x.ai/) and create an API key.
@@ -361,6 +396,24 @@ from pydantic_ai.providers.grok import GrokProvider
 model = OpenAIModel(
     'grok-2-1212',
     provider=GrokProvider(api_key='your-xai-api-key'),
+)
+agent = Agent(model)
+...
+```
+
+### MoonshotAI
+
+Create an API key in the [Moonshot Console](https://platform.moonshot.ai/console).
+With that key you can instantiate the [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider]:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+
+model = OpenAIModel(
+    'kimi-k2-0711-preview',
+    provider=MoonshotAIProvider(api_key='your-moonshot-api-key'),
 )
 agent = Agent(model)
 ...

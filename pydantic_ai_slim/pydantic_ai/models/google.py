@@ -73,18 +73,10 @@ except ImportError as _import_error:
     ) from _import_error
 
 LatestGoogleModelNames = Literal[
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro',
     'gemini-2.0-flash',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite-preview-06-17',
-    'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-05-06',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
@@ -166,7 +158,7 @@ class GoogleModel(Model):
         self._model_name = model_name
 
         if isinstance(provider, str):
-            provider = GoogleProvider(vertexai=provider == 'google-vertex')  # pragma: lax no cover
+            provider = GoogleProvider(vertexai=provider == 'google-vertex')
 
         self._provider = provider
         self._system = provider.name
@@ -419,7 +411,12 @@ class GoogleModel(Model):
                         file_data_dict['video_metadata'] = item.vendor_metadata
                     content.append(file_data_dict)  # type: ignore
                 elif isinstance(item, FileUrl):
-                    if self.system == 'google-gla' or item.force_download:
+                    if item.force_download or (
+                        # google-gla does not support passing file urls directly, except for youtube videos
+                        # (see above) and files uploaded to the file API (which cannot be downloaded anyway)
+                        self.system == 'google-gla'
+                        and not item.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
+                    ):
                         downloaded_item = await download_item(item, data_format='base64')
                         inline_data = {'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
                         content.append({'inline_data': inline_data})  # type: ignore
@@ -461,7 +458,9 @@ class GeminiStreamedResponse(StreamedResponse):
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
                     else:
-                        yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
+                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
                 elif part.function_call:
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=uuid4(),
@@ -492,8 +491,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             parts.append({'function_call': function_call})
         elif isinstance(item, TextPart):
-            if item.content:  # pragma: no branch
-                parts.append({'text': item.content})
+            parts.append({'text': item.content})
         elif isinstance(item, ThinkingPart):  # pragma: no cover
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.

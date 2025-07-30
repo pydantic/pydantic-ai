@@ -2,11 +2,15 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
+from typing import TYPE_CHECKING
 
 if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
+    from exceptiongroup import ExceptionGroup
 else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
+    ExceptionGroup = ExceptionGroup
+
+if TYPE_CHECKING:
+    from .messages import RetryPromptPart
 
 __all__ = (
     'ModelRetry',
@@ -113,3 +117,11 @@ class ModelHTTPError(AgentRunError):
 
 class FallbackExceptionGroup(ExceptionGroup):
     """A group of exceptions that can be raised when all fallback models fail."""
+
+
+class ToolRetryError(Exception):
+    """Exception used to signal a `ToolRetry` message should be returned to the LLM."""
+
+    def __init__(self, tool_retry: RetryPromptPart):
+        self.tool_retry = tool_retry
+        super().__init__()

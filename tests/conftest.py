@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import importlib.util
+import logging
 import os
 import re
 import secrets
@@ -28,6 +29,11 @@ from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
+# Configure VCR logger to WARNING as it is too verbose by default
+# specifically, it logs every request and response including binary
+# content in Cassette.append, which is causing log downloads from
+# GitHub action to fail.
+logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
@@ -44,6 +50,7 @@ if TYPE_CHECKING:
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
 else:
     from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
@@ -52,6 +59,44 @@ else:
         if 'delta' not in kwargs:  # pragma: no branch
             kwargs['delta'] = 10
         return _IsNow(*args, **kwargs)
+
+    class IsSameStr(IsStr):
+        """
+        Checks if the value is a string, and that subsequent uses have the same value as the first one.
+
+        Example:
+        ```python {test="skip"}
+        assert events == [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '(no tool calls)',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+        ```
+        """
+
+        _first_other: str | None = None
+
+        def equals(self, other: Any) -> bool:
+            if self._first_other is None:
+                self._first_other = other
+                return super().equals(other)
+            else:
+                return other == self._first_other
 
 
 class TestEnv:
@@ -317,6 +362,11 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def huggingface_api_key() -> str:
+    return os.getenv('HF_TOKEN', 'hf_token')
+
+
+@pytest.fixture(scope='session')
 def heroku_inference_key() -> str:
     return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
 
@@ -398,6 +448,7 @@ def model(
     groq_api_key: str,
     co_api_key: str,
     gemini_api_key: str,
+    huggingface_api_key: str,
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
@@ -440,6 +491,14 @@ def model(
             from pydantic_ai.models.bedrock import BedrockConverseModel
 
             return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+        elif request.param == 'huggingface':
+            from pydantic_ai.models.huggingface import HuggingFaceModel
+            from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+            return HuggingFaceModel(
+                'Qwen/Qwen2.5-72B-Instruct',
+                provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:
