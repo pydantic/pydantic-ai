@@ -17,6 +17,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     BinaryContent,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -25,6 +26,7 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
+    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -378,7 +380,7 @@ class MistralModel(Model):
         return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> MistralToolCall:
+    def _map_tool_call(t: ToolCallPart | ServerToolCallPart) -> MistralToolCall:
         """Maps a pydantic-ai ToolCall to a MistralToolCall."""
         return MistralToolCall(
             id=_utils.guard_tool_call_id(t=t),
@@ -502,6 +504,14 @@ class MistralModel(Model):
                         pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
+                    elif isinstance(part, ServerToolCallPart):  # pragma: no cover
+                        # Handle ServerToolCallPart the same as ToolCallPart
+                        # This is currently never returned from mistral
+                        pass
+                    elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
+                        # For now, we'll add BuiltinToolReturnPart as text content
+                        # This is currently never returned from mistral
+                        pass
                     else:
                         assert_never(part)
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))

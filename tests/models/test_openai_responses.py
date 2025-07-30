@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -7,13 +8,16 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
+    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -469,6 +473,87 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
             ),
         ]
     )
+
+
+async def test_openai_responses_model_web_search_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What day is it today?')
+    assert result.output == snapshot("""\
+Today is Wednesday, May 14, 2025.
+
+## Weather for San Francisco, CA:
+Current Conditions: Mostly clear, 50°F (10°C)
+
+Daily Forecast:
+* Wednesday, May 14: Low: 51°F (10°C), High: 65°F (18°C), Description: Areas of low clouds early; otherwise, mostly sunny
+* Thursday, May 15: Low: 53°F (12°C), High: 66°F (19°C), Description: Areas of low clouds, then sun
+* Friday, May 16: Low: 53°F (12°C), High: 64°F (18°C), Description: Partly sunny
+* Saturday, May 17: Low: 52°F (11°C), High: 63°F (17°C), Description: Low clouds breaking for some sun; breezy in the afternoon
+* Sunday, May 18: Low: 51°F (10°C), High: 68°F (20°C), Description: Clouds yielding to sun
+* Monday, May 19: Low: 53°F (12°C), High: 68°F (20°C), Description: Sunny
+* Tuesday, May 20: Low: 52°F (11°C), High: 70°F (21°C), Description: Mostly sunny
+ \
+""")
+
+
+async def test_openai_responses_model_web_search_tool_with_user_location(
+    allow_model_requests: None, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+    )
+
+    result = await agent.run('What is the current temperature?')
+    assert result.output == snapshot("""\
+As of 12:58 PM on Wednesday, May 14, 2025, in Utrecht, Netherlands, the weather is sunny with a temperature of 22°C (71°F).
+
+## Weather for Utrecht, Netherlands:
+Current Conditions: Sunny, 71°F (22°C)
+
+Daily Forecast:
+* Wednesday, May 14: Low: 48°F (9°C), High: 71°F (22°C), Description: Clouds yielding to sun
+* Thursday, May 15: Low: 43°F (6°C), High: 67°F (20°C), Description: After a cloudy start, sun returns
+* Friday, May 16: Low: 45°F (7°C), High: 64°F (18°C), Description: Mostly sunny
+* Saturday, May 17: Low: 47°F (9°C), High: 68°F (20°C), Description: Mostly sunny
+* Sunday, May 18: Low: 47°F (8°C), High: 68°F (20°C), Description: Some sun
+* Monday, May 19: Low: 49°F (9°C), High: 70°F (21°C), Description: Delightful with partial sunshine
+* Tuesday, May 20: Low: 49°F (10°C), High: 72°F (22°C), Description: Warm with sunshine and a few clouds
+ \
+""")
+
+
+async def test_openai_responses_model_web_search_tool_stream(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='Give me the top 3 news in the world today.') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts.pop(0) == snapshot(PartStartEvent(index=0, part=TextPart(content='Here')))
+    assert event_parts.pop(0) == snapshot(FinalResultEvent(tool_name=None, tool_call_id=None))
+    assert ''.join(event.delta.content_delta for event in event_parts) == snapshot("""\
+ are the top three news stories from around the world as of July 16, 2025:
+
+1. **Severe Flooding in the United States**: Central Texas experienced catastrophic flash flooding over the Fourth of July weekend, resulting in at least 111 fatalities and over 160 missing persons. The Guadalupe River rose 26 feet in under an hour, making it the deadliest inland flood in U.S. history. Additionally, Ruidoso, New Mexico, faced rapid floodwaters, leading to numerous rescues and missing individuals. Chicago's west side also saw significant rainfall, causing widespread flooding and emergency responses. ([wizard-withwords.com](https://www.wizard-withwords.com/p/weekly-world-wrap-up-july-6-12-2025?utm_source=openai))
+
+2. **International Tensions Over Russian Oil Imports**: U.S. President Donald Trump has threatened sanctions on countries like India and China for purchasing Russian oil. While urging peace talks between Russia and Ukraine, the U.S. continues to supply arms to Ukraine, highlighting the complex geopolitical landscape. ([leverageedu.com](https://leverageedu.com/discover/school-education/school-assembly-news-headlines-16-july-2025/?utm_source=openai))
+
+3. **Scientific Milestones Achieved**: In June 2025, the European Space Agency's Solar Orbiter captured the first-ever images of the Sun's south pole. Additionally, Chinese scientists demonstrated a parallel optical computing chip capable of 100 simultaneous operations, marking a significant advancement in light-based AI hardware. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2025_in_science?utm_source=openai))
+
+
+## Top World News Stories on July 16, 2025:
+- [Morning Bid: Tariff imprint spied in US CPI](https://www.reuters.com/world/europe/global-markets-view-europe-2025-07-16/?utm_source=openai) \
+""")
 
 
 def test_model_profile_strict_not_supported():

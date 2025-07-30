@@ -16,6 +16,7 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -190,6 +191,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -221,6 +223,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_tool_description: str | None = None,
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -276,6 +279,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
@@ -307,6 +311,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
+            builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
+                support certain tools. On models that don't support certain tools, the tool will be ignored.
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
@@ -413,6 +419,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._system_prompt_dynamic_functions = {}
 
         self._max_result_retries = output_retries if output_retries is not None else retries
+        self._builtin_tools: list[AbstractBuiltinTool] = []
+
+        for tool in builtin_tools:
+            self._builtin_tools.append(tool)
+
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
 
@@ -818,6 +829,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
+            builtin_tools=self._builtin_tools,
             tool_manager=run_toolset,
             tracer=tracer,
             get_instructions=get_instructions,

@@ -11,11 +11,13 @@ from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
+    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -223,6 +225,14 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, ServerToolCallPart):  # pragma: no cover
+                        # ServerToolCallPart represents a tool call from a remote server
+                        # This is currently never returned from cohere
+                        pass
+                    elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
+                        # BuiltinToolReturnPart represents a tool return from a remote server
+                        # This is currently never returned from cohere
+                        pass
                     else:
                         assert_never(item)
                 message_param = AssistantChatMessageV2(role='assistant')
@@ -244,7 +254,7 @@ class CohereModel(Model):
         return tools
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
+    def _map_tool_call(t: ToolCallPart | ServerToolCallPart) -> ToolCallV2:
         return ToolCallV2(
             id=_guard_tool_call_id(t=t),
             type='function',
