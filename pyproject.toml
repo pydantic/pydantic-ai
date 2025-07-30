@@ -5,9 +5,49 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
 
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[project]
+name = "pydantic-ai"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+description = "Agent Framework / shim to use Pydantic with LLMs"
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Internet",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: Pydantic",
+    "Framework :: Pydantic :: 2",
+]
+requires-python = ">=3.9"
+
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,cli,mcp,evals]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,evals,ag-ui]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -15,20 +55,17 @@ examples = ["pydantic-ai-examples=={{ version }}"]
 logfire = ["logfire>=3.11.0"]
 a2a = ["fasta2a>=0.4.1"]
 
+[project.urls]
+Homepage = "https://ai.pydantic.dev"
+Source = "https://github.com/pydantic/pydantic-ai"
+Documentation = "https://ai.pydantic.dev"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
-[tool.hatch.build.targets.wheel]
-only-include = ["/README.md"]
-
-[tool.hatch.build.targets.sdist]
-include = ["/README.md", "/Makefile", "/tests"]
-
-
-[tool.uv-dynamic-versioning]
-vcs = "git"
-style = "pep440"
-bump = true
+[project.scripts]
+pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.uv.sources]
+pydantic-ai = { workspace = true }
 pydantic-ai-slim = { workspace = true }
 pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
@@ -44,6 +81,25 @@ members = [
     "examples",
 ]
 
+[dependency-groups]
+# dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
+lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
+docs = [
+    "pydantic-ai[a2a]",
+    "black>=24.10.0",
+    "mkdocs>=1.6.1",
+    "mkdocs-glightbox>=0.4.0",
+    "mkdocs-llmstxt>=0.2.0",
+    "mkdocs-material[imaging]>=9.5.45",
+    "mkdocstrings-python>=1.12.2",
+]
+docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
+
+[tool.hatch.build.targets.wheel]
+only-include = ["/README.md"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/README.md", "/Makefile", "/tests"]
 
 [tool.ruff]
 line-length = 120
@@ -71,7 +127,6 @@ extend-select = [
     "TID251",
 ]
 flake8-quotes = { inline-quotes = "single", multiline-quotes = "double" }
-isort = { combine-as-imports = true, known-first-party = ["pydantic_ai"] }
 mccabe = { max-complexity = 15 }
 ignore = [
     "D100", # ignore missing docstring in module
@@ -80,6 +135,12 @@ ignore = [
     "D105", # ignore missing docstring in magic methods
     "D107", # ignore missing docstring in __init__ methods
 ]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["pydantic_ai"]
+# weird issue with ruff thinking fasta2a is still editable
+known-third-party = ["fasta2a"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -97,7 +158,6 @@ quote-style = "single"
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
-
 
 [tool.pyright]
 pythonVersion = "3.12"
@@ -134,15 +194,14 @@ files = "tests/typed_agent.py,tests/typed_graph.py"
 strict = true
 
 [tool.pytest.ini_options]
-testpaths = [
-    "tests",
-    "docs/.hooks"
-]
+testpaths = ["tests", "docs/.hooks"]
 xfail_strict = true
 filterwarnings = [
     "error",
     # Issue with python-multipart - we don't want to bump the minimum version of starlette.
     "ignore::PendingDeprecationWarning:starlette",
+    # mistralai accesses model_fields on the instance, which is deprecated in Pydantic 2.11.
+    "ignore:Accessing the 'model_fields' attribute",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",
@@ -155,7 +214,6 @@ filterwarnings = [
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
-
 [tool.coverage.run]
 # required to avoid warnings about files created by create_module fixture
 include = [
@@ -170,6 +228,20 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk requires Python 3.10+ so cannot be added as an (optional) dependency
 ]
 branch = true
+# Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
+# https://github.com/pytest-dev/pytest-cov/issues/532
+# https://github.com/pytest-dev/pytest-cov/issues/369
+# This prevents coverage being generated by pytest-cov which has direct editor support in VS Code,
+# making it super useful to check coverage while writing tests.
+disable_warnings = ["include-ignored"]
+
+[tool.coverage.paths]
+# Allow CI run assets to be downloaded an replicated locally.
+source = [
+    ".",
+    "/home/runner/work/pydantic-ai/pydantic-ai",
+    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai"
+]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
 [tool.coverage.report]
@@ -198,7 +270,6 @@ exclude_lines = [
     'assert False',
 ]
 
-
 [tool.logfire]
 ignore_no_config = true
 
@@ -209,7 +280,6 @@ format-command = "ruff format --stdin-filename {filename}"
 snap-fix = ["create", "fix"]
 snap = ["create"]
 
-
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
 skip = '.git*,*.svg,*.lock,*.css,*.yaml'
@@ -217,69 +287,3 @@ check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
 ignore-words-list = 'asend,aci'
-
-[tool.codeflash]
-# All paths are relative to this pyproject.toml's directory.
-module-root = "pydantic_ai_slim/pydantic_ai"
-tests-root = "tests"
-test-framework = "pytest"
-ignore-paths = []
-formatter-cmds = ["disabled"]
-
-[project]
-name = "pydantic-ai"
-dynamic = ["version", "dependencies", "optional-dependencies"]
-description = "Agent Framework / shim to use Pydantic with LLMs"
-authors = [
-    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
-    { name = "David Montague", email = "david@pydantic.dev" },
-    { name = "Alex Hall", email = "alex@pydantic.dev" },
-]
-license = "MIT"
-readme = "README.md"
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Programming Language :: Python",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Information Technology",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Topic :: Internet",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-    "Framework :: Pydantic",
-    "Framework :: Pydantic :: 2",
-]
-requires-python = ">=3.9"
-
-[project.urls]
-Homepage = "https://ai.pydantic.dev"
-Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev"
-Changelog = "https://github.com/pydantic/pydantic-ai/releases"
-
-[project.scripts]
-pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
-
-[dependency-groups]
-# dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
-lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
-docs = [
-    "pydantic-ai[a2a]",
-    "black>=24.10.0",
-    "mkdocs>=1.6.1",
-    "mkdocs-glightbox>=0.4.0",
-    "mkdocs-llmstxt>=0.2.0",
-    "mkdocs-material[imaging]>=9.5.45",
-    "mkdocstrings-python>=1.12.2",
-]
-docs-upload = ["algoliasearch>=4.12.0", "pydantic>=2.10.1"]
-
