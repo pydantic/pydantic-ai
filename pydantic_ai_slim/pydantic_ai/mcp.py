@@ -18,14 +18,13 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self, assert_never, deprecated
 
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
     from mcp import types as mcp_types
-    from mcp.client.session import ClientSession, LoggingFnT
+    from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
@@ -41,7 +40,13 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
+__all__ = (
+    'MCPServer',
+    'MCPServerStdio',
+    'MCPServerHTTP',
+    'MCPServerSSE',
+    'MCPServerStreamableHTTP',
+)
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
@@ -66,6 +71,8 @@ class MCPServer(AbstractToolset[Any], ABC):
     allow_sampling: bool = True
     max_retries: int = 1
     sampling_model: models.Model | None = None
+    allow_elicitation: bool = True
+    elicitation_callback: ElicitationFnT | None = None
     # } end of "abstract fields"
 
     _enter_lock: Lock = field(compare=False)
@@ -207,6 +214,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
                         sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                        elicitation_callback=self.elicitation_callback if self.allow_elicitation else None,
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                     )
@@ -398,6 +406,12 @@ class MCPServerStdio(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
+    allow_elicitation: bool = True
+    """Whether to allow MCP elicitation through this client."""
+
+    elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -499,6 +513,12 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
+    allow_elicitation: bool = True
+    """Whether to allow MCP elicitation through this client."""
+
+    elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
+
     def __init__(
         self,
         *,
@@ -514,6 +534,8 @@ class _MCPServerHTTP(MCPServer):
         allow_sampling: bool = True,
         max_retries: int = 1,
         sampling_model: models.Model | None = None,
+        allow_elicitation: bool = True,
+        elicitation_callback: ElicitationFnT | None = None,
         **kwargs: Any,
     ):
         # Handle deprecated sse_read_timeout parameter
@@ -542,6 +564,8 @@ class _MCPServerHTTP(MCPServer):
         self.allow_sampling = allow_sampling
         self.max_retries = max_retries
         self.sampling_model = sampling_model
+        self.allow_elicitation = allow_elicitation
+        self.elicitation_callback = elicitation_callback
         self.read_timeout = read_timeout
 
     @property
