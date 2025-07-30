@@ -43,9 +43,10 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
             if self._entered_count == 0:
-                self._exit_stack = AsyncExitStack()
-                for toolset in self.toolsets:
-                    await self._exit_stack.enter_async_context(toolset)
+                async with AsyncExitStack() as exit_stack:
+                    for toolset in self.toolsets:
+                        await exit_stack.enter_async_context(toolset)
+                    self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
         return self
 

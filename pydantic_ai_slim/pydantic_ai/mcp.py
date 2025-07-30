@@ -201,25 +201,24 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self._enter_lock:
             if self._running_count == 0:
-                self._exit_stack = AsyncExitStack()
+                async with AsyncExitStack() as exit_stack:
+                    self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
+                    client = ClientSession(
+                        read_stream=self._read_stream,
+                        write_stream=self._write_stream,
+                        sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                        logging_callback=self.log_handler,
+                        read_timeout_seconds=timedelta(seconds=self.read_timeout),
+                    )
+                    self._client = await exit_stack.enter_async_context(client)
 
-                self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(
-                    self.client_streams()
-                )
-                client = ClientSession(
-                    read_stream=self._read_stream,
-                    write_stream=self._write_stream,
-                    sampling_callback=self._sampling_callback if self.allow_sampling else None,
-                    logging_callback=self.log_handler,
-                    read_timeout_seconds=timedelta(seconds=self.read_timeout),
-                )
-                self._client = await self._exit_stack.enter_async_context(client)
+                    with anyio.fail_after(self.timeout):
+                        await self._client.initialize()
 
-                with anyio.fail_after(self.timeout):
-                    await self._client.initialize()
+                        if log_level := self.log_level:
+                            await self._client.set_logging_level(log_level)
 
-                    if log_level := self.log_level:
-                        await self._client.set_logging_level(log_level)
+                    self._exit_stack = exit_stack.pop_all()
             self._running_count += 1
         return self
 
@@ -544,6 +543,7 @@ class _MCPServerHTTP(MCPServer):
         self.max_retries = max_retries
         self.sampling_model = sampling_model
         self.read_timeout = read_timeout
+        self.__post_init__()
 
     @property
     @abstractmethod
