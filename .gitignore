@@ -13,6 +13,7 @@ env*/
 examples/pydantic_ai_examples/.chat_app_messages.sqlite
 .cache/
 .vscode/
+.zed/
 /question_graph_history.json
 /docs-site/.wrangler/
 node_modules/
