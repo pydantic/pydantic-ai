@@ -9,3 +9,5 @@
             - NativeOutput
             - PromptedOutput
             - TextOutput
+            - StructuredDict
+            - DeferredToolCalls

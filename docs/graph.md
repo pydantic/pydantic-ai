@@ -1,12 +1,12 @@
 # Graphs
 
 !!! danger "Don't use a nail gun unless you need a nail gun"
-    If PydanticAI [agents](agents.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun:
+    If Pydantic AI [agents](agents.md) are a hammer, and [multi-agent workflows](multi-agent-applications.md) are a sledgehammer, then graphs are a nail gun:
 
     * sure, nail guns look cooler than hammers
     * but nail guns take a lot more setup than hammers
     * and nail guns don't make you a better builder, they make you a builder with a nail gun
-    * Lastly, (and at the risk of torturing this metaphor), if you're a fan of medieval tools like mallets and untyped Python, you probably won't like nail guns or our approach to graphs. (But then again, if you're not a fan of type hints in Python, you've probably already bounced off PydanticAI to use one of the toy agent frameworks — good luck, and feel free to borrow my sledgehammer when you realize you need it)
+    * Lastly, (and at the risk of torturing this metaphor), if you're a fan of medieval tools like mallets and untyped Python, you probably won't like nail guns or our approach to graphs. (But then again, if you're not a fan of type hints in Python, you've probably already bounced off Pydantic AI to use one of the toy agent frameworks — good luck, and feel free to borrow my sledgehammer when you realize you need it)
 
     In short, graphs are a powerful tool, but they're not the right tool for every job. Please consider other [multi-agent approaches](multi-agent-applications.md) before proceeding.
 
@@ -14,11 +14,11 @@
 
 Graphs and finite state machines (FSMs) are a powerful abstraction to model, execute, control and visualize complex workflows.
 
-Alongside PydanticAI, we've developed `pydantic-graph` — an async graph and state machine library for Python where nodes and edges are defined using type hints.
+Alongside Pydantic AI, we've developed `pydantic-graph` — an async graph and state machine library for Python where nodes and edges are defined using type hints.
 
-While this library is developed as part of PydanticAI; it has no dependency on `pydantic-ai` and can be considered as a pure graph-based state machine library. You may find it useful whether or not you're using PydanticAI or even building with GenAI.
+While this library is developed as part of Pydantic AI; it has no dependency on `pydantic-ai` and can be considered as a pure graph-based state machine library. You may find it useful whether or not you're using Pydantic AI or even building with GenAI.
 
-`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and type hints. It is not designed to be as beginner-friendly as PydanticAI.
+`pydantic-graph` is designed for advanced users and makes heavy use of Python generics and type hints. It is not designed to be as beginner-friendly as Pydantic AI.
 
 ## Installation
 
@@ -34,7 +34,7 @@ pip/uv-add pydantic-graph
 
 ### GraphRunContext
 
-[`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to PydanticAI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
+[`GraphRunContext`][pydantic_graph.nodes.GraphRunContext] — The context for the graph run, similar to Pydantic AI's [`RunContext`][pydantic_ai.tools.RunContext]. This holds the state of the graph and dependencies and is passed to nodes when they're run.
 
 `GraphRunContext` is generic in the state type of the graph it's used in, [`StateT`][pydantic_graph.nodes.StateT].
 
@@ -50,15 +50,15 @@ Subclasses of [`BaseNode`][pydantic_graph.nodes.BaseNode] define nodes for execu
 
 Nodes, which are generally [`dataclass`es][dataclasses.dataclass], generally consist of:
 
-* fields containing any parameters required/optional when calling the node
-* the business logic to execute the node, in the [`run`][pydantic_graph.nodes.BaseNode.run] method
-* return annotations of the [`run`][pydantic_graph.nodes.BaseNode.run] method, which are read by `pydantic-graph` to determine the outgoing edges of the node
+- fields containing any parameters required/optional when calling the node
+- the business logic to execute the node, in the [`run`][pydantic_graph.nodes.BaseNode.run] method
+- return annotations of the [`run`][pydantic_graph.nodes.BaseNode.run] method, which are read by `pydantic-graph` to determine the outgoing edges of the node
 
 Nodes are generic in:
 
-* **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.nodes.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
-* **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
-* **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
+- **state**, which must have the same type as the state of graphs they're included in, [`StateT`][pydantic_graph.nodes.StateT] has a default of `None`, so if you're not using state you can omit this generic parameter, see [stateful graphs](#stateful-graphs) for more information
+- **deps**, which must have the same type as the deps of the graph they're included in, [`DepsT`][pydantic_graph.nodes.DepsT] has a default of `None`, so if you're not using deps you can omit this generic parameter, see [dependency injection](#dependency-injection) for more information
+- **graph return type** — this only applies if the node returns [`End`][pydantic_graph.nodes.End]. [`RunEndT`][pydantic_graph.nodes.RunEndT] has a default of [Never][typing.Never] so this generic parameter can be omitted if the node doesn't return `End`, but must be included if it does.
 
 Here's an example of a start or intermediate node in a graph — it can't end the run as it doesn't return [`End`][pydantic_graph.nodes.End]:
 
@@ -116,9 +116,9 @@ class MyNode(BaseNode[MyState, None, int]):  # (1)!
 
 `Graph` is generic in:
 
-* **state** the state type of the graph, [`StateT`][pydantic_graph.nodes.StateT]
-* **deps** the deps type of the graph, [`DepsT`][pydantic_graph.nodes.DepsT]
-* **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
+- **state** the state type of the graph, [`StateT`][pydantic_graph.nodes.StateT]
+- **deps** the deps type of the graph, [`DepsT`][pydantic_graph.nodes.DepsT]
+- **graph return type** the return type of the graph run, [`RunEndT`][pydantic_graph.nodes.RunEndT]
 
 Here's an example of a simple graph:
 
@@ -335,7 +335,7 @@ See [below](#mermaid-diagrams) for more information on generating diagrams.
 
 ## GenAI Example
 
-So far we haven't shown an example of a Graph that actually uses PydanticAI or GenAI at all.
+So far we haven't shown an example of a Graph that actually uses Pydantic AI or GenAI at all.
 
 In this example, one agent generates a welcome email to a user and the other agent provides feedback on the email.
 
@@ -352,7 +352,7 @@ stateDiagram-v2
   Feedback --> [*]
 ```
 
-```python {title="genai_email_feedback.py" py="3.10"}
+```python {title="genai_email_feedback.py" py="3.10" test="ci_only"}
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
@@ -635,7 +635,7 @@ async def run_node(run_id: str) -> bool:  # (3)!
 3. `run_node` is a pure function that doesn't need access to any other process state to run the next node of the graph, except the ID of the run.
 4. Call [`graph.iter_from_persistence()`][pydantic_graph.graph.Graph.iter_from_persistence] create a [`GraphRun`][pydantic_graph.graph.GraphRun] object that will run the next node of the graph from the state stored in persistence. This will return either a node or an `End` object.
 5. [`graph.run()`][pydantic_graph.graph.Graph.run] will return either a [node][pydantic_graph.nodes.BaseNode] or an [`End`][pydantic_graph.nodes.End] object.
-5. Check if the node is an [`End`][pydantic_graph.nodes.End] object, if it is, the graph run is complete.
+6. Check if the node is an [`End`][pydantic_graph.nodes.End] object, if it is, the graph run is complete.
 
 _(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
 
@@ -648,103 +648,107 @@ In this example, an AI asks the user a question, the user provides an answer, th
 Instead of running the entire graph in a single process invocation, we run the graph by running the process repeatedly, optionally providing an answer to the question as a command line argument.
 
 ??? example "`ai_q_and_a_graph.py` — `question_graph` definition"
-    ```python {title="ai_q_and_a_graph.py" noqa="I001" py="3.10"}
-    from __future__ import annotations as _annotations
+```python {title="ai_q_and_a_graph.py" noqa="I001" py="3.10"}
+from __future__ import annotations as _annotations
 
-    from dataclasses import dataclass, field
+from typing import Annotated
+from pydantic_graph import Edge
+from dataclasses import dataclass, field
+from pydantic import BaseModel
+from pydantic_graph import (
+    BaseNode,
+    End,
+    Graph,
+    GraphRunContext,
+)
+from pydantic_ai import Agent, format_as_xml
+from pydantic_ai.messages import ModelMessage
 
-    from pydantic import BaseModel
-    from pydantic_graph import (
-        BaseNode,
-        End,
-        Graph,
-        GraphRunContext,
-    )
-
-    from pydantic_ai import Agent, format_as_xml
-    from pydantic_ai.messages import ModelMessage
-
-    ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
-
-
-    @dataclass
-    class QuestionState:
-        question: str | None = None
-        ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-        evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
 
 
-    @dataclass
-    class Ask(BaseNode[QuestionState]):
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Answer:
-            result = await ask_agent.run(
-                'Ask a simple question with a single correct answer.',
-                message_history=ctx.state.ask_agent_messages,
-            )
-            ctx.state.ask_agent_messages += result.new_messages()
-            ctx.state.question = result.output
-            return Answer(result.output)
+@dataclass
+class QuestionState:
+    question: str | None = None
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
+    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
 
 
-    @dataclass
-    class Answer(BaseNode[QuestionState]):
-        question: str
-
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
-            answer = input(f'{self.question}: ')
-            return Evaluate(answer)
-
-
-    class EvaluationResult(BaseModel, use_attribute_docstrings=True):
-        correct: bool
-        """Whether the answer is correct."""
-        comment: str
-        """Comment on the answer, reprimand the user if the answer is wrong."""
-
-
-    evaluate_agent = Agent(
-        'openai:gpt-4o',
-        output_type=EvaluationResult,
-        system_prompt='Given a question and answer, evaluate if the answer is correct.',
-    )
+@dataclass
+class Ask(BaseNode[QuestionState]):
+    """Generate question using GPT-4o."""
+    docstring_notes = True
+    async def run(
+        self, ctx: GraphRunContext[QuestionState]
+    ) -> Annotated[Answer, Edge(label='Ask the question')]:
+        result = await ask_agent.run(
+            'Ask a simple question with a single correct answer.',
+            message_history=ctx.state.ask_agent_messages,
+        )
+        ctx.state.ask_agent_messages += result.new_messages()
+        ctx.state.question = result.output
+        return Answer(result.output)
 
 
-    @dataclass
-    class Evaluate(BaseNode[QuestionState, None, str]):
-        answer: str
+@dataclass
+class Answer(BaseNode[QuestionState]):
+    question: str
 
-        async def run(
-            self,
-            ctx: GraphRunContext[QuestionState],
-        ) -> End[str] | Reprimand:
-            assert ctx.state.question is not None
-            result = await evaluate_agent.run(
-                format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
-                message_history=ctx.state.evaluate_agent_messages,
-            )
-            ctx.state.evaluate_agent_messages += result.new_messages()
-            if result.output.correct:
-                return End(result.output.comment)
-            else:
-                return Reprimand(result.output.comment)
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
+        answer = input(f'{self.question}: ')
+        return Evaluate(answer)
 
 
-    @dataclass
-    class Reprimand(BaseNode[QuestionState]):
-        comment: str
-
-        async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
-            print(f'Comment: {self.comment}')
-            ctx.state.question = None
-            return Ask()
+class EvaluationResult(BaseModel, use_attribute_docstrings=True):
+    correct: bool
+    """Whether the answer is correct."""
+    comment: str
+    """Comment on the answer, reprimand the user if the answer is wrong."""
 
 
-    question_graph = Graph(
-        nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
-    )
-    ```
+evaluate_agent = Agent(
+    'openai:gpt-4o',
+    output_type=EvaluationResult,
+    system_prompt='Given a question and answer, evaluate if the answer is correct.',
+)
 
-    _(This example is complete, it can be run "as is" with Python 3.10+)_
+
+@dataclass
+class Evaluate(BaseNode[QuestionState, None, str]):
+    answer: str
+
+    async def run(
+        self,
+        ctx: GraphRunContext[QuestionState],
+    ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
+        assert ctx.state.question is not None
+        result = await evaluate_agent.run(
+            format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
+            message_history=ctx.state.evaluate_agent_messages,
+        )
+        ctx.state.evaluate_agent_messages += result.new_messages()
+        if result.output.correct:
+            return End(result.output.comment)
+        else:
+            return Reprimand(result.output.comment)
+
+
+@dataclass
+class Reprimand(BaseNode[QuestionState]):
+    comment: str
+
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
+        print(f'Comment: {self.comment}')
+        ctx.state.question = None
+        return Ask()
+
+
+question_graph = Graph(
+    nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
+)
+```
+
+_(This example is complete, it can be run "as is" with Python 3.10+)_
 
 ```python {title="ai_q_and_a_run.py" noqa="I001" py="3.10" requires="ai_q_and_a_graph.py"}
 import sys
@@ -801,7 +805,7 @@ For a complete example of this graph, see the [question graph example](examples/
 
 ## Dependency Injection
 
-As with PydanticAI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] field.
+As with Pydantic AI, `pydantic-graph` supports dependency injection via a generic parameter on [`Graph`][pydantic_graph.graph.Graph] and [`BaseNode`][pydantic_graph.nodes.BaseNode], and the [`GraphRunContext.deps`][pydantic_graph.nodes.GraphRunContext.deps] field.
 
 As an example of dependency injection, let's modify the `DivisibleBy5` example [above](#graph) to use a [`ProcessPoolExecutor`][concurrent.futures.ProcessPoolExecutor] to run the compute load in a separate process (this is a contrived example, `ProcessPoolExecutor` wouldn't actually improve performance in this example):
 
@@ -881,30 +885,37 @@ Pydantic Graph can generate [mermaid](https://mermaid.js.org/) [`stateDiagram-v2
 
 These diagrams can be generated with:
 
-* [`Graph.mermaid_code`][pydantic_graph.graph.Graph.mermaid_code] to generate the mermaid code for a graph
-* [`Graph.mermaid_image`][pydantic_graph.graph.Graph.mermaid_image] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/)
-* [`Graph.mermaid_save`][pydantic_graph.graph.Graph.mermaid_save] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/) and save it to a file
+- [`Graph.mermaid_code`][pydantic_graph.graph.Graph.mermaid_code] to generate the mermaid code for a graph
+- [`Graph.mermaid_image`][pydantic_graph.graph.Graph.mermaid_image] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/)
+- [`Graph.mermaid_save`][pydantic_graph.graph.Graph.mermaid_save] to generate an image of the graph using [mermaid.ink](https://mermaid.ink/) and save it to a file
 
 Beyond the diagrams shown above, you can also customize mermaid diagrams with the following options:
 
-* [`Edge`][pydantic_graph.nodes.Edge] allows you to apply a label to an edge
-* [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes
-* The [`highlighted_nodes`][pydantic_graph.graph.Graph.mermaid_code] parameter allows you to highlight specific node(s) in the diagram
+- [`Edge`][pydantic_graph.nodes.Edge] allows you to apply a label to an edge
+- [`BaseNode.docstring_notes`][pydantic_graph.nodes.BaseNode.docstring_notes] and [`BaseNode.get_note`][pydantic_graph.nodes.BaseNode.get_note] allows you to add notes to nodes
+- The [`highlighted_nodes`][pydantic_graph.graph.Graph.mermaid_code] parameter allows you to highlight specific node(s) in the diagram
 
 Putting that together, we can edit the last [`ai_q_and_a_graph.py`](#example-human-in-the-loop) example to:
 
-* add labels to some edges
-* add a note to the `Ask` node
-* highlight the `Answer` node
-* save the diagram as a `PNG` image to file
+- add labels to some edges
+- add a note to the `Ask` node
+- highlight the `Answer` node
+- save the diagram as a `PNG` image to file
 
 ```python {title="ai_q_and_a_graph_extra.py" test="skip" lint="skip" hl_lines="2 4 10-11 14 26 31"}
-...
 from typing import Annotated
 
 from pydantic_graph import BaseNode, End, Graph, GraphRunContext, Edge
 
-...
+ask_agent = Agent('openai:gpt-4o', output_type=str, instrument=True)
+
+
+@dataclass
+class QuestionState:
+    question: str | None = None
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
+    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+
 
 @dataclass
 class Ask(BaseNode[QuestionState]):
@@ -913,23 +924,71 @@ class Ask(BaseNode[QuestionState]):
     async def run(
         self, ctx: GraphRunContext[QuestionState]
     ) -> Annotated[Answer, Edge(label='Ask the question')]:
-        ...
+        result = await ask_agent.run(
+            'Ask a simple question with a single correct answer.',
+            message_history=ctx.state.ask_agent_messages,
+        )
+        ctx.state.ask_agent_messages += result.new_messages()
+        ctx.state.question = result.output
+        return Answer(result.output)
 
-...
 
 @dataclass
-class Evaluate(BaseNode[QuestionState]):
+class Answer(BaseNode[QuestionState]):
+    question: str
+
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Evaluate:
+        answer = input(f'{self.question}: ')
+        return Evaluate(answer)
+
+
+class EvaluationResult(BaseModel, use_attribute_docstrings=True):
+    correct: bool
+    """Whether the answer is correct."""
+    comment: str
+    """Comment on the answer, reprimand the user if the answer is wrong."""
+
+
+evaluate_agent = Agent(
+    'openai:gpt-4o',
+    output_type=EvaluationResult,
+    system_prompt='Given a question and answer, evaluate if the answer is correct.',
+)
+
+
+@dataclass
+class Evaluate(BaseNode[QuestionState, None, str]):
     answer: str
 
     async def run(
-            self,
-            ctx: GraphRunContext[QuestionState],
+        self,
+        ctx: GraphRunContext[QuestionState],
     ) -> Annotated[End[str], Edge(label='success')] | Reprimand:
-        ...
+        assert ctx.state.question is not None
+        result = await evaluate_agent.run(
+            format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
+            message_history=ctx.state.evaluate_agent_messages,
+        )
+        ctx.state.evaluate_agent_messages += result.new_messages()
+        if result.output.correct:
+            return End(result.output.comment)
+        else:
+            return Reprimand(result.output.comment)
 
-...
 
-question_graph.mermaid_save('image.png', highlighted_nodes=[Answer])
+@dataclass
+class Reprimand(BaseNode[QuestionState]):
+    comment: str
+
+    async def run(self, ctx: GraphRunContext[QuestionState]) -> Ask:
+        print(f'Comment: {self.comment}')
+        ctx.state.question = None
+        return Ask()
+
+
+question_graph = Graph(
+    nodes=(Ask, Answer, Evaluate, Reprimand), state_type=QuestionState
+)
 ```
 
 _(This example is not complete and cannot be run directly)_
@@ -965,6 +1024,7 @@ You can specify the direction of the state diagram using one of the following va
 - `'BT'`: Bottom to top, the diagram flows vertically from bottom to top.
 
 Here is an example of how to do this using 'Left to Right' (LR) instead of the default 'Top to Bottom' (TB):
+
 ```py {title="vending_machine_diagram.py" py="3.10" requires="vending_machine.py"}
 from vending_machine import InsertCoin, vending_machine_graph
 

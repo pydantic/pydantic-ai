@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli ex
 
 def test_cli_version(capfd: CaptureFixture[str]):
     assert cli(['--version']) == 0
-    assert capfd.readouterr().out.startswith('pai - PydanticAI CLI')
+    assert capfd.readouterr().out.startswith('pai - Pydantic AI CLI')
 
 
 def test_invalid_model(capfd: CaptureFixture[str]):
@@ -131,7 +131,7 @@ def test_agent_flag_bad_module_variable_path(capfd: CaptureFixture[str], mocker:
 def test_list_models(capfd: CaptureFixture[str]):
     assert cli(['--list-models']) == 0
     output = capfd.readouterr().out.splitlines()
-    assert output[:3] == snapshot([IsStr(regex='pai - PydanticAI CLI .*'), '', 'Available models:'])
+    assert output[:3] == snapshot([IsStr(regex='pai - Pydantic AI CLI .*'), '', 'Available models:'])
 
     providers = (
         'openai',
@@ -144,6 +144,9 @@ def test_list_models(capfd: CaptureFixture[str]):
         'cohere',
         'deepseek',
         'heroku',
+        'moonshotai',
+        'grok',
+        'huggingface',
     )
     models = {line.strip().split(' ')[0] for line in output[3:]}
     for provider in providers:

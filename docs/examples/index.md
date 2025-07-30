@@ -1,6 +1,6 @@
 # Examples
 
-Examples of how to use PydanticAI and what it can do.
+Examples of how to use Pydantic AI and what it can do.
 
 ## Usage
 

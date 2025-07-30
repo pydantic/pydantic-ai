@@ -593,10 +593,10 @@ async def test_a2a_multiple_tasks_same_context():
             assert result2['context_id'] == context_id
 
             # Wait for second task to complete
-            await anyio.sleep(0.1)
-            task2 = await a2a_client.get_task(task2_id)
-            assert 'result' in task2
-            assert task2['result']['status']['state'] == 'completed'
+            while task2 := await a2a_client.get_task(task2_id):  # pragma: no branch
+                if 'result' in task2 and task2['result']['status']['state'] == 'completed':
+                    break
+                await anyio.sleep(0.1)
 
             # Verify the model received the full history on the second call
             assert len(messages_received) == 2
@@ -800,8 +800,11 @@ async def test_a2a_multiple_messages():
                 }
             )
 
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    break
+                await anyio.sleep(0.1)
+
             assert task == snapshot(
                 {
                     'jsonrpc': '2.0',

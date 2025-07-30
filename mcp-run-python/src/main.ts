@@ -2,14 +2,18 @@
 
 import './polyfill.ts'
 import http from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { parseArgs } from '@std/cli/parse-args'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { type LoggingLevel, SetLevelRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 import { asXml, runCode } from './runCode.ts'
+import { Buffer } from 'node:buffer'
 
 const VERSION = '0.0.13'
 
@@ -17,6 +21,13 @@ export async function main() {
   const { args } = Deno
   if (args.length === 1 && args[0] === 'stdio') {
     await runStdio()
+  } else if (args.length >= 1 && args[0] === 'streamable_http') {
+    const flags = parseArgs(Deno.args, {
+      string: ['port'],
+      default: { port: '3001' },
+    })
+    const port = parseInt(flags.port)
+    runStreamableHttp(port)
   } else if (args.length >= 1 && args[0] === 'sse') {
     const flags = parseArgs(Deno.args, {
       string: ['port'],
@@ -31,7 +42,7 @@ export async function main() {
       `\
 Invalid arguments.
 
-Usage: deno run -N -R=node_modules -W=node_modules --node-modules-dir=auto jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
+Usage: deno run -N -R=node_modules -W=node_modules --node-modules-dir=auto jsr:@pydantic/mcp-run-python [stdio|streamable_http|sse|warmup]
 
 options:
   --port <port>  Port to run the SSE server on (default: 3001)`,
@@ -104,17 +115,60 @@ print('python code here')
 }
 
 /*
- * Run the MCP server using the SSE transport, e.g. over HTTP.
+ * Define some QOL functions for both the SSE and Streamable HTTP server implementation
  */
-function runSse(port: number) {
+function httpGetUrl(req: http.IncomingMessage): URL {
+  return new URL(
+    req.url ?? '',
+    `http://${req.headers.host ?? 'unknown'}`,
+  )
+}
+
+function httpGetBody(req: http.IncomingMessage): Promise<JSON> {
+  // https://nodejs.org/en/learn/modules/anatomy-of-an-http-transaction#request-body
+  return new Promise((resolve) => {
+    // deno-lint-ignore no-explicit-any
+    const bodyParts: any[] = []
+    let body
+    req.on('data', (chunk) => {
+      bodyParts.push(chunk)
+    }).on('end', () => {
+      body = Buffer.concat(bodyParts).toString()
+      resolve(JSON.parse(body))
+    })
+  })
+}
+
+function httpSetTextResponse(res: http.ServerResponse, status: number, text: string) {
+  res.setHeader('Content-Type', 'text/plain')
+  res.statusCode = status
+  res.end(`${text}\n`)
+}
+
+function httpSetJsonResponse(res: http.ServerResponse, status: number, text: string, code: number) {
+  res.setHeader('Content-Type', 'application/json')
+  res.statusCode = status
+  res.write(JSON.stringify({
+    jsonrpc: '2.0',
+    error: {
+      code: code,
+      message: text,
+    },
+    id: null,
+  }))
+  res.end()
+}
+
+/*
+ * Run the MCP server using the Streamable HTTP transport
+ */
+function runStreamableHttp(port: number) {
+  // https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#with-session-management
   const mcpServer = createServer()
-  const transports: { [sessionId: string]: SSEServerTransport } = {}
+  const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(
-      req.url ?? '',
-      `http://${req.headers.host ?? 'unknown'}`,
-    )
+    const url = httpGetUrl(req)
     let pathMatch = false
     function match(method: string, path: string): boolean {
       if (url.pathname === path) {
@@ -123,12 +177,92 @@ function runSse(port: number) {
       }
       return false
     }
-    function textResponse(status: number, text: string) {
-      res.setHeader('Content-Type', 'text/plain')
-      res.statusCode = status
-      res.end(`${text}\n`)
+
+    // Reusable handler for GET and DELETE requests
+    async function handleSessionRequest() {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined
+      if (!sessionId || !transports[sessionId]) {
+        httpSetTextResponse(res, 400, 'Invalid or missing session ID')
+        return
+      }
+
+      const transport = transports[sessionId]
+      await transport.handleRequest(req, res)
     }
-    // console.log(`${req.method} ${url}`)
+
+    // Handle different request methods and paths
+    if (match('POST', '/mcp')) {
+      // Check for existing session ID
+      const sessionId = req.headers['mcp-session-id'] as string | undefined
+      let transport: StreamableHTTPServerTransport
+
+      const body = await httpGetBody(req)
+
+      if (sessionId && transports[sessionId]) {
+        // Reuse existing transport
+        transport = transports[sessionId]
+      } else if (!sessionId && isInitializeRequest(body)) {
+        // New initialization request
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (sessionId) => {
+            // Store the transport by session ID
+            transports[sessionId] = transport
+          },
+        })
+
+        // Clean up transport when closed
+        transport.onclose = () => {
+          if (transport.sessionId) {
+            delete transports[transport.sessionId]
+          }
+        }
+
+        await mcpServer.connect(transport)
+      } else {
+        httpSetJsonResponse(res, 400, 'Bad Request: No valid session ID provided', -32000)
+        return
+      }
+
+      // Handle the request
+      await transport.handleRequest(req, res, body)
+    } else if (match('GET', '/mcp')) {
+      // Handle server-to-client notifications via SSE
+      await handleSessionRequest()
+    } else if (match('DELETE', '/mcp')) {
+      // Handle requests for session termination
+      await handleSessionRequest()
+    } else if (pathMatch) {
+      httpSetTextResponse(res, 405, 'Method not allowed')
+    } else {
+      httpSetTextResponse(res, 404, 'Page not found')
+    }
+  })
+
+  server.listen(port, () => {
+    console.log(
+      `Running MCP Run Python version ${VERSION} with Streamable HTTP transport on port ${port}`,
+    )
+  })
+}
+
+/*
+ * Run the MCP server using the SSE transport, e.g. over HTTP.
+ */
+function runSse(port: number) {
+  const mcpServer = createServer()
+  const transports: { [sessionId: string]: SSEServerTransport } = {}
+
+  const server = http.createServer(async (req, res) => {
+    const url = httpGetUrl(req)
+    let pathMatch = false
+    function match(method: string, path: string): boolean {
+      if (url.pathname === path) {
+        pathMatch = true
+        return req.method === method
+      }
+      return false
+    }
 
     if (match('GET', '/sse')) {
       const transport = new SSEServerTransport('/messages', res)
@@ -143,12 +277,12 @@ function runSse(port: number) {
       if (transport) {
         await transport.handlePostMessage(req, res)
       } else {
-        textResponse(400, `No transport found for sessionId '${sessionId}'`)
+        httpSetTextResponse(res, 400, `No transport found for sessionId '${sessionId}'`)
       }
     } else if (pathMatch) {
-      textResponse(405, 'Method not allowed')
+      httpSetTextResponse(res, 405, 'Method not allowed')
     } else {
-      textResponse(404, 'Page not found')
+      httpSetTextResponse(res, 404, 'Page not found')
     }
   })
 

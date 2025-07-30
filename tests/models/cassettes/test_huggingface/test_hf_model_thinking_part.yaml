@@ -1,0 +1,291 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/Qwen/Qwen3-235B-A22B?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '470'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"1d6-5wPQfbCXoh8XtBVekhfceCwHN4Y"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 680daa4ac41c05ba341b67d1
+      id: Qwen/Qwen3-235B-A22B
+      inferenceProviderMapping:
+        fireworks-ai:
+          providerId: accounts/fireworks/models/qwen3-235b-a22b
+          status: live
+          task: conversational
+        nebius:
+          providerId: Qwen/Qwen3-235B-A22B
+          status: live
+          task: conversational
+        novita:
+          providerId: qwen/qwen3-235b-a22b-fp8
+          status: live
+          task: conversational
+        nscale:
+          providerId: Qwen/Qwen3-235B-A22B
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/nebius/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '5526'
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          audio: null
+          content: "<think>\nOkay, the user is asking how to cross the street safely. Let me break this down step by step.
+            First, they need to look both ways to check for cars. But wait, should they check left, right, then left again?
+            I remember that's a common safety tip. They might be in a country where people drive on the right side or the
+            left, so maybe should I mention that?\n\nAlso, traffic signals and signs are important. What about pedestrian
+            crossings or traffic lights? Explaining when to walk when the signal is green and the cars have stopped. Oh, right,
+            sometimes people might not realize to wait for the walk signal. And even when using a crosswalk, you still need
+            to look both ways because cars might not stop.\n\nDistractions like phones or headphones. Yeah, people often get
+            hurt because they're looking at their phone while crossing. Should advise them to put away distractions and stay
+            alert. Kids and elderly folks might need extra care, like holding an adult's hand.\n\nWhat about if there's no
+            traffic light or crosswalk? Then finding the safest spot with good visibility, maybe near a corner where cars
+            can see them better. And teaching kids the basics of street safety.\n\nAlso, the confidence aspect—don't rush,
+            take your time, make eye contact with drivers. And what to do if stuck in the middle? Wait for the next signal.
+            Oh, and bicycles! In some places, bike lanes cross sidewalks, so being watchful for cyclists too.\n\nWait, should
+            I structure these points in a numbered list? Start with stopping at the curb, then looking both ways, checking
+            traffic signals, obeying signs, avoiding distractions, using crosswalks if possible, teaching kids, staying visible,
+            making eye contact, and what to do if stuck. Maybe add something about not assuming drivers see them and being
+            cautious.\n\nLet me make sure not to miss any key points. Also, mention that it's safer to cross at intersections.
+            And maybe a final note about local laws or practices varying by country. Yeah, that covers the main points. I
+            should present it clearly so it's easy to follow step by step without getting overwhelmed.\n</think>\n\nCrossing
+            the street safely requires attention, patience, and following key steps. Here's a clear guide:\n\n1. **Stop at
+            the Curb**: Find a safe spot to pause before stepping onto the road.\n\n2. **Look Both Ways (Left, Right, Then
+            Left Again!)**  \n   - **First check left**: Look for oncoming traffic from your left (if driving is on the right
+            side in your country).  \n   - **Then check right**: Check for vehicles coming from the right.  \n   - **Final
+            glance left**: Recheck the direction of traffic closest to you before stepping off the curb.  \n   *(Reverse this
+            order if driving is on the left, as in the UK or Japan.)*\n\n3. **Use Traffic Signals and Crosswalks**:  \n   -
+            Wait for the pedestrian \"walk\" signal (green hand or similar).  \n   - If there’s no signal, only cross once
+            all vehicles have come to a complete stop and you’ve made eye contact with drivers.  \n   - Follow any painted
+            crosswalk lines and stay within them.\n\n4. **Obey Traffic Signs/Lights**:  \n   - Red/yellow lights mean stop.
+            Green means it’s safe to start crossing, but still watch for turning vehicles.  \n   - If the \"don’t walk\" signal
+            flashes while you’re mid-crossing, finish crossing without rushing.\n\n5. **Avoid Distractions**:  \n   - Put
+            away phones, earbuds, or anything that blocks your senses.  \n   - Keep your head up and stay alert to your surroundings.\n\n6.
+            **Be Visible and Predictable**:  \n   - Wear bright/light-colored clothing, especially at night.  \n   - Walk
+            (don’t run) and follow the flow of traffic. Avoid sudden changes in direction.\n\n7. **Teach Children Safely**:
+            \ \n   - Hold young children’s hands.  \n   - Practice the \"stop, look, listen\" rule together.  \n   - Teach
+            them to make eye contact with drivers before crossing.\n\n8. **Cross at Intersections When Possible**:  \n   -
+            Drivers expect pedestrians at crosswalks and intersections.  \n   - If no crosswalk exists, choose a spot with
+            clear visibility (e.g., where you can see around parked cars).\n\n9. **Don’t Assume Drivers See You**:  \n   -
+            Even if a car stops, check for other vehicles that might not yield.  \n   - At night, use a flashlight or phone
+            light to stay visible.\n\n10. **What to Do if Stuck Mid-Street**:  \n    - If the light changes before you reach
+            the other side, stay calm.  \n    - Stop at the median or safety island and wait for the next signal.  \n\n**Bonus
+            Tip**: In areas with bike lanes, check for cyclists even once you’ve started crossing. In some places, bikes ride
+            against traffic flow, so look both ways even on one-way streets.\n\n**Local Laws Matter**: Check rules in your
+            area—e.g., some places require yielding to pedestrians, while others prioritize drivers. Always prioritize your
+            safety over assumptions.\n\nFollow these steps, and you’ll cross the street confidently and safely every time!
+            \U0001F6B6♀️ ✅"
+          function_call: null
+          reasoning_content: null
+          refusal: null
+          role: assistant
+          tool_calls: []
+        stop_reason: null
+      created: 1752067065
+      id: chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9
+      model: Qwen/Qwen3-235B-A22B
+      object: chat.completion
+      prompt_logprobs: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 1090
+        completion_tokens_details: null
+        prompt_tokens: 15
+        prompt_tokens_details: null
+        total_tokens: 1105
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/nebius/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '9391'
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          audio: null
+          content: "<think>\nOkay, the user previously asked how to cross the street, and I gave a detailed answer. Now they're
+            asking about crossing a river analogously. Let me start by understanding the connection. They want a similar structured
+            approach but for crossing a river.\n\nFirst, I need to figure out the equivalents between crossing a street and
+            a river. The original steps included looking both ways, using signals, avoiding distractions, etc. For a river,
+            physical steps might involve checking the current, choosing a safe spot, maybe using a bridge or boat.\n\nI should
+            map each street-crossing step to a river scenario. For example, \"stop at the curb\" becomes \"assess the riverbank.\"
+            Instead of traffic signals, check for ferry schedules or bridge access. Use safety equipment like life jackets
+            instead of wearing bright clothes.\n\nWait, the user mentioned \"analogously,\" so the structure should mirror
+            the previous answer but with river-specific actions. Maybe start by pausing to observe the river, checking water
+            flow instead of traffic. Use bridges as crosswalks and traffic signals. Boating has its own signals, like flags
+            or lights.\n\nAlso, think about hazards unique to rivers: strong currents, slippery rocks, wildlife. Safety considerations
+            here would involve knowing how to swim, having a floatation device, not relying on unreliable methods like jumping
+            on rocks.\n\nNeed to include steps like evaluating the crossing point, checking for bridges or fords, using boats
+            if necessary, avoiding hazards. Maybe mention time-sensitive factors like weather or flooding, similar to obeying
+            traffic lights.\n\nI should ensure each point from the previous answer has a parallel. For example, distractions
+            like phones would be like not paying attention to the river's flow. Visibility could mean wearing bright colors
+            to be seen on the water.\n\nAlso, consider group scenarios or children, making sure everyone knows the plan. Teaching
+            kids to cross safely here might involve knowing how to use floatation devices.\n\nI need to make sure the answer
+            is comprehensive but clear, following the same logical structure as the street crossing answer. Maybe list steps
+            in order, similar to the original list. Check for completeness: assessment, choosing the method, using proper
+            equipment, following safety protocols, dealing with emergencies mid-crossing, etc.\n\nWait, the original answer
+            had 10 points plus a bonus tip. Should mirror that structure? Maybe create a list with parallels. Also, ensure
+            that analogies are accurate—traffic becomes currents, crosswalks become bridges or fords, traffic signals become
+            navigational markers or ferry schedules.\n\nAvoiding distractions would involve focusing on the water's movement
+            and surroundings, not looking at devices. Visibility in water might involve reflective gear or signaling.\n\nAlso,
+            legal aspects: crossing at authorized spots only, checking if permits are needed. Local hazards or regulations
+            could be like local traffic laws.\n\nPotential mistakes: Maybe comparing the river's current to traffic is too
+            direct. Or missing steps like testing the stability of a path across the river, which isn't present in street
+            crossing. Need to add those unique elements naturally.\n\nAlso, emergencies: If mid-river and something goes wrong,
+            similar to being stuck on the street. Having a plan, like heading to a safer area or using safety equipment.\n\nAlright,
+            structure each point as an analogy, then expand with river-specific advice. Make sure the order parallels the
+            original. Use similar section titles but adapted. Maybe end with a note on local conditions and safety first.\n</think>\n\nCrossing
+            a river safely shares many principles with crossing a street but involves adapting to the unpredictable nature
+            of water. Below is an analogy-based guide, mirroring the street-crossing steps while addressing river-specific
+            challenges:\n\n---\n\n### **1. Stop at the Riverbank: Assess the Situation**\n   - **Pause and Observe**  \n     Like
+            stopping at the curb, stand back from the edge to evaluate the river’s width, speed, and hazards (swift currents,
+            rocks, debris, depth).  \n   - **Check for Bridges/Piers/Crossings**  \n     Just as intersections prioritize
+            pedestrian safety, bridges or marked fords exist for safer passage. Use them if accessible.  \n\n---\n\n### **2.
+            Read the River: Look Both Upstream and Downstream**  \n   - **Scan Both Directions**  \n     Just as you look
+            left/right for cars, search **upstream (left if driving is right-hand)** for hazards like floating debris or sudden
+            surges. Check **downstream (right)** for exit points in case you’re swept away.  \n   - **Check the Flow**  \n
+            \    Assess current strength: Is it a gentle trickle or a raging torrent? Avoid crossing if water is above knee-deep
+            or too fast.  \n\n---\n\n### **3. Use Safe Routes: Bridges, Ferries, or Designated Fords**  \n   - **Follow Traffic
+            Signals → Follow Nautical Rules**  \n     Wait for ferry schedules, flashing lights (if present), or buoys marking
+            safe paths. Cross only when signals (like a ferry’s horn) indicate it’s safe.  \n   - **Choose a Footbridge or
+            Ferry**  \n     Bridges eliminate water risks entirely, much like crosswalks. Ferries or boats (with licensed
+            operators) are safest for wider rivers.  \n\n---\n\n### **4. Prioritize Your Path: Know Where to Step or Swim**
+            \ \n   - **Identify Stable Rocks or Shallows**  \n     If wading, pick a route with flat, secure footing (like
+            stepping stones) or the shallowest stretch, avoiding slippery algae-covered surfaces.  \n   - **Test the Current**
+            \ \n     Before fully entering, use a stick or rock to gauge the force of the water. Swift currents can sweep
+            you off your feet faster than a car can strike.  \n\n---\n\n### **5. Avoid Distractions: Focus on the Movement**
+            \ \n   - **Put Away Devices**  \n     A phone distraction here risks losing balance in the river versus stepping
+            blindly into traffic. Keep both hands free for stability.  \n   - **Listen to the River**  \n     Gurgling or
+            roaring water warns of hidden holes or rapids—similar to hearing a car engine approaching.  \n\n---\n\n### **6.
+            Be Predictable and Visible: Wear Bright Gear or Floats**  \n   - **Wear a Life Jacket**  \n     Like high-visibility
+            clothing, a life jacket keeps you buoyant and makes you easier for rescuers or boat operators to spot.  \n   -
+            **Stick to a Straight Route**  \n     Zigzagging in water wastes energy and increases the risk of losing balance,
+            just as darting across lanes on a street invites accidents.  \n\n---\n\n### **7. Communicate: Make Eye Contact
+            with Boaters or Guides**  \n   - **Signal to Operators**  \n     In small boats or rafts, wave to catch the attention
+            of passing vessels (like making eye contact with drivers) to ensure they see you.  \n   - **Use Hand Signals or
+            Whistles**  \n     Agree on emergency signals with your group beforehand (e.g., pointing downstream to signal
+            danger).  \n\n---\n\n### **8. Cross at the Safest Spot: Avoid Mid-River Surprises**  \n   - **Choose Wide, Slow
+            Sections**  \n     Like crossing at intersections, wide shallow areas have gentler currents. Avoid narrows where
+            water funnels into rapids.  \n   - **Watch for Hidden Dangers**  \n     Submerged logs, sudden drop-offs, or hypothermic
+            cold water can be as lethal as a speeding car.  \n\n---\n\n### **9. Don’t Assume Safety: Verify Every Step or
+            Stroke**  \n   - **Test Each Footstep**  \n     Tap the riverbed before transferring weight to avoid stepping
+            into a hole or loose gravel (like checking for icy patches on a sidewalk).  \n   - **Swim Only If Trained**  \n
+            \    If the river is too deep to wade, only swim if you know how. Use floatation devices if unsure—similar to
+            holding an adult’s hand as a child crossing a street.  \n\n---\n\n### **10. Mid-River Emergencies: What to Do
+            if Stuck**  \n   - **If Struck by Current**  \n     Stay calm, float on your back with feet downstream (to avoid
+            head-first collisions), and steer toward eddies or the shore.  \n   - **If Trapped on a Rock**  \n     Hug a large
+            rock and wait for help, like pausing at a median. Don’t risk swimming diagonally across the river’s flow.  \n\n---\n\n###
+            **Bonus Tip: Adapt to Local Conditions**  \n   - **Research Hazards**  \n     Some rivers have undertows, wildlife,
+            or pollution. Check local warnings (like road signs for blind corners or school zones).  \n   - **Weather Watch**
+            \ \n     Sudden rainstorms can cause flash floods—delay crossing if clouds mass on the horizon.  \n\n---\n\nBy
+            applying street-crossing principles to river navigation—patience, situational awareness, and prioritizing safe
+            infrastructure—you can minimize risks. Always assume the river is more dangerous than it appears, just as you’d
+            treat an unfamiliar road. **Safety first, crossing second!** \U0001F30A \U0001F6A4 ⚠️"
+          function_call: null
+          reasoning_content: null
+          refusal: null
+          role: assistant
+          tool_calls: []
+        stop_reason: null
+      created: 1752067094
+      id: chatcmpl-35fdec1307634f94a39f7e26f52e12a7
+      model: Qwen/Qwen3-235B-A22B
+      object: chat.completion
+      prompt_logprobs: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 1860
+        completion_tokens_details: null
+        prompt_tokens: 691
+        prompt_tokens_details: null
+        total_tokens: 2551
+    status:
+      code: 200
+      message: OK
+version: 1

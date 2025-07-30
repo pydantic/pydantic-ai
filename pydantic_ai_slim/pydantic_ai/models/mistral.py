@@ -52,6 +52,7 @@ try:
         CompletionChunk as MistralCompletionChunk,
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
+        DocumentURLChunk as MistralDocumentURLChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
@@ -75,7 +76,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: lax no cover
+except ImportError as e:  # pragma: no cover
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -217,7 +218,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -428,7 +429,7 @@ class MistralModel(Model):
         if value_type == 'object':
             additional_properties = value.get('additionalProperties', {})
             if isinstance(additional_properties, bool):
-                return 'bool'  # pragma: no cover
+                return 'bool'  # pragma: lax no cover
             additional_properties_type = additional_properties.get('type')
             if (
                 additional_properties_type in SIMPLE_JSON_TYPE_MAPPING
@@ -539,10 +540,19 @@ class MistralModel(Model):
                     if item.is_image:
                         image_url = MistralImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
+                    elif item.media_type == 'application/pdf':
+                        content.append(
+                            MistralDocumentURLChunk(
+                                document_url=f'data:application/pdf;base64,{base64_encoded}', type='document_url'
+                            )
+                        )
                     else:
-                        raise RuntimeError('Only image binary content is supported for Mistral.')
+                        raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
                 elif isinstance(item, DocumentUrl):
-                    raise RuntimeError('DocumentUrl is not supported in Mistral.')  # pragma: no cover
+                    if item.media_type == 'application/pdf':
+                        content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
+                    else:
+                        raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
                 else:  # pragma: no cover
@@ -591,7 +601,9 @@ class MistralStreamedResponse(StreamedResponse):
                             tool_call_id=maybe_tool_call_part.tool_call_id,
                         )
                 else:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
             # Handle the explicit tool calls
             for index, dtc in enumerate(choice.delta.tool_calls or []):

@@ -6,12 +6,18 @@ from typing import Any, Callable
 import pytest
 from dirty_equals import IsInt, IsJson, IsList
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent
 from pydantic_ai._utils import get_traceparent
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.tools import RunContext
 
 from .conftest import IsStr
 
@@ -289,6 +295,7 @@ def test_logfire(
                                 },
                                 'outer_typed_dict_key': None,
                                 'strict': None,
+                                'kind': 'function',
                             }
                         ],
                         'output_mode': 'text',
@@ -415,6 +422,111 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
     )
 
 
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+def test_instructions_with_structured_output_exclude_content(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+    @dataclass
+    class MyOutput:
+        content: str
+
+    settings: InstrumentationSettings = InstrumentationSettings(include_content=False)
+
+    my_agent = Agent(model=TestModel(), instructions='Here are some instructions', instrument=settings)
+
+    result = my_agent.run_sync('Hello', output_type=MyOutput)
+    assert result.output == snapshot(MyOutput(content='a'))
+
+    summary = get_logfire_summary()
+    assert summary.attributes[0] == snapshot(
+        {
+            'model_name': 'test',
+            'agent_name': 'my_agent',
+            'logfire.msg': 'my_agent run',
+            'logfire.span_type': 'span',
+            'gen_ai.usage.input_tokens': 51,
+            'gen_ai.usage.output_tokens': 5,
+            'all_messages_events': IsJson(
+                snapshot(
+                    [
+                        {
+                            'role': 'system',
+                            'event.name': 'gen_ai.system.message',
+                        },
+                        {
+                            'content': {'kind': 'text'},
+                            'role': 'user',
+                            'gen_ai.message.index': 0,
+                            'event.name': 'gen_ai.user.message',
+                        },
+                        {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {
+                                    'id': IsStr(),
+                                    'type': 'function',
+                                    'function': {'name': 'final_result'},
+                                }
+                            ],
+                            'gen_ai.message.index': 1,
+                            'event.name': 'gen_ai.assistant.message',
+                        },
+                        {
+                            'role': 'tool',
+                            'id': IsStr(),
+                            'name': 'final_result',
+                            'gen_ai.message.index': 2,
+                            'event.name': 'gen_ai.tool.message',
+                        },
+                    ]
+                )
+            ),
+            'logfire.json_schema': IsJson(
+                snapshot(
+                    {
+                        'type': 'object',
+                        'properties': {'all_messages_events': {'type': 'array'}, 'final_result': {'type': 'object'}},
+                    }
+                )
+            ),
+        }
+    )
+    chat_span_attributes = summary.attributes[1]
+    assert chat_span_attributes['events'] == snapshot(
+        IsJson(
+            snapshot(
+                [
+                    {
+                        'role': 'system',
+                        'gen_ai.system': 'test',
+                        'event.name': 'gen_ai.system.message',
+                    },
+                    {
+                        'event.name': 'gen_ai.user.message',
+                        'content': {'kind': 'text'},
+                        'role': 'user',
+                        'gen_ai.message.index': 0,
+                        'gen_ai.system': 'test',
+                    },
+                    {
+                        'event.name': 'gen_ai.choice',
+                        'index': 0,
+                        'message': {
+                            'role': 'assistant',
+                            'tool_calls': [
+                                {
+                                    'id': IsStr(),
+                                    'type': 'function',
+                                    'function': {'name': 'final_result'},
+                                }
+                            ],
+                        },
+                        'gen_ai.system': 'test',
+                    },
+                ]
+            )
+        )
+    )
+
+
 def test_instrument_all():
     model = TestModel()
     agent = Agent()
@@ -528,10 +640,11 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('include_content,tool_error', [(True, False), (True, True), (False, False), (False, True)])
 def test_include_tool_args_span_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
+    tool_error: bool,
 ) -> None:
     """Test that tool arguments are included/excluded in span attributes based on instrumentation settings."""
 
@@ -542,25 +655,161 @@ def test_include_tool_args_span_attributes(
     @my_agent.tool_plain
     async def add_numbers(x: int, y: int) -> int:
         """Add two numbers together."""
+        if tool_error:
+            raise ModelRetry('Tool error')
         return x + y
 
-    result = my_agent.run_sync('Add 42 and 42')
-    assert result.output == snapshot('{"add_numbers":84}')
+    try:
+        result = my_agent.run_sync('Add 42 and 42')
+        assert result.output == snapshot('{"add_numbers":84}')
+    except UnexpectedModelBehavior:
+        if not tool_error:
+            raise  # pragma: no cover
 
     summary = get_logfire_summary()
 
-    [tool_attributes] = [
+    tool_attributes = next(
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'add_numbers'
+    )
+
+    if include_content:
+        if tool_error:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"x":42,"y":42}',
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': """\
+Tool error
+
+Fix the errors and try again.\
+""",
+                    'logfire.level_num': 17,
+                }
+            )
+        else:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"x":42,"y":42}',
+                    'tool_response': '84',
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                }
+            )
+    else:
+        if tool_error:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                }
+            )
+        else:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                }
+            )
+
+
+class WeatherInfo(BaseModel):
+    temperature: float
+    description: str
+
+
+def get_weather_info(city: str) -> WeatherInfo:
+    return WeatherInfo(temperature=28.7, description='sunny')
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_function_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Mexico City', output_type=get_weather_info)
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
     ]
 
     if include_content:
-        assert tool_attributes == snapshot(
+        assert output_function_attributes == snapshot(
             {
-                'gen_ai.tool.name': 'add_numbers',
+                'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"x":42,"y":42}',
-                'tool_response': '84',
-                'logfire.msg': 'running tool: add_numbers',
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
@@ -568,32 +817,665 @@ def test_include_tool_args_span_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
         )
     else:
-        assert tool_attributes == snapshot(
+        assert output_function_attributes == snapshot(
             {
-                'gen_ai.tool.name': 'add_numbers',
+                'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
-                'logfire.msg': 'running tool: add_numbers',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_function_with_run_context_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    def get_weather_with_ctx(ctx: RunContext[None], city: str) -> WeatherInfo:
+        assert ctx is not None
+        return WeatherInfo(temperature=28.7, description='sunny')
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Mexico City', output_type=get_weather_with_ctx)
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
                             },
                         }
                     )
                 ),
                 'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
             }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_function_with_retry_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    def get_weather_with_retry(city: str) -> WeatherInfo:
+        if city != 'Mexico City':
+            from pydantic_ai import ModelRetry
+
+            raise ModelRetry('City not found, I only know Mexico City')
+        return WeatherInfo(temperature=28.7, description='sunny')
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        if len(messages) == 1:
+            args_json = '{"city": "New York City"}'
+        else:
+            args_json = '{"city": "Mexico City"}'
+
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('New York City', output_type=get_weather_with_retry)
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    output_function_attributes = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"city":"New York City"}',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"city":"Mexico City"}',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+                },
+            ]
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'logfire.span_type': 'span',
+                },
+            ]
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_function_with_custom_tool_name_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    from pydantic_ai.output import ToolOutput
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Mexico City', output_type=ToolOutput(get_weather_info, name='get_weather'))
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes with custom tool name
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'get_weather'
+    ]
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'get_weather',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: get_weather',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'get_weather',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: get_weather',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_bound_instance_method_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+        def get_weather(self, city: str):
+            return self
+
+    weather = Weather(temperature=28.7, description='sunny')
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Mexico City', output_type=weather.get_weather)
+    assert result.output == Weather(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    class Weather(BaseModel):
+        temperature: float
+        description: str
+
+        def get_weather(self, ctx: RunContext[None], city: str):
+            assert ctx is not None
+            return self
+
+    weather = Weather(temperature=28.7, description='sunny')
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Mexico City', output_type=weather.get_weather)
+    assert result.output == Weather(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_async_function_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test logfire attributes for async output function types."""
+
+    async def get_weather_async(city: str) -> WeatherInfo:
+        return WeatherInfo(temperature=28.7, description='sunny')
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"city": "Mexico City"}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Mexico City', output_type=get_weather_async)
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    [output_function_attributes] = [
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    ]
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'tool_arguments': '{"city":"Mexico City"}',
+                'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'final_result',
+                'gen_ai.tool.call.id': IsStr(),
+                'logfire.msg': 'running output function: final_result',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+def upcase_text(text: str) -> str:
+    """Convert text to uppercase."""
+    return text.upper()
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_text_output_function_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test logfire attributes for TextOutput functions (PlainTextOutputProcessor)."""
+
+    def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        # Return a plain text response (not a tool call)
+        from pydantic_ai.messages import TextPart
+
+        return ModelResponse(parts=[TextPart(content='hello world')])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_text_response), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('Say hello', output_type=TextOutput(upcase_text))
+    assert result.output == 'HELLO WORLD'
+
+    summary = get_logfire_summary()
+
+    # Find the text output function span attributes
+    [text_function_attributes] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if 'running output function: upcase_text' in attributes.get('logfire.msg', '')
+    ]
+
+    if include_content:
+        assert text_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'upcase_text',
+                'tool_arguments': '{"text":"hello world"}',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': 'HELLO WORLD',
+            }
+        )
+    else:
+        assert text_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'upcase_text',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_prompted_output_function_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    """Test that spans are created for PromptedOutput functions with appropriate attributes."""
+
+    def upcase_text(text: str) -> str:
+        return text.upper()
+
+    call_count = 0
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        # Simulate the model returning JSON that will be parsed and used to call the function
+        return ModelResponse(parts=[TextPart(content='{"text": "hello world"}')])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    agent = Agent(
+        model=FunctionModel(call_tool), instrument=instrumentation_settings, output_type=PromptedOutput(upcase_text)
+    )
+
+    result = agent.run_sync('test')
+
+    # Check that the function was called and returned the expected result
+    assert result.output == 'HELLO WORLD'
+    assert call_count == 1
+
+    summary = get_logfire_summary()
+
+    # Find the output function span attributes
+    [output_function_attributes] = [
+        attributes
+        for attributes in summary.attributes.values()
+        if attributes.get('logfire.msg', '').startswith('running output function: upcase_text')
+    ]
+
+    if include_content:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'upcase_text',
+                'tool_arguments': '{"text":"hello world"}',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.json_schema': IsJson(
+                    snapshot(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                'tool_arguments': {'type': 'object'},
+                                'tool_response': {'type': 'object'},
+                            },
+                        }
+                    )
+                ),
+                'logfire.span_type': 'span',
+                'tool_response': 'HELLO WORLD',
+            }
+        )
+    else:
+        assert output_function_attributes == snapshot(
+            {
+                'gen_ai.tool.name': 'upcase_text',
+                'logfire.msg': 'running output function: upcase_text',
+                'logfire.span_type': 'span',
+            }
+        )
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('include_content', [True, False])
+def test_output_type_text_output_function_with_retry_logfire_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    def get_weather_with_retry(ctx: RunContext[None], city: str) -> WeatherInfo:
+        assert ctx is not None
+        if city != 'Mexico City':
+            from pydantic_ai import ModelRetry
+
+            raise ModelRetry('City not found, I only know Mexico City')
+        return WeatherInfo(temperature=28.7, description='sunny')
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        if len(messages) == 1:
+            city = 'New York City'
+        else:
+            city = 'Mexico City'
+
+        return ModelResponse(parts=[TextPart(content=city)])
+
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
+
+    result = my_agent.run_sync('New York City', output_type=TextOutput(get_weather_with_retry))
+    assert result.output == WeatherInfo(temperature=28.7, description='sunny')
+
+    summary = get_logfire_summary()
+
+    text_function_attributes = [
+        attributes
+        for attributes in summary.attributes.values()
+        if 'running output function: get_weather_with_retry' in attributes.get('logfire.msg', '')
+    ]
+
+    if include_content:
+        assert text_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'tool_arguments': '{"city":"New York City"}',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'tool_arguments': '{"city":"Mexico City"}',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+                },
+            ]
+        )
+    else:
+        assert text_function_attributes == snapshot(
+            [
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.span_type': 'span',
+                    'logfire.level_num': 17,
+                },
+                {
+                    'gen_ai.tool.name': 'get_weather_with_retry',
+                    'logfire.msg': 'running output function: get_weather_with_retry',
+                    'logfire.span_type': 'span',
+                },
+            ]
         )

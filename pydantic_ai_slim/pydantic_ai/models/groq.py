@@ -79,6 +79,7 @@ PreviewGroqModelNames = Literal[
     'llama-3.2-3b-preview',
     'llama-3.2-11b-vision-preview',
     'llama-3.2-90b-vision-preview',
+    'moonshotai/kimi-k2-instruct',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -248,7 +249,7 @@ class GroqModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -414,7 +415,11 @@ class GroqStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content is not None:
-                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content', content=content, extract_think_tags=True
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             # Handle the tool calls
             for dtc in choice.delta.tool_calls or []:
@@ -443,7 +448,7 @@ def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> us
     if isinstance(completion, chat.ChatCompletion):
         response_usage = completion.usage
     elif completion.x_groq is not None:
-        response_usage = completion.x_groq.usage  # pragma: no cover
+        response_usage = completion.x_groq.usage
 
     if response_usage is None:
         return usage.Usage()

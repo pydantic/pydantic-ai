@@ -62,6 +62,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openrouter import OpenRouterProvider
 
         return OpenRouterProvider
+    elif provider == 'vercel':
+        from .vercel import VercelProvider
+
+        return VercelProvider
     elif provider == 'azure':
         from .azure import AzureProvider
 
@@ -99,6 +103,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .grok import GrokProvider
 
         return GrokProvider
+    elif provider == 'moonshotai':
+        from .moonshotai import MoonshotAIProvider
+
+        return MoonshotAIProvider
     elif provider == 'fireworks':
         from .fireworks import FireworksProvider
 
@@ -111,6 +119,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .heroku import HerokuProvider
 
         return HerokuProvider
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceProvider
+
+        return HuggingFaceProvider
     elif provider == 'github':
         from .github import GitHubProvider
 

@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -41,10 +42,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.combined import CombinedToolset
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
@@ -396,6 +400,7 @@ def test_response_tuple():
                     'type': 'object',
                 },
                 outer_typed_dict_key='response',
+                kind='output',
             )
         ]
     )
@@ -469,6 +474,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                     'title': 'Foo',
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -548,6 +554,7 @@ class Bar(BaseModel):
                     'title': 'Foo',
                     'type': 'object',
                 },
+                kind='output',
             ),
             ToolDefinition(
                 name='final_result_Bar',
@@ -558,6 +565,7 @@ class Bar(BaseModel):
                     'title': 'Bar',
                     'type': 'object',
                 },
+                kind='output',
             ),
         ]
     )
@@ -589,6 +597,7 @@ def test_output_type_with_two_descriptions():
                     'title': 'MyOutput',
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -635,6 +644,7 @@ def test_output_type_tool_output_union():
                 },
                 outer_typed_dict_key='response',
                 strict=False,
+                kind='output',
             )
         ]
     )
@@ -673,6 +683,7 @@ def test_output_type_function():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -712,6 +723,7 @@ def test_output_type_function_with_run_context():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -752,6 +764,7 @@ def test_output_type_bound_instance_method():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -793,6 +806,7 @@ def test_output_type_bound_instance_method_with_run_context():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -943,7 +957,7 @@ def test_output_type_text_output_function_with_retry():
     [[str, str], [str, TextOutput(upcase)], [TextOutput(upcase), TextOutput(upcase)]],
 )
 def test_output_type_multiple_text_output(output_type: OutputSpec[str]):
-    with pytest.raises(UserError, match='Only one text output is allowed.'):
+    with pytest.raises(UserError, match='Only one `str` or `TextOutput` is allowed.'):
         Agent('test', output_type=output_type)
 
 
@@ -989,6 +1003,7 @@ def test_output_type_async_function():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -1027,6 +1042,7 @@ def test_output_type_function_with_custom_tool_name():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             )
         ]
     )
@@ -1065,6 +1081,7 @@ def test_output_type_function_or_model():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             ),
             ToolDefinition(
                 name='final_result_Weather',
@@ -1075,6 +1092,7 @@ def test_output_type_function_or_model():
                     'title': 'Weather',
                     'type': 'object',
                 },
+                kind='output',
             ),
         ]
     )
@@ -1251,6 +1269,7 @@ def test_output_type_multiple_custom_tools():
                     'required': ['city'],
                     'type': 'object',
                 },
+                kind='output',
             ),
             ToolDefinition(
                 name='return_weather',
@@ -1261,6 +1280,80 @@ def test_output_type_multiple_custom_tools():
                     'title': 'Weather',
                     'type': 'object',
                 },
+                kind='output',
+            ),
+        ]
+    )
+
+
+def test_output_type_structured_dict():
+    PersonDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'age': {'type': 'integer'},
+            },
+            'required': ['name', 'age'],
+        },
+        name='Person',
+        description='A person',
+    )
+    AnimalDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'species': {'type': 'string'},
+            },
+            'required': ['name', 'species'],
+        },
+        name='Animal',
+        description='An animal',
+    )
+
+    output_tools = None
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        nonlocal output_tools
+        output_tools = info.output_tools
+
+        args_json = '{"name": "John Doe", "age": 30}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=[PersonDict, AnimalDict],
+    )
+
+    result = agent.run_sync('Generate a person')
+
+    assert result.output == snapshot({'name': 'John Doe', 'age': 30})
+    assert output_tools == snapshot(
+        [
+            ToolDefinition(
+                name='final_result_Person',
+                parameters_json_schema={
+                    'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+                    'required': ['name', 'age'],
+                    'title': 'Person',
+                    'type': 'object',
+                },
+                description='A person',
+                kind='output',
+            ),
+            ToolDefinition(
+                name='final_result_Animal',
+                parameters_json_schema={
+                    'properties': {'name': {'type': 'string'}, 'species': {'type': 'string'}},
+                    'required': ['name', 'species'],
+                    'title': 'Animal',
+                    'type': 'object',
+                },
+                description='An animal',
+                kind='output',
             ),
         ]
     )
@@ -1927,7 +2020,7 @@ def test_unknown_tool():
     agent = Agent(FunctionModel(empty))
 
     with capture_run_messages() as messages:
-        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for result validation'):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
             agent.run_sync('Hello')
     assert messages == snapshot(
         [
@@ -2279,12 +2372,6 @@ class TestMultipleToolCalls:
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
                         ),
-                        RetryPromptPart(
-                            tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
-                            timestamp=IsNow(tz=timezone.utc),
-                            tool_call_id=IsStr(),
-                        ),
                         ToolReturnPart(
                             tool_name='regular_tool',
                             content=42,
@@ -2293,6 +2380,12 @@ class TestMultipleToolCalls:
                         ),
                         ToolReturnPart(
                             tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
+                        ),
+                        RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
+                            tool_name='unknown_tool',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
                         ),
                     ]
                 ),
@@ -2357,16 +2450,16 @@ class TestMultipleToolCalls:
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='regular_tool',
-                            content='Tool not executed - a final result was already processed.',
-                            tool_call_id=IsStr(),
-                            timestamp=IsNow(tz=timezone.utc),
-                        ),
-                        ToolReturnPart(
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
                             timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='regular_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
                         ),
                         ToolReturnPart(
                             tool_name='another_tool',
@@ -2376,7 +2469,7 @@ class TestMultipleToolCalls:
                         ),
                         RetryPromptPart(
                             tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: regular_tool, another_tool, final_result",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
                             timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
                         ),
@@ -2423,11 +2516,13 @@ class TestMultipleToolCalls:
         # Verify we got appropriate tool returns
         assert result.new_messages()[-1].parts == snapshot(
             [
-                ToolReturnPart(
+                RetryPromptPart(
+                    content=[
+                        {'type': 'missing', 'loc': ('value',), 'msg': 'Field required', 'input': {'bad_value': 'first'}}
+                    ],
                     tool_name='final_result',
                     tool_call_id='first',
-                    content='Output tool not used - result failed validation.',
-                    timestamp=IsNow(tz=timezone.utc),
+                    timestamp=IsDatetime(),
                 ),
                 ToolReturnPart(
                     tool_name='final_result',
@@ -2576,6 +2671,18 @@ def test_double_capture_run_messages() -> None:
             ),
         ]
     )
+
+
+def test_capture_run_messages_with_user_exception_does_not_contain_internal_errors() -> None:
+    """Test that user exceptions within capture_run_messages context have clean stack traces."""
+    agent = Agent('test')
+
+    try:
+        with capture_run_messages():
+            agent.run_sync('Hello')
+            raise ZeroDivisionError('division by zero')
+    except Exception as e:
+        assert e.__context__ is None
 
 
 def test_dynamic_false_no_reevaluate():
@@ -2831,7 +2938,13 @@ def test_binary_content_all_messages_json():
                     {
                         'content': [
                             'Hello',
-                            {'data': 'SGVsbG8=', 'media_type': 'text/plain', 'vendor_metadata': None, 'kind': 'binary'},
+                            {
+                                'data': 'SGVsbG8=',
+                                'media_type': 'text/plain',
+                                'vendor_metadata': None,
+                                'kind': 'binary',
+                                'identifier': None,
+                            },
                         ],
                         'timestamp': IsStr(),
                         'part_kind': 'user-prompt',
@@ -2861,6 +2974,93 @@ def test_binary_content_all_messages_json():
     # We also need to be able to round trip the serialized messages.
     messages = ModelMessagesTypeAdapter.validate_json(serialized)
     assert messages == result.all_messages()
+
+
+def test_tool_return_part_binary_content_serialization():
+    """Test that ToolReturnPart can properly serialize BinaryContent."""
+    png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+    binary_content = BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
+
+    tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
+
+    response_str = tool_return.model_response_str()
+
+    assert '"kind":"binary"' in response_str
+    assert '"media_type":"image/png"' in response_str
+    assert '"data":"' in response_str
+    assert '"identifier":"image_id_1"' in response_str
+
+    response_obj = tool_return.model_response_object()
+    assert response_obj['return_value']['kind'] == 'binary'
+    assert response_obj['return_value']['media_type'] == 'image/png'
+    assert response_obj['return_value']['identifier'] == 'image_id_1'
+    assert 'data' in response_obj['return_value']
+
+
+def test_tool_returning_binary_content_directly():
+    """Test that a tool returning BinaryContent directly works correctly."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_image', {})])
+        else:
+            return ModelResponse(parts=[TextPart('Image received')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_image() -> BinaryContent:
+        """Return a simple image."""
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+        return BinaryContent(png_data, media_type='image/png')
+
+    # This should work without the serialization error
+    result = agent.run_sync('Get an image')
+    assert result.output == 'Image received'
+
+
+def test_tool_returning_binary_content_with_identifier():
+    """Test that a tool returning BinaryContent directly works correctly."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_image', {})])
+        else:
+            return ModelResponse(parts=[TextPart('Image received')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_image() -> BinaryContent:
+        """Return a simple image."""
+        png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
+        return BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
+
+    # This should work without the serialization error
+    result = agent.run_sync('Get an image')
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_image',
+                    content='See file image_id_1',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content=[
+                        'This is file image_id_1:',
+                        BinaryContent(
+                            data=b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82',
+                            media_type='image/png',
+                            identifier='image_id_1',
+                        ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+    )
 
 
 def test_instructions_raise_error_when_system_prompt_is_set():
@@ -3135,7 +3335,7 @@ def test_unsupported_output_mode():
 
     agent = Agent(model, output_type=NativeOutput(Foo))
 
-    with pytest.raises(UserError, match='Structured output is not supported by the model.'):
+    with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
         agent.run_sync('Hello')
 
     agent = Agent(model, output_type=ToolOutput(Foo))
@@ -3323,7 +3523,7 @@ def test_many_multimodal_tool_response():
 
     with pytest.raises(
         UserError,
-        match="analyze_data's return contains invalid nested ToolReturn objects. ToolReturn should be used directly.",
+        match="The return value of tool 'analyze_data' contains invalid nested `ToolReturn` objects. `ToolReturn` should be used directly.",
     ):
         agent.run_sync('Please analyze the data')
 
@@ -3357,7 +3557,7 @@ def test_multimodal_tool_response_nested():
 
     with pytest.raises(
         UserError,
-        match="analyze_data's `return_value` contains invalid nested MultiModalContentTypes objects. Please use `content` instead.",
+        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContentTypes` objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
 
@@ -3422,6 +3622,19 @@ def test_deprecated_kwargs_still_work():
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_retries` is deprecated' in str(w[0].message)
 
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+
+            agent = Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
+            assert len(w) == 1
+            assert issubclass(w[0].category, DeprecationWarning)
+            assert '`mcp_servers` is deprecated' in str(w[0].message)
+    except ImportError:
+        pass
+
 
 def test_deprecated_kwargs_mixed_valid_invalid():
     """Test that mix of valid deprecated and invalid kwargs raises error for invalid ones."""
@@ -3436,3 +3649,272 @@ def test_deprecated_kwargs_mixed_valid_invalid():
         with warnings.catch_warnings():
             warnings.simplefilter('ignore', DeprecationWarning)  # Ignore the deprecation warning for result_tool_name
             Agent('test', result_tool_name='test', foo='value1', bar='value2')  # type: ignore[call-arg]
+
+
+def test_override_toolsets():
+    foo_toolset = FunctionToolset()
+
+    @foo_toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'
+
+    available_tools: list[list[str]] = []
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        nonlocal available_tools
+        available_tools.append([tool_def.name for tool_def in tool_defs])
+        return tool_defs
+
+    agent = Agent('test', toolsets=[foo_toolset], prepare_tools=prepare_tools)
+
+    @agent.tool_plain
+    def baz() -> str:
+        return 'Hello from baz'
+
+    result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['baz', 'foo'])
+    assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo"}')
+
+    bar_toolset = FunctionToolset()
+
+    @bar_toolset.tool
+    def bar() -> str:
+        return 'Hello from bar'
+
+    with agent.override(toolsets=[bar_toolset]):
+        result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['baz', 'bar'])
+    assert result.output == snapshot('{"baz":"Hello from baz","bar":"Hello from bar"}')
+
+    with agent.override(toolsets=[]):
+        result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['baz'])
+    assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+    result = agent.run_sync('Hello', toolsets=[bar_toolset])
+    assert available_tools[-1] == snapshot(['baz', 'foo', 'bar'])
+    assert result.output == snapshot('{"baz":"Hello from baz","foo":"Hello from foo","bar":"Hello from bar"}')
+
+    with agent.override(toolsets=[]):
+        result = agent.run_sync('Hello', toolsets=[bar_toolset])
+    assert available_tools[-1] == snapshot(['baz'])
+    assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+
+def test_adding_tools_during_run():
+    toolset = FunctionToolset()
+
+    def foo() -> str:
+        return 'Hello from foo'
+
+    @toolset.tool
+    def add_foo_tool() -> str:
+        toolset.add_function(foo)
+        return 'foo tool added'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('add_foo_tool')])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('foo')])
+        else:
+            return ModelResponse(parts=[TextPart('Done')])
+
+    agent = Agent(FunctionModel(respond), toolsets=[toolset])
+    result = agent.run_sync('Add the foo tool and run it')
+    assert result.output == snapshot('Done')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Add the foo tool and run it',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='add_foo_tool', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=2, total_tokens=59),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='add_foo_tool',
+                        content='foo tool added',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
+                usage=Usage(requests=1, request_tokens=60, response_tokens=4, total_tokens=64),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='foo',
+                        content='Hello from foo',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done')],
+                usage=Usage(requests=1, request_tokens=63, response_tokens=5, total_tokens=68),
+                model_name='function:respond:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_prepare_output_tools():
+    @dataclass
+    class AgentDeps:
+        plan_presented: bool = False
+
+    async def present_plan(ctx: RunContext[AgentDeps], plan: str) -> str:
+        """
+        Present the plan to the user.
+        """
+        ctx.deps.plan_presented = True
+        return plan
+
+    async def run_sql(ctx: RunContext[AgentDeps], purpose: str, query: str) -> str:
+        """
+        Run an SQL query.
+        """
+        return 'SQL query executed successfully'
+
+    async def only_if_plan_presented(
+        ctx: RunContext[AgentDeps], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        return tool_defs if ctx.deps.plan_presented else []
+
+    agent = Agent(
+        model='test',
+        deps_type=AgentDeps,
+        tools=[present_plan],
+        output_type=[ToolOutput(run_sql, name='run_sql')],
+        prepare_output_tools=only_if_plan_presented,
+    )
+
+    result = agent.run_sync('Hello', deps=AgentDeps())
+    assert result.output == snapshot('SQL query executed successfully')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='present_plan',
+                        args={'plan': 'a'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='present_plan',
+                        content='a',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='run_sql',
+                        args={'purpose': 'a', 'query': 'a'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=12, total_tokens=64),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='run_sql',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_context_manager():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent('test', toolsets=[toolset])
+
+    async with agent:
+        assert server1.is_running
+        assert server2.is_running
+
+        async with agent:
+            assert server1.is_running
+            assert server2.is_running
+
+
+def test_set_mcp_sampling_model():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    test_model = TestModel()
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'], sampling_model=test_model)
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent(None, toolsets=[toolset])
+
+    with pytest.raises(UserError, match='No sampling model provided and no model set on the agent.'):
+        agent.set_mcp_sampling_model()
+    assert server1.sampling_model is None
+    assert server2.sampling_model is test_model
+
+    agent.model = test_model
+    agent.set_mcp_sampling_model()
+    assert server1.sampling_model is test_model
+    assert server2.sampling_model is test_model
+
+    function_model = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Hello')]))
+    with agent.override(model=function_model):
+        agent.set_mcp_sampling_model()
+        assert server1.sampling_model is function_model
+        assert server2.sampling_model is function_model
+
+    function_model2 = FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('Goodbye')]))
+    agent.set_mcp_sampling_model(function_model2)
+    assert server1.sampling_model is function_model2
+    assert server2.sampling_model is function_model2

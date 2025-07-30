@@ -138,7 +138,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
-        except TypeError:  # pragma: lax no cover
+        except TypeError:
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
@@ -156,7 +156,12 @@ class InstrumentationSettings:
         events: list[Event] = []
         instructions = InstrumentedModel._get_instructions(messages)  # pyright: ignore [reportPrivateUsage]
         if instructions is not None:
-            events.append(Event('gen_ai.system.message', body={'content': instructions, 'role': 'system'}))
+            events.append(
+                Event(
+                    'gen_ai.system.message',
+                    body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
+                )
+            )
 
         for message_index, message in enumerate(messages):
             message_events: list[Event] = []
