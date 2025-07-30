@@ -9,13 +9,22 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import RunContext
-from pydantic_ai.batches.openai import (
-    BatchJob,
-    BatchResult,
-    OpenAIBatchModel,
-    create_chat_request,
-)
 from pydantic_ai.tools import Tool
+
+from ..conftest import try_import
+
+with try_import() as imports_successful:
+    from pydantic_ai.batches.openai import (
+        BatchJob,
+        BatchResult,
+        OpenAIBatchModel,
+        create_chat_request,
+    )
+
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.anyio,
+]
 
 
 class WeatherResult(BaseModel):
