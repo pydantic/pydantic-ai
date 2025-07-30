@@ -412,8 +412,8 @@ class ToolReturn:
     return_value: Any
     """The return value to be used in the tool response."""
 
-    content: Sequence[UserContent] | None = None
-    """The content sequence to be sent to the model as a UserPromptPart."""
+    content: str | Sequence[UserContent] | None = None
+    """The content to be sent to the model as a UserPromptPart."""
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
