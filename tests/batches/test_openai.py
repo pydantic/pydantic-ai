@@ -9,17 +9,12 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import RunContext
-
-try:
-    from pydantic_ai.batches.openai import (
-        BatchJob,
-        BatchResult,
-        OpenAIBatchModel,
-        create_chat_request,
-    )
-except ImportError:
-    pytest.skip('openai is not installed', allow_module_level=True)
-
+from pydantic_ai.batches.openai import (
+    BatchJob,
+    BatchResult,
+    OpenAIBatchModel,
+    create_chat_request,
+)
 from pydantic_ai.tools import Tool
 
 
@@ -1137,3 +1132,214 @@ class TestAdditionalErrorScenarios:
 
         # Should return None when response is None
         assert result.output is None
+
+
+class TestHelperFunctions:
+    """Test helper functions to achieve 100% coverage."""
+
+    def test_get_weather_function(self) -> None:
+        """Test get_weather function directly."""
+        from unittest.mock import Mock
+
+        ctx = Mock()
+        result = get_weather(ctx, 'Paris')
+        assert result == 'Weather in Paris: 22°C, sunny, 60% humidity'
+
+        result_fahrenheit = get_weather(ctx, 'New York', 'fahrenheit')
+        assert result_fahrenheit == 'Weather in New York: 22°F, sunny, 60% humidity'
+
+    def test_calculate_function(self) -> None:
+        """Test calculate function directly."""
+        from unittest.mock import Mock
+
+        ctx = Mock()
+
+        # Test successful calculation
+        result = calculate(ctx, '2 + 3')
+        assert result == 'Result: 5'
+
+        # Test error case
+        result_error = calculate(ctx, 'invalid_expression')
+        assert result_error.startswith('Error:')
+
+
+class TestBranchCoverage:
+    """Test specific branches to achieve 100% coverage."""
+
+    def test_file_content_with_empty_lines(self, mock_openai_batch_model: Any):
+        """Test batch_retrieve_job with empty lines in file content (line 486->485)."""
+        batch_model, mock_client = mock_openai_batch_model
+
+        # Mock batch status (completed)
+        mock_batch = MagicMock()
+        mock_batch.status = 'completed'
+        mock_batch.output_file_id = 'file_456'
+        mock_client.batches.retrieve = AsyncMock(return_value=mock_batch)
+
+        # Mock file content with empty lines and whitespace
+        mock_file_content = b"""{"id": "batch_req_1", "custom_id": "test-1", "response": {"body": {"choices": [{"message": {"content": "Hello"}}]}}, "error": null}
+
+{"id": "batch_req_2", "custom_id": "test-2", "response": {"body": {"choices": [{"message": {"content": "World"}}]}}, "error": null}
+
+"""  # Empty lines and whitespace
+
+        mock_file_response = MagicMock()
+        mock_file_response.read.return_value = mock_file_content
+        mock_client.files.content = AsyncMock(return_value=mock_file_response)
+
+        async def run_test():
+            results = await batch_model.batch_retrieve_job('batch_test_123')
+            # Should only have 2 results, empty lines should be skipped
+            assert len(results) == 2
+            assert results[0].custom_id == 'test-1'
+            assert results[1].custom_id == 'test-2'
+
+        import asyncio
+
+        asyncio.run(run_test())
+
+    def test_create_request_with_non_structured_output_type(self):
+        """Test native output with non-StructuredTextOutputSchema."""
+        from pydantic import BaseModel
+
+        class SimpleModel(BaseModel):
+            value: str
+
+        # Mock the OutputSchema.build to return a schema that's not StructuredTextOutputSchema
+        with patch('pydantic_ai._output.OutputSchema.build') as mock_build:
+            mock_schema = MagicMock()
+            mock_schema.mode = 'native'
+            # This will make isinstance(output_schema, StructuredTextOutputSchema) return False
+            mock_schema.__class__.__name__ = 'NotStructuredTextOutputSchema'
+            mock_build.return_value = mock_schema
+
+            request = create_chat_request(
+                custom_id='non-structured-test',
+                prompt='Test request',
+                model='gpt-4o-mini',
+                output_type=SimpleModel,
+                output_mode='native',
+            )
+
+            # Should not have response_format since it's not StructuredTextOutputSchema
+            assert 'response_format' not in request.body
+
+    def test_create_request_with_tool_mode_multiple_output_tools(self):
+        """Test tool mode with multiple output tools (no tool_choice)."""
+        from pydantic import BaseModel
+
+        class MultiToolModel(BaseModel):
+            result1: str
+            result2: str
+
+        # Mock the OutputSchema.build to return a schema with multiple tools
+        with patch('pydantic_ai._output.OutputSchema.build') as mock_build:
+            mock_schema = MagicMock()
+            mock_schema.mode = 'tool'
+
+            # Mock toolset with multiple tools
+            mock_tool_def1 = MagicMock()
+            mock_tool_def1.name = 'tool1'
+            mock_tool_def1.description = 'First tool'
+            mock_tool_def1.parameters_json_schema = {'type': 'object'}
+
+            mock_tool_def2 = MagicMock()
+            mock_tool_def2.name = 'tool2'
+            mock_tool_def2.description = 'Second tool'
+            mock_tool_def2.parameters_json_schema = {'type': 'object'}
+
+            mock_toolset = MagicMock()
+            mock_toolset._tool_defs = [mock_tool_def1, mock_tool_def2]
+            mock_schema.toolset = mock_toolset
+            mock_build.return_value = mock_schema
+
+            request = create_chat_request(
+                custom_id='multi-tool-test',
+                prompt='Test request',
+                model='gpt-4o-mini',
+                output_type=MultiToolModel,
+                output_mode='tool',
+            )
+
+            # Should have tools but no tool_choice since there are multiple tools
+            assert 'tools' in request.body
+            assert len(request.body['tools']) == 2
+            assert 'tool_choice' not in request.body
+
+    def test_create_request_with_tool_mode_no_toolset(self):
+        """Test tool mode with no toolset."""
+        from pydantic import BaseModel
+
+        class NoToolModel(BaseModel):
+            result: str
+
+        # Mock the OutputSchema.build to return a schema with no toolset
+        with patch('pydantic_ai._output.OutputSchema.build') as mock_build:
+            mock_schema = MagicMock()
+            mock_schema.mode = 'tool'
+            mock_schema.toolset = None  # No toolset
+            mock_build.return_value = mock_schema
+
+            request = create_chat_request(
+                custom_id='no-toolset-test',
+                prompt='Test request',
+                model='gpt-4o-mini',
+                output_type=NoToolModel,
+                output_mode='tool',
+            )
+
+            # Should not have tools since there's no toolset
+            assert 'tools' not in request.body
+
+    def test_create_request_with_prompted_mode_non_prompted_schema(self):
+        """Test prompted mode with non-PromptedOutputSchema."""
+        from pydantic import BaseModel
+
+        class NonPromptedModel(BaseModel):
+            result: str
+
+        # Mock the OutputSchema.build to return a schema that's not PromptedOutputSchema
+        with patch('pydantic_ai._output.OutputSchema.build') as mock_build:
+            mock_schema = MagicMock()
+            mock_schema.mode = 'prompted'
+            # This will make isinstance(output_schema, PromptedOutputSchema) return False
+            mock_schema.__class__.__name__ = 'NotPromptedOutputSchema'
+            mock_build.return_value = mock_schema
+
+            request = create_chat_request(
+                custom_id='non-prompted-test',
+                prompt='Test request',
+                model='gpt-4o-mini',
+                output_type=NonPromptedModel,
+                output_mode='prompted',
+            )
+
+            # Messages should remain unchanged since it's not PromptedOutputSchema
+            assert request.body['messages'] == [{'role': 'user', 'content': 'Test request'}]
+
+    def test_create_request_with_unknown_output_mode(self):
+        """Test create_chat_request with an output mode that's not handled."""
+        from pydantic import BaseModel
+
+        class TestModel(BaseModel):
+            result: str
+
+        # Mock the OutputSchema.build to return a schema with an unknown mode
+        with patch('pydantic_ai._output.OutputSchema.build') as mock_build:
+            mock_schema = MagicMock()
+            mock_schema.mode = 'unknown_mode'  # This will not match any of native/tool/prompted
+            mock_build.return_value = mock_schema
+
+            request = create_chat_request(
+                custom_id='unknown-mode-test',
+                prompt='Test request',
+                model='gpt-4o-mini',
+                output_type=TestModel,
+                output_mode='unknown_mode',  # type: ignore[arg-type]
+            )
+
+            # Should still return a valid request, just without output processing
+            assert request.custom_id == 'unknown-mode-test'
+            # Should not have special formatting since mode is unknown
+            assert 'response_format' not in request.body
+            assert 'tool_choice' not in request.body
