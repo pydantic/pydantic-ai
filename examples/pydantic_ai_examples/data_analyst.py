@@ -3,7 +3,6 @@ from dataclasses import dataclass
 import datasets
 import duckdb
 import pandas as pd
-from devtools import debug
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 
@@ -105,4 +104,4 @@ if __name__ == '__main__':
         user_prompt='Count how many negative comments are there in the dataset `cornell-movie-review-data/rotten_tomatoes`',
         deps=deps,
     )
-    debug(result.output)
+    print(result.output)

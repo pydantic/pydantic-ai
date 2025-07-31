@@ -28,13 +28,9 @@ python/uv-run -m pydantic_ai_examples.data_analyst
 
 Output (debug):
 
-```
-examples/pydantic_ai_examples/data_analyst.py:103 <module>
-    result.output: (
-        'Based on my analysis of the cornell-movie-review-data/rotten_tomatoes dataset, there are **4,265 negative com'
-        'ments** in the training split. The dataset is balanced, with an equal number of positive comments.'
-    ) (str) len=207
-```
+
+> Based on my analysis of the Cornell Movie Review dataset (rotten_tomatoes), there are **4,265 negative comments** in the training split. These are the reviews labeled as 'neg' (represented by 0 in the dataset).
+
 
 
 ## Example Code
@@ -46,8 +42,7 @@ examples/pydantic_ai_examples/data_analyst.py:103 <module>
 
 ### Choosing a Model
 
-This example requires using a model that understands DuckDB SQL. I am using
-Anthropic Claude 3.7. You can use other models but check with `clai`:
+This example requires using a model that understands DuckDB SQL. You can check with `clai`:
 
 ```sh
 > clai -m bedrock:us.anthropic.claude-3-7-sonnet-20250219-v1:0
