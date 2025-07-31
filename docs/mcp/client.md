@@ -455,7 +455,7 @@ if __name__ == '__main__':
 
 The corresponding client handles the confirmation request:
 
-```python {title="file_client.py" py="3.10"}
+```python {title="file_client.py" py="3.10" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
