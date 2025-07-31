@@ -774,90 +774,91 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
         # This will raise errors for any name conflicts
-        run_toolset = await ToolManager[AgentDepsT].build(toolset, run_context)
+        async with toolset:
+            run_toolset = await ToolManager[AgentDepsT].build(toolset, run_context)
 
-        # Merge model settings in order of precedence: run > agent > model
-        merged_settings = merge_model_settings(model_used.settings, self.model_settings)
-        model_settings = merge_model_settings(merged_settings, model_settings)
-        usage_limits = usage_limits or _usage.UsageLimits()
-        agent_name = self.name or 'agent'
-        run_span = tracer.start_span(
-            'agent run',
-            attributes={
-                'model_name': model_used.model_name if model_used else 'no-model',
-                'agent_name': agent_name,
-                'logfire.msg': f'{agent_name} run',
-            },
-        )
+            # Merge model settings in order of precedence: run > agent > model
+            merged_settings = merge_model_settings(model_used.settings, self.model_settings)
+            model_settings = merge_model_settings(merged_settings, model_settings)
+            usage_limits = usage_limits or _usage.UsageLimits()
+            agent_name = self.name or 'agent'
+            run_span = tracer.start_span(
+                'agent run',
+                attributes={
+                    'model_name': model_used.model_name if model_used else 'no-model',
+                    'agent_name': agent_name,
+                    'logfire.msg': f'{agent_name} run',
+                },
+            )
 
-        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
-                self._instructions,
-                *[await func.run(run_context) for func in self._instructions_functions],
-            ]
+            async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
+                parts = [
+                    self._instructions,
+                    *[await func.run(run_context) for func in self._instructions_functions],
+                ]
 
-            model_profile = model_used.profile
-            if isinstance(output_schema, _output.PromptedOutputSchema):
-                instructions = output_schema.instructions(model_profile.prompted_output_template)
-                parts.append(instructions)
+                model_profile = model_used.profile
+                if isinstance(output_schema, _output.PromptedOutputSchema):
+                    instructions = output_schema.instructions(model_profile.prompted_output_template)
+                    parts.append(instructions)
 
-            parts = [p for p in parts if p]
-            if not parts:
-                return None
-            return '\n\n'.join(parts).strip()
+                parts = [p for p in parts if p]
+                if not parts:
+                    return None
+                return '\n\n'.join(parts).strip()
 
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
-            user_deps=deps,
-            prompt=user_prompt,
-            new_message_index=new_message_index,
-            model=model_used,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            max_result_retries=self._max_result_retries,
-            end_strategy=self.end_strategy,
-            output_schema=output_schema,
-            output_validators=output_validators,
-            history_processors=self.history_processors,
-            tool_manager=run_toolset,
-            tracer=tracer,
-            get_instructions=get_instructions,
-            instrumentation_settings=instrumentation_settings,
-        )
-        start_node = _agent_graph.UserPromptNode[AgentDepsT](
-            user_prompt=user_prompt,
-            instructions=self._instructions,
-            instructions_functions=self._instructions_functions,
-            system_prompts=self._system_prompts,
-            system_prompt_functions=self._system_prompt_functions,
-            system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
-        )
+            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+                user_deps=deps,
+                prompt=user_prompt,
+                new_message_index=new_message_index,
+                model=model_used,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                max_result_retries=self._max_result_retries,
+                end_strategy=self.end_strategy,
+                output_schema=output_schema,
+                output_validators=output_validators,
+                history_processors=self.history_processors,
+                tool_manager=run_toolset,
+                tracer=tracer,
+                get_instructions=get_instructions,
+                instrumentation_settings=instrumentation_settings,
+            )
+            start_node = _agent_graph.UserPromptNode[AgentDepsT](
+                user_prompt=user_prompt,
+                instructions=self._instructions,
+                instructions_functions=self._instructions_functions,
+                system_prompts=self._system_prompts,
+                system_prompt_functions=self._system_prompt_functions,
+                system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
+            )
 
-        try:
-            async with graph.iter(
-                start_node,
-                state=state,
-                deps=graph_deps,
-                span=use_span(run_span) if run_span.is_recording() else None,
-                infer_name=False,
-            ) as graph_run:
-                agent_run = AgentRun(graph_run)
-                yield agent_run
-                if (final_result := agent_run.result) is not None and run_span.is_recording():
-                    if instrumentation_settings and instrumentation_settings.include_content:
-                        run_span.set_attribute(
-                            'final_result',
-                            (
-                                final_result.output
-                                if isinstance(final_result.output, str)
-                                else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                            ),
-                        )
-        finally:
             try:
-                if instrumentation_settings and run_span.is_recording():
-                    run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
+                async with graph.iter(
+                    start_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=use_span(run_span) if run_span.is_recording() else None,
+                    infer_name=False,
+                ) as graph_run:
+                    agent_run = AgentRun(graph_run)
+                    yield agent_run
+                    if (final_result := agent_run.result) is not None and run_span.is_recording():
+                        if instrumentation_settings and instrumentation_settings.include_content:
+                            run_span.set_attribute(
+                                'final_result',
+                                (
+                                    final_result.output
+                                    if isinstance(final_result.output, str)
+                                    else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                                ),
+                            )
             finally:
-                run_span.end()
+                try:
+                    if instrumentation_settings and run_span.is_recording():
+                        run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
+                finally:
+                    run_span.end()
 
     def _run_span_end_attributes(
         self, state: _agent_graph.GraphAgentState, usage: _usage.Usage, settings: InstrumentationSettings
@@ -2173,7 +2174,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node."""
         next_node = await self._graph_run.__anext__()
-        if _agent_graph.is_agent_node(next_node):
+        if _agent_graph.is_agent_node(node=next_node):
             return next_node
         assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
         return next_node
