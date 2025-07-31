@@ -355,7 +355,7 @@ def handle_slash_command(
         except IndexError:
             console.print('[dim]No output available to copy.[/dim]')
         else:
-            text_to_copy = ''.join(part.content for part in parts if part.part_kind == 'text')
+            text_to_copy = '\n'.join(part.content for part in parts if part.part_kind == 'text')
             text_to_copy = text_to_copy.strip()
             if text_to_copy:
                 pyperclip.copy(text_to_copy)
