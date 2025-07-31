@@ -26,6 +26,7 @@ __all__ = (
     'EvaluationScalar',
     'Evaluator',
     'EvaluatorOutput',
+    'EvaluatorSpec',
 )
 
 EvaluationScalar = Union[bool, int, float, str]
