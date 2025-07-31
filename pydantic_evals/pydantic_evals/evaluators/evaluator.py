@@ -17,8 +17,8 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai import _utils
 
 from .._utils import get_event_loop
-from ._spec import EvaluatorSpec
 from .context import EvaluatorContext
+from .spec import EvaluatorSpec
 
 __all__ = (
     'EvaluationReason',
