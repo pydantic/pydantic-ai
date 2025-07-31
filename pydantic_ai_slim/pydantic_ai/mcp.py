@@ -110,8 +110,11 @@ class MCPServer(AbstractToolset[Any], ABC):
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
-        async with self:  # Ensure server is running
-            result = await self._client.list_tools()
+        try:
+            async with self:  # Ensure server is running
+                result = await self._client.list_tools()
+        except anyio.get_cancelled_exc_class():
+            return []
         return result.tools
 
     async def direct_call_tool(
