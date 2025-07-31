@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import json
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
@@ -18,14 +19,14 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self, assert_never, deprecated
 
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.tools import ToolDefinition
-
-from .toolsets.abstract import AbstractToolset, ToolsetTool
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
+from pydantic_ai.usage import Usage
 
 try:
     from mcp import types as mcp_types
-    from mcp.client.session import ClientSession, LoggingFnT
+    from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
@@ -41,13 +42,181 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
+__all__ = (
+    'MCPServer',
+    'MCPServerStdio',
+    'MCPServerHTTP',
+    'MCPServerSSE',
+    'MCPServerStreamableHTTP',
+    'create_tool_elicitation_callback',
+    'create_auto_tool_injection_callback',
+)
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
         pydantic_core.core_schema.str_schema(), pydantic_core.core_schema.any_schema()
     )
 )
+
+
+def _is_mcp_run_python_server(toolset: AbstractToolset[Any]) -> bool:
+    """Check if a toolset is an mcp-run-python server to avoid deadlock."""
+    command = getattr(toolset, 'command', None)
+    args = getattr(toolset, 'args', None)
+    if command is not None and args is not None:
+        command_str = ' '.join([str(command)] + [str(arg) for arg in args])
+        return 'mcp-run-python' in command_str
+    return False
+
+
+class _FilteredToolset(AbstractToolset[Any]):
+    """Toolset wrapper that excludes mcp-run-python servers to prevent deadlock."""
+
+    def __init__(self, wrapped: AbstractToolset[Any]):
+        from .toolsets.combined import CombinedToolset
+
+        self.wrapped = wrapped
+
+        # If it's a CombinedToolset, filter out mcp-run-python toolsets before any get_tools() calls
+        if isinstance(wrapped, CombinedToolset):
+            filtered_toolsets: list[AbstractToolset[Any]] = []
+            for toolset in wrapped.toolsets:
+                if not _is_mcp_run_python_server(toolset):
+                    filtered_toolsets.append(toolset)
+            # Create a new CombinedToolset with filtered toolsets
+            self.wrapped = CombinedToolset(toolsets=filtered_toolsets)
+        elif _is_mcp_run_python_server(wrapped):
+            # If the wrapped toolset itself is mcp-run-python, return empty tools
+            self._is_empty = True
+        else:
+            self._is_empty = False
+
+    async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
+        """Get tools excluding those from mcp-run-python servers."""
+        if hasattr(self, '_is_empty') and self._is_empty:
+            return {}
+
+        return await self.wrapped.get_tools(ctx)
+
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+    ) -> Any:
+        """Call tool using the wrapped toolset."""
+        return await self.wrapped.call_tool(name, tool_args, ctx, tool)
+
+    def apply(self, visitor: Callable[[AbstractToolset[Any]], None]) -> None:
+        """Apply visitor to the wrapped toolset."""
+        self.wrapped.apply(visitor)
+
+
+async def _call_tool_for_elicitation(
+    toolset: AbstractToolset[Any],
+    tool_name: str,
+    tool_arguments: dict[str, Any],
+    ctx: RunContext[Any],
+) -> Any:
+    """Call a tool for elicitation using standard toolset API."""
+    available_tools = await toolset.get_tools(ctx)
+    if tool_name not in available_tools:
+        raise ValueError(f'Tool {tool_name} not found in toolset')
+
+    tool = available_tools[tool_name]
+    return await toolset.call_tool(tool_name, tool_arguments, ctx, tool)
+
+
+def _create_elicitation_context(tool_name: str) -> RunContext[Any]:
+    """Create minimal RunContext for elicitation."""
+    return RunContext(
+        deps=None,
+        model=TestModel(),
+        usage=Usage(),
+        tool_name=tool_name,
+    )
+
+
+def create_tool_elicitation_callback(toolset: AbstractToolset[Any]) -> ElicitationFnT:
+    """Create an elicitation callback that routes to the provided toolset.
+
+    Args:
+        toolset: The toolset containing tools that can be called via elicitation
+
+    Returns:
+        An elicitation callback function that handles tool execution requests
+    """
+    filtered_toolset = _FilteredToolset(toolset)
+
+    async def elicitation_callback(context: Any, params: Any) -> mcp_types.ElicitResult | mcp_types.ErrorData:
+        """Handle elicitation requests by routing to the toolset."""
+        try:
+            tool_execution_data = json.loads(params.message)
+            tool_name = tool_execution_data.get('tool_name')
+            tool_arguments = tool_execution_data.get('arguments', {})
+
+            if tool_name is None:
+                return mcp_types.ErrorData(
+                    code=mcp_types.INVALID_PARAMS, message='Missing tool_name in elicitation request'
+                )
+            bridge_ctx = _create_elicitation_context(tool_name)
+            try:
+                result = await _call_tool_for_elicitation(filtered_toolset, tool_name, tool_arguments, bridge_ctx)
+                return mcp_types.ElicitResult(action='accept', content={'result': str(result)})
+            except ValueError as e:
+                # Tool not found or invalid arguments
+                return mcp_types.ErrorData(code=mcp_types.INVALID_PARAMS, message=f'Tool {tool_name} error: {str(e)}')
+            except TimeoutError:
+                return mcp_types.ErrorData(
+                    code=mcp_types.INTERNAL_ERROR, message=f'Tool {tool_name} execution timed out'
+                )
+            except Exception as e:
+                error_msg = (
+                    f'Tool execution failed for {tool_name}: {str(e)}. Check tool arguments and toolset configuration.'
+                )
+                return mcp_types.ErrorData(code=mcp_types.INTERNAL_ERROR, message=error_msg)
+
+        except json.JSONDecodeError as json_error:
+            return mcp_types.ErrorData(
+                code=mcp_types.INVALID_PARAMS, message=f'Invalid JSON in elicitation request: {str(json_error)}'
+            )
+        except Exception as e:
+            return mcp_types.ErrorData(code=mcp_types.INTERNAL_ERROR, message=f'Elicitation callback failed: {str(e)}')
+
+    return elicitation_callback
+
+
+def create_auto_tool_injection_callback(toolset: AbstractToolset[Any]) -> ProcessToolCallback:
+    """Create a callback that auto-injects available tools into run_python_code calls.
+
+    Args:
+        toolset: The toolset containing tools to be discovered and injected
+
+    Returns:
+        A process tool callback that adds available tools to Python code execution
+    """
+    filtered_toolset = _FilteredToolset(toolset)
+
+    async def auto_inject_tools_callback(
+        ctx: RunContext[Any],
+        call_tool_func: CallToolFunc,
+        tool_name: str,
+        tool_arguments: dict[str, Any],
+    ) -> ToolResult:
+        """Auto-inject tools discovered from toolset into run_python_code calls."""
+        if tool_name == 'run_python_code':
+            available_tools: list[str] = []
+
+            try:
+                discovered_tools = await filtered_toolset.get_tools(ctx=ctx)
+                for original_tool_name, _ in discovered_tools.items():
+                    available_tools.append(original_tool_name)
+            except Exception:
+                pass
+
+            if available_tools:
+                tool_arguments = {**tool_arguments, 'tools': available_tools}
+
+        return await call_tool_func(tool_name, tool_arguments, None)
+
+    return auto_inject_tools_callback
 
 
 class MCPServer(AbstractToolset[Any], ABC):
@@ -66,6 +235,8 @@ class MCPServer(AbstractToolset[Any], ABC):
     allow_sampling: bool = True
     max_retries: int = 1
     sampling_model: models.Model | None = None
+    allow_elicitation: bool = True
+    elicitation_callback: ElicitationFnT | None = None
     # } end of "abstract fields"
 
     _enter_lock: Lock = field(compare=False)
@@ -207,6 +378,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
                         sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                        elicitation_callback=self.elicitation_callback if self.allow_elicitation else None,
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                     )
@@ -398,6 +570,12 @@ class MCPServerStdio(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
+    allow_elicitation: bool = True
+    """Whether to allow MCP elicitation through this client."""
+
+    elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -499,6 +677,12 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
+    allow_elicitation: bool = True
+    """Whether to allow MCP elicitation through this client."""
+
+    elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
+
     def __init__(
         self,
         *,
@@ -514,6 +698,8 @@ class _MCPServerHTTP(MCPServer):
         allow_sampling: bool = True,
         max_retries: int = 1,
         sampling_model: models.Model | None = None,
+        allow_elicitation: bool = True,
+        elicitation_callback: ElicitationFnT | None = None,
         **kwargs: Any,
     ):
         # Handle deprecated sse_read_timeout parameter
@@ -542,6 +728,8 @@ class _MCPServerHTTP(MCPServer):
         self.allow_sampling = allow_sampling
         self.max_retries = max_retries
         self.sampling_model = sampling_model
+        self.allow_elicitation = allow_elicitation
+        self.elicitation_callback = elicitation_callback
         self.read_timeout = read_timeout
         self.__post_init__()
 
