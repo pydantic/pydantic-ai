@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import datasets
 import duckdb
@@ -9,7 +9,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 
 @dataclass
 class AnalystAgentDeps:
-    output: dict[str, pd.DataFrame]
+    output: dict[str, pd.DataFrame] = field(default_factory=dict)
 
     def store(self, value: pd.DataFrame) -> str:
         """Store the output in deps and return the reference such as Out[1] to be used by the LLM."""
@@ -84,7 +84,7 @@ def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str
         dataset: reference string to the DataFrame
         sql: the query to be executed using DuckDB
     """
-    data = ctx.deps.output[dataset]
+    data = ctx.deps.get(dataset)
     result = duckdb.query_df(df=data, virtual_table_name='dataset', sql_query=sql)
     # pass the result as ref (because DuckDB SQL can select many rows, creating another huge dataframe)
     ref = ctx.deps.store(result.df())  # pyright: ignore[reportUnknownMemberType]
@@ -93,13 +93,13 @@ def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str
 
 @analyst_agent.tool
 def display(ctx: RunContext[AnalystAgentDeps], name: str) -> str:
-    """Display at most 5 rows of the dataframe ."""
+    """Display at most 5 rows of the dataframe."""
     dataset = ctx.deps.get(name)
     return dataset.head().to_string()  # pyright: ignore[reportUnknownMemberType]
 
 
 if __name__ == '__main__':
-    deps = AnalystAgentDeps(output={})
+    deps = AnalystAgentDeps()
     result = analyst_agent.run_sync(
         user_prompt='Count how many negative comments are there in the dataset `cornell-movie-review-data/rotten_tomatoes`',
         deps=deps,
