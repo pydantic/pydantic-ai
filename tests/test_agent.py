@@ -3866,7 +3866,7 @@ def test_prepare_output_tools():
     )
 
 
-async def test_context_manager():
+async def test_explicit_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
     except ImportError:  # pragma: lax no cover
@@ -3884,6 +3884,47 @@ async def test_context_manager():
         async with agent:
             assert server1.is_running
             assert server2.is_running
+
+
+async def test_implicit_context_manager():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent('test', toolsets=[toolset])
+
+    async with agent.iter(
+        user_prompt='Hello',
+    ):
+        assert server1.is_running
+        assert server2.is_running
+
+
+def test_parallel_mcp_calls():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    async def call_tools_parallel(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_none'),
+                    ToolCallPart(tool_name='get_multiple_items'),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('finished')])
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
+    result = agent.run_sync()
+    assert result.output == snapshot('finished')
 
 
 def test_set_mcp_sampling_model():
