@@ -390,13 +390,15 @@ class Model(ABC):
         """Make a request to the model."""
         raise NotImplementedError()
 
-    @abstractmethod
     async def count_tokens(
         self,
         messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> BaseCountTokensResponse:
-        """Make a request to the model."""
-        raise NotImplementedError()
+        """Make a request to the model for counting tokens."""
+        # This method is not required, but you need to implement it if you want to support token counting before making a request
+        raise NotImplementedError(f'Token counting API call is not supported by this {self.__class__.__name__}')
 
     @asynccontextmanager
     async def request_stream(

@@ -96,10 +96,10 @@ class UsageLimits:
     """The maximum number of tokens allowed in responses from the model."""
     total_tokens_limit: int | None = None
     """The maximum number of tokens allowed in requests and responses combined."""
-    pre_request_token_check_with_overhead: bool = False
+    count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
     to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
-    (from calling the model's `count_tokens` method) and is disabled by default."""
+    (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.

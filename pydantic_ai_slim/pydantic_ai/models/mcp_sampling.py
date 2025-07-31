@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from .. import _mcp, exceptions, usage
-from ..messages import BaseCountTokensResponse, ModelMessage, ModelResponse
+from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import Model, ModelRequestParameters, StreamedResponse
 
@@ -69,13 +69,6 @@ class MCPSamplingModel(Model):
             raise exceptions.UnexpectedModelBehavior(
                 f'Unexpected result from MCP sampling, expected "assistant" role, got {result.role}.'
             )
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the MCPSamplingModel."""
-        raise NotImplementedError('Token counting is not supported by MCPSamplingModel')
 
     @asynccontextmanager
     async def request_stream(

@@ -16,7 +16,6 @@ from pydantic_ai.profiles import ModelProfileSpec
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
-    BaseCountTokensResponse,
     BinaryContent,
     ModelMessage,
     ModelRequest,
@@ -139,13 +138,6 @@ class FunctionModel(Model):
             response.usage = _estimate_usage(chain(messages, [response]))
             response.usage.requests = 1
         return response
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the FunctionModel."""
-        raise NotImplementedError('Token counting is not supported by FunctionModel')
 
     @asynccontextmanager
     async def request_stream(

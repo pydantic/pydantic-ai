@@ -19,7 +19,6 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from ..exceptions import UserError
 from ..messages import (
-    BaseCountTokensResponse,
     BinaryContent,
     FileUrl,
     ModelMessage,
@@ -158,13 +157,6 @@ class GeminiModel(Model):
             data = await http_response.aread()
             response = _gemini_response_ta.validate_json(data)
         return self._process_response(response)
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the CohereModel."""
-        raise NotImplementedError('Token counting is not supported by CohereModel')
 
     @asynccontextmanager
     async def request_stream(

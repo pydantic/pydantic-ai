@@ -20,7 +20,6 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
     AudioUrl,
-    BaseCountTokensResponse,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -248,13 +247,6 @@ class OpenAIModel(Model):
         model_response = self._process_response(response)
         model_response.usage.requests = 1
         return model_response
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the OpenAIModel."""
-        raise NotImplementedError('Token counting is not supported by OpenAIModel')
 
     @asynccontextmanager
     async def request_stream(
@@ -679,13 +671,6 @@ class OpenAIResponsesModel(Model):
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         return self._process_response(response)
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the OpenAIResponsesModel."""
-        raise NotImplementedError('Token counting is not supported by the OpenAIResponsesModel')
 
     @asynccontextmanager
     async def request_stream(

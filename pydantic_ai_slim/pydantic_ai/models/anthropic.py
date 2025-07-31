@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
-    BaseCountTokensResponse,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -165,13 +164,6 @@ class AnthropicModel(Model):
         model_response = self._process_response(response)
         model_response.usage.requests = 1
         return model_response
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the AnthropicModel."""
-        raise NotImplementedError('Token counting is not supported by AnthropicModel')
 
     @asynccontextmanager
     async def request_stream(

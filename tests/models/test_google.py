@@ -43,7 +43,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 with try_import() as imports_successful:
     from google.genai.types import HarmBlockThreshold, HarmCategory
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, ModelRequestParameters
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -1396,27 +1396,29 @@ Don't include any text or Markdown fencing before or after.\
 
 
 async def test_google_model_count_tokens(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
 
     messages = [
         ModelRequest(
             parts=[
-                SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
-                UserPromptPart(content='What was the temperature in London 1st January 2022?', timestamp=IsDatetime()),
+                SystemPromptPart(content='You are an expert', timestamp=IsDatetime()),
+                UserPromptPart(
+                    content='The quick brown fox jumps over the lazydog.',
+                    timestamp=IsDatetime(),
+                ),
             ]
         ),
-        ModelResponse(
-            parts=[
-                ToolCallPart(
-                    tool_name='temperature',
-                    args={'date': '2022-01-01', 'city': 'London'},
-                    tool_call_id='test_id',
-                )
-            ],
-            model_name='gemini-1.5-flash',
-            timestamp=IsDatetime(),
-            vendor_details={'finish_reason': 'STOP'},
-        ),
+        ModelResponse(parts=[TextPart(content="""That's a classic!""")]),
     ]
-    result = await model.count_tokens(messages)
-    assert result.total_tokens == snapshot(7)
+    result = await model.count_tokens(
+        messages,
+        model_settings={'temperature': 0.0},
+        model_request_parameters=ModelRequestParameters(
+            function_tools=[],
+            allow_text_output=True,
+            output_tools=[],
+            output_mode='text',
+            output_object=None,
+        ),
+    )
+    assert result.total_tokens == snapshot(10)

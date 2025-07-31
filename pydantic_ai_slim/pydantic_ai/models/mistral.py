@@ -16,7 +16,6 @@ from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..messages import (
-    BaseCountTokensResponse,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
@@ -167,13 +166,6 @@ class MistralModel(Model):
         model_response = self._process_response(response)
         model_response.usage.requests = 1
         return model_response
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the MistralModel."""
-        raise NotImplementedError('Token counting is not supported by MistralModel')
 
     @asynccontextmanager
     async def request_stream(

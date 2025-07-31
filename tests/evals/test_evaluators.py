@@ -8,7 +8,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 from pydantic_core import to_jsonable_python
 
-from pydantic_ai.messages import BaseCountTokensResponse, ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 
@@ -123,12 +123,6 @@ async def test_llm_judge_serialization():
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
-            raise NotImplementedError
-
-        async def count_tokens(
-            self,
-            messages: list[ModelMessage],
-        ) -> BaseCountTokensResponse:
             raise NotImplementedError
 
         @property

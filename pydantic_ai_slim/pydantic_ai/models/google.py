@@ -49,6 +49,7 @@ try:
     from google.genai.types import (
         ContentDict,
         ContentUnionDict,
+        CountTokensConfigDict,
         CountTokensResponse,
         FunctionCallDict,
         FunctionCallingConfigDict,
@@ -186,12 +187,33 @@ class GoogleModel(Model):
     async def count_tokens(
         self,
         messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
     ) -> BaseCountTokensResponse:
         check_allow_model_requests()
-        _, contents = await self._map_messages(messages)
+        model_settings = cast(GoogleModelSettings, model_settings or {})
+        system_instruction, contents = await self._map_messages(messages)
+        system_instruction = None
+        tools = self._get_tools(model_request_parameters)
+        http_options: HttpOptionsDict = {
+            'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
+        }
+        if timeout := model_settings.get('timeout'):
+            if isinstance(timeout, (int, float)):
+                http_options['timeout'] = int(1000 * timeout)
+            else:
+                raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
+
+        config = CountTokensConfigDict(
+            http_options=http_options,
+            system_instruction=system_instruction,
+            tools=cast(list[ToolDict], tools),
+        )
+
         response = self.client.models.count_tokens(
             model=self._model_name,
             contents=contents,
+            config=config,
         )
         return self._process_count_tokens_response(response)
 
@@ -356,21 +378,9 @@ class GoogleModel(Model):
         self,
         response: CountTokensResponse,
     ) -> BaseCountTokensResponse:
-        """Process Gemini token count response into BaseCountTokensResponse."""
         if not hasattr(response, 'total_tokens') or response.total_tokens is None:
             raise UnexpectedModelBehavior('Total tokens missing from Gemini response', str(response))
-
-        vendor_details: dict[str, Any] | None = None
-        if hasattr(response, 'cached_content_token_count'):
-            vendor_details = {}
-            vendor_details['cached_content_token_count'] = response.cached_content_token_count
-
-        return BaseCountTokensResponse(
-            total_tokens=response.total_tokens,
-            model_name=self._model_name,
-            vendor_details=vendor_details if vendor_details else None,
-            vendor_id=getattr(response, 'request_id', None),
-        )
+        return BaseCountTokensResponse(total_tokens=response.total_tokens)
 
     async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []

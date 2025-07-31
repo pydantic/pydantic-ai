@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 
 from .. import _utils
 from ..messages import (
-    BaseCountTokensResponse,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -112,12 +111,6 @@ class TestModel(Model):
         model_response.usage = _estimate_usage([*messages, model_response])
         model_response.usage.requests = 1
         return model_response
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        return BaseCountTokensResponse(total_tokens=1)
 
     @asynccontextmanager
     async def request_stream(

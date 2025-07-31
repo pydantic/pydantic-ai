@@ -13,7 +13,7 @@ from ..exceptions import FallbackExceptionGroup, ModelHTTPError
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
-    from ..messages import BaseCountTokensResponse, ModelMessage, ModelResponse
+    from ..messages import ModelMessage, ModelResponse
     from ..settings import ModelSettings
 
 
@@ -76,13 +76,6 @@ class FallbackModel(Model):
             return response
 
         raise FallbackExceptionGroup('All models from FallbackModel failed', exceptions)
-
-    async def count_tokens(
-        self,
-        messages: list[ModelMessage],
-    ) -> BaseCountTokensResponse:
-        """Token counting is not supported by the FallbackModel."""
-        raise NotImplementedError('Token counting is not supported by FallbackModel')
 
     @asynccontextmanager
     async def request_stream(
