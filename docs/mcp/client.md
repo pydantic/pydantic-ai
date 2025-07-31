@@ -391,3 +391,106 @@ server = MCPServerStdio(
     allow_sampling=False,
 )
 ```
+
+## Elicitation
+
+Sometimes MCP servers need to ask the user questions during tool execution. For example, a file management tool might ask "Are you sure you want to delete this file?" before performing a destructive action, or a deployment tool might need confirmation before deploying to production.
+
+In MCP, elicitation allows servers to pause tool execution and request input from the user via the client. The server sends a message, the client presents it to the user, collects their response, and sends it back to the server.
+
+### Setting up Elicitation
+
+To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPServerStdio.elicitation_callback] function when creating your MCP server instance:
+
+```python {title="simple_elicitation.py" py="3.10"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+
+async def ask_user(message: str) -> str:
+    print(f"Server asks: {message}")
+    return input("Your answer: ")
+
+
+server = MCPServerStdio(
+    command='python',
+    args=['my_server.py'],
+    elicitation_callback=ask_user  # (1)!
+)
+
+agent = Agent('openai:gpt-4o', toolsets=[server])
+```
+
+1. This function is called whenever the server needs user input.
+
+The elicitation callback is an async function that receives a message from the server and returns the user's response as a string. Your callback can be as simple as requesting terminal input, or as sophisticated as showing GUI dialogs, sending notifications, or integrating with web interfaces.
+
+### File Deletion Example
+
+Here's a practical example showing how an MCP server might use elicitation for confirmation dialogs:
+
+```python {title="file_server.py" py="3.10"}
+from mcp.server.fastmcp import Context, FastMCP
+
+app = FastMCP('File Manager')
+
+@app.tool()
+async def delete_file(ctx: Context, filename: str) -> str:
+    """Delete a file after getting user confirmation."""
+    # The server asks the client for input
+    user_response = await ctx.session.elicitation(
+        message=f"Delete '{filename}'? This cannot be undone! (yes/no)",
+        timeout_seconds=30,
+    )
+
+    if user_response.lower() in ['yes', 'y']:
+        # In real life, you'd actually delete the file here
+        return f"Deleted {filename}"
+    else:
+        return f"Cancelled deletion of {filename}"
+
+if __name__ == '__main__':
+    app.run()
+```
+
+The corresponding client handles the confirmation request:
+
+```python {title="file_client.py" py="3.10"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+
+async def handle_confirmation(message: str) -> str:
+    """Present the confirmation dialog to the user."""
+    print(f"Warning: {message}")
+
+    while True:
+        response = input("Your choice: ").strip().lower()
+        if response in ['yes', 'no', 'y', 'n']:
+            return response
+        print("Please answer 'yes' or 'no'")
+
+
+server = MCPServerStdio(
+    command='python',
+    args=['file_server.py'],
+    elicitation_callback=handle_confirmation
+)
+
+agent = Agent('openai:gpt-4o', toolsets=[server])
+
+async def main():
+    async with agent:
+        result = await agent.run('Delete the file called important_data.txt')
+    print(result.output)
+```
+
+When executed, this produces an interactive confirmation dialog:
+
+```
+Warning: Delete 'important_data.txt'? This cannot be undone! (yes/no)
+Your choice: no
+Cancelled deletion of important_data.txt
+```
+
+The interaction flows from the AI agent through the server's elicitation request, to your callback function, and back through the system with the user's decision.

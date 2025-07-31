@@ -71,7 +71,6 @@ class MCPServer(AbstractToolset[Any], ABC):
     allow_sampling: bool = True
     max_retries: int = 1
     sampling_model: models.Model | None = None
-    allow_elicitation: bool = True
     elicitation_callback: ElicitationFnT | None = None
     # } end of "abstract fields"
 
@@ -214,7 +213,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
                         sampling_callback=self._sampling_callback if self.allow_sampling else None,
-                        elicitation_callback=self.elicitation_callback if self.allow_elicitation else None,
+                        elicitation_callback=self.elicitation_callback,
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                     )
@@ -406,9 +405,6 @@ class MCPServerStdio(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
-    allow_elicitation: bool = True
-    """Whether to allow MCP elicitation through this client."""
-
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
 
@@ -513,9 +509,6 @@ class _MCPServerHTTP(MCPServer):
     sampling_model: models.Model | None = None
     """The model to use for sampling."""
 
-    allow_elicitation: bool = True
-    """Whether to allow MCP elicitation through this client."""
-
     elicitation_callback: ElicitationFnT | None = None
     """Callback function to handle elicitation requests from the server."""
 
@@ -534,7 +527,6 @@ class _MCPServerHTTP(MCPServer):
         allow_sampling: bool = True,
         max_retries: int = 1,
         sampling_model: models.Model | None = None,
-        allow_elicitation: bool = True,
         elicitation_callback: ElicitationFnT | None = None,
         **kwargs: Any,
     ):
@@ -564,7 +556,6 @@ class _MCPServerHTTP(MCPServer):
         self.allow_sampling = allow_sampling
         self.max_retries = max_retries
         self.sampling_model = sampling_model
-        self.allow_elicitation = allow_elicitation
         self.elicitation_callback = elicitation_callback
         self.read_timeout = read_timeout
 
