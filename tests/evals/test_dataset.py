@@ -456,13 +456,13 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},
@@ -482,13 +482,13 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},

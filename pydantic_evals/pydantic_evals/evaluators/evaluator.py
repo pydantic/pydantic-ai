@@ -71,13 +71,13 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         name: The name of the evaluation.
         value: The scalar result of the evaluation.
         reason: An optional explanation of the evaluation result.
-        source: The evaluator that produced this result.
+        source: The spec of the evaluator that produced this result.
     """
 
     name: str
     value: EvaluationScalarT
     reason: str | None
-    source: Evaluator
+    source: EvaluatorSpec
 
     def downcast(self, *value_types: type[T]) -> EvaluationResult[T] | None:
         """Attempt to downcast this result to a more specific type.
@@ -246,6 +246,13 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         Returns:
             A JSON-serializable representation of this evaluator as an EvaluatorSpec.
         """
+        return to_jsonable_python(
+            self.as_spec(),
+            context=info.context,
+            serialize_unknown=True,
+        )
+
+    def as_spec(self) -> EvaluatorSpec:
         raw_arguments = self.build_serialization_arguments()
 
         arguments: None | tuple[Any,] | dict[str, Any]
@@ -255,11 +262,8 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
             arguments = (next(iter(raw_arguments.values())),)
         else:
             arguments = raw_arguments
-        return to_jsonable_python(
-            EvaluatorSpec(name=self.get_serialization_name(), arguments=arguments),
-            context=info.context,
-            serialize_unknown=True,
-        )
+
+        return EvaluatorSpec(name=self.get_serialization_name(), arguments=arguments)
 
     def build_serialization_arguments(self) -> dict[str, Any]:
         """Build the arguments for serialization.
