@@ -11,7 +11,7 @@ from typing import Callable, Union
 
 from typing_extensions import TypeAlias, assert_never, overload
 
-from pydantic_ai.profiles import ModelProfile, ModelProfileSpec
+from pydantic_ai.profiles import ModelProfileSpec
 
 from .. import _utils, usage
 from .._utils import PeekableAsyncStream
@@ -163,7 +163,7 @@ class FunctionModel(Model):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(_model_name=self._model_name, _model_profile=self.profile, _iter=response_stream)
+        yield FunctionStreamedResponse(_model_name=self._model_name, _iter=response_stream)
 
     @property
     def model_name(self) -> str:
@@ -253,7 +253,6 @@ class FunctionStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
     _model_name: str
-    _model_profile: ModelProfile
     _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
@@ -265,9 +264,7 @@ class FunctionStreamedResponse(StreamedResponse):
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
                 self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content', content=item, model_profile=self._model_profile
-                )
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
             elif isinstance(item, dict) and item:

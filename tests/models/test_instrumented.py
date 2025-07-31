@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import Usage
 
@@ -98,24 +97,16 @@ class MyModel(Model):
 class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         self._usage = Usage(request_tokens=300, response_tokens=400)
-        maybe_event = self._parts_manager.handle_text_delta(
-            vendor_part_id=0, content='text1', model_profile=self.profile
-        )
+        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
         if maybe_event is not None:  # pragma: no branch
             yield maybe_event
-        maybe_event = self._parts_manager.handle_text_delta(
-            vendor_part_id=0, content='text2', model_profile=self.profile
-        )
+        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text2')
         if maybe_event is not None:  # pragma: no branch
             yield maybe_event
 
     @property
     def model_name(self) -> str:
         return 'my_model_123'
-
-    @property
-    def profile(self) -> ModelProfile:
-        return ModelProfile()
 
     @property
     def timestamp(self) -> datetime:

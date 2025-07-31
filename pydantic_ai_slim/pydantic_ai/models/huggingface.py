@@ -10,7 +10,6 @@ from typing import Literal, Union, cast, overload
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -245,11 +244,7 @@ class HuggingFaceModel(Model):
         items: list[ModelResponsePart] = []
 
         if content is not None:
-            items.extend(
-                split_content_into_text_and_thinking(
-                    self.profile.thinking_start_tag, self.profile.thinking_end_tag, content
-                )
-            )
+            items.extend(split_content_into_text_and_thinking(content, self.profile.thinking_tags))
         if tool_calls is not None:
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -272,7 +267,7 @@ class HuggingFaceModel(Model):
 
         return HuggingFaceStreamedResponse(
             _model_name=self._model_name,
-            _model_profile=self.profile,
+            _thinking_tags=self.profile.thinking_tags,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
@@ -418,7 +413,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Hugging Face models."""
 
     _model_name: str
-    _model_profile: ModelProfile
+    _thinking_tags: tuple[str, str] | None
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _timestamp: datetime
 
@@ -437,8 +432,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
-                    model_profile=self._model_profile,
-                    extract_think_tags=True,
+                    extract_think_tags=self._thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

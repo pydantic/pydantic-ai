@@ -30,7 +30,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -334,7 +334,6 @@ class GoogleModel(Model):
 
         return GeminiStreamedResponse(
             _model_name=self._model_name,
-            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
         )
@@ -442,7 +441,6 @@ class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
     _model_name: GoogleModelName
-    _model_profile: ModelProfile
     _response: AsyncIterator[GenerateContentResponse]
     _timestamp: datetime
 
@@ -460,9 +458,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
                     else:
-                        maybe_event = self._parts_manager.handle_text_delta(
-                            vendor_part_id='content', content=part.text, model_profile=self._model_profile
-                        )
+                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
                 elif part.function_call:

@@ -33,7 +33,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -333,11 +333,7 @@ class MistralModel(Model):
 
         parts: list[ModelResponsePart] = []
         if text := _map_content(content):
-            parts.extend(
-                split_content_into_text_and_thinking(
-                    self.profile.thinking_start_tag, self.profile.thinking_end_tag, text
-                )
-            )
+            parts.extend(split_content_into_text_and_thinking(text, self.profile.thinking_tags))
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
@@ -369,7 +365,6 @@ class MistralModel(Model):
         return MistralStreamedResponse(
             _response=peekable_response,
             _model_name=self._model_name,
-            _model_profile=self.profile,
             _timestamp=timestamp,
             _output_tools={c.name: c for c in output_tools},
         )
@@ -573,7 +568,6 @@ class MistralStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Mistral models."""
 
     _model_name: MistralModelName
-    _model_profile: ModelProfile
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
     _output_tools: dict[str, ToolDefinition]
@@ -607,9 +601,7 @@ class MistralStreamedResponse(StreamedResponse):
                             tool_call_id=maybe_tool_call_part.tool_call_id,
                         )
                 else:
-                    maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content=text, model_profile=self._model_profile
-                    )
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 

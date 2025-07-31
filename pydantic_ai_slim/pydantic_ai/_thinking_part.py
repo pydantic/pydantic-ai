@@ -3,9 +3,7 @@ from __future__ import annotations as _annotations
 from pydantic_ai.messages import TextPart, ThinkingPart
 
 
-def split_content_into_text_and_thinking(
-    thinking_start_tag: str, thinking_end_tag: str, content: str
-) -> list[ThinkingPart | TextPart]:
+def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str, str]) -> list[ThinkingPart | TextPart]:
     """Split a string into text and thinking parts.
 
     Some models don't return the thinking part as a separate part, but rather as a tag in the content.
@@ -16,20 +14,20 @@ def split_content_into_text_and_thinking(
     """
     parts: list[ThinkingPart | TextPart] = []
 
-    start_index = content.find(thinking_start_tag)
+    start_index = content.find(thinking_tags[0])
     while start_index >= 0:
-        before_think, content = content[:start_index], content[start_index + len(thinking_start_tag) :]
+        before_think, content = content[:start_index], content[start_index + len(thinking_tags[0]) :]
         if before_think:
             parts.append(TextPart(content=before_think))
-        end_index = content.find(thinking_end_tag)
+        end_index = content.find(thinking_tags[1])
         if end_index >= 0:
-            think_content, content = content[:end_index], content[end_index + len(thinking_end_tag) :]
+            think_content, content = content[:end_index], content[end_index + len(thinking_tags[1]) :]
             parts.append(ThinkingPart(content=think_content))
         else:
             # We lose the `<think>` tag, but it shouldn't matter.
             parts.append(TextPart(content=content))
             content = ''
-        start_index = content.find(thinking_start_tag)
+        start_index = content.find(thinking_tags[0])
     if content:
         parts.append(TextPart(content=content))
     return parts

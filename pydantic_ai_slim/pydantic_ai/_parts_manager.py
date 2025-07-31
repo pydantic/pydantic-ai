@@ -30,7 +30,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from pydantic_ai.profiles import ModelProfile
 
 from ._utils import generate_tool_call_id as _generate_tool_call_id
 
@@ -72,8 +71,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: VendorId | None,
         content: str,
-        model_profile: ModelProfile,
-        extract_think_tags: bool = False,
+        extract_think_tags: tuple[str, str] | None = None,
     ) -> ModelResponseStreamEvent | None:
         """Handle incoming text content, creating or updating a TextPart in the manager as appropriate.
 
@@ -114,7 +112,7 @@ class ModelResponsePartsManager:
 
                 if extract_think_tags and isinstance(existing_part, ThinkingPart):
                     # We may be building a thinking part instead of a text part if we had previously seen a `<think>` tag
-                    if content == model_profile.thinking_end_tag:
+                    if content == extract_think_tags[1]:
                         # When we see `</think>`, we're done with the thinking part and the next text delta will need a new part
                         self._vendor_id_to_part_index.pop(vendor_part_id)
                         return None
@@ -125,7 +123,7 @@ class ModelResponsePartsManager:
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
-        if extract_think_tags and content == model_profile.thinking_start_tag:
+        if extract_think_tags and content == extract_think_tags[0]:
             # When we see a `<think>` tag (which is a single token), we'll build a new thinking part instead
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
             return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')

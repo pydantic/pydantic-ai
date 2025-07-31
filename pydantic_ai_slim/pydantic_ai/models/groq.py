@@ -30,7 +30,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -261,11 +261,7 @@ class GroqModel(Model):
             items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.content is not None:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
-            items.extend(
-                split_content_into_text_and_thinking(
-                    self.profile.thinking_start_tag, self.profile.thinking_end_tag, choice.message.content
-                )
-            )
+            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
@@ -285,7 +281,7 @@ class GroqModel(Model):
         return GroqStreamedResponse(
             _response=peekable_response,
             _model_name=self._model_name,
-            _model_profile=self.profile,
+            _thinking_tags=self.profile.thinking_tags,
             _timestamp=number_to_datetime(first_chunk.created),
         )
 
@@ -405,7 +401,7 @@ class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
     _model_name: GroqModelName
-    _model_profile: ModelProfile
+    _thinking_tags: tuple[str, str] | None
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
 
@@ -424,8 +420,7 @@ class GroqStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
-                    model_profile=self._model_profile,
-                    extract_think_tags=True,
+                    extract_think_tags=self._thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

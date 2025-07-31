@@ -35,7 +35,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -306,9 +306,7 @@ class GeminiModel(Model):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GeminiStreamedResponse(
-            _model_name=self._model_name, _model_profile=self.profile, _content=content, _stream=aiter_bytes
-        )
+        return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
 
     async def _message_to_gemini_content(
         self, messages: list[ModelMessage]
@@ -426,7 +424,6 @@ class GeminiStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for the Gemini model."""
 
     _model_name: GeminiModelName
-    _model_profile: ModelProfile
     _content: bytearray
     _stream: AsyncIterator[bytes]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -442,7 +439,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
                     # amongst the tool call deltas
                     maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id=None, content=gemini_part['text'], model_profile=self._model_profile
+                        vendor_part_id=None, content=gemini_part['text']
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event

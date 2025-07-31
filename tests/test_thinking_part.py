@@ -8,24 +8,21 @@ from pydantic_ai.messages import ModelResponsePart, TextPart, ThinkingPart, Thin
 
 
 @pytest.mark.parametrize(
-    'open_tag, close_tag, content, parts',
+    'thinking_tags, content, parts',
     [
         # default <think>…</think> cases
         (
-            '<think>',
-            '</think>',
+            ('<think>', '</think>'),
             'foo bar',
             [TextPart(content='foo bar')],
         ),
         (
-            '<think>',
-            '</think>',
+            ('<think>', '</think>'),
             'foo bar<think>thinking</think>',
             [TextPart(content='foo bar'), ThinkingPart(content='thinking')],
         ),
         (
-            '<think>',
-            '</think>',
+            ('<think>', '</think>'),
             'foo bar<think>thinking</think>baz',
             [
                 TextPart(content='foo bar'),
@@ -34,33 +31,28 @@ from pydantic_ai.messages import ModelResponsePart, TextPart, ThinkingPart, Thin
             ],
         ),
         (
-            '<think>',
-            '</think>',
+            ('<think>', '</think>'),
             'foo bar<think>thinking',
             [TextPart(content='foo bar'), TextPart(content='thinking')],
         ),
         (
-            '<think>',
-            '</think>',
+            ('<think>', '</think>'),
             'foo bar<custom>thinking</custom>baz',
             [TextPart(content='foo bar<custom>thinking</custom>baz')],
         ),
         # custom <custom>…</custom> cases
         (
-            '<custom>',
-            '</custom>',
+            ('<custom>', '</custom>'),
             'foo bar',
             [TextPart(content='foo bar')],
         ),
         (
-            '<custom>',
-            '</custom>',
+            ('<custom>', '</custom>'),
             'foo bar<custom>thinking</custom>',
             [TextPart(content='foo bar'), ThinkingPart(content='thinking')],
         ),
         (
-            '<custom>',
-            '</custom>',
+            ('<custom>', '</custom>'),
             'foo bar<custom>thinking</custom>baz',
             [
                 TextPart(content='foo bar'),
@@ -69,21 +61,19 @@ from pydantic_ai.messages import ModelResponsePart, TextPart, ThinkingPart, Thin
             ],
         ),
         (
-            '<custom>',
-            '</custom>',
+            ('<custom>', '</custom>'),
             'foo bar<custom>thinking',
             [TextPart(content='foo bar'), TextPart(content='thinking')],
         ),
         (
-            '<custom>',
-            '</custom>',
+            ('<custom>', '</custom>'),
             'foo bar<think>thinking</think>baz',
             [TextPart(content='foo bar<think>thinking</think>baz')],
         ),
     ],
 )
-def test_split_content(open_tag: str, close_tag: str, content: str, parts: list[ModelResponsePart]):
-    assert split_content_into_text_and_thinking(open_tag, close_tag, content) == parts
+def test_split_content(thinking_tags: tuple[str, str], content: str, parts: list[ModelResponsePart]):
+    assert split_content_into_text_and_thinking(content, thinking_tags) == parts
 
 
 def test_thinking_part_delta_applies_both_content_and_signature():

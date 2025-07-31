@@ -29,7 +29,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -293,7 +293,7 @@ class AnthropicModel(Model):
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(
-            _model_name=self._model_name, _model_profile=self.profile, _response=peekable_response, _timestamp=timestamp
+            _model_name=self._model_name, _response=peekable_response, _timestamp=timestamp
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
@@ -467,7 +467,6 @@ class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
 
     _model_name: AnthropicModelName
-    _model_profile: ModelProfile
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _timestamp: datetime
 
@@ -481,7 +480,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
                     maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content=current_block.text, model_profile=self._model_profile
+                        vendor_part_id='content', content=current_block.text
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
@@ -504,7 +503,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
                     maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content=event.delta.text, model_profile=self._model_profile
+                        vendor_part_id='content', content=event.delta.text
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event

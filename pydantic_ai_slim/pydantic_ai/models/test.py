@@ -24,7 +24,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
 )
-from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
@@ -124,7 +124,6 @@ class TestModel(Model):
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
             _model_name=self._model_name,
-            _model_profile=self.profile,
             _structured_response=model_response,
             _messages=messages,
         )
@@ -254,7 +253,6 @@ class TestStreamedResponse(StreamedResponse):
     """A structured response that streams test data."""
 
     _model_name: str
-    _model_profile: ModelProfile
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
@@ -273,16 +271,12 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id=i, content='', model_profile=self._model_profile
-                )
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
                 for word in words:
                     self._usage += _get_string_usage(word)
-                    maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id=i, content=word, model_profile=self._model_profile
-                    )
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
             elif isinstance(part, ToolCallPart):
