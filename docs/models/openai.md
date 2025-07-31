@@ -528,12 +528,12 @@ export HEROKU_INFERENCE_URL='https://us.inference.heroku.com'
 ```
 ### TrueFoundry AI Gateway
 
-To use [TrueFoundry's AI Gateway](https://www.truefoundry.com/ai-gateway), first obtain your Personal Access Token by following the [authentication documentation](https://docs.truefoundry.com/gateway/authentication).
+To use [TrueFoundry's AI Gateway](https://www.truefoundry.com/ai-gateway), first follow the quick start guide [here](https://docs.truefoundry.com/gateway/quick-start) then obtain your Personal Access Token by following the [authentication documentation](https://docs.truefoundry.com/gateway/authentication).
 
 
 Once you have your Personal Access Token, you can use the OpenAI custom provider by configuring the model name, base URL, and API key to route pydantic requests through TrueFoundry gateway:
 
-![TrueFoundry AI Gateway](../img/unified-code-tfy.png)
+![TrueFoundry unified code snippet](../img/unified-code-tfy.png)
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
@@ -542,7 +542,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 model = OpenAIModel(
     model name = openai-main/gpt4o ('ensure you pick the correct model name'),
     provider=OpenAIProvider(
-        base_url='TRUEFOUNDRY_GATEWAY_BASE_URL', api_key='your-PAT'
+        base_url='TRUEFOUNDRY_GATEWAY_BASE_URL', api_key='your-TRUEFOUNDRY-PAT'
     ),
 )
 agent = Agent(model)
