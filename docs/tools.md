@@ -730,8 +730,8 @@ When a model returns multiple tool calls in one response, PydanticAI schedules t
 
 - Prefer `async def` tools that use non-blocking I/O (e.g., `httpx.AsyncClient`).
 - If you must use blocking libraries (e.g., `requests`, filesystem), declare the tool as `def` so it runs off the event loop in a thread.
-- Don’t do blocking I/O inside an `async def` tool; either switch to an async client or offload with `anyio.to_thread.run_sync`.
-- CPU-bound work (like `numpy` o `scikit-learn` operations) doesn’t benefit from async; keep it in `def` tools (thread offload) or move to a separate process for heavy workloads.
+- Don't do blocking I/O inside an `async def` tool; either switch to an async client or offload with `anyio.to_thread.run_sync`.
+- CPU-bound work (like `numpy` o `scikit-learn` operations) doesn't benefit from async; keep it in `def` tools (thread offload) or move to a separate process for heavy workloads.
 
 ## Third-Party Tools
 
