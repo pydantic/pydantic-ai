@@ -227,23 +227,44 @@ class TestModel(Model):
                                 output[part.tool_name] = part.content
                 if output:
                     return ModelResponse(
-                        parts=[TextPart(pydantic_core.to_json(output).decode())], model_name=self._model_name
+                        parts=[TextPart(pydantic_core.to_json(output).decode())],
+                        model_name=self._model_name,
+                        id=None,
+                        finish_reason=None,
                     )
                 else:
-                    return ModelResponse(parts=[TextPart('success (no tool calls)')], model_name=self._model_name)
+                    return ModelResponse(
+                        parts=[TextPart('success (no tool calls)')],
+                        model_name=self._model_name,
+                        id=None,
+                        finish_reason=None,
+                    )
             else:
-                return ModelResponse(parts=[TextPart(response_text)], model_name=self._model_name)
+                return ModelResponse(
+                    parts=[TextPart(response_text)],
+                    model_name=self._model_name,
+                    id=None,
+                    finish_reason=None,
+                )
         else:
             assert output_tools, 'No output tools provided'
             custom_output_args = output_wrapper.value
             output_tool = output_tools[self.seed % len(output_tools)]
             if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(output_tool.name, custom_output_args)], model_name=self._model_name
+                    parts=[ToolCallPart(output_tool.name, custom_output_args)],
+                    model_name=self._model_name,
+                    id=None,
+                    finish_reason=None,
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
-                return ModelResponse(parts=[ToolCallPart(output_tool.name, response_args)], model_name=self._model_name)
+                return ModelResponse(
+                    parts=[ToolCallPart(output_tool.name, response_args)],
+                    model_name=self._model_name,
+                    id=None,
+                    finish_reason=None,
+                )
 
 
 @dataclass
