@@ -12,22 +12,23 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
     We use the `<think>` tag because that's how Groq uses it in the `raw` format, so instead of using `<Thinking>` or
     something else, we just match the tag to make it easier for other models that don't support the `ThinkingPart`.
     """
+    start_tag, end_tag = thinking_tags
     parts: list[ThinkingPart | TextPart] = []
 
-    start_index = content.find(thinking_tags[0])
+    start_index = content.find(start_tag)
     while start_index >= 0:
-        before_think, content = content[:start_index], content[start_index + len(thinking_tags[0]) :]
+        before_think, content = content[:start_index], content[start_index + len(start_tag) :]
         if before_think:
             parts.append(TextPart(content=before_think))
-        end_index = content.find(thinking_tags[1])
+        end_index = content.find(end_tag)
         if end_index >= 0:
-            think_content, content = content[:end_index], content[end_index + len(thinking_tags[1]) :]
+            think_content, content = content[:end_index], content[end_index + len(end_tag) :]
             parts.append(ThinkingPart(content=think_content))
         else:
             # We lose the `<think>` tag, but it shouldn't matter.
             parts.append(TextPart(content=content))
             content = ''
-        start_index = content.find(thinking_tags[0])
+        start_index = content.find(start_tag)
     if content:
         parts.append(TextPart(content=content))
     return parts

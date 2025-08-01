@@ -432,7 +432,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
-                    extract_think_tags=self._thinking_tags,
+                    thinking_tags=self._thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
