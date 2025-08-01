@@ -1870,9 +1870,10 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         on_shutdown: Sequence[Callable[[], Any]] | None = None,
         lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
     ) -> AGUIApp[AgentDepsT, OutputDataT]:
-        """Convert the agent to an AG-UI application.
+        """Returns an ASGI application that handles every AG-UI request by running the agent.
 
-        This allows you to use the agent with a compatible AG-UI frontend.
+        Only use this if every request can be handled using the same `deps` or if no `deps` are required.
+        If you need to handle requests with different `deps`, use [`pydantic_ai.ag_ui.run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui] or [`pydantic_ai.ag_ui.handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] instead.
 
         Example:
         ```python
@@ -1881,8 +1882,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         agent = Agent('openai:gpt-4o')
         app = agent.to_ag_ui()
         ```
-
-        The `app` is an ASGI application that can be used with any ASGI server.
 
         To run the application, you can use the following command:
 
@@ -1902,7 +1901,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
-            toolsets: Optional list of toolsets to use for this agent, defaults to the agent's toolset.
+            toolsets: Optional additional toolsets for this run.
 
             debug: Boolean indicating if debug tracebacks should be returned on errors.
             routes: A list of routes to serve incoming HTTP and WebSocket requests.
