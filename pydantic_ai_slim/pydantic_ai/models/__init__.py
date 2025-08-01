@@ -13,19 +13,19 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Generic, TypeVar, overload
+from typing import Any, Generic, TypeVar, overload
 
 import httpx
 from typing_extensions import Literal, TypeAliasType, TypedDict
 
-from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-
 from .. import _utils
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
+from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
 from ..output import OutputMode
+from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -388,6 +388,7 @@ class Model(ABC):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses
