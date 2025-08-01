@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import Field, dataclass, replace
 from http import HTTPStatus
 from typing import (
-    TYPE_CHECKING,
     Any,
     Callable,
     ClassVar,
@@ -23,10 +22,36 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic_ai.exceptions import UserError
+from pydantic import BaseModel, ValidationError
 
-if TYPE_CHECKING:
-    pass
+from ._agent_graph import CallToolsNode, ModelRequestNode
+from .agent import Agent, AgentRun
+from .exceptions import UserError
+from .messages import (
+    AgentStreamEvent,
+    FunctionToolResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    SystemPromptPart,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from .models import KnownModelName, Model
+from .output import DeferredToolCalls, OutputDataT, OutputSpec
+from .settings import ModelSettings
+from .tools import AgentDepsT, ToolDefinition
+from .toolsets import AbstractToolset
+from .toolsets.deferred import DeferredToolset
+from .usage import Usage, UsageLimits
 
 try:
     from ag_ui.core import (
@@ -73,38 +98,6 @@ except ImportError as e:  # pragma: no cover
         'Please install the `starlette` package to use `Agent.to_ag_ui()` method, '
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
-
-from collections.abc import AsyncGenerator
-
-from pydantic import BaseModel, ValidationError
-
-from ._agent_graph import CallToolsNode, ModelRequestNode
-from .agent import Agent, AgentRun
-from .messages import (
-    AgentStreamEvent,
-    FunctionToolResultEvent,
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
-    SystemPromptPart,
-    TextPart,
-    TextPartDelta,
-    ThinkingPart,
-    ThinkingPartDelta,
-    ToolCallPart,
-    ToolCallPartDelta,
-    ToolReturnPart,
-    UserPromptPart,
-)
-from .models import KnownModelName, Model
-from .output import DeferredToolCalls, OutputDataT, OutputSpec
-from .settings import ModelSettings
-from .tools import AgentDepsT, ToolDefinition
-from .toolsets import AbstractToolset
-from .toolsets.deferred import DeferredToolset
-from .usage import Usage, UsageLimits
 
 __all__ = [
     'SSE_CONTENT_TYPE',
@@ -285,7 +278,7 @@ async def run_ag_ui(
     usage: Usage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
     Args:
@@ -387,7 +380,7 @@ async def run_ag_ui(
         )
 
 
-async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncGenerator[BaseEvent, None]:
+async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEvent]:
     """Run the agent streaming responses using AG-UI protocol events.
 
     Args:
@@ -418,7 +411,7 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncGenerator[BaseEv
 async def _handle_model_request_event(
     stream_ctx: _RequestStreamContext,
     agent_event: AgentStreamEvent,
-) -> AsyncGenerator[BaseEvent, None]:
+) -> AsyncIterator[BaseEvent]:
     """Handle an agent event and yield AG-UI protocol events.
 
     Args:
@@ -502,7 +495,7 @@ async def _handle_model_request_event(
 async def _handle_tool_result_event(
     stream_ctx: _RequestStreamContext,
     event: FunctionToolResultEvent,
-) -> AsyncGenerator[BaseEvent, None]:
+) -> AsyncIterator[BaseEvent]:
     """Convert a tool call result to AG-UI events.
 
     Args:
