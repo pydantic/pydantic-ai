@@ -405,8 +405,8 @@ To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPSe
 ```python {title="simple_elicitation.py" py="3.10"}
 from typing import Any
 
+from mcp import ClientSession, types
 from mcp.shared.context import RequestContext
-from mcp import types
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
@@ -466,8 +466,8 @@ The corresponding client handles the confirmation request:
 ```python {title="file_client.py" py="3.10" test="skip"}
 from typing import Any
 
+from mcp import ClientSession, types
 from mcp.shared.context import RequestContext
-from mcp import types
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
