@@ -682,7 +682,7 @@ class ThinkingPart:
     signature: str | None = None
     """The signature of the thinking.
 
-    The signature is only available on the Anthropic models.
+    The signature is only available on the Anthropic and Google models.
     """
 
     part_kind: Literal['thinking'] = 'thinking'
