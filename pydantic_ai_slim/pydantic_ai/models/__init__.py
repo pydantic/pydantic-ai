@@ -24,7 +24,15 @@ from .. import _utils
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
-from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
+from ..messages import (
+    BaseCountTokensResponse,
+    FileUrl,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    VideoUrl,
+)
 from ..output import OutputMode
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
@@ -381,6 +389,16 @@ class Model(ABC):
     ) -> ModelResponse:
         """Make a request to the model."""
         raise NotImplementedError()
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> BaseCountTokensResponse:
+        """Make a request to the model for counting tokens."""
+        # This method is not required, but you need to implement it if you want to support token counting before making a request
+        raise NotImplementedError(f'Token counting API call is not supported by this {self.__class__.__name__}')
 
     @asynccontextmanager
     async def request_stream(

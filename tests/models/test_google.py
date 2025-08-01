@@ -10,6 +10,7 @@ from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from pydantic_ai import UsageLimitExceeded
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -36,7 +37,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.result import Usage
+from pydantic_ai.result import Usage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
@@ -1393,3 +1394,14 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+async def test_google_model_usage_limit_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=12\\)'):
+        await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
+        )

@@ -368,7 +368,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Check usage
         if ctx.deps.usage_limits:  # pragma: no branch
-            ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+            if ctx.deps.usage_limits.count_tokens_before_request:
+                model_request_parameters = await _prepare_request_parameters(ctx)
+                message_history = await _process_message_history(
+                    ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
+                )
+                token_count = await ctx.deps.model.count_tokens(
+                    message_history, ctx.deps.model_settings, model_request_parameters
+                )
+                ctx.state.usage.incr(token_count.to_usage())
+                ctx.deps.usage_limits.check_tokens(ctx.state.usage)
+            else:
+                ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 
         # Increment run_step
         ctx.state.run_step += 1
