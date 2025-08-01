@@ -542,7 +542,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 model = OpenAIModel(
     model name = openai-main/gpt4o ('ensure you pick the correct model name'),
     provider=OpenAIProvider(
-        base_url='TRUEFOUNDRY_GATEWAY_BASE_URL', api_key='your-TRUEFOUNDRY-PAT'
+        base_url='your-truefoundry-base-url', api_key='your-truefoundry-pat'
     ),
 )
 agent = Agent(model)
