@@ -37,7 +37,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -407,7 +407,7 @@ class OpenAIModel(Model):
             }
 
         if choice.message.content is not None:
-            items.extend(split_content_into_text_and_thinking(choice.message.content))
+            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
@@ -433,6 +433,7 @@ class OpenAIModel(Model):
 
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
+            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
         )
@@ -1009,6 +1010,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
 
     _model_name: OpenAIModelName
+    _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
 
@@ -1025,7 +1027,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             content = choice.delta.content
             if content:
                 maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content', content=content, extract_think_tags=True
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

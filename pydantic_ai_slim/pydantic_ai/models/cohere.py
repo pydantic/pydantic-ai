@@ -192,7 +192,7 @@ class CohereModel(Model):
             # While Cohere's API returns a list, it only does that for future proofing
             # and currently only one item is being returned.
             choice = response.message.content[0]
-            parts.extend(split_content_into_text_and_thinking(choice.text))
+            parts.extend(split_content_into_text_and_thinking(choice.text, self.profile.thinking_tags))
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
