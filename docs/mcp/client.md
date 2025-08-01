@@ -396,20 +396,28 @@ server = MCPServerStdio(
 
 Sometimes MCP servers need to ask the user questions during tool execution. For example, a file management tool might ask "Are you sure you want to delete this file?" before performing a destructive action, or a deployment tool might need confirmation before deploying to production.
 
-In MCP, elicitation allows servers to pause tool execution and request input from the user via the client. The server sends a message, the client presents it to the user, collects their response, and sends it back to the server.
+In MCP, [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation) allows servers to pause tool execution and request input from the user via the client. The server sends a message, the client presents it to the user, collects their response, and sends it back to the server.
 
 ### Setting up Elicitation
 
 To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPServerStdio.elicitation_callback] function when creating your MCP server instance:
 
 ```python {title="simple_elicitation.py" py="3.10"}
+from typing import Any
+
+from mcp.shared.context import RequestContext
+from mcp import types
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 
-async def ask_user(message: str) -> str:
-    print(f"Server asks: {message}")
-    return input("Your answer: ")
+async def ask_user(
+    context: RequestContext["ClientSession", Any],
+    params: types.ElicitRequestParams,
+) -> types.ElicitResult | types.ErrorData:
+    print(f"Server asks: {params.message}")
+    user_response = input("Your answer: ")
+    return types.ElicitResult(action="accept", content={"response": user_response})
 
 
 server = MCPServerStdio(
@@ -423,7 +431,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])
 
 1. This function is called whenever the server needs user input.
 
-The elicitation callback is an async function that receives a message from the server and returns the user's response as a string. Your callback can be as simple as requesting terminal input, or as sophisticated as showing GUI dialogs, sending notifications, or integrating with web interfaces.
+The elicitation callback is an async function that receives a context and elicitation parameters from the server and returns an `ElicitResult` or `ErrorData`. Your callback can be as simple as requesting terminal input, or as sophisticated as showing GUI dialogs, sending notifications, or integrating with web interfaces.
 
 ### File Deletion Example
 
@@ -456,18 +464,25 @@ if __name__ == '__main__':
 The corresponding client handles the confirmation request:
 
 ```python {title="file_client.py" py="3.10" test="skip"}
+from typing import Any
+
+from mcp.shared.context import RequestContext
+from mcp import types
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 
-async def handle_confirmation(message: str) -> str:
+async def handle_confirmation(
+    context: RequestContext["ClientSession", Any],
+    params: types.ElicitRequestParams,
+) -> types.ElicitResult | types.ErrorData:
     """Present the confirmation dialog to the user."""
-    print(f"Warning: {message}")
+    print(f"Warning: {params.message}")
 
     while True:
         response = input("Your choice: ").strip().lower()
         if response in ['yes', 'no', 'y', 'n']:
-            return response
+            return types.ElicitResult(action="accept", content={"response": response})
         print("Please answer 'yes' or 'no'")
 
 
