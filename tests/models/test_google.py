@@ -44,7 +44,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 with try_import() as imports_successful:
     from google.genai.types import HarmBlockThreshold, HarmCategory
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, ModelRequestParameters
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -1395,11 +1395,12 @@ Don't include any text or Markdown fencing before or after.\
         ]
     )
 
+
 async def test_google_model_usage_limit_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model)
 
-    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 10 \\(request_tokens=12\\)'):
+    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=12\\)'):
         await agent.run(
             'The quick brown fox jumps over the lazydog.',
             usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
