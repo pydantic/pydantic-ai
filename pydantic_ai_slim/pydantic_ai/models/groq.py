@@ -30,7 +30,7 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -281,7 +281,7 @@ class GroqModel(Model):
         return GroqStreamedResponse(
             _response=peekable_response,
             _model_name=self._model_name,
-            _thinking_tags=self.profile.thinking_tags,
+            _model_profile=self.profile,
             _timestamp=number_to_datetime(first_chunk.created),
         )
 
@@ -401,7 +401,7 @@ class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
     _model_name: GroqModelName
-    _thinking_tags: tuple[str, str] | None
+    _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
 
@@ -420,7 +420,7 @@ class GroqStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
-                    thinking_tags=self._thinking_tags,
+                    thinking_tags=self._model_profile.thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

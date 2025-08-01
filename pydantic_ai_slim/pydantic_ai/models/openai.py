@@ -37,7 +37,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -433,7 +433,7 @@ class OpenAIModel(Model):
 
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
-            _thinking_tags=self.profile.thinking_tags,
+            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
         )
@@ -1010,7 +1010,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
 
     _model_name: OpenAIModelName
-    _thinking_tags: tuple[str, str] | None
+    _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
 
@@ -1029,7 +1029,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
-                    thinking_tags=self._thinking_tags,
+                    thinking_tags=self._model_profile.thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

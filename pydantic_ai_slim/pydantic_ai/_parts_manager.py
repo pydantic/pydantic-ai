@@ -84,7 +84,7 @@ class ModelResponsePartsManager:
                 of text. If None, a new part will be created unless the latest part is already
                 a TextPart.
             content: The text content to append to the appropriate TextPart.
-            thinking_tags: If provided, will handle the content between the tags as thinking parts.
+            thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
 
         Returns:
             - A `PartStartEvent` if a new part was created.

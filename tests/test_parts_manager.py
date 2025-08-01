@@ -424,7 +424,7 @@ def test_handle_mixed_deltas_without_text_part_id(text_vendor_part_id: str | Non
 
 def test_cannot_convert_from_text_to_tool_call():
     manager = ModelResponsePartsManager()
-    manager.handle_text_delta(vendor_part_id=1, content='hello ')
+    manager.handle_text_delta(vendor_part_id=1, content='hello')
     with pytest.raises(
         UnexpectedModelBehavior, match=re.escape('Cannot apply a tool call delta to existing_part=TextPart(')
     ):

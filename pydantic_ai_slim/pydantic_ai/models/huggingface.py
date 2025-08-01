@@ -33,6 +33,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfile
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
@@ -267,7 +268,7 @@ class HuggingFaceModel(Model):
 
         return HuggingFaceStreamedResponse(
             _model_name=self._model_name,
-            _thinking_tags=self.profile.thinking_tags,
+            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
@@ -413,7 +414,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Hugging Face models."""
 
     _model_name: str
-    _thinking_tags: tuple[str, str] | None
+    _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _timestamp: datetime
 
@@ -432,7 +433,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
-                    thinking_tags=self._thinking_tags,
+                    thinking_tags=self._model_profile.thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

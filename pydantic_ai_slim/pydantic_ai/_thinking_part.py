@@ -8,9 +8,6 @@ def split_content_into_text_and_thinking(content: str, thinking_tags: tuple[str,
 
     Some models don't return the thinking part as a separate part, but rather as a tag in the content.
     This function splits the content into text and thinking parts.
-
-    We use the `<think>` tag because that's how Groq uses it in the `raw` format, so instead of using `<Thinking>` or
-    something else, we just match the tag to make it easier for other models that don't support the `ThinkingPart`.
     """
     start_tag, end_tag = thinking_tags
     parts: list[ThinkingPart | TextPart] = []
