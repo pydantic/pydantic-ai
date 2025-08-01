@@ -146,7 +146,11 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
     ) -> None:
         """An ASGI application that handles every AG-UI request by running the agent.
 
-        Only use this if every request can be handled using the same `deps` or if no `deps` are required.
+        Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
+        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol.
+        To provide different `deps` for each request (e.g. based on the authenticated user),
+        use [`pydantic_ai.ag_ui.run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui] or
+        [`pydantic_ai.ag_ui.handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] instead.
 
         Args:
             agent: The agent to run.
