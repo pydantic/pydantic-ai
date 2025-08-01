@@ -724,7 +724,14 @@ def my_flaky_tool(query: str) -> str:
 
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
-When the LLM requests multiple tool executions, they are run concurrently via `asyncio.create_task`. For this concurrency to be effective, the tools must be defined as async functions and use non-blocking clients (e.g., `httpx.AsyncClient` instead of `httpx.Client`).
+### Parallel tool calls & concurrency
+
+When a model returns multiple tool calls in one response, PydanticAI schedules them concurrently (with `asyncio.create_task`). To achieve real speed-ups:
+
+- Prefer `async def` tools that use non-blocking I/O (e.g., `httpx.AsyncClient`).
+- If you must use blocking libraries (e.g., `requests`, filesystem), declare the tool as `def` so it runs off the event loop in a thread.
+- Don’t do blocking I/O inside an `async def` tool; either switch to an async client or offload with `anyio.to_thread.run_sync`.
+- CPU-bound work (like `numpy` o `scikit-learn` operations) doesn’t benefit from async; keep it in `def` tools (thread offload) or move to a separate process for heavy workloads.
 
 ## Third-Party Tools
 
