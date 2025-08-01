@@ -378,7 +378,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     message_history, ctx.deps.model_settings, model_request_parameters
                 )
                 ctx.state.usage.incr(token_count.to_usage())
-                ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+                ctx.deps.usage_limits.check_tokens(ctx.state.usage)
             else:
                 ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 

@@ -192,9 +192,7 @@ class GoogleModel(Model):
     ) -> BaseCountTokensResponse:
         check_allow_model_requests()
         model_settings = cast(GoogleModelSettings, model_settings or {})
-        system_instruction, contents = await self._map_messages(messages)
-        system_instruction = None
-        tools = self._get_tools(model_request_parameters)
+        _, contents = await self._map_messages(messages)
         http_options: HttpOptionsDict = {
             'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         }
@@ -203,14 +201,14 @@ class GoogleModel(Model):
                 http_options['timeout'] = int(1000 * timeout)
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
-
+        # system_instruction and tools parameter are not supported for Count Tokens https://github.com/googleapis/python-genai/blob/038ecd3375f7c63a8ee8c1afa50cff1976343625/google/genai/models.py#L1169
         config = CountTokensConfigDict(
             http_options=http_options,
-            system_instruction=system_instruction,
-            tools=cast(list[ToolDict], tools),
+            system_instruction=None,
+            tools=None,
         )
 
-        response = self.client.models.count_tokens(
+        response = await self.client.aio.models.count_tokens(
             model=self._model_name,
             contents=contents,
             config=config,
