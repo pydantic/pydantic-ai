@@ -1,4 +1,5 @@
 import uuid
+from typing import Any, cast
 
 import anyio
 import httpx
@@ -24,6 +25,7 @@ from pydantic_ai.usage import Usage
 from .conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
+    from fasta2a.broker import StreamEvent
     from fasta2a.client import A2AClient
     from fasta2a.schema import DataPart, FilePart, Message, TextPart
     from fasta2a.storage import InMemoryStorage
@@ -991,3 +993,180 @@ async def test_a2a_multiple_send_task_messages():
                     ],
                 }
             )
+
+
+async def test_streaming_emits_incremental_messages(mocker: Any) -> None:
+    """Verify that enable_streaming=True produces incremental messages during agent execution."""
+    from fasta2a.broker import InMemoryBroker
+
+    # Create a model that produces multiple text parts to simulate streaming
+    def return_multiple_text_parts(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                PydanticAITextPart(content='First part of response'),
+                PydanticAITextPart(content='Second part of response'),
+                PydanticAITextPart(content='Final part'),
+            ]
+        )
+
+    streaming_model = FunctionModel(return_multiple_text_parts)
+
+    # Create agent with streaming enabled
+    agent = Agent(model=streaming_model, output_type=str)
+    storage = InMemoryStorage()
+    broker = InMemoryBroker()
+
+    # Spy on the broker's send_stream_event method to capture calls
+    mock_send: Any = mocker.spy(broker, 'send_stream_event')
+
+    app = agent.to_a2a(enable_streaming=True, storage=storage, broker=broker)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+
+            # Wait for task completion
+            await anyio.sleep(0.1)
+            final_response = await a2a_client.get_task(task_id)
+            assert 'result' in final_response
+            final_result = final_response['result']
+            assert final_result['status']['state'] == 'completed'
+
+            # Verify streaming events were captured
+            assert mock_send.call_count > 0
+
+            # Extract events from mock calls
+            captured_events: list[StreamEvent] = [call.args[1] for call in mock_send.call_args_list]
+
+            # Check that we got different types of events
+            event_kinds = [event.get('kind') for event in captured_events if event.get('kind')]
+
+            # Look for agent messages
+            message_events: list[Message] = []
+            for event in captured_events:
+                if event.get('kind') == 'message' and event.get('role') == 'agent':
+                    message_events.append(cast(Message, event))
+
+            # Should have status updates at minimum
+            assert 'status-update' in event_kinds
+
+            # Verify we got at least one agent message during streaming
+            assert len(message_events) > 0, f'Expected agent messages during streaming, got events: {event_kinds}'
+
+            # Verify the agent message contains the expected content
+            agent_message = message_events[0]
+            assert agent_message['role'] == 'agent'
+            assert agent_message['kind'] == 'message'
+            assert 'message_id' in agent_message
+            assert 'parts' in agent_message
+            parts = agent_message['parts']
+            assert len(parts) == 3  # Should have 3 text parts
+            first_part = parts[0]
+            assert first_part.get('kind') == 'text'
+            assert first_part.get('text') == 'First part of response'
+
+
+async def test_streaming_disabled_sends_only_final_results(mocker: Any) -> None:
+    """Verify enable_streaming=False sends only status updates and final results, no incremental messages."""
+    from fasta2a.broker import InMemoryBroker
+
+    # Create a model that produces multiple text parts - same as streaming test for comparison
+    def return_multiple_text_parts(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                PydanticAITextPart(content='First part of response'),
+                PydanticAITextPart(content='Second part of response'),
+                PydanticAITextPart(content='Final part'),
+            ]
+        )
+
+    streaming_model = FunctionModel(return_multiple_text_parts)
+
+    # Create agent with streaming DISABLED (default behavior)
+    agent = Agent(model=streaming_model, output_type=str)
+    storage = InMemoryStorage()
+    broker = InMemoryBroker()
+
+    # Spy on the broker's send_stream_event method to capture calls
+    mock_send: Any = mocker.spy(broker, 'send_stream_event')
+
+    # Note: enable_streaming defaults to False, but being explicit for clarity
+    app = agent.to_a2a(enable_streaming=False, storage=storage, broker=broker)
+
+    async with LifespanManager(app):
+        transport = httpx.ASGITransport(app)
+        async with httpx.AsyncClient(transport=transport) as http_client:
+            a2a_client = A2AClient(http_client=http_client)
+
+            message = Message(
+                role='user',
+                parts=[TextPart(text='Hello, world!', kind='text')],
+                kind='message',
+                message_id=str(uuid.uuid4()),
+            )
+            response = await a2a_client.send_message(message=message)
+            assert 'error' not in response
+            assert 'result' in response
+
+            result = response['result']
+            assert result['kind'] == 'task'
+            task_id = result['id']
+
+            # Wait for task completion
+            await anyio.sleep(0.1)
+            final_response = await a2a_client.get_task(task_id)
+            assert 'result' in final_response
+            final_result = final_response['result']
+            assert final_result['status']['state'] == 'completed'
+
+            # Verify streaming events were captured
+            assert mock_send.call_count > 0
+
+            # Extract events from mock calls
+            captured_events: list[StreamEvent] = [call.args[1] for call in mock_send.call_args_list]
+
+            # Analyze event types
+            event_kinds = [event.get('kind') for event in captured_events if event.get('kind')]
+
+            # Look for any agent messages (should be NONE when streaming disabled)
+            agent_messages: list[Message] = []
+            for event in captured_events:
+                if event.get('kind') == 'message' and event.get('role') == 'agent':
+                    agent_messages.append(cast(Message, event))
+
+            # Verify expected behavior: only status updates, NO incremental agent messages
+            assert 'status-update' in event_kinds, 'Should have status updates'
+            assert len(agent_messages) == 0, (
+                f'Should have NO agent messages when streaming disabled, but got: {agent_messages}'
+            )
+
+            # Verify clean event stream: only status updates (working -> completed)
+            status_events = [event for event in captured_events if event.get('kind') == 'status-update']
+            assert len(status_events) >= 2, 'Should have at least working and completed status updates'
+
+            # Verify final result is complete and correct
+            assert 'artifacts' in final_result
+            artifacts = final_result['artifacts']
+            assert len(artifacts) == 1
+            artifact = cast(dict[str, Any], artifacts[0])
+            assert artifact['name'] == 'result'
+            assert len(artifact['parts']) == 1
+            artifact_part = cast(dict[str, Any], artifact['parts'][0])
+            assert artifact_part['kind'] == 'text'
+            # Final result should contain all text parts concatenated
+            assert 'First part of response' in artifact_part['text']
