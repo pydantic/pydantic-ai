@@ -17,7 +17,6 @@ from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
 from typing import Any, Union
 
-from pydantic_ai._thinking_part import END_THINK_TAG, START_THINK_TAG
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelResponsePart,
@@ -72,7 +71,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: VendorId | None,
         content: str,
-        extract_think_tags: bool = False,
+        thinking_tags: tuple[str, str] | None = None,
     ) -> ModelResponseStreamEvent | None:
         """Handle incoming text content, creating or updating a TextPart in the manager as appropriate.
 
@@ -85,7 +84,7 @@ class ModelResponsePartsManager:
                 of text. If None, a new part will be created unless the latest part is already
                 a TextPart.
             content: The text content to append to the appropriate TextPart.
-            extract_think_tags: Whether to extract `<think>` tags from the text content and handle them as thinking parts.
+            thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
 
         Returns:
             - A `PartStartEvent` if a new part was created.
@@ -110,10 +109,10 @@ class ModelResponsePartsManager:
             if part_index is not None:
                 existing_part = self._parts[part_index]
 
-                if extract_think_tags and isinstance(existing_part, ThinkingPart):
-                    # We may be building a thinking part instead of a text part if we had previously seen a `<think>` tag
-                    if content == END_THINK_TAG:
-                        # When we see `</think>`, we're done with the thinking part and the next text delta will need a new part
+                if thinking_tags and isinstance(existing_part, ThinkingPart):
+                    # We may be building a thinking part instead of a text part if we had previously seen a thinking tag
+                    if content == thinking_tags[1]:
+                        # When we see the thinking end tag, we're done with the thinking part and the next text delta will need a new part
                         self._vendor_id_to_part_index.pop(vendor_part_id)
                         return None
                     else:
@@ -123,8 +122,8 @@ class ModelResponsePartsManager:
                 else:
                     raise UnexpectedModelBehavior(f'Cannot apply a text delta to {existing_part=}')
 
-        if extract_think_tags and content == START_THINK_TAG:
-            # When we see a `<think>` tag (which is a single token), we'll build a new thinking part instead
+        if thinking_tags and content == thinking_tags[0]:
+            # When we see a thinking start tag (which is a single token), we'll build a new thinking part instead
             self._vendor_id_to_part_index.pop(vendor_part_id, None)
             return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
 
