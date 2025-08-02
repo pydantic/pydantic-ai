@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -65,8 +66,8 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 """
 
 
-class GeminiModelSettings(ModelSettings, total=False):
-    """Settings used for a Gemini model request."""
+class _GeminiModelSettingsBase(ModelSettings, total=False):
+    """Internal base class for GeminiModelSettings."""
 
     # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
@@ -92,14 +93,46 @@ class GeminiModelSettings(ModelSettings, total=False):
     """
 
 
+class GeminiModelSettings(_GeminiModelSettingsBase):
+    """**DEPRECATED**: Settings used for a Gemini model request.
+
+    **This class is deprecated and will be removed in a future version.**
+    Use `GoogleModelSettings` from `pydantic_ai.models.google` instead.
+
+    .. deprecated::
+        `GeminiModelSettings` is deprecated, use `GoogleModelSettings` from `pydantic_ai.models.google` instead.
+    """
+
+    pass
+
+
+# Issue deprecation warning when GeminiModelSettings is accessed
+def __getattr__(name: str):
+    if name == 'GeminiModelSettings':
+        warnings.warn(
+            'GeminiModelSettings is deprecated, use GoogleModelSettings from pydantic_ai.models.google instead.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return GeminiModelSettings
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
+
+
 @dataclass(init=False)
 class GeminiModel(Model):
-    """A model that uses Gemini via `generativelanguage.googleapis.com` API.
+    """**DEPRECATED**: A model that uses Gemini via `generativelanguage.googleapis.com` API.
+
+    **This class is deprecated and will be removed in a future version.**
+    Use `GoogleModel` from `pydantic_ai.models.google` instead.
 
     This is implemented from scratch rather than using a dedicated SDK, good API documentation is
     available [here](https://ai.google.dev/api).
 
     Apart from `__init__`, all methods are private or match those of the base class.
+
+    .. deprecated::
+        `GeminiModel` is deprecated, use `GoogleModel` from `pydantic_ai.models.google` instead.
+        `GoogleModel` uses Google's official SDK and is more up-to-date with API changes.
     """
 
     client: httpx.AsyncClient = field(repr=False)
@@ -120,6 +153,10 @@ class GeminiModel(Model):
     ):
         """Initialize a Gemini model.
 
+        .. deprecated::
+            `GeminiModel` is deprecated, use `GoogleModel` from `pydantic_ai.models.google` instead.
+            `GoogleModel` uses Google's official SDK and is more up-to-date with API changes.
+
         Args:
             model_name: The name of the model to use.
             provider: The provider to use for authentication and API access. Can be either the string
@@ -128,6 +165,12 @@ class GeminiModel(Model):
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
         """
+        warnings.warn(
+            'GeminiModel is deprecated, use GoogleModel from pydantic_ai.models.google instead. '
+            "GoogleModel uses Google's official SDK and is more up-to-date with API changes.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._model_name = model_name
         self._provider = provider
 
@@ -152,7 +195,7 @@ class GeminiModel(Model):
     ) -> ModelResponse:
         check_allow_model_requests()
         async with self._make_request(
-            messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(_GeminiModelSettingsBase, model_settings or {}), model_request_parameters
         ) as http_response:
             data = await http_response.aread()
             response = _gemini_response_ta.validate_json(data)
@@ -167,7 +210,7 @@ class GeminiModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         async with self._make_request(
-            messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
+            messages, True, cast(_GeminiModelSettingsBase, model_settings or {}), model_request_parameters
         ) as http_response:
             yield await self._process_streamed_response(http_response)
 
@@ -200,7 +243,7 @@ class GeminiModel(Model):
         self,
         messages: list[ModelMessage],
         streamed: bool,
-        model_settings: GeminiModelSettings,
+        model_settings: _GeminiModelSettingsBase,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncIterator[HTTPResponse]:
         tools = self._get_tools(model_request_parameters)
@@ -383,7 +426,7 @@ class GeminiModel(Model):
         return response_schema
 
 
-def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _GeminiGenerationConfig:
+def _settings_to_generation_config(model_settings: _GeminiModelSettingsBase) -> _GeminiGenerationConfig:
     config: _GeminiGenerationConfig = {}
     if (max_tokens := model_settings.get('max_tokens')) is not None:
         config['max_output_tokens'] = max_tokens

@@ -32,6 +32,8 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore:GeminiModel is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:GeminiModelSettings is deprecated:DeprecationWarning'),
 ]
 
 

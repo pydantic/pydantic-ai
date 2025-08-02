@@ -83,6 +83,8 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings('ignore:GeminiModel is deprecated:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:GeminiModelSettings is deprecated:DeprecationWarning'),
 ]
 
 

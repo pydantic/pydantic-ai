@@ -41,20 +41,20 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   (generally by wrapping a vendor-provided SDK, like the `openai` python SDK). These classes implement a
   vendor-SDK-agnostic API, ensuring a single Pydantic AI agent is portable to different LLM vendors without
   any other code changes just by swapping out the Model it uses. Model classes are named
-  roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIModel`, `AnthropicModel`, `GeminiModel`,
+  roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIModel`, `AnthropicModel`, `GoogleModel`,
   etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-4o`,
   `claude-3-5-sonnet-latest`, `gemini-1.5-flash`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
-  authentication (e.g., you can use Vertex-specific auth with the `GeminiModel` by way of the `VertexProvider`).
+  authentication (e.g., you can use Vertex-specific auth with the `GoogleModel` by way of the `VertexProvider`).
   In particular, this is how you can make use of an AI gateway, or an LLM vendor that offers API compatibility
   with the vendor SDK used by an existing Model (such as `OpenAIModel`).
 - **Profile**: This refers to a description of how requests to a specific model or family of models need to be
   constructed to get the best results, independent of the model and provider classes used.
   For example, different models have different restrictions on the JSON schemas that can be used for tools,
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
-  with model name `gemini-2.5-pro-preview`, or `OpenAIModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
+  with model name `gemini-2.5-pro`, or `OpenAIModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro`.
 
 When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-4o` or `openrouter:google/gemini-2.5-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.

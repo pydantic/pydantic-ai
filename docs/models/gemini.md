@@ -1,5 +1,12 @@
 # Gemini
 
+!!! warning "DEPRECATION NOTICE"
+    **GeminiModel is deprecated and will be removed in a future version.**
+
+    Please use [`GoogleModel`](../api/models/google.md) instead.
+
+    `GoogleModel` uses Google's official SDK (`google-genai`) and is more up-to-date with API changes.
+
 !!! note
     We've developed a new Google model called `GoogleModel` which uses `google-genai` under the hood.
 
@@ -16,6 +23,9 @@ Pydantic AI supports Google's Gemini models through two different APIs:
 - Vertex AI API (`*-aiplatform.googleapis.com`)
 
 ## Gemini via Generative Language API
+
+!!! info "Consider using GoogleModel instead"
+    For new projects, consider using [`GoogleModel`](../api/models/google.md) instead of the deprecated `GeminiModel`.
 
 ### Install
 
@@ -96,6 +106,9 @@ agent = Agent(model)
 ```
 
 ## Gemini via VertexAI
+
+!!! info "Consider using GoogleModel instead"
+    For new projects, consider using [`GoogleModel`](../api/models/google.md) instead of the deprecated `GeminiModel`.
 
 If you are an enterprise user, you should use the `google-vertex` provider with `GeminiModel` which uses the `*-aiplatform.googleapis.com` API.
 
