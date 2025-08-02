@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
 !!! note
-    MCP integration requires Python 3.10 or higher.
+MCP integration requires Python 3.10 or higher.
 
 ## Usage
 
@@ -34,7 +34,7 @@ You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manag
 [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport to a server.
 
 !!! note
-    [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
+[`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
@@ -100,7 +100,7 @@ Will display as follows:
 [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
 
 !!! note
-    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
+[`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
 
 The name "HTTP" is used since this implementation will be adapted in future to use the new
 [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
@@ -280,13 +280,13 @@ async def main():
 ```
 
 1. When you supply `http_client`, Pydantic AI re-uses this client for every
-   request.  Anything supported by **httpx** (`verify`, `cert`, custom
+   request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
 ## MCP Sampling
 
 !!! info "What is MCP Sampling?"
-    In MCP [sampling](https://modelcontextprotocol.io/docs/concepts/sampling) is a system by which an MCP server can make LLM calls via the MCP client - effectively proxying requests to an LLM via the client over whatever transport is being used.
+In MCP [sampling](https://modelcontextprotocol.io/docs/concepts/sampling) is a system by which an MCP server can make LLM calls via the MCP client - effectively proxying requests to an LLM via the client over whatever transport is being used.
 
     Sampling is extremely useful when MCP servers need to use Gen AI but you don't want to provision them each with their own LLM credentials or when a public MCP server would like the connecting client to pay for LLM calls.
 
@@ -394,118 +394,138 @@ server = MCPServerStdio(
 
 ## Elicitation
 
-Sometimes MCP servers need to ask the user questions during tool execution. For example, a file management tool might ask "Are you sure you want to delete this file?" before performing a destructive action, or a deployment tool might need confirmation before deploying to production.
+In MCP, [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation) allows a server to request for [structured input](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) from the client for missing or additional context during a session.
 
-In MCP, [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation) allows servers to pause tool execution and request input from the user via the client. The server sends a message, the client presents it to the user, collects their response, and sends it back to the server.
+Elicitation let models essentially say "Hold on - I need to know X before i can continue" rather than requiring everything upfront or taking a shot in the dark.
+
+### How Elicitation works
+
+Elicitation introduces a new protocol message type called [`ElicitRequest`](https://modelcontextprotocol.io/specification/2025-06-18/schema#elicitrequest), which is sent from the server to the client when it needs additional information. The client can then respond with an [`ElicitResult`](https://modelcontextprotocol.io/specification/2025-06-18/schema#elicitresult) or an `ErrorData` message.
+
+Here's a typical interaction:
+
+- User makes a request to the MCP server (e.g. "Book a table at that Italian place")
+- The server identifies that it needs more information (e.g. "Which Italian place?", "What date and time?")
+- The server sends an `ElicitRequest` to the client asking for the missing information.
+- The client receives the request, presents it to the user (e.g. via a terminal prompt, GUI dialog, or web interface).
+- User provides the requested information, `decline` or `cancel` the request.
+- The client sends an `ElicitResult` back to the server with the user's response.
+- With the structured data, the server can continue processing the original request.
+
+This allows for a more interactive and user-friendly experience, especially for multi-staged workflows. Instead of requiring all information upfront, the server can ask for it as needed, making the interaction feel more natural.
 
 ### Setting up Elicitation
 
-To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPServerStdio.elicitation_callback] function when creating your MCP server instance:
+To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPServer.elicitation_callback] function when creating your MCP server instance:
 
-```python {title="simple_elicitation.py" py="3.10"}
-from typing import Any
-
-from mcp import ClientSession, types
-from mcp.shared.context import RequestContext
-from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServerStdio
-
-
-async def ask_user(
-    context: RequestContext["ClientSession", Any],
-    params: types.ElicitRequestParams,
-) -> types.ElicitResult | types.ErrorData:
-    print(f"Server asks: {params.message}")
-    user_response = input("Your answer: ")
-    return types.ElicitResult(action="accept", content={"response": user_response})
-
-
-server = MCPServerStdio(
-    command='python',
-    args=['my_server.py'],
-    elicitation_callback=ask_user  # (1)!
-)
-
-agent = Agent('openai:gpt-4o', toolsets=[server])
-```
-
-1. This function is called whenever the server needs user input.
-
-The elicitation callback is an async function that receives a context and elicitation parameters from the server and returns an `ElicitResult` or `ErrorData`. Your callback can be as simple as requesting terminal input, or as sophisticated as showing GUI dialogs, sending notifications, or integrating with web interfaces.
-
-### File Deletion Example
-
-Here's a practical example showing how an MCP server might use elicitation for confirmation dialogs:
-
-```python {title="file_server.py" py="3.10"}
+```python {title="restaurant_server.py" py="3.10"}
 from mcp.server.fastmcp import Context, FastMCP
+from pydantic import BaseModel, Field
 
-app = FastMCP('File Manager')
+mcp = FastMCP(name='Restaurant Booking')
 
-@app.tool()
-async def delete_file(ctx: Context, filename: str) -> str:
-    """Delete a file after getting user confirmation."""
-    # The server asks the client for input
-    user_response = await ctx.session.elicitation(
-        message=f"Delete '{filename}'? This cannot be undone! (yes/no)",
-        timeout_seconds=30,
-    )
 
-    if user_response.lower() in ['yes', 'y']:
-        # In real life, you'd actually delete the file here
-        return f"Deleted {filename}"
-    else:
-        return f"Cancelled deletion of {filename}"
+class BookingDetails(BaseModel):
+    """Schema for restaurant booking information."""
+
+    restaurant: str = Field(description='Choose a restaurant')
+    party_size: int = Field(description='Number of people', ge=1, le=8)
+    date: str = Field(description='Reservation date (DD-MM-YYYY)')
+
+
+@mcp.tool()
+async def book_table(ctx: Context) -> str:
+    """Book a restaurant table with user input."""
+    # Ask user for booking details using Pydantic schema
+    result = await ctx.elicit(message='Please provide your booking details:', schema=BookingDetails)
+
+    if result.action == 'accept' and result.data:
+        booking = result.data
+        return f'✅ Booked table for {booking.party_size} at {booking.restaurant} on {booking.date}'
+    elif result.action == 'decline':
+        return 'No problem! Maybe another time.'
+    else:  # cancel
+        return 'Booking cancelled.'
+
 
 if __name__ == '__main__':
-    app.run()
+    mcp.run(transport='stdio')
 ```
 
-The corresponding client handles the confirmation request:
-
-```python {title="file_client.py" py="3.10" test="skip"}
+```python {title="client_example.py" py="3.10" requires="restaurant_server.py" test="skip"}
+import asyncio
 from typing import Any
 
-from mcp import ClientSession, types
+from mcp.client.session import ClientSession
 from mcp.shared.context import RequestContext
+from mcp.types import ElicitRequestParams, ElicitResult
+
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 
-async def handle_confirmation(
-    context: RequestContext["ClientSession", Any],
-    params: types.ElicitRequestParams,
-) -> types.ElicitResult | types.ErrorData:
-    """Present the confirmation dialog to the user."""
-    print(f"Warning: {params.message}")
+async def handle_elicitation(
+    context: RequestContext[ClientSession, Any, Any],
+    params: ElicitRequestParams,
+) -> ElicitResult:
+    """Handle elicitation requests from MCP server."""
+    print(f'\n{params.message}')
 
-    while True:
-        response = input("Your choice: ").strip().lower()
-        if response in ['yes', 'no', 'y', 'n']:
-            return types.ElicitResult(action="accept", content={"response": response})
-        print("Please answer 'yes' or 'no'")
+    if not params.requestedSchema:
+        response = input('Response: ')
+        return ElicitResult(action='accept', content={'response': response})
+
+    # Collect data for each field
+    properties = params.requestedSchema['properties']
+    data = {}
+
+    for field, info in properties.items():
+        description = info.get('description', field)
+
+        value = input(f'{description}: ')
+
+        # Convert to proper type based on JSON schema
+        if info.get('type') == 'integer':
+            data[field] = int(value)
+        else:
+            data[field] = value
+
+    # Confirm
+    confirm = input('\nConfirm booking? (y/n/c): ').lower()
+
+    if confirm == 'y':
+        print('Booking details:', data)
+        return ElicitResult(action='accept', content=data)
+    elif confirm == 'n':
+        return ElicitResult(action='decline')
+    else:
+        return ElicitResult(action='cancel')
 
 
-server = MCPServerStdio(
-    command='python',
-    args=['file_server.py'],
-    elicitation_callback=handle_confirmation
+# Set up MCP server connection
+restaurant_server = MCPServerStdio(
+    command='python', args=['restaurant_server.py'], elicitation_callback=handle_elicitation
 )
 
-agent = Agent('openai:gpt-4o', toolsets=[server])
+# Create agent
+agent = Agent('openai:gpt-4o', toolsets=[restaurant_server])
+
 
 async def main():
+    """Run the agent to book a restaurant table."""
     async with agent:
-        result = await agent.run('Delete the file called important_data.txt')
-    print(result.output)
+        result = await agent.run('Book me a table')
+        print(f'\nResult: {result.output}')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
 ```
 
-When executed, this produces an interactive confirmation dialog:
+### Supported Schema Types
 
-```
-Warning: Delete 'important_data.txt'? This cannot be undone! (yes/no)
-Your choice: no
-Cancelled deletion of important_data.txt
-```
+MCP elicitation supports string, number, boolean, and enum types with flat object structures only. These limitations ensure reliable cross-client compatibility. See [supported schema types](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) for details.
 
-The interaction flows from the AI agent through the server's elicitation request, to your callback function, and back through the system with the user's decision.
+### Security
+
+MCP Elicitation requires careful handling - servers must not request sensitive information, and clients must implement user approval controls with clear explanations. See [security considerations](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#security-considerations) for details.

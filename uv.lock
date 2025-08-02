@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
@@ -1846,7 +1846,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.12.2"
+version = "1.12.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "python_full_version >= '3.10'" },
@@ -1861,9 +1861,9 @@ dependencies = [
     { name = "starlette", marker = "python_full_version >= '3.10'" },
     { name = "uvicorn", marker = "python_full_version >= '3.10' and sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/85/f36d538b1286b7758f35c1b69d93f2719d2df90c01bd074eadd35f6afc35/mcp-1.12.2.tar.gz", hash = "sha256:a4b7c742c50ce6ed6d6a6c096cca0e3893f5aecc89a59ed06d47c4e6ba41edcc", size = 426202, upload-time = "2025-07-24T18:29:05.175Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/19/9955e2df5384ff5dd25d38f8e88aaf89d2d3d9d39f27e7383eaf0b293836/mcp-1.12.3.tar.gz", hash = "sha256:ab2e05f5e5c13e1dc90a4a9ef23ac500a6121362a564447855ef0ab643a99fed", size = 427203, upload-time = "2025-07-31T18:36:36.795Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2f/cf/3fd38cfe43962452e4bfadc6966b2ea0afaf8e0286cb3991c247c8c33ebd/mcp-1.12.2-py3-none-any.whl", hash = "sha256:b86d584bb60193a42bd78aef01882c5c42d614e416cbf0480149839377ab5a5f", size = 158473, upload-time = "2025-07-24T18:29:03.419Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/8b/0be74e3308a486f1d127f3f6767de5f9f76454c9b4183210c61cc50999b6/mcp-1.12.3-py3-none-any.whl", hash = "sha256:5483345bf39033b858920a5b6348a303acacf45b23936972160ff152107b850e", size = 158810, upload-time = "2025-07-31T18:36:34.915Z" },
 ]
 
 [package.optional-dependencies]
@@ -3231,7 +3231,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
-    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.12.2" },
+    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.12.3" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.92.0" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
