@@ -10,7 +10,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 ## Configuration
 
-To use `OpenAIModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
+To use `OpenAIChatCompletionsModel` with the OpenAI API, go to [platform.openai.com](https://platform.openai.com/) and follow your nose until you find the place to generate an API key.
 
 ## Environment variable
 
@@ -20,7 +20,7 @@ Once you have the API key, you can set it as an environment variable:
 export OPENAI_API_KEY='your-api-key'
 ```
 
-You can then use `OpenAIModel` by name:
+You can then use `OpenAIChatCompletionsModel` by name:
 
 ```python
 from pydantic_ai import Agent
@@ -33,14 +33,14 @@ Or initialise the model directly with just the model name:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 
-model = OpenAIModel('gpt-4o')
+model = OpenAIChatCompletionsModel('gpt-4o')
 agent = Agent(model)
 ...
 ```
 
-By default, the `OpenAIModel` uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
+By default, the `OpenAIChatCompletionsModel` uses the `OpenAIProvider` with the `base_url` set to `https://api.openai.com/v1`.
 
 ## Configure the provider
 
@@ -49,10 +49,10 @@ If you want to pass parameters in code to the provider, you can programmatically
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key='your-api-key'))
+model = OpenAIChatCompletionsModel('gpt-4o', provider=OpenAIProvider(api_key='your-api-key'))
 agent = Agent(model)
 ...
 ```
@@ -65,11 +65,11 @@ agent = Agent(model)
 from openai import AsyncOpenAI
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncOpenAI(max_retries=3)
-model = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
+model = OpenAIChatCompletionsModel('gpt-4o', provider=OpenAIProvider(openai_client=client))
 agent = Agent(model)
 ...
 ```
@@ -81,7 +81,7 @@ to use the Azure OpenAI API. Note that the `AsyncAzureOpenAI` is a subclass of `
 from openai import AsyncAzureOpenAI
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 client = AsyncAzureOpenAI(
@@ -90,7 +90,7 @@ client = AsyncAzureOpenAI(
     api_key='your-api-key',
 )
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'gpt-4o',
     provider=OpenAIProvider(openai_client=client),
 )
@@ -144,17 +144,17 @@ You can learn more about the differences between the Responses API and Chat Comp
 
 ## OpenAI-compatible Models
 
-Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIModel` in Pydantic AI.
+Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatCompletionsModel` in Pydantic AI.
 Before getting started, check the [installation and configuration](#install) instructions above.
 
 To use another OpenAI-compatible API, you can make use of the `base_url` and `api_key` arguments from `OpenAIProvider`:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'model_name',
     provider=OpenAIProvider(
         base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
@@ -165,30 +165,30 @@ agent = Agent(model)
 ```
 
 Various providers also have their own provider classes so that you don't need to specify the base URL yourself and you can use the standard `<PROVIDER>_API_KEY` environment variable to set the API key.
-When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("openrouter:google/gemini-2.5-pro-preview")`, instead of building the `OpenAIModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIModel` instead of building instantiating the provider class explicitly.
+When a provider has its own provider class, you can use the `Agent("<provider>:<model>")` shorthand, e.g. `Agent("deepseek:deepseek-chat")` or `Agent("openrouter:google/gemini-2.5-pro-preview")`, instead of building the `OpenAIChatCompletionsModel` explicitly. Similarly, you can pass the provider name as a string to the `provider` argument on `OpenAIChatCompletionsModel` instead of building instantiating the provider class explicitly.
 
 #### Model Profile
 
 Sometimes, the provider or model you're using will have slightly different requirements than OpenAI's API or models, like having different restrictions on JSON schemas for tool definitions, or not supporting tool definitions to be marked as strict.
 
 When using an alternative provider class provided by Pydantic AI, an appropriate model profile is typically selected automatically based on the model name.
-If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIModel`):
+If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIChatCompletionsModel`):
 
 ```py
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'model_name',
     provider=OpenAIProvider(
         base_url='https://<openai-compatible-api-endpoint>.com', api_key='your-api-key'
     ),
     profile=OpenAIModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,  # Supported by any model class on a plain ModelProfile
-        openai_supports_strict_tool_definition=False  # Supported by OpenAIModel only, requires OpenAIModelProfile
+        openai_supports_strict_tool_definition=False  # Supported by OpenAIChatCompletionsModel only, requires OpenAIModelProfile
     )
 )
 agent = Agent(model)
@@ -201,10 +201,10 @@ Once you have the API key, you can use it with the [`DeepSeekProvider`][pydantic
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'deepseek-chat',
     provider=DeepSeekProvider(api_key='your-deepseek-api-key'),
 )
@@ -218,11 +218,11 @@ You can also customize any provider with a custom `http_client`:
 from httpx import AsyncClient
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 custom_http_client = AsyncClient(timeout=30)
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'deepseek-chat',
     provider=DeepSeekProvider(
         api_key='your-deepseek-api-key', http_client=custom_http_client
@@ -254,7 +254,7 @@ Then run your code, here's a minimal example:
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -263,7 +263,7 @@ class CityLocation(BaseModel):
     country: str
 
 
-ollama_model = OpenAIModel(
+ollama_model = OpenAIChatCompletionsModel(
     model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
 )
 agent = Agent(ollama_model, output_type=CityLocation)
@@ -281,10 +281,10 @@ print(result.usage())
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-ollama_model = OpenAIModel(
+ollama_model = OpenAIChatCompletionsModel(
     model_name='qwen2.5-coder:7b',  # (1)!
     provider=OpenAIProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
 )
@@ -314,10 +314,10 @@ If you want to use [Azure AI Foundry](https://ai.azure.com/) as your provider, y
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.azure import AzureProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'gpt-4o',
     provider=AzureProvider(
         azure_endpoint='your-azure-endpoint',
@@ -337,10 +337,10 @@ Once you have the API key, you can use it with the [`OpenRouterProvider`][pydant
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openrouter import OpenRouterProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'anthropic/claude-3.5-sonnet',
     provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
 )
@@ -390,10 +390,10 @@ Once you have the API key, you can use it with the [`GrokProvider`][pydantic_ai.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.grok import GrokProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'grok-2-1212',
     provider=GrokProvider(api_key='your-xai-api-key'),
 )
@@ -427,10 +427,10 @@ Once you have the token, you can use it with the [`GitHubProvider`][pydantic_ai.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.github import GitHubProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'xai/grok-3-mini',  # GitHub Models uses prefixed model names
     provider=GitHubProvider(api_key='your-github-token'),
 )
@@ -453,10 +453,10 @@ guide to create an API key. Then, you can query the Perplexity API with the foll
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'sonar-pro',
     provider=OpenAIProvider(
         base_url='https://api.perplexity.ai',
@@ -474,10 +474,10 @@ Once you have the API key, you can use it with the [`FireworksProvider`][pydanti
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.fireworks import FireworksProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'accounts/fireworks/models/qwq-32b',  # model library available at https://fireworks.ai/models
     provider=FireworksProvider(api_key='your-fireworks-api-key'),
 )
@@ -492,10 +492,10 @@ Once you have the API key, you can use it with the [`TogetherProvider`][pydantic
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.together import TogetherProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',  # model library available at https://www.together.ai/models
     provider=TogetherProvider(api_key='your-together-api-key'),
 )
@@ -509,10 +509,10 @@ To use [Heroku AI](https://www.heroku.com/ai), you can use the [`HerokuProvider`
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatCompletionsModel
 from pydantic_ai.providers.heroku import HerokuProvider
 
-model = OpenAIModel(
+model = OpenAIChatCompletionsModel(
     'claude-3-7-sonnet',
     provider=HerokuProvider(api_key='your-heroku-inference-key'),
 )

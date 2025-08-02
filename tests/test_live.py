@@ -22,10 +22,10 @@ pytestmark = [
 
 
 def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatCompletionsModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
+    return OpenAIChatCompletionsModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
 
 
 def gemini(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -63,10 +63,10 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatCompletionsModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel(
+    return OpenAIChatCompletionsModel(
         'qwen2:0.5b', provider=OpenAIProvider(base_url='http://localhost:11434/v1/', http_client=http_client)
     )
 

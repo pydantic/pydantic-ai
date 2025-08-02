@@ -28,7 +28,11 @@ from pydantic_ai.usage import Usage
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import (
+        OpenAIModelSettings,
+        OpenAIResponsesModel,
+        OpenAIResponsesModelSettings,
+    )
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [

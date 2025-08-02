@@ -2623,7 +2623,7 @@ def test_last_run_messages() -> None:
     agent = Agent('test')
 
     with pytest.raises(AttributeError, match='The `last_run_messages` attribute has been removed,'):
-        agent.last_run_messages  # pyright: ignore[reportDeprecated]
+        agent.last_run_messages  # type: ignore[reportDeprecated]
 
 
 def test_nested_capture_run_messages() -> None:
@@ -3592,7 +3592,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_type=str)  # type: ignore[call-arg]
+        agent = Agent('test', result_type=str)  # type: ignore[reportDeprecated]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_type` is deprecated' in str(w[0].message)
@@ -3601,7 +3601,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_tool_name='test_tool')  # type: ignore[call-arg]
+        agent = Agent('test', result_tool_name='test_tool')  # type: ignore[reportDeprecated]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_tool_name` is deprecated' in str(w[0].message)
@@ -3609,7 +3609,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_tool_description='test description')  # type: ignore[call-arg]
+        agent = Agent('test', result_tool_description='test description')  # type: ignore[reportDeprecated]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_tool_description` is deprecated' in str(w[0].message)
@@ -3617,7 +3617,7 @@ def test_deprecated_kwargs_still_work():
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter('always')
 
-        agent = Agent('test', result_retries=3)  # type: ignore[call-arg]
+        agent = Agent('test', result_retries=3)  # type: ignore[reportDeprecated]
         assert len(w) == 1
         assert issubclass(w[0].category, DeprecationWarning)
         assert '`result_retries` is deprecated' in str(w[0].message)
@@ -3628,7 +3628,7 @@ def test_deprecated_kwargs_still_work():
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter('always')
 
-            agent = Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[call-arg]
+            agent = Agent('test', mcp_servers=[MCPServerStdio('python', ['-m', 'tests.mcp_server'])])  # type: ignore[reportDeprecated]
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
             assert '`mcp_servers` is deprecated' in str(w[0].message)

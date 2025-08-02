@@ -416,7 +416,7 @@ async def test_next(mock_snapshot_id: object):
     assert g.name is None
     sp = FullStatePersistence()
     with pytest.warns(DeprecationWarning, match='`next` is deprecated, use `async with graph.iter(...)'):
-        n = await g.next(Foo(), persistence=sp)  # pyright: ignore[reportDeprecated]
+        n = await g.next(Foo(), persistence=sp)  # type: ignore[reportDeprecated]
     assert n == Bar()
     assert g.name == 'g'
     assert sp.history == snapshot(

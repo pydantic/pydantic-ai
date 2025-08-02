@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
 from pydantic import ValidationError
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.profiles.openai import OpenAIModelProfile
@@ -74,6 +74,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 __all__ = (
+    'OpenAIChatCompletionsModel',
     'OpenAIModel',
     'OpenAIResponsesModel',
     'OpenAIModelSettings',
@@ -172,8 +173,8 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
 
 
 @dataclass(init=False)
-class OpenAIModel(Model):
-    """A model that uses the OpenAI API.
+class OpenAIChatCompletionsModel(Model):
+    """A model that uses the OpenAI Chat Completions API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
 
@@ -599,6 +600,14 @@ class OpenAIModel(Model):
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+
+@deprecated('Use OpenAIChatCompletionsModel instead')
+class OpenAIModel(OpenAIChatCompletionsModel):
+    """A model that uses the OpenAI API.
+
+    This class was renamed to `OpenAIChatCompletionsModel`.
+    """
 
 
 @dataclass(init=False)
