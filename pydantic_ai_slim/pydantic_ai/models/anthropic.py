@@ -365,7 +365,7 @@ class AnthropicModel(Model):
                 assert_never(m)
         system_prompt = '\n\n'.join(system_prompt_parts)
         if instructions := self._get_instructions(messages):
-            system_prompt = f'{instructions}\n\n{system_prompt}'
+            system_prompt = f'{instructions}\n\n{system_prompt}' if system_prompt else instructions
         return system_prompt, anthropic_messages
 
     @staticmethod
