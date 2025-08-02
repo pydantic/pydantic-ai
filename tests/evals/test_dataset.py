@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from ..conftest import IsStr, try_import
 from .utils import render_table
@@ -20,7 +20,7 @@ with try_import() as imports_successful:
 
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
+    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, EvaluatorSpec, LLMJudge, Python
     from pydantic_evals.evaluators.context import EvaluatorContext
 
     @dataclass
@@ -32,7 +32,7 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
 
-    from pydantic_evals.reporting import ReportCase, ReportCaseAdapter
+    from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -456,13 +456,13 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},
@@ -482,13 +482,13 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},
@@ -499,6 +499,73 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
             ),
         ]
     )
+
+
+async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test the increment_eval_metric function."""
+
+    async def my_task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=f'answer to {inputs.query}')
+
+    example_dataset.add_evaluator(MockEvaluator({'output': 'a'}))
+
+    report = await example_dataset.evaluate(my_task)
+    assert report == snapshot(
+        EvaluationReport(
+            name='my_task',
+            cases=[
+                ReportCase(
+                    name='case1',
+                    inputs=TaskInput(query='What is 2+2?'),
+                    metadata=TaskMetadata(difficulty='easy', category='general'),
+                    expected_output=TaskOutput(answer='4', confidence=1.0),
+                    output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
+                    metrics={},
+                    attributes={},
+                    scores={},
+                    labels={
+                        'output': EvaluationResult(
+                            name='output',
+                            value='a',
+                            reason=None,
+                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                        )
+                    },
+                    assertions={},
+                    task_duration=1.0,
+                    total_duration=6.0,
+                    trace_id='00000000000000000000000000000001',
+                    span_id='0000000000000003',
+                ),
+                ReportCase(
+                    name='case2',
+                    inputs=TaskInput(query='What is the capital of France?'),
+                    metadata=TaskMetadata(difficulty='medium', category='geography'),
+                    expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                    output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
+                    metrics={},
+                    attributes={},
+                    scores={},
+                    labels={
+                        'output': EvaluationResult(
+                            name='output',
+                            value='a',
+                            reason=None,
+                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                        )
+                    },
+                    assertions={},
+                    task_duration=1.0,
+                    total_duration=4.0,
+                    trace_id='00000000000000000000000000000001',
+                    span_id='0000000000000007',
+                ),
+            ],
+        )
+    )
+
+    report_adapter = TypeAdapter(EvaluationReport[TaskInput, TaskOutput, TaskMetadata])
+    assert report == report_adapter.validate_json(report_adapter.dump_json(report, indent=2))
 
 
 async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):

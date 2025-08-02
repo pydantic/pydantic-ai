@@ -48,7 +48,7 @@ def sample_assertion(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetada
         name='MockEvaluator',
         value=True,
         reason=None,
-        source=mock_evaluator,
+        source=mock_evaluator.as_spec(),
     )
 
 
@@ -58,7 +58,7 @@ def sample_score(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata])
         name='MockEvaluator',
         value=2.5,
         reason=None,
-        source=mock_evaluator,
+        source=mock_evaluator.as_spec(),
     )
 
 
@@ -68,7 +68,7 @@ def sample_label(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata])
         name='MockEvaluator',
         value='hello',
         reason=None,
-        source=mock_evaluator,
+        source=mock_evaluator.as_spec(),
     )
 
 
@@ -195,16 +195,16 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
 
     table = renderer.build_diff_table(sample_report, baseline_report)
     assert render_table(table) == snapshot("""\
-                                                                                                                               Evaluation Diff: baseline_report → test_report
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Case ID   ┃ Inputs                    ┃ Metadata               ┃ Expected Output ┃ Outputs         ┃ Scores       ┃ Labels                                                                              ┃ Metrics                                 ┃ Assertions   ┃                             Durations ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ test_case │ {'query': 'What is 2+2?'} │ {'difficulty': 'easy'} │ {'answer': '4'} │ {'answer': '4'} │ score1: 2.50 │ label1: EvaluationResult(name='MockEvaluator', value='hello', reason=None,          │ accuracy: 0.900 → 0.950 (+0.05 / +5.6%) │  → ✔         │  task: 0.150 → 0.100 (-0.05 / -33.3%) │
-│           │                           │                        │                 │                 │              │ source=mock_evaluator.<locals>.MockEvaluator())                                     │                                         │              │ total: 0.250 → 0.200 (-0.05 / -20.0%) │
-├───────────┼───────────────────────────┼────────────────────────┼─────────────────┼─────────────────┼──────────────┼─────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────┼──────────────┼───────────────────────────────────────┤
-│ Averages  │                           │                        │                 │                 │ score1: 2.50 │ label1: {'hello': 1.0}                                                              │ accuracy: 0.900 → 0.950 (+0.05 / +5.6%) │ - → 100.0% ✔ │  task: 0.150 → 0.100 (-0.05 / -33.3%) │
-│           │                           │                        │                 │                 │              │                                                                                     │                                         │              │ total: 0.250 → 0.200 (-0.05 / -20.0%) │
-└───────────┴───────────────────────────┴────────────────────────┴─────────────────┴─────────────────┴──────────────┴─────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────┴──────────────┴───────────────────────────────────────┘
+                                                                                                Evaluation Diff: baseline_report → test_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Metadata               ┃ Expected Output ┃ Outputs         ┃ Scores       ┃ Labels                 ┃ Metrics                                 ┃ Assertions   ┃                             Durations ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ {'difficulty': 'easy'} │ {'answer': '4'} │ {'answer': '4'} │ score1: 2.50 │ label1: hello          │ accuracy: 0.900 → 0.950 (+0.05 / +5.6%) │  → ✔         │  task: 0.150 → 0.100 (-0.05 / -33.3%) │
+│           │                           │                        │                 │                 │              │                        │                                         │              │ total: 0.250 → 0.200 (-0.05 / -20.0%) │
+├───────────┼───────────────────────────┼────────────────────────┼─────────────────┼─────────────────┼──────────────┼────────────────────────┼─────────────────────────────────────────┼──────────────┼───────────────────────────────────────┤
+│ Averages  │                           │                        │                 │                 │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.900 → 0.950 (+0.05 / +5.6%) │ - → 100.0% ✔ │  task: 0.150 → 0.100 (-0.05 / -33.3%) │
+│           │                           │                        │                 │                 │              │                        │                                         │              │ total: 0.250 → 0.200 (-0.05 / -20.0%) │
+└───────────┴───────────────────────────┴────────────────────────┴─────────────────┴─────────────────┴──────────────┴────────────────────────┴─────────────────────────────────────────┴──────────────┴───────────────────────────────────────┘
 """)
 
 
@@ -350,7 +350,7 @@ async def test_report_case_aggregate_average():
                     name='MockEvaluator',
                     value=0.8,
                     reason=None,
-                    source=MockEvaluator(),
+                    source=MockEvaluator().as_spec(),
                 )
             },
             labels={
@@ -358,7 +358,7 @@ async def test_report_case_aggregate_average():
                     name='MockEvaluator',
                     value='good',
                     reason=None,
-                    source=MockEvaluator(),
+                    source=MockEvaluator().as_spec(),
                 )
             },
             assertions={
@@ -366,7 +366,7 @@ async def test_report_case_aggregate_average():
                     name='MockEvaluator',
                     value=True,
                     reason=None,
-                    source=MockEvaluator(),
+                    source=MockEvaluator().as_spec(),
                 )
             },
             task_duration=0.1,
@@ -387,7 +387,7 @@ async def test_report_case_aggregate_average():
                     name='MockEvaluator',
                     value=0.7,
                     reason=None,
-                    source=MockEvaluator(),
+                    source=MockEvaluator().as_spec(),
                 )
             },
             labels={
@@ -395,7 +395,7 @@ async def test_report_case_aggregate_average():
                     name='MockEvaluator',
                     value='good',
                     reason=None,
-                    source=MockEvaluator(),
+                    source=MockEvaluator().as_spec(),
                 )
             },
             assertions={
@@ -403,7 +403,7 @@ async def test_report_case_aggregate_average():
                     name='MockEvaluator',
                     value=False,
                     reason=None,
-                    source=MockEvaluator(),
+                    source=MockEvaluator().as_spec(),
                 )
             },
             task_duration=0.15,

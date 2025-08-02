@@ -669,7 +669,11 @@ class ReportCaseRenderer:
             row.append(scores_diff)
 
         if self.include_labels:  # pragma: no branch
-            labels_diff = self._render_dicts_diff(baseline.labels, new_case.labels, self.label_renderers)
+            labels_diff = self._render_dicts_diff(
+                {k: v.value for k, v in baseline.labels.items()},
+                {k: v.value for k, v in new_case.labels.items()},
+                self.label_renderers,
+            )
             row.append(labels_diff)
 
         if self.include_metrics:  # pragma: no branch
