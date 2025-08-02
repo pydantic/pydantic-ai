@@ -10,7 +10,6 @@ from typing import Any, Generic, cast, overload
 
 import logfire_api
 import typing_extensions
-from typing_extensions import deprecated
 from typing_inspection import typing_objects
 
 from . import _utils, exceptions, mermaid
@@ -341,43 +340,6 @@ class Graph(Generic[StateT, DepsT, RunEndT]):
 
         persistence.set_graph_types(self)
         await persistence.snapshot_node(state, node)
-
-    @deprecated('`next` is deprecated, use `async with graph.iter(...) as run:  run.next()` instead')
-    async def next(
-        self,
-        node: BaseNode[StateT, DepsT, RunEndT],
-        persistence: BaseStatePersistence[StateT, RunEndT],
-        *,
-        state: StateT = None,
-        deps: DepsT = None,
-        infer_name: bool = True,
-    ) -> BaseNode[StateT, DepsT, Any] | End[RunEndT]:
-        """Run a node in the graph and return the next node to run.
-
-        Args:
-            node: The node to run.
-            persistence: State persistence interface, defaults to
-                [`SimpleStatePersistence`][pydantic_graph.SimpleStatePersistence] if `None`.
-            state: The current state of the graph.
-            deps: The dependencies of the graph.
-            infer_name: Whether to infer the graph name from the calling frame.
-
-        Returns:
-            The next node to run or [`End`][pydantic_graph.nodes.End] if the graph has finished.
-        """
-        if infer_name and self.name is None:
-            self._infer_name(inspect.currentframe())
-
-        persistence.set_graph_types(self)
-        run = GraphRun[StateT, DepsT, RunEndT](
-            graph=self,
-            start_node=node,
-            persistence=persistence,
-            state=state,
-            deps=deps,
-            traceparent=None,
-        )
-        return await run.next(node)
 
     def mermaid_code(
         self,

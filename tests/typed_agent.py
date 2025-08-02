@@ -273,12 +273,12 @@ Agent('test', tools=[Tool(foobar_ctx)], deps_type=int)
 Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, foobar_plain], deps_type=int)
 Agent('test', tools=[Tool(foobar_ctx), foobar_ctx, Tool(foobar_plain)], deps_type=int)
 
-Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType,reportCallIssue]
-Agent('test', tools=[Tool(foobar_ctx), Tool(foobar_plain)], deps_type=str)  # pyright: ignore[reportArgumentType,reportCallIssue]
-Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType,reportCallIssue]
-Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType,reportCallIssue]
+Agent('test', tools=[foobar_ctx], deps_type=str)  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[Tool(foobar_ctx), Tool(foobar_plain)], deps_type=str)  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[foobar_ctx])  # pyright: ignore[reportArgumentType]
+Agent('test', tools=[Tool(foobar_ctx)])  # pyright: ignore[reportArgumentType]
 # since deps are not set, they default to `None`, so can't be `int`
-Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType,reportCallIssue]
+Agent('test', tools=[Tool(foobar_plain)], deps_type=int)  # pyright: ignore[reportArgumentType]
 
 # prepare example from docs:
 

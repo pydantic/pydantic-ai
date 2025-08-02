@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import functools
-import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
@@ -16,7 +15,7 @@ import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from typing_extensions import Self, assert_never, deprecated
+from typing_extensions import Self, assert_never
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -41,7 +40,7 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
+__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
@@ -517,14 +516,6 @@ class _MCPServerHTTP(MCPServer):
         **kwargs: Any,
     ):
         # Handle deprecated sse_read_timeout parameter
-        if 'sse_read_timeout' in kwargs:
-            if read_timeout is not None:
-                raise TypeError("'read_timeout' and 'sse_read_timeout' cannot be set at the same time.")
-
-            warnings.warn(
-                "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
-            )
-            read_timeout = kwargs.pop('sse_read_timeout')
 
         _utils.validate_empty_kwargs(kwargs)
 
@@ -640,36 +631,6 @@ class MCPServerSSE(_MCPServerHTTP):
     @property
     def _transport_client(self):
         return sse_client  # pragma: no cover
-
-
-@deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
-@dataclass
-class MCPServerHTTP(MCPServerSSE):
-    """An MCP server that connects over HTTP using the old SSE transport.
-
-    This class implements the SSE transport from the MCP specification.
-    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse> for more information.
-
-    !!! note
-        Using this class as an async context manager will create a new pool of HTTP connections to connect
-        to a server which should already be running.
-
-    Example:
-    ```python {py="3.10" test="skip"}
-    from pydantic_ai import Agent
-    from pydantic_ai.mcp import MCPServerHTTP
-
-    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
-    agent = Agent('openai:gpt-4o', toolsets=[server])
-
-    async def main():
-        async with agent:  # (2)!
-            ...
-    ```
-
-    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
-    2. This will connect to a server running on `localhost:3001`.
-    """
 
 
 @dataclass

@@ -401,39 +401,6 @@ async def test_iter_next_error(mock_snapshot_id: object):
             await run.next()
 
 
-async def test_next(mock_snapshot_id: object):
-    @dataclass
-    class Foo(BaseNode):
-        async def run(self, ctx: GraphRunContext) -> Bar:
-            return Bar()
-
-    @dataclass
-    class Bar(BaseNode):
-        async def run(self, ctx: GraphRunContext) -> Foo:
-            return Foo()  # pragma: no cover
-
-    g = Graph(nodes=(Foo, Bar))
-    assert g.name is None
-    sp = FullStatePersistence()
-    with pytest.warns(DeprecationWarning, match='`next` is deprecated, use `async with graph.iter(...)'):
-        n = await g.next(Foo(), persistence=sp)  # pyright: ignore[reportDeprecated]
-    assert n == Bar()
-    assert g.name == 'g'
-    assert sp.history == snapshot(
-        [
-            NodeSnapshot(
-                state=None,
-                node=Foo(),
-                start_ts=IsNow(tz=timezone.utc),
-                duration=IsFloat(),
-                status='success',
-                id='Foo:1',
-            ),
-            NodeSnapshot(state=None, node=Bar(), id='Bar:2'),
-        ]
-    )
-
-
 async def test_deps(mock_snapshot_id: object):
     @dataclass
     class Deps:
