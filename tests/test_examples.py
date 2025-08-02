@@ -12,6 +12,7 @@ from inspect import FrameInfo
 from io import StringIO
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -149,6 +150,38 @@ def test_docs_examples(  # noqa: C901
         mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
         mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
         mocker.patch('mcp.server.fastmcp.FastMCP')
+
+    # Mock OpenAI batch API for batch examples
+    mock_openai_client = MagicMock()
+
+    # Mock batch creation
+    mock_batch = MagicMock()
+    mock_batch.id = 'batch_test_123'
+    mock_openai_client.batches.create = AsyncMock(return_value=mock_batch)
+    mock_openai_client.files.create = AsyncMock(return_value=MagicMock(id='file_123'))
+
+    # Mock batch status retrieval
+    mock_batch_status = MagicMock()
+    mock_batch_status.status = 'completed'
+    mock_batch_status.id = 'batch_test_123'
+    mock_batch_status.completion_window = '24h'
+    mock_batch_status.created_at = 1700000000
+    mock_batch_status.request_counts = MagicMock()
+    mock_batch_status.request_counts.model_dump.return_value = {'completed': 3, 'failed': 0, 'total': 3}
+    mock_batch_status.output_file_id = 'file_456'
+    mock_openai_client.batches.retrieve = AsyncMock(return_value=mock_batch_status)
+
+    # Mock file content retrieval with realistic batch results
+    mock_file_content = b"""{"id": "batch_req_1", "custom_id": "math-question", "response": {"body": {"choices": [{"message": {"content": "2 + 2 = 4"}}]}}, "error": null}
+{"id": "batch_req_2", "custom_id": "creative-writing", "response": {"body": {"choices": [{"message": {"content": "In lines of code, a world takes flight,\\nFrom dawn's first thought to late at night."}}]}}, "error": null}
+{"id": "batch_req_3", "custom_id": "explanation", "response": {"body": {"choices": [{"message": {"content": "Quantum computing uses quantum bits to perform complex calculations faster than classical computers."}}]}}, "error": null}"""
+
+    mock_file_response = MagicMock()
+    mock_file_response.read.return_value = mock_file_content
+    mock_openai_client.files.content = AsyncMock(return_value=mock_file_response)
+
+    # Patch the OpenAI client provider
+    mocker.patch('pydantic_ai.providers.openai.AsyncOpenAI', return_value=mock_openai_client)
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')

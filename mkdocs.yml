@@ -29,6 +29,9 @@ nav:
           - models/groq.md
           - models/mistral.md
           - models/huggingface.md
+      - Batches:
+          - batches/index.md
+          - batches/openai.md
       - dependencies.md
       - tools.md
       - toolsets.md
