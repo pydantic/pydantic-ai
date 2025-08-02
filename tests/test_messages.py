@@ -41,6 +41,24 @@ def test_youtube_video_url(url: str, is_youtube: bool):
     assert video_url.format == 'mp4'
 
 
+@pytest.mark.parametrize(
+    'url, expected_data_type',
+    [
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md', 'text/markdown'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.txt', 'text/plain'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.pdf', 'application/pdf'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.rtf', 'application/rtf'),
+        (
+            'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.asciidoc',
+            'text/x-asciidoc',
+        ),
+    ],
+)
+def test_document_url_other_types(url: str, expected_data_type: str) -> None:
+    document_url = DocumentUrl(url=url)
+    assert document_url.media_type == expected_data_type
+
+
 def test_document_url():
     document_url = DocumentUrl(url='https://example.com/document.pdf')
     assert document_url.media_type == 'application/pdf'
