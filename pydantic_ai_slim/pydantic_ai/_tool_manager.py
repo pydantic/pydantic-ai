@@ -41,6 +41,9 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
+        if ctx.run_step == self.ctx.run_step:
+            return self
+
         retries = {
             failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1 for failed_tool_name in self.failed_tools
         }

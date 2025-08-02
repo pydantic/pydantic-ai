@@ -433,6 +433,35 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 2. We're using the agent's dependencies to give the `toggle` tool access to the `togglable_toolset` via the `RunContext` argument.
 3. This shows the available tools _after_ the `toggle` tool was executed, as the "last model request" was the one that returned the `toggle` tool result to the model.
 
+## Providing a Dynamic Toolset
+
+A Dynamic Toolset is a toolset that is built dynamically during an Agent run using a function that takes the run context and returns a Toolset. This is useful when you want to build a specific toolset (like an MCP Server) based on information specific to that Agent run.
+
+To use a Dynamic Toolset, you can pass a function that matches ['`ToolsetFunc`][pydantic_ai.toolsets._dynamic.ToolsetFunc] to the `toolsets` argument of the `Agent` constructor or you can wrap a compliant function in the ['`@agent.toolset`][pydantic_ai.Agent.toolset] decorator.
+
+The function will be called with the agent's [run context][pydantic_ai.tools.RunContext] and should return a [`Toolset`][pydantic_ai.toolsets.AbstractToolset] or [`None`][typing.None]. The function will be called once for each agent run step. If you are using the decorator, you can optionally provide a `per_run_step` argument to indicate whether the function should be called once for each agent run step or only once for the entire run.
+
+```python {title="agent_dynamic_toolset.py", requires="function_toolset.py"}
+from function_toolset import weather_toolset
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets.function import FunctionToolset
+
+def build_toolset(ctx: RunContext) -> FunctionToolset:
+    return weather_toolset
+
+test_model = TestModel() # (1)!
+agent = Agent(
+    test_model,
+    toolsets=[build_toolset],
+)
+
+result = agent.run_sync('Use the toolset')
+print([t.name for t in test_model.last_model_request_parameters.function_tools])
+#> ['temperature_celsius', 'temperature_fahrenheit', 'conditions']
+```
+
 ## Building a Custom Toolset
 
 To define a fully custom toolset with its own logic to list available tools and handle them being called, you can subclass [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] and implement the [`get_tools()`][pydantic_ai.toolsets.AbstractToolset.get_tools] and [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] methods.

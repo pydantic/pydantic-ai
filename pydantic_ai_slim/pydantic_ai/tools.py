@@ -118,7 +118,6 @@ agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 Usage `ToolsPrepareFunc[AgentDepsT]`.
 """
 
-
 DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
 """Supported docstring formats.
 

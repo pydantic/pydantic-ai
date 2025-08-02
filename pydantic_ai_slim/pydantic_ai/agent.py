@@ -16,6 +16,10 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
+from pydantic_ai.toolsets._dynamic import (
+    ToolsetFunc,
+    _DynamicToolset as DynamicToolset,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -164,7 +168,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     )
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
-    _user_toolsets: Sequence[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
+    _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
@@ -192,7 +196,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -223,7 +227,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -278,7 +282,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT] | ToolsetFunc[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -313,7 +317,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
                 This is useful if you want to customize the definition of multiple output tools or you want to register
                 a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
-            toolsets: Toolsets to register with the agent, including MCP servers.
+            toolsets: Toolsets to register with the agent, including MCP servers and functions which take a run context
+                and return a toolset. See [`ToolsetFunc`][pydantic_ai.toolsets.ToolsetFunc] for more information.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -421,7 +426,12 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             self._output_toolset.max_retries = self._max_result_retries
 
         self._function_toolset = FunctionToolset(tools, max_retries=retries)
-        self._user_toolsets = toolsets or ()
+        self._dynamic_toolsets = [
+            DynamicToolset[AgentDepsT](toolset_func=toolset)
+            for toolset in toolsets or []
+            if not isinstance(toolset, AbstractToolset)
+        ]
+        self._user_toolsets = [toolset for toolset in toolsets or [] if isinstance(toolset, AbstractToolset)]
 
         self.history_processors = history_processors or []
 
@@ -772,7 +782,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        toolset = self._get_toolset(
+            output_toolset=output_toolset,
+            additional_toolsets=toolsets,
+        )
+
         # This will raise errors for any name conflicts
         async with toolset:
             run_toolset = await ToolManager[AgentDepsT].build(toolset, run_context)
@@ -1624,6 +1638,55 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         return tool_decorator if func is None else tool_decorator(func)
 
+    @overload
+    def toolset(self, func: ToolsetFunc[AgentDepsT], /) -> ToolsetFunc[AgentDepsT]: ...
+
+    @overload
+    def toolset(
+        self,
+        /,
+        *,
+        per_run_step: bool = True,
+    ) -> Callable[[ToolsetFunc[AgentDepsT]], ToolsetFunc[AgentDepsT]]: ...
+
+    def toolset(
+        self,
+        func: ToolsetFunc[AgentDepsT] | None = None,
+        /,
+        *,
+        per_run_step: bool = True,
+    ) -> Any:
+        """Decorator to register a toolset function.
+
+        Optionally takes [`RunContext`][pydantic_ai.tools.RunContext] as its only argument.
+        Can decorate a sync or async functions.
+
+        The decorator can be used bare (`agent.toolset`).
+
+        Example:
+        ```python
+        from pydantic_ai import Agent, RunContext
+        from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+
+        agent = Agent('test', deps_type=str)
+
+        @agent.toolset
+        async def simple_toolset(ctx: RunContext[str]) -> AbstractToolset[str]:
+            return FunctionToolset()
+
+        ```
+
+        Args:
+            func: The toolset function to register.
+            per_run_step: Whether to re-evaluate the toolset for each run step. Defaults to True.
+        """
+
+        def toolset_decorator(func_: ToolsetFunc[AgentDepsT]) -> ToolsetFunc[AgentDepsT]:
+            self._dynamic_toolsets.append(DynamicToolset(func_, per_run_step=per_run_step))
+            return func_
+
+        return toolset_decorator if func is None else toolset_decorator(func)
+
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
 
@@ -1672,7 +1735,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self,
         output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
         additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-    ) -> AbstractToolset[AgentDepsT]:
+    ) -> CombinedToolset[AgentDepsT]:
         """Get the complete toolset.
 
         Args:
@@ -1686,7 +1749,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             user_toolsets = self._user_toolsets
 
-        all_toolsets = [self._function_toolset, *user_toolsets]
+        dynamic_toolsets = [toolset.copy() for toolset in self._dynamic_toolsets]
+
+        all_toolsets = [self._function_toolset, *user_toolsets, *dynamic_toolsets]
 
         if self._prepare_tools:
             all_toolsets = [PreparedToolset(CombinedToolset(all_toolsets), self._prepare_tools)]
