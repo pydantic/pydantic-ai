@@ -5,7 +5,7 @@ import functools
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import timedelta
@@ -72,7 +72,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     _running_count: int
     _exit_stack: AsyncExitStack | None
 
-    _client: ClientSession
+    _client: ClientSession | None = None
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
 
@@ -100,6 +100,12 @@ class MCPServer(AbstractToolset[Any], ABC):
         return repr(self)
 
     @property
+    def client(self) -> ClientSession:
+        if self._client is None:
+            raise RuntimeError('MCP server is not running')
+        return self._client
+
+    @property
     def tool_name_conflict_hint(self) -> str:
         return 'Consider setting `tool_prefix` to avoid name conflicts.'
 
@@ -110,8 +116,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         - We don't cache tools as they might change.
         - We also don't subscribe to the server to avoid complexity.
         """
-        async with self:  # Ensure server is running
-            result = await self._client.list_tools()
+        async with self.setup():  # Ensure server is running
+            result = await self.client.list_tools()
         return result.tools
 
     async def direct_call_tool(
@@ -133,9 +139,9 @@ class MCPServer(AbstractToolset[Any], ABC):
         Raises:
             ModelRetry: If the tool call fails.
         """
-        async with self:  # Ensure server is running
+        async with self.setup():  # Ensure server is running
             try:
-                result = await self._client.send_request(
+                result = await self.client.send_request(
                     mcp_types.ClientRequest(
                         mcp_types.CallToolRequest(
                             method='tools/call',
@@ -190,6 +196,11 @@ class MCPServer(AbstractToolset[Any], ABC):
             for mcp_tool in await self.list_tools()
             if (name := f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name)
         }
+
+    @asynccontextmanager
+    async def setup(self) -> AsyncGenerator[Self, Any]:
+        async with self:
+            yield self
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
@@ -286,7 +297,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             resource = part.resource
             return self._get_content(resource)
         elif isinstance(part, mcp_types.ResourceLink):
-            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
+            resource_result: mcp_types.ReadResourceResult = await self.client.read_resource(part.uri)
             return (
                 self._get_content(resource_result.contents[0])
                 if len(resource_result.contents) == 1
@@ -339,7 +350,7 @@ class MCPServerStdio(MCPServer):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent:  # (2)!
+        async with agent.setup():  # (2)!
             ...
     ```
 
@@ -629,7 +640,7 @@ class MCPServerSSE(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent:  # (2)!
+        async with agent.setup():  # (2)!
             ...
     ```
 
@@ -663,7 +674,7 @@ class MCPServerHTTP(MCPServerSSE):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent:  # (2)!
+        async with agent.setup():  # (2)!
             ...
     ```
 
@@ -692,7 +703,7 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent:  # (2)!
+        async with agent.setup():  # (2)!
             ...
     ```
     """

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import TypeVar
-from unittest.mock import AsyncMock
+from typing import Any, TypeVar
 
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import Self
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
@@ -15,6 +17,7 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -464,11 +467,11 @@ async def test_context_manager():
     server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
 
-    async with toolset:
+    async with toolset.setup():
         assert server1.is_running
         assert server2.is_running
 
-        async with toolset:
+        async with toolset.setup():
             assert server1.is_running
             assert server2.is_running
 
@@ -484,14 +487,26 @@ async def test_context_manager_failed_initialization():
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
+    class FailingToolset(AbstractToolset[Any]):
+        @asynccontextmanager
+        async def setup(self) -> AsyncGenerator[Self, Any]:
+            raise InitializationError
+
+            yield self  # pragma: no cover
+
+        async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]: ...  # pragma: no cover
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any]
+        ) -> Any: ...  # pragma: no cover
+
     server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    server2 = AsyncMock()
-    server2.__aenter__.side_effect = InitializationError
+    server2 = FailingToolset()
 
     toolset = CombinedToolset([server1, server2])
 
     with pytest.raises(InitializationError):
-        async with toolset:
+        async with toolset.setup():
             pass
 
     assert server1.is_running is False

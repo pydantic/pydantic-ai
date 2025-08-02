@@ -3866,7 +3866,7 @@ def test_prepare_output_tools():
     )
 
 
-async def test_explicit_context_manager():
+async def test_legacy_context_manager():
     try:
         from pydantic_ai.mcp import MCPServerStdio
     except ImportError:  # pragma: lax no cover
@@ -3882,6 +3882,26 @@ async def test_explicit_context_manager():
         assert server2.is_running
 
         async with agent:
+            assert server1.is_running
+            assert server2.is_running
+
+
+async def test_explicit_context_manager():
+    try:
+        from pydantic_ai.mcp import MCPServerStdio
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('mcp is not installed')
+
+    server1 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    server2 = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
+    agent = Agent('test', toolsets=[toolset])
+
+    async with agent.setup():
+        assert server1.is_running
+        assert server2.is_running
+
+        async with agent.setup():
             assert server1.is_running
             assert server2.is_running
 

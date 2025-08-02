@@ -5,7 +5,7 @@ import inspect
 import json
 import warnings
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -548,19 +548,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         _utils.validate_empty_kwargs(_deprecated_kwargs)
 
-        async with self.iter(
-            user_prompt=user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            toolsets=toolsets,
-        ) as agent_run:
-            async for _ in agent_run:
-                pass
+        async with self.setup():
+            async with self.iter(
+                user_prompt=user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                toolsets=toolsets,
+            ) as agent_run:
+                async for _ in agent_run:
+                    pass
 
         assert agent_run.result is not None, 'The graph run did not finish properly'
         return agent_run.result
@@ -774,8 +775,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
         # This will raise errors for any name conflicts
-        async with toolset:
-            run_toolset = await ToolManager[AgentDepsT].build(toolset, run_context)
+        async with self.setup():
+            run_toolset = await ToolManager[AgentDepsT].build(toolset, ctx=run_context)
 
             # Merge model settings in order of precedence: run > agent > model
             merged_settings = merge_model_settings(model_used.settings, self.model_settings)
@@ -1784,19 +1785,25 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         return isinstance(node, End)
 
-    async def __aenter__(self) -> Self:
+    @asynccontextmanager
+    async def setup(self) -> AsyncGenerator[Self, Any]:
         """Enter the agent context.
 
         This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
+        """
+        toolset = self._get_toolset()
+        async with toolset.setup():
+            yield self
 
-        This is a no-op if the agent has already been entered.
+    async def __aenter__(self) -> Self:
+        """Enter the agent context.
+
+        A backwards compatible way to enter the Agent context
         """
         async with self._enter_lock:
             if self._entered_count == 0:
                 async with AsyncExitStack() as exit_stack:
-                    toolset = self._get_toolset()
-                    await exit_stack.enter_async_context(toolset)
-
+                    await exit_stack.enter_async_context(self.setup())
                     self._exit_stack = exit_stack.pop_all()
             self._entered_count += 1
         return self
@@ -1828,7 +1835,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     @asynccontextmanager
     @deprecated(
-        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
+        '`run_mcp_servers` is deprecated, use `async with agent.setup():` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
     )
     async def run_mcp_servers(
         self, model: models.Model | models.KnownModelName | str | None = None
@@ -1846,7 +1853,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             if model is not None:
                 raise
 
-        async with self:
+        async with self.setup():
             yield
 
     def to_ag_ui(

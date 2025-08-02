@@ -269,12 +269,6 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
-    async def __aenter__(self) -> MockMCPServer:
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        pass
-
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         return {}
 

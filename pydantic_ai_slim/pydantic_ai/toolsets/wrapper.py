@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -18,12 +20,10 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
     wrapped: AbstractToolset[AgentDepsT]
 
-    async def __aenter__(self) -> Self:
-        await self.wrapped.__aenter__()
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        return await self.wrapped.__aexit__(*args)
+    @asynccontextmanager
+    async def setup(self) -> AsyncGenerator[Self, Any]:
+        async with self.wrapped.setup():
+            yield self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.wrapped.get_tools(ctx)

@@ -26,7 +26,7 @@ Examples of all three are shown below; [mcp-run-python](run-python.md) is used a
 
 Each MCP server instance is a [toolset](../toolsets.md) and can be registered with an [`Agent`][pydantic_ai.Agent] using the `toolsets` argument.
 
-You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manager to open and close connections to all registered servers (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use [`async with server`][pydantic_ai.mcp.MCPServer.__aenter__] to manage the connection or subprocess of a specific server, for example if you'd like to use it with multiple agents. If you don't explicitly enter one of these context managers to set up the server, this will be done automatically when it's needed (e.g. to list the available tools or call a specific tool), but it's more efficient to do so around the entire context where you expect the servers to be used.
+You can use the [`async with agent.setup()`][pydantic_ai.Agent.__aenter__] context manager to open and close connections to all registered servers (and in the case of stdio servers, start and stop the subprocesses) around the context where they’ll be used in agent runs. You can also use [`async with server`][pydantic_ai.mcp.MCPServer.__aenter__] to manage the connection or subprocess of a specific server, for example if you’d like to use it with multiple agents. If you don’t explicitly enter one of these context managers to set up the server, this will be done automatically when it’s needed (e.g. to list the available tools or call a specific tool), but it’s more efficient to do so around the entire context where you expect the servers to be used.
 
 ### Streamable HTTP Client
 
@@ -61,7 +61,7 @@ server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
 agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
-    async with agent:  # (3)!
+    async with agent.setup():  # (3)!
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -71,18 +71,18 @@ async def main():
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run “as is” with Python 3.10+ — you’ll need to add `asyncio.run(main())` to run `main`)_
 
-**What's happening here?**
+**What’s happening here?**
 
-- The model is receiving the prompt "how many days between 2000-01-01 and 2025-03-18?"
-- The model decides "Oh, I've got this `run_python_code` tool, that will be a good way to answer this question", and writes some python code to calculate the answer.
+- The model is receiving the prompt “how many days between 2000-01-01 and 2025-03-18?”
+- The model decides “Oh, I’ve got this `run_python_code` tool, that will be a good way to answer this question”, and writes some python code to calculate the answer.
 - The model returns a tool call
 - Pydantic AI sends the tool call to the MCP server using the SSE transport
 - The model is called again with the return value of running the code
 - The model returns the final answer
 
-You can visualise this clearly, and even see the code that's run by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
+You can visualise this clearly, and even see the code that’s run by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
 
 ```python {title="mcp_sse_client_logfire.py" test="skip"}
 import logfire
@@ -102,7 +102,7 @@ Will display as follows:
 !!! note
     [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
 
-The name "HTTP" is used since this implementation will be adapted in future to use the new
+The name “HTTP” is used since this implementation will be adapted in future to use the new
 [Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
 
 Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
@@ -122,7 +122,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 
 async def main():
-    async with agent:  # (3)!
+    async with agent.setup():  # (3)!
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -132,11 +132,11 @@ async def main():
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run “as is” with Python 3.10+ — you’ll need to add `asyncio.run(main())` to run `main`)_
 
-### MCP "stdio" Server
+### MCP “stdio” Server
 
-The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
+The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you’d use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
 ```python {title="mcp_stdio_client.py" py="3.10"}
 from pydantic_ai import Agent
@@ -158,7 +158,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():
-    async with agent:
+    async with agent.setup():
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -202,7 +202,7 @@ agent = Agent(
 
 
 async def main():
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Echo with deps set to 42', deps=42)
     print(result.output)
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
@@ -273,7 +273,7 @@ server = MCPServerSSE(
 agent = Agent("openai:gpt-4o", toolsets=[server])
 
 async def main():
-    async with agent:
+    async with agent.setup():
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
@@ -285,7 +285,7 @@ async def main():
 
 ## MCP Sampling
 
-!!! info "What is MCP Sampling?"
+!!! info “What is MCP Sampling?”
     In MCP [sampling](https://modelcontextprotocol.io/docs/concepts/sampling) is a system by which an MCP server can make LLM calls via the MCP client - effectively proxying requests to an LLM via the client over whatever transport is being used.
 
     Sampling is extremely useful when MCP servers need to use Gen AI but you don't want to provision them each with their own LLM credentials or when a public MCP server would like the connecting client to pay for LLM calls.
@@ -318,11 +318,11 @@ Pydantic AI supports sampling as both a client and server. See the [server](./se
 
 Sampling is automatically supported by Pydantic AI agents when they act as a client.
 
-To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServerStdio.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.Agent.set_mcp_sampling_model] to set the agent's model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
+To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServerStdio.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.Agent.set_mcp_sampling_model] to set the agent’s model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
 
-Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments).
+Let’s say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments).
 
-??? example "Sampling MCP Server"
+??? example “Sampling MCP Server”
 
     ```python {title="generate_svg.py" py="3.10"}
     import re
@@ -371,14 +371,14 @@ agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
 async def main():
-    async with agent:
+    async with agent.setup():
         agent.set_mcp_sampling_model()
         result = await agent.run('Create an image of a robot in a punk style.')
     print(result.output)
     #> Image file written to robot_punk.svg.
 ```
 
-_(This example is complete, it can be run "as is" with Python 3.10+)_
+_(This example is complete, it can be run “as is” with Python 3.10+)_
 
 You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MCPServerStdio.allow_sampling] when creating the server reference, e.g.:
 

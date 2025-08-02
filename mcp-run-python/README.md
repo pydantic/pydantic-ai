@@ -30,7 +30,7 @@ where:
 - `warmup` will run a minimal Python script to download and cache the Python standard library. This is also useful to
   check the server is running correctly.
 
-Here's an example of using `@pydantic/mcp-run-python` with Pydantic AI:
+Here’s an example of using `@pydantic/mcp-run-python` with Pydantic AI:
 
 ```python
 from pydantic_ai import Agent
@@ -56,7 +56,7 @@ agent = Agent('claude-3-5-haiku-latest', toolsets=[server])
 
 
 async def main():
-    async with agent:
+    async with agent.setup():
         result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
     print(result.output)
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.w

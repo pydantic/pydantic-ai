@@ -64,7 +64,7 @@ async def worker_lifespan(app: FastA2A, worker: Worker, agent: Agent[AgentDepsT,
 
     This ensures the worker is started and ready to process tasks as soon as the application starts.
     """
-    async with app.task_manager, agent:
+    async with app.task_manager, agent.setup():
         async with worker.run():
             yield
 
