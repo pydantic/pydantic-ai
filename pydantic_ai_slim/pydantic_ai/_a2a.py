@@ -70,7 +70,7 @@ async def worker_lifespan(app: FastA2A, worker: Worker, agent: Agent[AgentDepsT,
 
 
 def agent_to_a2a(
-    agent: Agent[AgentDepsT, OutputDataT],
+    agent: Agent[AgentDepsT, OutputDataT, None],
     *,
     storage: Storage | None = None,
     broker: Broker | None = None,

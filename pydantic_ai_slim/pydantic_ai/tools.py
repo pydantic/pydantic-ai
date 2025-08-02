@@ -9,7 +9,7 @@ from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
 from . import _function_schema, _utils
-from ._run_context import AgentDepsT, RunContext
+from ._run_context import AgentDepsT, InputDataT, RunContext
 
 __all__ = (
     'AgentDepsT',
@@ -32,8 +32,8 @@ ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
 SystemPromptFunc = Union[
-    Callable[[RunContext[AgentDepsT]], str],
-    Callable[[RunContext[AgentDepsT]], Awaitable[str]],
+    Callable[[RunContext[AgentDepsT, InputDataT]], str],
+    Callable[[RunContext[AgentDepsT, InputDataT]], Awaitable[str]],
     Callable[[], str],
     Callable[[], Awaitable[str]],
 ]

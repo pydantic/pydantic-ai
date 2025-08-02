@@ -17,13 +17,18 @@ if TYPE_CHECKING:
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
+InputDataT = TypeVar('InputDataT', default=None)
+"""Type variable for the input data of a run."""
+
 
 @dataclasses.dataclass(repr=False)
-class RunContext(Generic[AgentDepsT]):
+class RunContext(Generic[AgentDepsT, InputDataT]):
     """Information about the current call."""
 
     deps: AgentDepsT
     """Dependencies for the agent."""
+    input: InputDataT
+    """The input data for the run."""
     model: Model
     """The model used in this run."""
     usage: Usage
