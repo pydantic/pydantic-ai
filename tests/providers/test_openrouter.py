@@ -67,9 +67,6 @@ Why don't scientists trust atoms? \n\
 Because they make up everything!
 """)
 
-
-
-
     unknown_profile = provider.model_profile('unknown/model')
     assert unknown_profile is not None
     assert unknown_profile.json_schema_transformer == OpenAIJsonSchemaTransformer

@@ -101,6 +101,7 @@ with try_import() as imports_successful:
             usage=usage,
         )
 
+
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
@@ -141,8 +142,6 @@ async def test_openrouter_basic_request(allow_model_requests: None):
     mock_client = MockOpenAI.create_mock(c)
     model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
 
-
-
     messages: list[ModelMessage] = [ModelRequest([UserPromptPart(content='Hello')])]
     model_settings = None
     model_request_parameters = ModelRequestParameters(
@@ -174,10 +173,7 @@ async def test_openrouter_response_processing():
 
 async def test_openrouter_thinking_part_response():
     """Test OpenRouter response processing with ThinkingPart."""
-    message = ChatCompletionMessage(
-        content='Final answer after thinking',
-        role='assistant'
-    )
+    message = ChatCompletionMessage(content='Final answer after thinking', role='assistant')
     setattr(message, 'reasoning', 'Let me think about this step by step...')
 
     c = completion_message(message)
@@ -234,7 +230,7 @@ def test_openrouter_thinking_part_not_sent_to_provider():
         parts=[
             ThinkingPart(content='I need to think about this...'),
             TextPart(content='Here is my response'),
-            ToolCallPart(tool_name='test_tool', args={'arg': 'value'}, tool_call_id='call_123')
+            ToolCallPart(tool_name='test_tool', args={'arg': 'value'}, tool_call_id='call_123'),
         ]
     )
 

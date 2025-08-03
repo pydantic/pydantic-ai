@@ -212,7 +212,7 @@ class OpenRouterModel(Model):
         reasoning_param = self._build_reasoning_param(model_settings)
 
         raw_extra_body: object | None = model_settings.get('extra_body')
-        
+
         if isinstance(raw_extra_body, Mapping):
             typed_mapping = cast(Mapping[str, Any], raw_extra_body)
             extra_body: dict[str, Any] = dict(typed_mapping)
