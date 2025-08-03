@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any, Union, cast
 
+import pytest
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
     ModelMessage,
@@ -16,7 +18,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.openrouter import OpenRouterModel
 
 from ..conftest import raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -28,77 +29,82 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
+    from pydantic_ai.models.openrouter import OpenRouterModel
+
     MockChatCompletion = Union[chat.ChatCompletion, Exception]
     MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
 
+    @dataclass
+    class MockOpenAI:
+        completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
+        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
+        index: int = 0
+        chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
 
-@dataclass
-class MockOpenAI:
-    completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
-    stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
-    index: int = 0
-    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+        @cached_property
+        def chat(self) -> Any:
+            chat_completions = type('Completions', (), {'create': self.chat_completions_create})
+            return type('Chat', (), {'completions': chat_completions})
 
-    @cached_property
-    def chat(self) -> Any:
-        chat_completions = type('Completions', (), {'create': self.chat_completions_create})
-        return type('Chat', (), {'completions': chat_completions})
+        @classmethod
+        def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncOpenAI:
+            return cast(AsyncOpenAI, cls(completions=completions))
 
-    @classmethod
-    def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncOpenAI:
-        return cast(AsyncOpenAI, cls(completions=completions))
+        @classmethod
+        def create_mock_stream(
+            cls,
+            stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
+        ) -> AsyncOpenAI:
+            return cast(AsyncOpenAI, cls(stream=stream))
 
-    @classmethod
-    def create_mock_stream(
-        cls,
-        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
-    ) -> AsyncOpenAI:
-        return cast(AsyncOpenAI, cls(stream=stream))
+        async def chat_completions_create(  # pragma: lax no cover
+            self, *_args: Any, stream: bool = False, **kwargs: Any
+        ) -> ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+            self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
-    async def chat_completions_create(  # pragma: lax no cover
-        self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
-        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
-
-        if stream:
-            assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
+            if stream:
+                assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
+                if isinstance(self.stream[0], Sequence):
+                    response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
+                else:
+                    response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
             else:
-                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
-        else:
-            assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
-            if isinstance(self.completions, Sequence):
-                raise_if_exception(self.completions[self.index])
-                response = cast(ChatCompletion, self.completions[self.index])
-            else:
-                raise_if_exception(self.completions)
-                response = cast(ChatCompletion, self.completions)
-        self.index += 1
-        return response
+                assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
+                if isinstance(self.completions, Sequence):
+                    raise_if_exception(self.completions[self.index])
+                    response = cast(ChatCompletion, self.completions[self.index])
+                else:
+                    raise_if_exception(self.completions)
+                    response = cast(ChatCompletion, self.completions)
+            self.index += 1
+            return response
 
+    def completion_message(
+        message: ChatCompletionMessage,
+        *,
+        usage: CompletionUsage | None = None,
+    ) -> ChatCompletion:
+        """Create a ChatCompletion for testing."""
+        return ChatCompletion(
+            id='test-id',
+            choices=[
+                Choice(
+                    finish_reason='stop',
+                    index=0,
+                    logprobs=None,
+                    message=message,
+                )
+            ],
+            created=1234567890,
+            model='google/gemini-2.5-flash-lite',
+            object='chat.completion',
+            usage=usage,
+        )
 
-def completion_message(
-    message: ChatCompletionMessage,
-    *,
-    usage: CompletionUsage | None = None,
-) -> ChatCompletion:
-    """Create a ChatCompletion for testing."""
-    return ChatCompletion(
-        id='test-id',
-        choices=[
-            Choice(
-                finish_reason='stop',
-                index=0,
-                logprobs=None,
-                message=message,
-            )
-        ],
-        created=1234567890,
-        model='google/gemini-2.5-flash-lite',
-        object='chat.completion',
-        usage=usage,
-    )
+pytestmark = [
+    pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
+    pytest.mark.anyio,
+]
 
 
 def test_openrouter_model_init():
