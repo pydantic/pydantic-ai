@@ -39,22 +39,19 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 
 model = OpenRouterModel('google/gemini-2.5-flash-lite')
 agent = Agent(model)
-
-result = await agent.run('What is the capital of France?')
-print(result.output)
+...
 ```
 
-## `provider` argument
+## Custom API Key
 
-You can provide a custom `Provider` via the `provider` argument:
+You can provide a custom API key directly to the model:
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel
-from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 model = OpenRouterModel(
-    'google/gemini-2.5-flash-lite', provider=OpenRouterProvider(api_key='your-api-key')
+    'google/gemini-2.5-flash-lite', api_key='your-api-key'
 )
 agent = Agent(model)
 ...
@@ -62,19 +59,19 @@ agent = Agent(model)
 
 ## Custom HTTP Client
 
-You can customize the `OpenRouterProvider` with a custom `httpx.AsyncClient`:
+You can customize the OpenRouter model with a custom `httpx.AsyncClient`:
 
 ```python
 from httpx import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openrouter import OpenRouterModel
-from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 custom_http_client = AsyncClient(timeout=30)
 model = OpenRouterModel(
     'google/gemini-2.5-flash-lite',
-    provider=OpenRouterProvider(api_key='your-api-key', http_client=custom_http_client),
+    api_key='your-api-key',
+    http_client=custom_http_client,
 )
 agent = Agent(model)
 ...
