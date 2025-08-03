@@ -19,3 +19,6 @@ node_modules/
 **.idea/
 .coverage*
 /test_tmp/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/

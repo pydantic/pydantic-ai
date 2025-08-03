@@ -6,6 +6,16 @@ from functools import cached_property
 from typing import Any, Union, cast
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ThinkingPart,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openrouter import OpenRouterModel
 
 from ..conftest import raise_if_exception, try_import
@@ -15,6 +25,7 @@ with try_import() as imports_successful:
     from openai import NOT_GIVEN, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
     from openai.types.completion_usage import CompletionUsage
 
     MockChatCompletion = Union[chat.ChatCompletion, Exception]
@@ -76,12 +87,12 @@ def completion_message(
     return ChatCompletion(
         id='test-id',
         choices=[
-            {
-                'finish_reason': 'stop',
-                'index': 0,
-                'logprobs': None,
-                'message': message,
-            }
+            Choice(
+                finish_reason='stop',
+                index=0,
+                logprobs=None,
+                message=message,
+            )
         ],
         created=1234567890,
         model='google/gemini-2.5-flash-lite',
@@ -110,7 +121,7 @@ def test_openrouter_model_with_custom_base_url():
 
 def test_openrouter_model_url_formatting():
     """Test that OpenRouter URLs are formatted correctly."""
-    from pydantic_ai.models.openrouter import _format_openrouter_url
+    from pydantic_ai.models.openrouter import _format_openrouter_url  # pyright: ignore[reportPrivateUsage]
 
     assert _format_openrouter_url('openrouter.ai') == 'https://openrouter.ai/api/v1/'
     assert _format_openrouter_url('https://openrouter.ai') == 'https://openrouter.ai/api/v1/'
@@ -124,11 +135,10 @@ async def test_openrouter_basic_request(allow_model_requests: None):
     mock_client = MockOpenAI.create_mock(c)
     model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
 
-    from pydantic_ai.messages import ModelRequest, UserPromptPart
-    from pydantic_ai.models import ModelRequestParameters
 
-    messages = [ModelRequest([UserPromptPart(content='Hello')])]
-    model_settings = {}
+
+    messages: list[ModelMessage] = [ModelRequest([UserPromptPart(content='Hello')])]
+    model_settings = None
     model_request_parameters = ModelRequestParameters(
         function_tools=[],
         output_tools=[],
@@ -137,6 +147,7 @@ async def test_openrouter_basic_request(allow_model_requests: None):
 
     response = await model.request(messages, model_settings, model_request_parameters)
 
+    assert isinstance(response.parts[0], TextPart)
     assert response.parts[0].content == 'Hello from OpenRouter!'
     assert response.model_name == 'google/gemini-2.5-flash-lite'
 
@@ -147,20 +158,111 @@ async def test_openrouter_response_processing():
     mock_client = MockOpenAI.create_mock(c)
     model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
 
-    processed_response = model._process_response(c)
+    processed_response = model._process_response(c)  # pyright: ignore[reportPrivateUsage]
 
     assert len(processed_response.parts) == 1
+    assert isinstance(processed_response.parts[0], TextPart)
     assert processed_response.parts[0].content == 'Test response'
     assert processed_response.model_name == 'google/gemini-2.5-flash-lite'
 
 
+async def test_openrouter_thinking_part_response():
+    """Test OpenRouter response processing with ThinkingPart."""
+    message = ChatCompletionMessage(
+        content='Final answer after thinking',
+        role='assistant'
+    )
+    setattr(message, 'reasoning', 'Let me think about this step by step...')
+
+    c = completion_message(message)
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenRouterModel('anthropic/claude-3.7-sonnet', openai_client=mock_client)
+
+    processed_response = model._process_response(c)  # pyright: ignore[reportPrivateUsage]
+
+    assert len(processed_response.parts) == 2
+    assert isinstance(processed_response.parts[0], ThinkingPart)
+    assert processed_response.parts[0].content == 'Let me think about this step by step...'
+    assert isinstance(processed_response.parts[1], TextPart)
+    assert processed_response.parts[1].content == 'Final answer after thinking'
+
+
+def test_openrouter_reasoning_param_building():
+    """Test building reasoning parameters from model settings."""
+    from typing import cast
+
+    from pydantic_ai.settings import ModelSettings
+
+    c = completion_message(ChatCompletionMessage(content='Test', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenRouterModel('anthropic/claude-3.7-sonnet', openai_client=mock_client)
+
+    settings = cast(ModelSettings, {'openrouter_reasoning_effort': 'high'})
+    reasoning_param = model._build_reasoning_param(settings)  # pyright: ignore[reportPrivateUsage]
+    assert reasoning_param == {'effort': 'high'}
+
+    settings = cast(ModelSettings, {'openrouter_reasoning_max_tokens': 2000})
+    reasoning_param = model._build_reasoning_param(settings)  # pyright: ignore[reportPrivateUsage]
+    assert reasoning_param == {'max_tokens': 2000}
+
+    settings = cast(ModelSettings, {'openrouter_reasoning_enabled': True})
+    reasoning_param = model._build_reasoning_param(settings)  # pyright: ignore[reportPrivateUsage]
+    assert reasoning_param == {'enabled': True}
+
+    settings = cast(ModelSettings, {'openrouter_reasoning_effort': 'medium', 'openrouter_reasoning_exclude': True})
+    reasoning_param = model._build_reasoning_param(settings)  # pyright: ignore[reportPrivateUsage]
+    assert reasoning_param == {'effort': 'medium', 'exclude': True}
+
+    settings = cast(ModelSettings, {})
+    reasoning_param = model._build_reasoning_param(settings)  # pyright: ignore[reportPrivateUsage]
+    assert reasoning_param is None
+
+
+def test_openrouter_thinking_part_not_sent_to_provider():
+    """Test that ThinkingPart is not sent back to the provider in message mapping."""
+    c = completion_message(ChatCompletionMessage(content='Test', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenRouterModel('anthropic/claude-3.7-sonnet', openai_client=mock_client)
+
+    model_response = ModelResponse(
+        parts=[
+            ThinkingPart(content='I need to think about this...'),
+            TextPart(content='Here is my response'),
+            ToolCallPart(tool_name='test_tool', args={'arg': 'value'}, tool_call_id='call_123')
+        ]
+    )
+
+    mapped_messages = list(model._map_message(model_response))  # pyright: ignore[reportPrivateUsage]
+
+    assert len(mapped_messages) == 1
+    assistant_message = mapped_messages[0]
+
+    assert assistant_message['role'] == 'assistant'
+    assert assistant_message.get('content') == 'Here is my response'
+    assert 'tool_calls' in assistant_message
+    tool_calls = list(assistant_message.get('tool_calls', []))
+    assert len(tool_calls) == 1
+    assert tool_calls[0]['function']['name'] == 'test_tool'
+
+
 def test_openrouter_model_inference():
     """Test that openrouter: prefix creates OpenRouterModel."""
+    import os
+
     from pydantic_ai.models import infer_model
 
-    model = infer_model('openrouter:google/gemini-2.5-flash-lite')
-    assert isinstance(model, OpenRouterModel)
-    assert model.model_name == 'google/gemini-2.5-flash-lite'
+    original_key = os.environ.get('OPENAI_API_KEY')
+    os.environ['OPENAI_API_KEY'] = 'test-key'
+
+    try:
+        model = infer_model('openrouter:google/gemini-2.5-flash-lite')
+        assert isinstance(model, OpenRouterModel)
+        assert model.model_name == 'google/gemini-2.5-flash-lite'
+    finally:
+        if original_key is None:
+            os.environ.pop('OPENAI_API_KEY', None)
+        else:
+            os.environ['OPENAI_API_KEY'] = original_key
 
 
 async def test_openrouter_agent_integration(allow_model_requests: None):
@@ -173,6 +275,7 @@ async def test_openrouter_agent_integration(allow_model_requests: None):
     result = await agent.run('Hello')
     assert result.output == 'Hello world'
     assert agent.model == model
+    assert isinstance(agent.model, OpenRouterModel)
     assert agent.model.system == 'openrouter'
 
 

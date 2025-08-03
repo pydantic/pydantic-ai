@@ -12,14 +12,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Literal, Union, overload
+from typing import Any, Literal, Union, overload
 from urllib.parse import urlparse, urlunparse
 
 from httpx import AsyncClient as AsyncHTTPClient
 from typing_extensions import assert_never
 
-from pydantic_ai import UnexpectedModelBehavior, _utils, result
-from pydantic_ai._utils import guard_tool_call_id as _guard_tool_call_id
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -29,6 +27,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -42,6 +41,9 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+
+from .. import UnexpectedModelBehavior, _utils, usage
+from .._utils import guard_tool_call_id as _guard_tool_call_id
 
 try:
     from openai import NOT_GIVEN, AsyncOpenAI, AsyncStream
@@ -207,6 +209,12 @@ class OpenRouterModel(Model):
 
         model_settings = model_settings or {}
 
+        reasoning_param = self._build_reasoning_param(model_settings)
+
+        extra_body = model_settings.get('extra_body', {}).copy() if model_settings.get('extra_body') else {}
+        if reasoning_param:
+            extra_body['reasoning'] = reasoning_param
+
         return await self.client.chat.completions.create(
             model=self._model_name,
             messages=openrouter_messages,
@@ -220,11 +228,12 @@ class OpenRouterModel(Model):
             temperature=model_settings.get('temperature', NOT_GIVEN),
             top_p=model_settings.get('top_p', NOT_GIVEN),
             timeout=model_settings.get('timeout', NOT_GIVEN),
+            extra_body=extra_body or None,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
         """Get tools from model request parameters."""
-        tools = []
+        tools: list[chat.ChatCompletionToolParam] = []
         for tool_def in model_request_parameters.function_tools:
             tools.append(self._map_tool_definition(tool_def))
         for tool_def in model_request_parameters.output_tools:
@@ -237,16 +246,36 @@ class OpenRouterModel(Model):
             'type': 'function',
             'function': {
                 'name': f.name,
-                'description': f.description,
+                'description': f.description or '',
                 'parameters': f.parameters_json_schema,
             },
         }
+
+    def _build_reasoning_param(self, model_settings: ModelSettings) -> dict[str, Any] | None:
+        """Build the reasoning parameter for OpenRouter API from model settings."""
+        reasoning_config: dict[str, Any] = {}
+
+        if 'openrouter_reasoning_effort' in model_settings:
+            reasoning_config['effort'] = model_settings['openrouter_reasoning_effort']
+        elif 'openrouter_reasoning_max_tokens' in model_settings:
+            reasoning_config['max_tokens'] = model_settings['openrouter_reasoning_max_tokens']
+        elif 'openrouter_reasoning_enabled' in model_settings:
+            reasoning_config['enabled'] = model_settings['openrouter_reasoning_enabled']
+
+        if 'openrouter_reasoning_exclude' in model_settings:
+            reasoning_config['exclude'] = model_settings['openrouter_reasoning_exclude']
+
+        return reasoning_config if reasoning_config else None
 
     def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
         """Process a non-streamed response."""
         timestamp = datetime.fromtimestamp(response.created, tz=timezone.utc)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+
+        reasoning_content = getattr(choice.message, 'reasoning', None)
+        if reasoning_content:
+            items.append(ThinkingPart(content=reasoning_content))
 
         if choice.message.content is not None:
             items.append(TextPart(choice.message.content))
@@ -283,11 +312,12 @@ class OpenRouterModel(Model):
                     texts.append(item.content)
                 elif isinstance(item, ToolCallPart):
                     tool_calls.append(_map_tool_call(item))
+                elif isinstance(item, ThinkingPart):
+                    pass
                 else:
                     assert_never(item)
             message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
             if texts:
-                # Note: model responses from this model should only have one text item, so the following
                 # shouldn't merge multiple texts into one unless you switch models between runs:
                 message_param['content'] = '\n\n'.join(texts)
             if tool_calls:
@@ -296,13 +326,25 @@ class OpenRouterModel(Model):
         else:
             assert_never(message)
 
+    @staticmethod
+    def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+        """Map a UserPromptPart to a ChatCompletionUserMessageParam."""
+        if isinstance(part.content, str):
+            return chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+        else:
+            content_parts: list[str] = []
+            for item in part.content:
+                if isinstance(item, str):
+                    content_parts.append(item)
+            return chat.ChatCompletionUserMessageParam(role='user', content=' '.join(content_parts))
+
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
+                yield cls._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -349,6 +391,13 @@ class OpenRouterStreamedResponse(StreamedResponse):
                 if maybe_event is not None:
                     yield maybe_event
 
+            reasoning_content = getattr(choice.delta, 'reasoning', None)
+            if reasoning_content is not None:
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning',
+                    content=reasoning_content,
+                )
+
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=dtc.index,
@@ -378,19 +427,19 @@ def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
     )
 
 
-def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> result.Usage:
-    usage = response.usage
-    if usage is None:
-        return result.Usage()
+def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk) -> usage.Usage:
+    response_usage = response.usage
+    if response_usage is None:
+        return usage.Usage()
     else:
         details: dict[str, int] = {}
-        if usage.completion_tokens_details is not None:
-            details.update(usage.completion_tokens_details.model_dump(exclude_none=True))
-        if usage.prompt_tokens_details is not None:
-            details.update(usage.prompt_tokens_details.model_dump(exclude_none=True))
-        return result.Usage(
-            request_tokens=usage.prompt_tokens,
-            response_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
+        if response_usage.completion_tokens_details is not None:
+            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+        if response_usage.prompt_tokens_details is not None:
+            details.update(response_usage.prompt_tokens_details.model_dump(exclude_none=True))
+        return usage.Usage(
+            request_tokens=response_usage.prompt_tokens,
+            response_tokens=response_usage.completion_tokens,
+            total_tokens=response_usage.total_tokens,
             details=details,
         )
