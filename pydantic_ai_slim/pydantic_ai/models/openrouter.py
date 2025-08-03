@@ -326,7 +326,7 @@ class OpenRouterModel(Model):
             if texts:
                 # shouldn't merge multiple texts into one unless you switch models between runs:
                 message_param['content'] = '\n\n'.join(texts)
-            if tool_calls:
+            if tool_calls:  # pragma: no branch
                 message_param['tool_calls'] = tool_calls
             yield message_param
         else:
