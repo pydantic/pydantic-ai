@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -27,6 +28,7 @@ with try_import() as imports_successful:
     from openai.types import chat
     from openai.types.chat import ChatCompletion, ChatCompletionMessage
     from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
     from openai.types.completion_usage import CompletionUsage
 
     from pydantic_ai.models.openrouter import OpenRouterModel
@@ -289,3 +291,191 @@ def test_openrouter_basic_functionality():
 
     assert model.model_name == 'google/gemini-2.5-flash-lite'
     assert model.system == 'openrouter'
+
+
+def test_openrouter_model_with_custom_base_url_formatting():
+    """Test OpenRouter model with custom base URL that needs formatting."""
+    model = OpenRouterModel('google/gemini-2.5-flash-lite', base_url='openrouter.ai', api_key='test-key')
+    assert model.model_name == 'google/gemini-2.5-flash-lite'
+    assert 'openrouter.ai' in str(model.client.base_url)
+
+
+def test_openrouter_model_with_http_client():
+    """Test OpenRouter model with custom HTTP client."""
+    from httpx import AsyncClient
+
+    http_client = AsyncClient(timeout=30)
+    model = OpenRouterModel('google/gemini-2.5-flash-lite', api_key='test-key', http_client=http_client)
+    assert model.model_name == 'google/gemini-2.5-flash-lite'
+    assert model.client.api_key == 'test-key'
+
+
+def test_openrouter_model_with_env_api_key(monkeypatch: pytest.MonkeyPatch):
+    """Test OpenRouter model using environment variable for API key."""
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'env-api-key')
+
+    model = OpenRouterModel('google/gemini-2.5-flash-lite')
+    assert model.model_name == 'google/gemini-2.5-flash-lite'
+    assert model.client.api_key == 'env-api-key'
+
+
+async def test_openrouter_streaming(allow_model_requests: None):
+    """Test OpenRouter streaming functionality."""
+    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
+    from openai.types.completion_usage import CompletionUsage
+
+    chunks = [
+        ChatCompletionChunk(
+            id='test-id',
+            choices=[
+                Choice(
+                    delta=ChoiceDelta(content='Hello'),
+                    finish_reason=None,
+                    index=0,
+                    logprobs=None,
+                )
+            ],
+            created=1234567890,
+            model='google/gemini-2.5-flash-lite',
+            object='chat.completion.chunk',
+            usage=CompletionUsage(completion_tokens=1, prompt_tokens=1, total_tokens=2),
+        ),
+        ChatCompletionChunk(
+            id='test-id',
+            choices=[
+                Choice(
+                    delta=ChoiceDelta(content=' World'),
+                    finish_reason='stop',
+                    index=0,
+                    logprobs=None,
+                )
+            ],
+            created=1234567890,
+            model='google/gemini-2.5-flash-lite',
+            object='chat.completion.chunk',
+            usage=CompletionUsage(completion_tokens=1, prompt_tokens=1, total_tokens=2),
+        ),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(chunks)
+    model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
+    agent = Agent(model)
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.is_complete
+        text_chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert text_chunks == ['Hello', 'Hello World']
+        assert result.is_complete
+
+
+async def test_openrouter_streaming_with_empty_choices(allow_model_requests: None):
+    """Test OpenRouter streaming with chunks that have empty choices."""
+    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
+    from openai.types.completion_usage import CompletionUsage
+
+    chunks = [
+        ChatCompletionChunk(
+            id='test-id',
+            choices=[],
+            created=1234567890,
+            model='google/gemini-2.5-flash-lite',
+            object='chat.completion.chunk',
+            usage=CompletionUsage(completion_tokens=0, prompt_tokens=1, total_tokens=1),
+        ),
+        ChatCompletionChunk(
+            id='test-id',
+            choices=[
+                Choice(
+                    delta=ChoiceDelta(content='Hello'),
+                    finish_reason='stop',
+                    index=0,
+                    logprobs=None,
+                )
+            ],
+            created=1234567890,
+            model='google/gemini-2.5-flash-lite',
+            object='chat.completion.chunk',
+            usage=CompletionUsage(completion_tokens=1, prompt_tokens=1, total_tokens=2),
+        ),
+    ]
+
+    mock_client = MockOpenAI.create_mock_stream(chunks)
+    model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
+    agent = Agent(model)
+
+    async with agent.run_stream('Hello') as result:
+        text_chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert 'Hello' in ''.join(text_chunks)
+
+
+async def test_openrouter_tool_choice_required(allow_model_requests: None):
+    """Test OpenRouter with tool choice required (no text output allowed)."""
+    c = completion_message(
+        ChatCompletionMessage(
+            content=None,
+            role='assistant',
+            tool_calls=[
+                ChatCompletionMessageToolCall(
+                    id='call_1',
+                    function=Function(name='test_tool', arguments='{"value": "test"}'),
+                    type='function',
+                )
+            ],
+        )
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
+
+    messages: list[ModelMessage] = [ModelRequest([UserPromptPart(content='Hello')])]
+    model_settings = None
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[ToolDefinition(name='test_tool', description='Test tool')],
+        output_tools=[],
+        allow_text_output=False,  # This should trigger tool_choice='required'
+    )
+
+    response = await model.request(messages, model_settings, model_request_parameters)
+    assert len(response.parts) == 1
+    assert isinstance(response.parts[0], ToolCallPart)
+
+
+async def test_openrouter_with_reasoning_param(allow_model_requests: None):
+    """Test OpenRouter with reasoning parameter in model settings."""
+    c = completion_message(ChatCompletionMessage(content='test response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
+
+    messages: list[ModelMessage] = [ModelRequest([UserPromptPart(content='Hello')])]
+    model_settings = cast(Any, {'reasoning': True})  # This should be added to extra_body
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        output_tools=[],
+        allow_text_output=True,
+    )
+
+    response = await model.request(messages, model_settings, model_request_parameters)
+    assert len(response.parts) == 1
+    assert isinstance(response.parts[0], TextPart)
+
+    # Just verify the response was processed correctly
+
+
+async def test_openrouter_with_extra_body(allow_model_requests: None):
+    """Test OpenRouter with extra_body in model settings."""
+    c = completion_message(ChatCompletionMessage(content='test response', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenRouterModel('google/gemini-2.5-flash-lite', openai_client=mock_client)
+
+    messages: list[ModelMessage] = [ModelRequest([UserPromptPart(content='Hello')])]
+    model_settings = cast(Any, {'extra_body': {'custom_param': 'custom_value'}})
+    model_request_parameters = ModelRequestParameters(
+        function_tools=[],
+        output_tools=[],
+        allow_text_output=True,
+    )
+
+    response = await model.request(messages, model_settings, model_request_parameters)
+    assert len(response.parts) == 1
+    assert isinstance(response.parts[0], TextPart)
