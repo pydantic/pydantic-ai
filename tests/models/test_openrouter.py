@@ -841,7 +841,7 @@ async def test_openrouter_streaming_with_reasoning_delta(allow_model_requests: N
     from openai.types.completion_usage import CompletionUsage
 
     class ChoiceDeltaWithReasoning(ChoiceDelta):
-        reasoning: str | None = None
+        reasoning: Union[str, None] = None
 
     chunks = [
         ChatCompletionChunk(
