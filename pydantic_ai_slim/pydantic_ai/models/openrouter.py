@@ -7,12 +7,12 @@ response formats and API quirks without relying on monkey-patching the OpenAI mo
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterable, AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from itertools import chain
-from typing import Any, Literal, Union, overload
+from typing import Any, Literal, Union, cast, overload
 from urllib.parse import urlparse, urlunparse
 
 from httpx import AsyncClient as AsyncHTTPClient
@@ -211,7 +211,13 @@ class OpenRouterModel(Model):
 
         reasoning_param = self._build_reasoning_param(model_settings)
 
-        extra_body = model_settings.get('extra_body', {}).copy() if model_settings.get('extra_body') else {}
+        raw_extra_body: object | None = model_settings.get('extra_body')
+        
+        if isinstance(raw_extra_body, Mapping):
+            typed_mapping = cast(Mapping[str, Any], raw_extra_body)
+            extra_body: dict[str, Any] = dict(typed_mapping)
+        else:
+            extra_body = {}
         if reasoning_param:
             extra_body['reasoning'] = reasoning_param
 
