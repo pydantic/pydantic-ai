@@ -331,9 +331,11 @@ agent = Agent(model)
 
 ### OpenRouter
 
-To use [OpenRouter](https://openrouter.ai), first create an API key at [openrouter.ai/keys](https://openrouter.ai/keys).
+[OpenRouter](https://openrouter.ai) now has dedicated support in PydanticAI with the [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel].
 
-Once you have the API key, you can use it with the [`OpenRouterProvider`][pydantic_ai.providers.openrouter.OpenRouterProvider]:
+For detailed documentation and examples, see the [OpenRouter documentation](openrouter.md).
+
+You can also still use OpenRouter through the OpenAI-compatible interface:
 
 ```python
 from pydantic_ai import Agent

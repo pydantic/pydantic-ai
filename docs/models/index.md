@@ -10,6 +10,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 * [Cohere](cohere.md)
 * [Bedrock](bedrock.md)
 * [Hugging Face](huggingface.md)
+* [OpenRouter](openrouter.md)
 
 ## OpenAI-compatible Providers
 

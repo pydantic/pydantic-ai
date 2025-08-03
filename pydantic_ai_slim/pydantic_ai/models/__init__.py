@@ -619,11 +619,14 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
+    elif provider == 'openrouter':
+        from .openrouter import OpenRouterModel
+
+        return OpenRouterModel(model_name)
     elif provider in (
         'openai',
         'deepseek',
         'azure',
-        'openrouter',
         'vercel',
         'grok',
         'moonshotai',
