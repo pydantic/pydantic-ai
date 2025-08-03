@@ -112,7 +112,10 @@ async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
         assert all(name.startswith('foo_') for name in tools.keys())
 
         result = await server.call_tool(
-            'foo_celsius_to_fahrenheit', {'celsius': 0}, run_context, tools['foo_celsius_to_fahrenheit']
+            'foo_celsius_to_fahrenheit',
+            {'celsius': 0},
+            run_context,
+            tools['foo_celsius_to_fahrenheit'],
         )
         assert result == snapshot('32.0')
 
@@ -147,6 +150,18 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         assert called, 'process_tool_call should have been called'
 
 
+async def test_deps(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        agent = Agent(
+            deps_type=int,
+            model=TestModel(call_tools=['echo_deps']),
+            toolsets=[server],
+        )
+        result = await agent.run('Echo with deps set to 42', deps=42)
+        assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
+
+
 def test_sse_server():
     sse_server = MCPServerSSE(url='http://localhost:8000/sse')
     assert sse_server.url == 'http://localhost:8000/sse'
@@ -154,7 +169,10 @@ def test_sse_server():
 
 
 def test_sse_server_with_header_and_timeout():
-    with pytest.warns(DeprecationWarning, match="'sse_read_timeout' is deprecated, use 'read_timeout' instead."):
+    with pytest.warns(
+        DeprecationWarning,
+        match="'sse_read_timeout' is deprecated, use 'read_timeout' instead.",
+    ):
         sse_server = MCPServerSSE(
             url='http://localhost:8000/sse',
             headers={'my-custom-header': 'my-header-value'},
@@ -170,7 +188,10 @@ def test_sse_server_with_header_and_timeout():
 
 
 def test_sse_server_conflicting_timeout_params():
-    with pytest.raises(TypeError, match="'read_timeout' and 'sse_read_timeout' cannot be set at the same time."):
+    with pytest.raises(
+        TypeError,
+        match="'read_timeout' and 'sse_read_timeout' cannot be set at the same time.",
+    ):
         MCPServerSSE(
             url='http://localhost:8000/sse',
             read_timeout=50,
@@ -282,7 +303,10 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
 
     async with agent:
         # This means that we passed the _prepare_request_parameters check and there is no conflict in the tool name
-        with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
+        with pytest.raises(
+            RuntimeError,
+            match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False',
+        ):
             await agent.run('No conflict')
 
 
@@ -587,7 +611,10 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                             tool_call_id='call_nFsDHYDZigO0rOHqmChZ3pmt',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=['This is file 1c8566:', image_content],
+                            timestamp=IsDatetime(),
+                        ),
                     ]
                 ),
                 ModelResponse(
@@ -669,7 +696,10 @@ async def test_tool_returning_image_resource_link(
                             tool_call_id='call_eVFgn54V9Nuh8Y4zvuzkYjUp',
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 1c8566:', image_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=['This is file 1c8566:', image_content],
+                            timestamp=IsDatetime(),
+                        ),
                     ]
                 ),
                 ModelResponse(
@@ -701,7 +731,10 @@ async def test_tool_returning_image_resource_link(
 
 @pytest.mark.vcr()
 async def test_tool_returning_audio_resource(
-    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
+    allow_model_requests: None,
+    agent: Agent,
+    audio_content: BinaryContent,
+    gemini_api_key: str,
 ):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
@@ -710,10 +743,21 @@ async def test_tool_returning_audio_resource(
         assert result.all_messages() == snapshot(
             [
                 ModelRequest(
-                    parts=[UserPromptPart(content="What's the content of the audio resource?", timestamp=IsDatetime())]
+                    parts=[
+                        UserPromptPart(
+                            content="What's the content of the audio resource?",
+                            timestamp=IsDatetime(),
+                        )
+                    ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_audio_resource',
+                            args={},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
                     usage=Usage(
                         requests=1,
                         request_tokens=383,
@@ -733,7 +777,10 @@ async def test_tool_returning_audio_resource(
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=['This is file 2d36ae:', audio_content],
+                            timestamp=IsDatetime(),
+                        ),
                     ]
                 ),
                 ModelResponse(
@@ -755,11 +802,17 @@ async def test_tool_returning_audio_resource(
 
 @pytest.mark.vcr()
 async def test_tool_returning_audio_resource_link(
-    allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
+    allow_model_requests: None,
+    agent: Agent,
+    audio_content: BinaryContent,
+    gemini_api_key: str,
 ):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
-        result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
+        result = await agent.run(
+            "What's the content of the audio resource via get_audio_resource_link?",
+            model=model,
+        )
         assert result.output == snapshot('00:05')
         assert result.all_messages() == snapshot(
             [
@@ -776,7 +829,11 @@ async def test_tool_returning_audio_resource_link(
                         TextPart(
                             content='The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.'
                         ),
-                        ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='get_audio_resource_link',
+                            args={},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
                     usage=Usage(
                         requests=1,
@@ -797,7 +854,10 @@ async def test_tool_returning_audio_resource_link(
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=['This is file 2d36ae:', audio_content],
+                            timestamp=IsDatetime(),
+                        ),
                     ]
                 ),
                 ModelResponse(
@@ -913,7 +973,13 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_dict', args='{}', tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_dict',
+                            args='{}',
+                            tool_call_id='call_oqKviITBj8PwpQjGyUu4Zu5x',
+                        )
+                    ],
                     usage=Usage(
                         requests=1,
                         request_tokens=195,
@@ -1094,7 +1160,13 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     ]
                 ),
                 ModelResponse(
-                    parts=[ToolCallPart(tool_name='get_none', args='{}', tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC')],
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_none',
+                            args='{}',
+                            tool_call_id='call_mJTuQ2Cl5SaHPTJbIILEUhJC',
+                        )
+                    ],
                     usage=Usage(
                         requests=1,
                         request_tokens=193,
@@ -1245,7 +1317,12 @@ async def test_client_sampling(run_context: RunContext[int]):
             {
                 'meta': None,
                 'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, 'meta': None},
+                'content': {
+                    'type': 'text',
+                    'text': 'sampling model response',
+                    'annotations': None,
+                    'meta': None,
+                },
                 'model': 'test',
                 'stopReason': None,
             }
@@ -1256,12 +1333,18 @@ async def test_client_sampling_disabled(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
-        with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
+        with pytest.raises(
+            ModelRetry,
+            match='Error executing tool use_sampling: Sampling not supported',
+        ):
             await server.direct_call_tool('use_sampling', {'foo': 'bar'})
 
 
 async def test_mcp_server_raises_mcp_error(
-    allow_model_requests: None, mcp_server: MCPServerStdio, agent: Agent, run_context: RunContext[int]
+    allow_model_requests: None,
+    mcp_server: MCPServerStdio,
+    agent: Agent,
+    run_context: RunContext[int],
 ) -> None:
     mcp_error = McpError(error=ErrorData(code=400, message='Test MCP error conversion'))
 
@@ -1281,7 +1364,11 @@ def test_map_from_mcp_params_model_request():
             SamplingMessage(role='user', content=TextContent(type='text', text='xx')),
             SamplingMessage(
                 role='user',
-                content=ImageContent(type='image', data=base64.b64encode(b'img').decode(), mimeType='image/png'),
+                content=ImageContent(
+                    type='image',
+                    data=base64.b64encode(b'img').decode(),
+                    mimeType='image/png',
+                ),
             ),
         ],
         maxTokens=8,
@@ -1293,7 +1380,8 @@ def test_map_from_mcp_params_model_request():
                 parts=[
                     UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png')], timestamp=IsNow(tz=timezone.utc)
+                        content=[BinaryContent(data=b'img', media_type='image/png')],
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]
             )
@@ -1320,5 +1408,8 @@ def test_map_from_mcp_params_model_response():
 
 
 def test_map_from_model_response():
-    with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
+    with pytest.raises(
+        UnexpectedModelBehavior,
+        match='Unexpected part type: ThinkingPart, expected TextPart',
+    ):
         map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))

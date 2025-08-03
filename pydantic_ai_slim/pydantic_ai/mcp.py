@@ -18,7 +18,7 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self, assert_never, deprecated
 
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import AgentDepsT, RunContext
 from pydantic_ai.tools import ToolDefinition
 
 from .toolsets.abstract import AbstractToolset, ToolsetTool
@@ -41,7 +41,13 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
+__all__ = (
+    'MCPServer',
+    'MCPServerStdio',
+    'MCPServerHTTP',
+    'MCPServerSSE',
+    'MCPServerStreamableHTTP',
+)
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
@@ -142,7 +148,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                             params=mcp_types.CallToolRequestParams(
                                 name=name,
                                 arguments=args,
-                                _meta=mcp_types.RequestParams.Meta(**metadata) if metadata else None,
+                                _meta=(mcp_types.RequestParams.Meta(**metadata) if metadata else None),
                             ),
                         )
                     ),
@@ -163,7 +169,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self,
         name: str,
         tool_args: dict[str, Any],
-        ctx: RunContext[Any],
+        ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[Any],
     ) -> ToolResult:
         if self.tool_prefix:
@@ -172,6 +178,8 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         if self.process_tool_call is not None:
             return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
+        elif ctx.deps is not None:
+            return await self.direct_call_tool(name, tool_args, {'deps': ctx.deps})
         else:
             return await self.direct_call_tool(name, tool_args)
 
@@ -188,7 +196,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 args_validator=TOOL_SCHEMA_VALIDATOR,
             )
             for mcp_tool in await self.list_tools()
-            if (name := f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name)
+            if (name := (f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name))
         }
 
     async def __aenter__(self) -> Self:
@@ -206,7 +214,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     client = ClientSession(
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
-                        sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                        sampling_callback=(self._sampling_callback if self.allow_sampling else None),
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                     )
@@ -235,7 +243,9 @@ class MCPServer(AbstractToolset[Any], ABC):
         return bool(self._running_count)
 
     async def _sampling_callback(
-        self, context: RequestContext[ClientSession, Any], params: mcp_types.CreateMessageRequestParams
+        self,
+        context: RequestContext[ClientSession, Any],
+        params: mcp_types.CreateMessageRequestParams,
     ) -> mcp_types.CreateMessageResult | mcp_types.ErrorData:
         """MCP sampling callback."""
         if self.sampling_model is None:
@@ -302,7 +312,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             return resource.text
         elif isinstance(resource, mcp_types.BlobResourceContents):
             return messages.BinaryContent(
-                data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+                data=base64.b64decode(resource.blob),
+                media_type=resource.mimeType or 'application/octet-stream',
             )
         else:
             assert_never(resource)
@@ -522,7 +533,9 @@ class _MCPServerHTTP(MCPServer):
                 raise TypeError("'read_timeout' and 'sse_read_timeout' cannot be set at the same time.")
 
             warnings.warn(
-                "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
+                "'sse_read_timeout' is deprecated, use 'read_timeout' instead.",
+                DeprecationWarning,
+                stacklevel=2,
             )
             read_timeout = kwargs.pop('sse_read_timeout')
 
@@ -602,7 +615,11 @@ class _MCPServerHTTP(MCPServer):
             ):
                 yield read_stream, write_stream
         else:
-            async with transport_client_partial(headers=self.headers) as (read_stream, write_stream, *_):
+            async with transport_client_partial(headers=self.headers) as (
+                read_stream,
+                write_stream,
+                *_,
+            ):
                 yield read_stream, write_stream
 
     def __repr__(self) -> str:  # pragma: no cover
