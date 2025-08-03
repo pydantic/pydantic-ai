@@ -36,10 +36,10 @@ with try_import() as imports_successful:
 
     @dataclass
     class MockOpenAI:
-        completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
-        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
+        completions: Union[MockChatCompletion, Sequence[MockChatCompletion], None] = None
+        stream: Union[Sequence[MockChatCompletionChunk], Sequence[Sequence[MockChatCompletionChunk]], None] = None
         index: int = 0
-        chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
+        chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=lambda: [])
 
         @cached_property
         def chat(self) -> Any:
@@ -47,19 +47,19 @@ with try_import() as imports_successful:
             return type('Chat', (), {'completions': chat_completions})
 
         @classmethod
-        def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncOpenAI:
+        def create_mock(cls, completions: Union[MockChatCompletion, Sequence[MockChatCompletion]]) -> AsyncOpenAI:
             return cast(AsyncOpenAI, cls(completions=completions))
 
         @classmethod
         def create_mock_stream(
             cls,
-            stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
+            stream: Union[Sequence[MockChatCompletionChunk], Sequence[Sequence[MockChatCompletionChunk]]],
         ) -> AsyncOpenAI:
             return cast(AsyncOpenAI, cls(stream=stream))
 
         async def chat_completions_create(  # pragma: lax no cover
             self, *_args: Any, stream: bool = False, **kwargs: Any
-        ) -> ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
+        ) -> Union[ChatCompletion, MockAsyncStream[MockChatCompletionChunk]]:
             self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
 
             if stream:
@@ -82,7 +82,7 @@ with try_import() as imports_successful:
     def completion_message(
         message: ChatCompletionMessage,
         *,
-        usage: CompletionUsage | None = None,
+        usage: Union[CompletionUsage, None] = None,
     ) -> ChatCompletion:
         """Create a ChatCompletion for testing."""
         return ChatCompletion(
