@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import re
+from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -145,6 +147,51 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         result = await agent.run('Echo with deps set to 42', deps=42)
         assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
         assert called, 'process_tool_call should have been called'
+
+
+async def test_deps(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        agent = Agent(
+            deps_type=int,
+            model=TestModel(call_tools=['echo_deps']),
+            toolsets=[server],
+        )
+        result = await agent.run('Echo with deps set to 42', deps=42)
+        assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
+
+
+@dataclass
+class MyDeps:
+    foo: str
+
+
+async def test_deps_dataclass(run_context: RunContext[MyDeps]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        agent = Agent(
+            deps_type=MyDeps,
+            model=TestModel(call_tools=['echo_deps']),
+            toolsets=[server],
+        )
+        result = await agent.run("Echo with deps set to MyDeps(foo='bar')", deps=MyDeps('bar'))
+        assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":{"foo":"bar"}}}')
+
+
+class MyBaseDeps(BaseModel):
+    foo: str
+
+
+async def test_deps_base_model(run_context: RunContext[MyBaseDeps]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        agent = Agent(
+            deps_type=MyBaseDeps,
+            model=TestModel(call_tools=['echo_deps']),
+            toolsets=[server],
+        )
+        result = await agent.run("Echo with deps set to MyBaseDeps(foo='bar')", deps=MyBaseDeps(foo='bar'))
+        assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":{"foo":"bar"}}}')
 
 
 def test_sse_server():

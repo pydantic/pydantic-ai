@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -16,6 +16,7 @@ import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from pydantic import BaseModel
 from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai._run_context import RunContext
@@ -173,7 +174,14 @@ class MCPServer(AbstractToolset[Any], ABC):
         if self.process_tool_call is not None:
             return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
         else:
-            return await self.direct_call_tool(name, tool_args)
+            metadata_deps: dict[str, Any] | None = None
+            if is_dataclass(ctx.deps) and not isinstance(ctx.deps, type):
+                metadata_deps = {'deps': asdict(ctx.deps)}
+            elif isinstance(ctx.deps, BaseModel):
+                metadata_deps = {'deps': ctx.deps.model_dump()}
+            elif ctx.deps is not None:
+                metadata_deps = {'deps': ctx.deps}
+            return await self.direct_call_tool(name, tool_args, metadata_deps)
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         return {
