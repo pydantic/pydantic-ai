@@ -57,7 +57,7 @@ def sample_score(mock_evaluator: Evaluator[TaskInput, TaskOutput, TaskMetadata])
     return EvaluationResult(
         name='MockEvaluator',
         value=2.5,
-        reason=None,
+        reason='my reason',
         source=mock_evaluator.as_spec(),
     )
 
@@ -120,6 +120,7 @@ async def test_evaluation_renderer_basic(sample_report: EvaluationReport):
         label_configs={},
         metric_configs={},
         duration_config={},
+        include_reasons=False,
     )
 
     table = renderer.build_table(sample_report)
@@ -134,6 +135,43 @@ async def test_evaluation_renderer_basic(sample_report: EvaluationReport):
 │ Averages  │                           │                        │                 │                 │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │  task: 0.100 │
 │           │                           │                        │                 │                 │              │                        │                 │            │ total: 0.200 │
 └───────────┴───────────────────────────┴────────────────────────┴─────────────────┴─────────────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────────┘
+""")
+
+
+async def test_evaluation_renderer_with_reasons(sample_report: EvaluationReport):
+    """Test basic functionality of EvaluationRenderer."""
+    renderer = EvaluationRenderer(
+        include_input=True,
+        include_output=True,
+        include_metadata=True,
+        include_expected_output=True,
+        include_durations=True,
+        include_total_duration=True,
+        include_removed_cases=False,
+        include_averages=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=True,
+    )
+
+    table = renderer.build_table(sample_report)
+    assert render_table(table) == snapshot("""\
+                                                                                     Evaluation Summary: test_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Metadata               ┃ Expected Output ┃ Outputs         ┃ Scores              ┃ Labels                 ┃ Metrics         ┃ Assertions       ┃    Durations ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ {'difficulty': 'easy'} │ {'answer': '4'} │ {'answer': '4'} │ score1: 2.50        │ label1: hello          │ accuracy: 0.950 │ MockEvaluator: ✔ │  task: 0.100 │
+│           │                           │                        │                 │                 │   Reason: my reason │                        │                 │                  │ total: 0.200 │
+│           │                           │                        │                 │                 │                     │                        │                 │                  │              │
+├───────────┼───────────────────────────┼────────────────────────┼─────────────────┼─────────────────┼─────────────────────┼────────────────────────┼─────────────────┼──────────────────┼──────────────┤
+│ Averages  │                           │                        │                 │                 │ score1: 2.50        │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔         │  task: 0.100 │
+│           │                           │                        │                 │                 │                     │                        │                 │                  │ total: 0.200 │
+└───────────┴───────────────────────────┴────────────────────────┴─────────────────┴─────────────────┴─────────────────────┴────────────────────────┴─────────────────┴──────────────────┴──────────────┘
 """)
 
 
@@ -191,6 +229,7 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
         label_configs={},
         metric_configs={},
         duration_config={},
+        include_reasons=False,
     )
 
     table = renderer.build_diff_table(sample_report, baseline_report)
@@ -248,6 +287,7 @@ async def test_evaluation_renderer_with_removed_cases(sample_report: EvaluationR
         label_configs={},
         metric_configs={},
         duration_config={},
+        include_reasons=False,
     )
 
     table = renderer.build_diff_table(sample_report, baseline_report)
@@ -311,6 +351,7 @@ async def test_evaluation_renderer_with_custom_configs(sample_report: Evaluation
             'diff_increase_style': 'bold red',
             'diff_decrease_style': 'bold green',
         },
+        include_reasons=False,
     )
 
     table = renderer.build_table(sample_report)
