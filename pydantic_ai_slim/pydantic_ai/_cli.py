@@ -152,6 +152,7 @@ def cli(
     @click.option(
         '-m',
         '--model',
+        shell_complete=get_literal_values(KnownModelName.__value__),
         help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "{default_model}".',
     )
     @click.option(
