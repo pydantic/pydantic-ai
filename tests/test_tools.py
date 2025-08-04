@@ -455,6 +455,7 @@ def test_takes_just_model():
             'name': 'takes_just_model',
             'description': None,
             'parameters_json_schema': {
+                'additionalProperties': False,
                 'properties': {
                     'x': {'type': 'integer'},
                     'y': {'type': 'string'},
@@ -489,6 +490,7 @@ def test_takes_model_and_int():
             'parameters_json_schema': {
                 '$defs': {
                     'Foo': {
+                        'additionalProperties': False,
                         'properties': {
                             'x': {'type': 'integer'},
                             'y': {'type': 'string'},
