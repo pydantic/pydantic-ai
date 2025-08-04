@@ -312,6 +312,19 @@ class DocumentUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
+        # Common document types are hardcoded here as mime-type support for these
+        # extensions varies across operating systems.
+        if self.url.endswith(('.md', '.mdx', '.markdown')):
+            return 'text/markdown'
+        elif self.url.endswith('.asciidoc'):
+            return 'text/x-asciidoc'
+        elif self.url.endswith('.txt'):
+            return 'text/plain'
+        elif self.url.endswith('.pdf'):
+            return 'application/pdf'
+        elif self.url.endswith('.rtf'):
+            return 'application/rtf'
+
         type_, _ = guess_type(self.url)
         if type_ is None:
             raise ValueError(f'Unknown document file extension: {self.url}')
