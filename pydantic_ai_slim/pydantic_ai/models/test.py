@@ -123,7 +123,9 @@ class TestModel(Model):
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
-            _model_name=self._model_name, _structured_response=model_response, _messages=messages
+            _model_name=self._model_name,
+            _structured_response=model_response,
+            _messages=messages,
         )
 
     @property
