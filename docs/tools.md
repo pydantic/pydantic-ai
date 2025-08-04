@@ -726,12 +726,9 @@ Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception
 
 ### Parallel tool calls & concurrency
 
-When a model returns multiple tool calls in one response, PydanticAI schedules them concurrently (with `asyncio.create_task`). To achieve real speed-ups:
+When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
 
-- Prefer `async def` tools that use non-blocking I/O (e.g., `httpx.AsyncClient`).
-- If you must use blocking libraries (e.g., `requests`, filesystem), declare the tool as `def` so it runs off the event loop in a thread.
-- Don't do blocking I/O inside an `async def` tool; either switch to an async client or offload with `anyio.to_thread.run_sync`.
-- CPU-bound work (like `numpy` o `scikit-learn` operations) doesn't benefit from async; keep it in `def` tools (thread offload) or move to a separate process for heavy workloads.
+Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
 ## Third-Party Tools
 
