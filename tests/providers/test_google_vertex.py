@@ -24,6 +24,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio(),
+    pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
 ]
 
 
