@@ -454,7 +454,6 @@ print(test_model.last_model_request_parameters.function_tools)
     ToolDefinition(
         name='foobar',
         parameters_json_schema={
-            'additionalProperties': False,
             'properties': {
                 'x': {'type': 'integer'},
                 'y': {'type': 'string'},
