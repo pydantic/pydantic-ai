@@ -132,6 +132,13 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
+    def model_schema(self, schema: core_schema.ModelSchema) -> JsonSchemaValue:
+        s = super().model_schema(schema)
+        extra = schema.get('extra_behavior')
+        if 'additionalProperties' not in s and extra != 'allow':
+            s['additionalProperties'] = False
+        return s
+
     def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
         s = super().typed_dict_schema(schema)
         total = schema.get('total')

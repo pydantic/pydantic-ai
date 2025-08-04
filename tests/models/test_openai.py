@@ -1082,7 +1082,11 @@ class MyDefaultRecursiveDc:
     field: MyDefaultRecursiveDc | None = None
 
 
-class MyModel(BaseModel, extra='allow'):
+class MyModel(BaseModel):
+    foo: str
+
+
+class MyAdditionalPropertiesModel(BaseModel, extra='allow'):
     pass
 
 
@@ -1098,7 +1102,11 @@ def tool_with_recursion(x: MyRecursiveDc, y: MyDefaultRecursiveDc):
     return f'{x} {y}'  # pragma: no cover
 
 
-def tool_with_additional_properties(x: MyModel) -> str:
+def tool_with_model(x: MyModel) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_additional_properties(x: MyAdditionalPropertiesModel) -> str:
     return f'{x}'  # pragma: no cover
 
 
@@ -1223,6 +1231,19 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'y': {'$ref': '#/$defs/MyDefaultRecursiveDc'},
                     },
                     'required': ['x', 'y'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_model,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'foo': {'type': 'string'}},
+                    'required': ['foo'],
                     'type': 'object',
                 }
             ),
