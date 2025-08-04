@@ -48,7 +48,9 @@ async def run_evaluator(
     for name, result in results.items():
         if not isinstance(result, EvaluationReason):
             result = EvaluationReason(value=result)
-        details.append(EvaluationResult(name=name, value=result.value, reason=result.reason, source=evaluator))
+        details.append(
+            EvaluationResult(name=name, value=result.value, reason=result.reason, source=evaluator.as_spec())
+        )
 
     return details
 
