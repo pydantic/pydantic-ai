@@ -49,6 +49,9 @@ requires-python = ">=3.9"
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     "pydantic-ai=={{ version }}",
+    "rich>=13",
+    "prompt-toolkit>=3",
+    "click>=8.0.0",
 ]
 
 [tool.hatch.metadata]
