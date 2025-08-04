@@ -6,14 +6,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from functools import cached_property
-from typing import Annotated, Any, Callable, Literal, NotRequired, Union, cast
+from typing import Annotated, Any, Callable, Literal, Union, cast
 
 import httpx
 import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Discriminator, Field, Tag
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
