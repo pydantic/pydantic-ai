@@ -72,6 +72,30 @@ TEST_CASES = [
         'github',
         'OpenAIModel',
     ),
+    (
+        'MOONSHOTAI_API_KEY',
+        'moonshotai:kimi-k2-0711-preview',
+        'kimi-k2-0711-preview',
+        'moonshotai',
+        'moonshotai',
+        'OpenAIModel',
+    ),
+    (
+        'GROK_API_KEY',
+        'grok:grok-3',
+        'grok-3',
+        'grok',
+        'grok',
+        'OpenAIModel',
+    ),
+    (
+        'GROK_API_KEY',
+        'grok-4',  # Note that the provider and model name are both "grok", so the plain string grok with no prefix works because its also the provider name
+        'grok-4',
+        'grok',
+        'grok',
+        'OpenAIModel',
+    ),
 ]
 
 

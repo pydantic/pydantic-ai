@@ -123,35 +123,35 @@ class ExamplePydanticModel(BaseModel):
         ),
     ],
 )
-def test(input_obj: Any, output: str):
-    assert format_as_xml(input_obj) == output
+def test_root_tag(input_obj: Any, output: str):
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example') == output
 
 
 @pytest.mark.parametrize(
     'input_obj,output',
     [
-        pytest.param('a string', snapshot('<examples>a string</examples>'), id='string'),
-        pytest.param('a <ex>foo</ex>', snapshot('<examples>a &lt;ex&gt;foo&lt;/ex&gt;</examples>'), id='string'),
-        pytest.param(42, snapshot('<examples>42</examples>'), id='int'),
+        pytest.param('a string', snapshot('<item>a string</item>'), id='string'),
+        pytest.param('a <ex>foo</ex>', snapshot('<item>a &lt;ex&gt;foo&lt;/ex&gt;</item>'), id='string'),
+        pytest.param(42, snapshot('<item>42</item>'), id='int'),
         pytest.param(
             [1, 2, 3],
             snapshot("""\
-<example>1</example>
-<example>2</example>
-<example>3</example>\
+<item>1</item>
+<item>2</item>
+<item>3</item>\
 """),
             id='list[int]',
         ),
         pytest.param(
             [[1, 2], [3]],
             snapshot("""\
-<example>
-  <example>1</example>
-  <example>2</example>
-</example>
-<example>
-  <example>3</example>
-</example>\
+<item>
+  <item>1</item>
+  <item>2</item>
+</item>
+<item>
+  <item>3</item>
+</item>\
 """),
             id='list[list[int]]',
         ),
@@ -166,24 +166,22 @@ def test(input_obj: Any, output: str):
         pytest.param(
             [datetime(2025, 1, 1, 12, 13), date(2025, 1, 2)],
             snapshot("""\
-<example>2025-01-01T12:13:00</example>
-<example>2025-01-02</example>\
+<item>2025-01-01T12:13:00</item>
+<item>2025-01-02</item>\
 """),
             id='list[date]',
         ),
     ],
 )
 def test_no_root(input_obj: Any, output: str):
-    assert format_as_xml(input_obj, include_root_tag=False) == output
+    assert format_as_xml(input_obj) == output
 
 
 def test_no_indent():
-    assert format_as_xml([1, 2, 3], indent=None) == snapshot(
-        '<examples><example>1</example><example>2</example><example>3</example></examples>'
+    assert format_as_xml([1, 2, 3], indent=None, root_tag='example') == snapshot(
+        '<example><item>1</item><item>2</item><item>3</item></example>'
     )
-    assert format_as_xml([1, 2, 3], indent=None, include_root_tag=False) == snapshot(
-        '<example>1</example><example>2</example><example>3</example>'
-    )
+    assert format_as_xml([1, 2, 3], indent=None) == snapshot('<item>1</item><item>2</item><item>3</item>')
 
 
 def test_invalid_value():
@@ -197,8 +195,8 @@ def test_invalid_key():
 
 
 def test_set():
-    assert '<example>1</example>' in format_as_xml({1, 2, 3})
+    assert '<example>1</example>' in format_as_xml({1, 2, 3}, item_tag='example')
 
 
 def test_custom_null():
-    assert format_as_xml(None, none_str='nil') == snapshot('<examples>nil</examples>')
+    assert format_as_xml(None, none_str='nil') == snapshot('<item>nil</item>')

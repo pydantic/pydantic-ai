@@ -202,6 +202,7 @@ class BedrockConverseModel(Model):
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Bedrock model.
 
@@ -213,13 +214,15 @@ class BedrockConverseModel(Model):
                 'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
@@ -569,7 +572,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
@@ -615,7 +618,9 @@ class BedrockStreamedResponse(StreamedResponse):
                             UserWarning,
                         )
                 if 'text' in delta:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                    if maybe_event is not None:
+                        yield maybe_event
                 if 'toolUse' in delta:
                     tool_use = delta['toolUse']
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -660,4 +665,4 @@ class _AsyncIteratorWrapper(Generic[T]):
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:
-                raise e  # pragma: lax no cover
+                raise e  # pragma: no cover

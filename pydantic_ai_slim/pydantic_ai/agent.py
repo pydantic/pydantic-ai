@@ -4,7 +4,8 @@ import dataclasses
 import inspect
 import json
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
+from asyncio import Lock
+from collections.abc import AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -15,7 +16,6 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Literal, Never, Self, TypeIs, TypeVar, deprecated
 
-from pydantic_ai.profiles import ModelProfile
 from pydantic_graph import End, Graph, GraphRun, GraphRunContext
 from pydantic_graph._utils import get_event_loop
 
@@ -31,9 +31,12 @@ from . import (
     usage as _usage,
 )
 from ._agent_graph import HistoryProcessor
+from ._output import OutputToolset
+from ._tool_manager import ToolManager
 from .models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from .output import OutputDataT, OutputSpec
-from .result import FinalResult, StreamedRunResult
+from .profiles import ModelProfile
+from .result import AgentStream, FinalResult, StreamedRunResult
 from .settings import ModelSettings, merge_model_settings
 from .tools import (
     AgentDepsT,
@@ -48,6 +51,11 @@ from .tools import (
     ToolPrepareFunc,
     ToolsPrepareFunc,
 )
+from .toolsets import AbstractToolset
+from .toolsets.combined import CombinedToolset
+from .toolsets.function import FunctionToolset
+from .toolsets.prepared import PreparedToolset
+from .usage import Usage, UsageLimits
 
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
@@ -57,16 +65,17 @@ ModelRequestNode = _agent_graph.ModelRequestNode
 UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
-    from starlette.middleware import Middleware
-    from starlette.routing import Route
-    from starlette.types import ExceptionHandler, Lifespan
-
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
-    from fasta2a.schema import Provider, Skill
+    from fasta2a.schema import AgentProvider, Skill
     from fasta2a.storage import Storage
+    from starlette.middleware import Middleware
+    from starlette.routing import BaseRoute, Route
+    from starlette.types import ExceptionHandler, Lifespan
+
     from pydantic_ai.mcp import MCPServer
 
+    from .ag_ui import AGUIApp
 
 __all__ = (
     'Agent',
@@ -153,11 +162,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
         repr=False
     )
+    _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
+    _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
+    _user_toolsets: Sequence[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
-    _function_tools: dict[str, Tool[AgentDepsT]] = dataclasses.field(repr=False)
-    _mcp_servers: Sequence[MCPServer] = dataclasses.field(repr=False)
-    _default_retries: int = dataclasses.field(repr=False)
+    _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
+
+    _enter_lock: Lock = dataclasses.field(repr=False)
+    _entered_count: int = dataclasses.field(repr=False)
+    _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
     @overload
     def __init__(
@@ -177,7 +191,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[MCPServer] = (),
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -186,7 +201,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
     @overload
     @deprecated(
-        '`result_type`, `result_tool_name`, `result_tool_description` & `result_retries` are deprecated, use `output_type` instead. `result_retries` is deprecated, use `output_retries` instead.'
+        '`result_type`, `result_tool_name` & `result_tool_description` are deprecated, use `output_type` instead. `result_retries` is deprecated, use `output_retries` instead.'
     )
     def __init__(
         self,
@@ -207,6 +222,36 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         result_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        defer_model_check: bool = False,
+        end_strategy: EndStrategy = 'early',
+        instrument: InstrumentationSettings | bool | None = None,
+        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
+    ) -> None: ...
+
+    @overload
+    @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
+    def __init__(
+        self,
+        model: models.Model | models.KnownModelName | str | None = None,
+        *,
+        result_type: type[OutputDataT] = str,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None = None,
+        system_prompt: str | Sequence[str] = (),
+        deps_type: type[AgentDepsT] = NoneType,
+        name: str | None = None,
+        model_settings: ModelSettings | None = None,
+        retries: int = 1,
+        result_tool_name: str = _output.DEFAULT_OUTPUT_TOOL_NAME,
+        result_tool_description: str | None = None,
+        result_retries: int | None = None,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
@@ -232,7 +277,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        mcp_servers: Sequence[MCPServer] = (),
+        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         defer_model_check: bool = False,
         end_strategy: EndStrategy = 'early',
         instrument: InstrumentationSettings | bool | None = None,
@@ -258,14 +304,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
             retries: The default number of retries to allow before raising an error.
-            output_retries: The maximum number of retries to allow for result validation, defaults to `retries`.
+            output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
-            prepare_tools: custom method to prepare the tool definition of all tools for each step.
+            prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
-            mcp_servers: MCP servers to register with the agent. You should register a [`MCPServer`][pydantic_ai.mcp.MCPServer]
-                for each server you want the agent to connect to.
+            prepare_output_tools: Custom function to prepare the tool definition of all output tools for each step.
+                This is useful if you want to customize the definition of multiple output tools or you want to register
+                a subset of output tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]
+            toolsets: Toolsets to register with the agent, including MCP servers.
             defer_model_check: by default, if you provide a [named][pydantic_ai.models.KnownModelName] model,
                 it's evaluated to create a [`Model`][pydantic_ai.models.Model] instance immediately,
                 which checks for the necessary environment variables. Set this to `false`
@@ -329,10 +377,17 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             )
             output_retries = result_retries
 
+        if mcp_servers := _deprecated_kwargs.pop('mcp_servers', None):
+            if toolsets is not None:  # pragma: no cover
+                raise TypeError('`mcp_servers` and `toolsets` cannot be set at the same time.')
+            warnings.warn('`mcp_servers` is deprecated, use `toolsets` instead', DeprecationWarning)
+            toolsets = mcp_servers
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
         default_output_mode = (
             self.model.profile.default_structured_output_mode if isinstance(self.model, models.Model) else None
         )
-        _utils.validate_empty_kwargs(_deprecated_kwargs)
 
         self._output_schema = _output.OutputSchema[OutputDataT].build(
             output_type,
@@ -357,21 +412,28 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._system_prompt_functions = []
         self._system_prompt_dynamic_functions = {}
 
-        self._function_tools = {}
-
-        self._default_retries = retries
         self._max_result_retries = output_retries if output_retries is not None else retries
-        self._mcp_servers = mcp_servers
         self._prepare_tools = prepare_tools
+        self._prepare_output_tools = prepare_output_tools
+
+        self._output_toolset = self._output_schema.toolset
+        if self._output_toolset:
+            self._output_toolset.max_retries = self._max_result_retries
+
+        self._function_toolset = FunctionToolset(tools, max_retries=retries)
+        self._user_toolsets = toolsets or ()
+
         self.history_processors = history_processors or []
-        for tool in tools:
-            if isinstance(tool, Tool):
-                self._register_tool(tool)
-            else:
-                self._register_tool(Tool(tool))
 
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
+        self._override_toolsets: ContextVar[_utils.Option[Sequence[AbstractToolset[AgentDepsT]]]] = ContextVar(
+            '_override_toolsets', default=None
+        )
+
+        self._enter_lock = _utils.get_async_lock()
+        self._entered_count = 0
+        self._exit_stack = None
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -391,6 +453,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -406,6 +469,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     @overload
@@ -422,6 +486,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -436,6 +501,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -466,6 +532,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -490,6 +557,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             model_settings=model_settings,
             usage_limits=usage_limits,
             usage=usage,
+            toolsets=toolsets,
         ) as agent_run:
             async for _ in agent_run:
                 pass
@@ -500,7 +568,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
@@ -510,13 +578,14 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -526,6 +595,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -533,7 +603,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     @deprecated('`result_type` is deprecated, use `output_type` instead.')
     def iter(
         self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         result_type: type[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
@@ -543,6 +613,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, Any]]: ...
 
     @asynccontextmanager
@@ -558,6 +629,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -632,6 +704,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -655,6 +728,18 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
         output_type_ = output_type or self.output_type
 
+        # We consider it a user error if a user tries to restrict the result type while having an output validator that
+        # may change the result type from the restricted type to something else. Therefore, we consider the following
+        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
+        output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
+
+        output_toolset = self._output_toolset
+        if output_schema != self._output_schema or output_validators:
+            output_toolset = cast(OutputToolset[AgentDepsT], output_schema.toolset)
+            if output_toolset:
+                output_toolset.max_retries = self._max_result_retries
+                output_toolset.output_validators = output_validators
+
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
             _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
@@ -669,104 +754,111 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             run_step=0,
         )
 
-        # We consider it a user error if a user tries to restrict the result type while having an output validator that
-        # may change the result type from the restricted type to something else. Therefore, we consider the following
-        # typecast reasonable, even though it is possible to violate it with otherwise-type-checked code.
-        output_validators = cast(list[_output.OutputValidator[AgentDepsT, RunOutputDataT]], self._output_validators)
-
-        model_settings = merge_model_settings(self.model_settings, model_settings)
-        usage_limits = usage_limits or _usage.UsageLimits()
-
         if isinstance(model_used, InstrumentedModel):
-            instrumentation_settings = model_used.settings
-            tracer = model_used.settings.tracer
+            instrumentation_settings = model_used.instrumentation_settings
+            tracer = model_used.instrumentation_settings.tracer
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
-        agent_name = self.name or 'agent'
-        run_span = tracer.start_span(
-            'agent run',
-            attributes={
-                'model_name': model_used.model_name if model_used else 'no-model',
-                'agent_name': agent_name,
-                'logfire.msg': f'{agent_name} run',
-            },
-        )
 
-        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
-                self._instructions,
-                *[await func.run(run_context) for func in self._instructions_functions],
-            ]
-
-            model_profile = model_used.profile
-            if isinstance(output_schema, _output.PromptedOutputSchema):
-                instructions = output_schema.instructions(model_profile.prompted_output_template)
-                parts.append(instructions)
-
-            parts = [p for p in parts if p]
-            if not parts:
-                return None
-            return '\n\n'.join(parts).strip()
-
-        # Copy the function tools so that retry state is agent-run-specific
-        # Note that the retry count is reset to 0 when this happens due to the `default=0` and `init=False`.
-        run_function_tools = {k: dataclasses.replace(v) for k, v in self._function_tools.items()}
-
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
-            user_deps=deps,
-            prompt=user_prompt,
-            new_message_index=new_message_index,
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
             model=model_used,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            max_result_retries=self._max_result_retries,
-            end_strategy=self.end_strategy,
-            output_schema=output_schema,
-            output_validators=output_validators,
-            history_processors=self.history_processors,
-            function_tools=run_function_tools,
-            mcp_servers=self._mcp_servers,
-            default_retries=self._default_retries,
+            usage=usage,
+            prompt=user_prompt,
+            messages=state.message_history,
             tracer=tracer,
-            prepare_tools=self._prepare_tools,
-            get_instructions=get_instructions,
-            instrumentation_settings=instrumentation_settings,
-        )
-        start_node = _agent_graph.UserPromptNode[AgentDepsT](
-            user_prompt=user_prompt,
-            instructions=self._instructions,
-            instructions_functions=self._instructions_functions,
-            system_prompts=self._system_prompts,
-            system_prompt_functions=self._system_prompt_functions,
-            system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
+            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
+            run_step=state.run_step,
         )
 
-        try:
-            async with graph.iter(
-                start_node,
-                state=state,
-                deps=graph_deps,
-                span=use_span(run_span) if run_span.is_recording() else None,
-                infer_name=False,
-            ) as graph_run:
-                agent_run = AgentRun(graph_run)
-                yield agent_run
-                if (final_result := agent_run.result) is not None and run_span.is_recording():
-                    run_span.set_attribute(
-                        'final_result',
-                        (
-                            final_result.output
-                            if isinstance(final_result.output, str)
-                            else json.dumps(InstrumentedModel.serialize_any(final_result.output))
-                        ),
-                    )
-        finally:
+        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        # This will raise errors for any name conflicts
+        async with toolset:
+            run_toolset = await ToolManager[AgentDepsT].build(toolset, run_context)
+
+            # Merge model settings in order of precedence: run > agent > model
+            merged_settings = merge_model_settings(model_used.settings, self.model_settings)
+            model_settings = merge_model_settings(merged_settings, model_settings)
+            usage_limits = usage_limits or _usage.UsageLimits()
+            agent_name = self.name or 'agent'
+            run_span = tracer.start_span(
+                'agent run',
+                attributes={
+                    'model_name': model_used.model_name if model_used else 'no-model',
+                    'agent_name': agent_name,
+                    'logfire.msg': f'{agent_name} run',
+                },
+            )
+
+            async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
+                parts = [
+                    self._instructions,
+                    *[await func.run(run_context) for func in self._instructions_functions],
+                ]
+
+                model_profile = model_used.profile
+                if isinstance(output_schema, _output.PromptedOutputSchema):
+                    instructions = output_schema.instructions(model_profile.prompted_output_template)
+                    parts.append(instructions)
+
+                parts = [p for p in parts if p]
+                if not parts:
+                    return None
+                return '\n\n'.join(parts).strip()
+
+            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+                user_deps=deps,
+                prompt=user_prompt,
+                new_message_index=new_message_index,
+                model=model_used,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                max_result_retries=self._max_result_retries,
+                end_strategy=self.end_strategy,
+                output_schema=output_schema,
+                output_validators=output_validators,
+                history_processors=self.history_processors,
+                tool_manager=run_toolset,
+                tracer=tracer,
+                get_instructions=get_instructions,
+                instrumentation_settings=instrumentation_settings,
+            )
+            start_node = _agent_graph.UserPromptNode[AgentDepsT](
+                user_prompt=user_prompt,
+                instructions=self._instructions,
+                instructions_functions=self._instructions_functions,
+                system_prompts=self._system_prompts,
+                system_prompt_functions=self._system_prompt_functions,
+                system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
+            )
+
             try:
-                if instrumentation_settings and run_span.is_recording():
-                    run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
+                async with graph.iter(
+                    start_node,
+                    state=state,
+                    deps=graph_deps,
+                    span=use_span(run_span) if run_span.is_recording() else None,
+                    infer_name=False,
+                ) as graph_run:
+                    agent_run = AgentRun(graph_run)
+                    yield agent_run
+                    if (final_result := agent_run.result) is not None and run_span.is_recording():
+                        if instrumentation_settings and instrumentation_settings.include_content:
+                            run_span.set_attribute(
+                                'final_result',
+                                (
+                                    final_result.output
+                                    if isinstance(final_result.output, str)
+                                    else json.dumps(InstrumentedModel.serialize_any(final_result.output))
+                                ),
+                            )
             finally:
-                run_span.end()
+                try:
+                    if instrumentation_settings and run_span.is_recording():
+                        run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
+                finally:
+                    run_span.end()
 
     def _run_span_end_attributes(
         self, state: _agent_graph.GraphAgentState, usage: _usage.Usage, settings: InstrumentationSettings
@@ -799,6 +891,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -814,6 +907,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     @overload
@@ -830,6 +924,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
@@ -844,6 +939,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -873,6 +969,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -899,6 +996,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 usage_limits=usage_limits,
                 usage=usage,
                 infer_name=False,
+                toolsets=toolsets,
             )
         )
 
@@ -914,6 +1012,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -929,6 +1028,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @overload
@@ -945,6 +1045,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[result.StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -960,6 +1061,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         usage_limits: _usage.UsageLimits | None = None,
         usage: _usage.Usage | None = None,
         infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -987,6 +1089,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits: Optional limits on model request count or token usage.
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
 
         Returns:
             The result of the run.
@@ -1017,6 +1120,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             usage_limits=usage_limits,
             usage=usage,
             infer_name=False,
+            toolsets=toolsets,
         ) as agent_run:
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
@@ -1024,28 +1128,16 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             while True:
                 if self.is_model_request_node(node):
                     graph_ctx = agent_run.ctx
-                    async with node._stream(graph_ctx) as streamed_response:  # pyright: ignore[reportPrivateUsage]
+                    async with node.stream(graph_ctx) as stream:
 
-                        async def stream_to_final(
-                            s: models.StreamedResponse,
-                        ) -> FinalResult[models.StreamedResponse] | None:
-                            output_schema = graph_ctx.deps.output_schema
-                            async for maybe_part_event in streamed_response:
-                                if isinstance(maybe_part_event, _messages.PartStartEvent):
-                                    new_part = maybe_part_event.part
-                                    if isinstance(new_part, _messages.TextPart) and isinstance(
-                                        output_schema, _output.TextOutputSchema
-                                    ):
-                                        return FinalResult(s, None, None)
-                                    elif isinstance(new_part, _messages.ToolCallPart) and isinstance(
-                                        output_schema, _output.ToolOutputSchema
-                                    ):  # pragma: no branch
-                                        for call, _ in output_schema.find_tool([new_part]):
-                                            return FinalResult(s, call.tool_name, call.tool_call_id)
+                        async def stream_to_final(s: AgentStream) -> FinalResult[AgentStream] | None:
+                            async for event in stream:
+                                if isinstance(event, _messages.FinalResultEvent):
+                                    return FinalResult(s, event.tool_name, event.tool_call_id)
                             return None
 
-                        final_result_details = await stream_to_final(streamed_response)
-                        if final_result_details is not None:
+                        final_result = await stream_to_final(stream)
+                        if final_result is not None:
                             if yielded:
                                 raise exceptions.AgentRunError('Agent run produced final results')  # pragma: no cover
                             yielded = True
@@ -1066,29 +1158,20 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
 
                                 parts: list[_messages.ModelRequestPart] = []
                                 async for _event in _agent_graph.process_function_tools(
+                                    graph_ctx.deps.tool_manager,
                                     tool_calls,
-                                    final_result_details.tool_name,
-                                    final_result_details.tool_call_id,
+                                    final_result,
                                     graph_ctx,
                                     parts,
                                 ):
                                     pass
-                                # TODO: Should we do something here related to the retry count?
-                                #   Maybe we should move the incrementing of the retry count to where we actually make a request?
-                                # if any(isinstance(part, _messages.RetryPromptPart) for part in parts):
-                                #     ctx.state.increment_retries(ctx.deps.max_result_retries)
                                 if parts:
                                     messages.append(_messages.ModelRequest(parts))
 
                             yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
-                                graph_ctx.deps.usage_limits,
-                                streamed_response,
-                                graph_ctx.deps.output_schema,
-                                _agent_graph.build_run_context(graph_ctx),
-                                graph_ctx.deps.output_validators,
-                                final_result_details.tool_name,
+                                stream,
                                 on_complete,
                             )
                             break
@@ -1108,8 +1191,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         *,
         deps: AgentDepsT | _utils.Unset = _utils.UNSET,
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies and model.
+        """Context manager to temporarily override agent dependencies, model, or toolsets.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -1117,6 +1201,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         Args:
             deps: The dependencies to use instead of the dependencies passed to the agent run.
             model: The model to use instead of the model passed to the agent run.
+            toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
         """
         if _utils.is_set(deps):
             deps_token = self._override_deps.set(_utils.Some(deps))
@@ -1128,6 +1213,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         else:
             model_token = None
 
+        if _utils.is_set(toolsets):
+            toolsets_token = self._override_toolsets.set(_utils.Some(toolsets))
+        else:
+            toolsets_token = None
+
         try:
             yield
         finally:
@@ -1135,6 +1225,8 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 self._override_deps.reset(deps_token)
             if model_token is not None:
                 self._override_model.reset(model_token)
+            if toolsets_token is not None:
+                self._override_toolsets.reset(toolsets_token)
 
     @overload
     def instructions(
@@ -1420,30 +1512,13 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
-        if func is None:
 
-            def tool_decorator(
-                func_: ToolFuncContext[AgentDepsT, ToolParams],
-            ) -> ToolFuncContext[AgentDepsT, ToolParams]:
-                # noinspection PyTypeChecker
-                self._register_function(
-                    func_,
-                    True,
-                    name,
-                    retries,
-                    prepare,
-                    docstring_format,
-                    require_parameter_descriptions,
-                    schema_generator,
-                    strict,
-                )
-                return func_
-
-            return tool_decorator
-        else:
+        def tool_decorator(
+            func_: ToolFuncContext[AgentDepsT, ToolParams],
+        ) -> ToolFuncContext[AgentDepsT, ToolParams]:
             # noinspection PyTypeChecker
-            self._register_function(
-                func,
+            self._function_toolset.add_function(
+                func_,
                 True,
                 name,
                 retries,
@@ -1453,7 +1528,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
             )
-            return func
+            return func_
+
+        return tool_decorator if func is None else tool_decorator(func)
 
     @overload
     def tool_plain(self, func: ToolFuncPlain[ToolParams], /) -> ToolFuncPlain[ToolParams]: ...
@@ -1529,27 +1606,11 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
-        if func is None:
 
-            def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
-                # noinspection PyTypeChecker
-                self._register_function(
-                    func_,
-                    False,
-                    name,
-                    retries,
-                    prepare,
-                    docstring_format,
-                    require_parameter_descriptions,
-                    schema_generator,
-                    strict,
-                )
-                return func_
-
-            return tool_decorator
-        else:
-            self._register_function(
-                func,
+        def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
+            # noinspection PyTypeChecker
+            self._function_toolset.add_function(
+                func_,
                 False,
                 name,
                 retries,
@@ -1559,48 +1620,9 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
             )
-            return func
+            return func_
 
-    def _register_function(
-        self,
-        func: ToolFuncEither[AgentDepsT, ToolParams],
-        takes_ctx: bool,
-        name: str | None,
-        retries: int | None,
-        prepare: ToolPrepareFunc[AgentDepsT] | None,
-        docstring_format: DocstringFormat,
-        require_parameter_descriptions: bool,
-        schema_generator: type[GenerateJsonSchema],
-        strict: bool | None,
-    ) -> None:
-        """Private utility to register a function as a tool."""
-        retries_ = retries if retries is not None else self._default_retries
-        tool = Tool[AgentDepsT](
-            func,
-            takes_ctx=takes_ctx,
-            name=name,
-            max_retries=retries_,
-            prepare=prepare,
-            docstring_format=docstring_format,
-            require_parameter_descriptions=require_parameter_descriptions,
-            schema_generator=schema_generator,
-            strict=strict,
-        )
-        self._register_tool(tool)
-
-    def _register_tool(self, tool: Tool[AgentDepsT]) -> None:
-        """Private utility to register a tool instance."""
-        if tool.max_retries is None:
-            # noinspection PyTypeChecker
-            tool = dataclasses.replace(tool, max_retries=self._default_retries)
-
-        if tool.name in self._function_tools:
-            raise exceptions.UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-
-        if tool.name in self._output_schema.tools:
-            raise exceptions.UserError(f'Tool name conflicts with output tool name: {tool.name!r}')
-
-        self._function_tools[tool.name] = tool
+        return tool_decorator if func is None else tool_decorator(func)
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
@@ -1645,6 +1667,37 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             return some_deps.value
         else:
             return deps
+
+    def _get_toolset(
+        self,
+        output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    ) -> AbstractToolset[AgentDepsT]:
+        """Get the complete toolset.
+
+        Args:
+            output_toolset: The output toolset to use instead of the one built at agent construction time.
+            additional_toolsets: Additional toolsets to add.
+        """
+        if some_user_toolsets := self._override_toolsets.get():
+            user_toolsets = some_user_toolsets.value
+        elif additional_toolsets is not None:
+            user_toolsets = [*self._user_toolsets, *additional_toolsets]
+        else:
+            user_toolsets = self._user_toolsets
+
+        all_toolsets = [self._function_toolset, *user_toolsets]
+
+        if self._prepare_tools:
+            all_toolsets = [PreparedToolset(CombinedToolset(all_toolsets), self._prepare_tools)]
+
+        output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
+        if output_toolset is not None:
+            if self._prepare_output_tools:
+                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            all_toolsets = [output_toolset, *all_toolsets]
+
+        return CombinedToolset(all_toolsets)
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
@@ -1731,28 +1784,171 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         """
         return isinstance(node, End)
 
+    async def __aenter__(self) -> Self:
+        """Enter the agent context.
+
+        This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
+
+        This is a no-op if the agent has already been entered.
+        """
+        async with self._enter_lock:
+            if self._entered_count == 0:
+                async with AsyncExitStack() as exit_stack:
+                    toolset = self._get_toolset()
+                    await exit_stack.enter_async_context(toolset)
+
+                    self._exit_stack = exit_stack.pop_all()
+            self._entered_count += 1
+        return self
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        async with self._enter_lock:
+            self._entered_count -= 1
+            if self._entered_count == 0 and self._exit_stack is not None:
+                await self._exit_stack.aclose()
+                self._exit_stack = None
+
+    def set_mcp_sampling_model(self, model: models.Model | models.KnownModelName | str | None = None) -> None:
+        """Set the sampling model on all MCP servers registered with the agent.
+
+        If no sampling model is provided, the agent's model will be used.
+        """
+        try:
+            sampling_model = models.infer_model(model) if model else self._get_model(None)
+        except exceptions.UserError as e:
+            raise exceptions.UserError('No sampling model provided and no model set on the agent.') from e
+
+        from .mcp import MCPServer
+
+        def _set_sampling_model(toolset: AbstractToolset[AgentDepsT]) -> None:
+            if isinstance(toolset, MCPServer):
+                toolset.sampling_model = sampling_model
+
+        self._get_toolset().apply(_set_sampling_model)
+
     @asynccontextmanager
+    @deprecated(
+        '`run_mcp_servers` is deprecated, use `async with agent:` instead. If you need to set a sampling model on all MCP servers, use `agent.set_mcp_sampling_model()`.'
+    )
     async def run_mcp_servers(
         self, model: models.Model | models.KnownModelName | str | None = None
     ) -> AsyncIterator[None]:
         """Run [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] so they can be used by the agent.
 
+        Deprecated: use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] instead.
+        If you need to set a sampling model on all MCP servers, use [`agent.set_mcp_sampling_model()`][pydantic_ai.agent.Agent.set_mcp_sampling_model].
+
         Returns: a context manager to start and shutdown the servers.
         """
         try:
-            sampling_model: models.Model | None = self._get_model(model)
-        except exceptions.UserError:  # pragma: no cover
-            sampling_model = None
+            self.set_mcp_sampling_model(model)
+        except exceptions.UserError:
+            if model is not None:
+                raise
 
-        exit_stack = AsyncExitStack()
-        try:
-            for mcp_server in self._mcp_servers:
-                if sampling_model is not None:  # pragma: no branch
-                    mcp_server.sampling_model = sampling_model
-                await exit_stack.enter_async_context(mcp_server)
+        async with self:
             yield
-        finally:
-            await exit_stack.aclose()
+
+    def to_ag_ui(
+        self,
+        *,
+        # Agent.iter parameters
+        output_type: OutputSpec[OutputDataT] | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: UsageLimits | None = None,
+        usage: Usage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        # Starlette
+        debug: bool = False,
+        routes: Sequence[BaseRoute] | None = None,
+        middleware: Sequence[Middleware] | None = None,
+        exception_handlers: Mapping[Any, ExceptionHandler] | None = None,
+        on_startup: Sequence[Callable[[], Any]] | None = None,
+        on_shutdown: Sequence[Callable[[], Any]] | None = None,
+        lifespan: Lifespan[AGUIApp[AgentDepsT, OutputDataT]] | None = None,
+    ) -> AGUIApp[AgentDepsT, OutputDataT]:
+        """Returns an ASGI application that handles every AG-UI request by running the agent.
+
+        Note that the `deps` will be the same for each request, with the exception of the AG-UI state that's
+        injected into the `state` field of a `deps` object that implements the [`StateHandler`][pydantic_ai.ag_ui.StateHandler] protocol.
+        To provide different `deps` for each request (e.g. based on the authenticated user),
+        use [`pydantic_ai.ag_ui.run_ag_ui`][pydantic_ai.ag_ui.run_ag_ui] or
+        [`pydantic_ai.ag_ui.handle_ag_ui_request`][pydantic_ai.ag_ui.handle_ag_ui_request] instead.
+
+        Example:
+        ```python
+        from pydantic_ai import Agent
+
+        agent = Agent('openai:gpt-4o')
+        app = agent.to_ag_ui()
+        ```
+
+        To run the application, you can use the following command:
+
+        ```bash
+        uvicorn app:app --host 0.0.0.0 --port 8000
+        ```
+
+        See [AG-UI docs](../ag-ui.md) for more information.
+
+        Args:
+            output_type: Custom output type to use for this run, `output_type` may only be used if the agent has
+                no output validators since output validators would expect an argument that matches the agent's
+                output type.
+            model: Optional model to use for this run, required if `model` was not set when creating the agent.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings to use for this model's request.
+            usage_limits: Optional limits on model request count or token usage.
+            usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
+
+            debug: Boolean indicating if debug tracebacks should be returned on errors.
+            routes: A list of routes to serve incoming HTTP and WebSocket requests.
+            middleware: A list of middleware to run for every request. A starlette application will always
+                automatically include two middleware classes. `ServerErrorMiddleware` is added as the very
+                outermost middleware, to handle any uncaught errors occurring anywhere in the entire stack.
+                `ExceptionMiddleware` is added as the very innermost middleware, to deal with handled
+                exception cases occurring in the routing or endpoints.
+            exception_handlers: A mapping of either integer status codes, or exception class types onto
+                callables which handle the exceptions. Exception handler callables should be of the form
+                `handler(request, exc) -> response` and may be either standard functions, or async functions.
+            on_startup: A list of callables to run on application startup. Startup handler callables do not
+                take any arguments, and may be either standard functions, or async functions.
+            on_shutdown: A list of callables to run on application shutdown. Shutdown handler callables do
+                not take any arguments, and may be either standard functions, or async functions.
+            lifespan: A lifespan context function, which can be used to perform startup and shutdown tasks.
+                This is a newer style that replaces the `on_startup` and `on_shutdown` handlers. Use one or
+                the other, not both.
+
+        Returns:
+            An ASGI application for running Pydantic AI agents with AG-UI protocol support.
+        """
+        from .ag_ui import AGUIApp
+
+        return AGUIApp(
+            agent=self,
+            # Agent.iter parameters
+            output_type=output_type,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            # Starlette
+            debug=debug,
+            routes=routes,
+            middleware=middleware,
+            exception_handlers=exception_handlers,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            lifespan=lifespan,
+        )
 
     def to_a2a(
         self,
@@ -1764,7 +1960,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         url: str = 'http://localhost:8000',
         version: str = '1.0.0',
         description: str | None = None,
-        provider: Provider | None = None,
+        provider: AgentProvider | None = None,
         skills: list[Skill] | None = None,
         # Starlette
         debug: bool = False,
@@ -1980,7 +2176,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node."""
         next_node = await self._graph_run.__anext__()
-        if _agent_graph.is_agent_node(next_node):
+        if _agent_graph.is_agent_node(node=next_node):
             return next_node
         assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
         return next_node
@@ -2109,12 +2305,18 @@ class AgentRunResult(Generic[OutputDataT]):
         """
         if not self._output_tool_name:
             raise ValueError('Cannot set output tool return content when the return type is `str`.')
-        messages = deepcopy(self._state.message_history)
+
+        messages = self._state.message_history
         last_message = messages[-1]
-        for part in last_message.parts:
+        for idx, part in enumerate(last_message.parts):
             if isinstance(part, _messages.ToolReturnPart) and part.tool_name == self._output_tool_name:
-                part.content = return_content
-                return messages
+                # Only do deepcopy when we have to modify
+                copied_messages = list(messages)
+                copied_last = deepcopy(last_message)
+                copied_last.parts[idx].content = return_content  # type: ignore[misc]
+                copied_messages[-1] = copied_last
+                return copied_messages
+
         raise LookupError(f'No tool call found with tool name {self._output_tool_name!r}.')
 
     @overload

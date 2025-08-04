@@ -43,13 +43,12 @@ class GoogleJsonSchemaTransformer(JsonSchemaTransformer):
                 f' Full schema: {self.schema}\n\n'
                 f'Source of additionalProperties within the full schema: {original_schema}\n\n'
                 'If this came from a field with a type like `dict[str, MyType]`, that field will always be empty.\n\n'
-                "If Google's APIs are updated to support this properly, please create an issue on the PydanticAI GitHub"
+                "If Google's APIs are updated to support this properly, please create an issue on the Pydantic AI GitHub"
                 ' and we will fix this behavior.',
                 UserWarning,
             )
 
         schema.pop('title', None)
-        schema.pop('default', None)
         schema.pop('$schema', None)
         if (const := schema.pop('const', None)) is not None:
             # Gemini doesn't support const, but it does support enum with a single value

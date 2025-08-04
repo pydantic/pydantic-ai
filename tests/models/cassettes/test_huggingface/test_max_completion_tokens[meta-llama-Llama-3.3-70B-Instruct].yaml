@@ -1,0 +1,142 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/meta-llama/Llama-3.3-70B-Instruct?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '1215'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"4bf-2c5rXKFDCLWF+O3TnkXoII8pC2U"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 6745f28f9333dfcc06268b1e
+      id: meta-llama/Llama-3.3-70B-Instruct
+      inferenceProviderMapping:
+        cerebras:
+          providerId: llama-3.3-70b
+          status: live
+          task: conversational
+        featherless-ai:
+          providerId: meta-llama/Llama-3.3-70B-Instruct
+          status: live
+          task: conversational
+        fireworks-ai:
+          providerId: accounts/fireworks/models/llama-v3p3-70b-instruct
+          status: live
+          task: conversational
+        groq:
+          providerId: llama-3.3-70b-versatile
+          status: live
+          task: conversational
+        hyperbolic:
+          providerId: meta-llama/Llama-3.3-70B-Instruct
+          status: live
+          task: conversational
+        nebius:
+          providerId: meta-llama/Llama-3.3-70B-Instruct-fast
+          status: live
+          task: conversational
+        novita:
+          providerId: meta-llama/llama-3.3-70b-instruct
+          status: live
+          task: conversational
+        nscale:
+          providerId: meta-llama/Llama-3.3-70B-Instruct
+          status: live
+          task: conversational
+        ovhcloud:
+          providerId: Meta-Llama-3_3-70B-Instruct
+          status: error
+          task: conversational
+        sambanova:
+          providerId: Meta-Llama-3.3-70B-Instruct
+          status: live
+          task: conversational
+        together:
+          providerId: meta-llama/Llama-3.3-70B-Instruct-Turbo
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/nebius/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '686'
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          audio: null
+          content: '{"type": "function", "name": "print_output", "parameters": {"output": "hello"}}'
+          function_call: null
+          reasoning_content: null
+          refusal: null
+          role: assistant
+          tool_calls: []
+        stop_reason: 128008
+      created: 1752050609
+      id: chatcmpl-e4e88c8a58b34ea8bd5c47e6265a0de3
+      kv_transfer_params: null
+      model: meta-llama/Llama-3.3-70B-Instruct-fast
+      object: chat.completion
+      prompt_logprobs: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 23
+        completion_tokens_details: null
+        prompt_tokens: 92
+        prompt_tokens_details: null
+        total_tokens: 115
+    status:
+      code: 200
+      message: OK
+version: 1

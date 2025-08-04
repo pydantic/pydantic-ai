@@ -24,6 +24,7 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from ..usage import Usage
@@ -45,7 +46,7 @@ class _WrappedToolOutput:
     value: Any | None
 
 
-@dataclass
+@dataclass(init=False)
 class TestModel(Model):
     """A model specifically for testing purposes.
 
@@ -79,6 +80,26 @@ class TestModel(Model):
     _model_name: str = field(default='test', repr=False)
     _system: str = field(default='test', repr=False)
 
+    def __init__(
+        self,
+        *,
+        call_tools: list[str] | Literal['all'] = 'all',
+        custom_output_text: str | None = None,
+        custom_output_args: Any | None = None,
+        seed: int = 0,
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
+    ):
+        """Initialize TestModel with optional settings and profile."""
+        self.call_tools = call_tools
+        self.custom_output_text = custom_output_text
+        self.custom_output_args = custom_output_args
+        self.seed = seed
+        self.last_model_request_parameters = None
+        self._model_name = 'test'
+        self._system = 'test'
+        super().__init__(settings=settings, profile=profile)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -102,7 +123,9 @@ class TestModel(Model):
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
-            _model_name=self._model_name, _structured_response=model_response, _messages=messages
+            _model_name=self._model_name,
+            _structured_response=model_response,
+            _messages=messages,
         )
 
     @property
@@ -248,10 +271,14 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
                 for word in words:
                     self._usage += _get_string_usage(word)
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
             elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id

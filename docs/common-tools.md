@@ -1,11 +1,11 @@
 # Common Tools
 
-PydanticAI ships with native tools that can be used to enhance your agent's capabilities.
+Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
 
 ## DuckDuckGo Search Tool
 
 The DuckDuckGo search tool allows you to search the web for information. It is built on top of the
-[DuckDuckGo API](https://github.com/deedy5/duckduckgo_search).
+[DuckDuckGo API](https://github.com/deedy5/ddgs).
 
 ### Installation
 

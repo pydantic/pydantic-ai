@@ -127,6 +127,7 @@ class AnthropicModel(Model):
         *,
         provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -136,13 +137,15 @@ class AnthropicModel(Model):
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
                 instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
@@ -253,7 +256,7 @@ class AnthropicModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: lax no cover
+            raise  # pragma: no cover
 
     def _process_response(self, response: BetaMessage) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -263,7 +266,7 @@ class AnthropicModel(Model):
                 items.append(TextPart(content=item.text))
             elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
                 warnings.warn(
-                    'PydanticAI currently does not handle redacted thinking blocks. '
+                    'Pydantic AI currently does not handle redacted thinking blocks. '
                     'If you have a suggestion on how we should handle them, please open an issue.',
                     UserWarning,
                 )
@@ -467,7 +470,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _timestamp: datetime
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
 
         async for event in self._response:
@@ -476,7 +479,11 @@ class AnthropicStreamedResponse(StreamedResponse):
             if isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id='content', content=current_block.text
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                 elif isinstance(current_block, BetaThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
@@ -495,7 +502,11 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id='content', content=event.delta.text
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking', content=event.delta.thinking
