@@ -18,7 +18,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
+from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings  # type: ignore[reportDeprecated]
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
@@ -32,6 +32,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
 ]
 
 
@@ -125,7 +126,7 @@ async def test_url_input(
     url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl], expected_output: str, allow_model_requests: None
 ) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
-    m = GeminiModel('gemini-2.0-flash', provider=provider)
+    m = GeminiModel('gemini-2.0-flash', provider=provider)  # type: ignore[reportDeprecated]
     agent = Agent(m)
     result = await agent.run(['What is the main content of this URL?', url])
 
@@ -158,7 +159,7 @@ async def test_url_input(
 @pytest.mark.vcr()
 async def test_url_input_force_download(allow_model_requests: None) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
-    m = GeminiModel('gemini-2.0-flash', provider=provider)
+    m = GeminiModel('gemini-2.0-flash', provider=provider)  # type: ignore[reportDeprecated]
     agent = Agent(m)
 
     video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4', force_download=True)
@@ -191,7 +192,7 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
 
 async def test_gs_url_force_download_raises_user_error(allow_model_requests: None) -> None:
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
-    m = GeminiModel('gemini-2.0-flash', provider=provider)
+    m = GeminiModel('gemini-2.0-flash', provider=provider)  # type: ignore[reportDeprecated]
     agent = Agent(m)
 
     url = ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png', force_download=True)

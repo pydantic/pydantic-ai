@@ -34,7 +34,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
-    GeminiModel,
+    GeminiModel,  # type: ignore[reportDeprecated]
     GeminiModelSettings,
     _content_model_response,
     _gemini_response_ta,
@@ -60,11 +60,11 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning')]
 
 
 async def test_model_simple(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     assert isinstance(m.client, httpx.AsyncClient)
     assert m.model_name == 'gemini-1.5-flash'
     assert 'x-goog-api-key' in m.client.headers
@@ -80,7 +80,7 @@ async def test_model_simple(allow_model_requests: None):
 
 
 async def test_model_tools(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     tools = [
         ToolDefinition(
             name='foo',
@@ -155,7 +155,7 @@ async def test_model_tools(allow_model_requests: None):
 
 
 async def test_require_response_tool(allow_model_requests: None):
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -248,7 +248,7 @@ async def test_json_def_replaced(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -343,7 +343,7 @@ async def test_json_def_enum(allow_model_requests: None):
             'type': 'object',
         }
     )
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -391,7 +391,7 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
 
     json_schema = Locations.model_json_schema()
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -460,7 +460,7 @@ async def test_json_def_recursive(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -499,7 +499,7 @@ async def test_json_def_date(allow_model_requests: None):
         }
     )
 
-    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))
+    m = GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key='via-arg'))  # type: ignore[reportDeprecated]
     output_tool = ToolDefinition(
         name='result',
         description='This is the tool for the final Result',
@@ -1286,7 +1286,7 @@ async def test_image_as_binary_content_input(
 
 @pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, gemini_api_key: str) -> None:
-    m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
     agent = Agent(m)
 
     image_url = ImageUrl(url='https://goo.gle/instrument-img')
@@ -1836,7 +1836,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
 
 @pytest.mark.vcr()
 async def test_gemini_text_output_function(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -2069,7 +2069,7 @@ Don't include any text or Markdown fencing before or after.\
 
 @pytest.mark.vcr()
 async def test_gemini_prompted_output_with_tools(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.5-pro-preview-05-06', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
 
     class CityLocation(BaseModel):
         city: str
@@ -2154,7 +2154,7 @@ Don't include any text or Markdown fencing before or after.\
 
 @pytest.mark.vcr()
 async def test_gemini_prompted_output_multiple(allow_model_requests: None, gemini_api_key: str):
-    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    m = GeminiModel('gemini-2.0-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
 
     class CityLocation(BaseModel):
         city: str

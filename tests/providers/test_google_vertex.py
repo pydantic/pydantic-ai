@@ -12,7 +12,7 @@ from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
 
 from ..conftest import try_import
 
@@ -164,7 +164,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 )
 @pytest.mark.vcr()
 async def test_vertexai_provider(allow_model_requests: None):  # pragma: lax no cover
-    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
+    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')  # type: ignore[reportDeprecated]
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')
