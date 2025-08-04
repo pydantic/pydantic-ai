@@ -1206,17 +1206,16 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(None),
         ),
         (
-            strict_compatible_tool,
+            tool_with_default,
             None,
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'integer'}},
-                    'required': ['x'],
+                    'properties': {'x': {'default': 1, 'type': 'integer'}},
                     'type': 'object',
                 }
             ),
-            snapshot(True),
+            snapshot(None),
         ),
         (
             tool_with_recursion,
@@ -1584,6 +1583,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'properties': {
                         'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                         'y': {
+                            'default': ['abc'],
                             'maxItems': 1,
                             'minItems': 1,
                             'prefixItems': [{'type': 'string'}],

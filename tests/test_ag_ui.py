@@ -58,7 +58,7 @@ with contextlib.suppress(ImportError):
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
         StateDeps,
-        _Adapter,  # type: ignore[reportPrivateUsage]
+        run_ag_ui,
     )
 
     has_ag_ui = True
@@ -95,13 +95,12 @@ def simple_result() -> Any:
     )
 
 
-async def collect_events_from_adapter(
-    adapter: _Adapter[AgentDepsT, OutputDataT], *run_inputs: RunAgentInput, deps: AgentDepsT = None
+async def run_and_collect_events(
+    agent: Agent[AgentDepsT, OutputDataT], *run_inputs: RunAgentInput, deps: AgentDepsT = None
 ) -> list[dict[str, Any]]:
-    """Helper function to collect events from an AG-UI adapter run."""
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
-        async for event in adapter.run(run_input, deps=deps):
+        async for event in run_ag_ui(agent, run_input, deps=deps):
             events.append(json.loads(event.removeprefix('data: ')))
     return events
 
@@ -202,7 +201,7 @@ async def test_basic_user_message() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=simple_stream),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -210,7 +209,7 @@ async def test_basic_user_message() -> None:
         )
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -227,9 +226,9 @@ async def test_empty_messages() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input()
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -248,7 +247,7 @@ async def test_multiple_messages() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=simple_stream),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -272,7 +271,7 @@ async def test_multiple_messages() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -282,7 +281,7 @@ async def test_messages_with_history() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=simple_stream),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -294,7 +293,7 @@ async def test_messages_with_history() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -317,7 +316,7 @@ async def test_tool_ag_ui() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[send_snapshot, send_custom, current_time],
     )
-    adapter = _Adapter(agent=agent)
+
     thread_id = uuid_str()
     run_inputs = [
         create_input(
@@ -355,7 +354,7 @@ async def test_tool_ag_ui() -> None:
         ),
     ]
 
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -427,7 +426,7 @@ async def test_tool_ag_ui_multiple() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
     )
-    adapter = _Adapter(agent=agent)
+
     tool_call_id1 = uuid_str()
     tool_call_id2 = uuid_str()
     run_inputs = [
@@ -486,7 +485,7 @@ async def test_tool_ag_ui_multiple() -> None:
         ),
     ]
 
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -562,7 +561,7 @@ async def test_tool_ag_ui_parts() -> None:
             yield '{"get_weather": "Tool result"}'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
-    adapter = _Adapter(agent=agent)
+
     run_inputs = [
         (
             first_input := create_input(
@@ -600,7 +599,7 @@ async def test_tool_ag_ui_parts() -> None:
             thread_id=first_input.thread_id,
         ),
     ]
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -675,14 +674,14 @@ async def test_tool_local_single_event() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[send_snapshot],
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
             content='Please call send_snapshot',
         ),
     )
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -744,14 +743,14 @@ async def test_tool_local_multiple_events() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[send_custom],
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
             content='Please call send_custom',
         ),
     )
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -812,7 +811,6 @@ async def test_tool_local_parts() -> None:
         tools=[send_snapshot, send_custom, current_time],
     )
 
-    adapter = _Adapter(agent=agent)
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -820,7 +818,7 @@ async def test_tool_local_parts() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -873,7 +871,7 @@ async def test_thinking() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -881,7 +879,7 @@ async def test_thinking() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -933,7 +931,7 @@ async def test_tool_local_then_ag_ui() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[current_time],
     )
-    adapter = _Adapter(agent=agent)
+
     run_inputs = [
         (
             first_input := create_input(
@@ -989,7 +987,7 @@ async def test_tool_local_then_ag_ui() -> None:
             thread_id=first_input.thread_id,
         ),
     ]
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -1068,7 +1066,7 @@ async def test_request_with_state() -> None:
         deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
         prepare_tools=store_state,
     )
-    adapter = _Adapter(agent=agent)
+
     run_inputs = [
         create_input(
             UserMessage(
@@ -1102,7 +1100,7 @@ async def test_request_with_state() -> None:
 
     for run_input in run_inputs:
         events = list[dict[str, Any]]()
-        async for event in adapter.run(run_input, deps=deps):
+        async for event in run_ag_ui(agent, run_input, deps=deps):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
@@ -1122,7 +1120,7 @@ async def test_request_with_state() -> None:
 
 async def test_request_with_state_without_handler() -> None:
     agent = Agent(model=FunctionModel(stream_function=simple_stream))
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -1135,7 +1133,7 @@ async def test_request_with_state_without_handler() -> None:
         UserError,
         match='AG-UI state is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
     ):
-        async for _ in adapter.run(run_input):
+        async for _ in run_ag_ui(agent, run_input):
             pass
 
 
@@ -1155,7 +1153,7 @@ async def test_request_with_state_with_custom_handler() -> None:
         deps_type=CustomStateDeps,
         prepare_tools=store_state,
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -1164,7 +1162,7 @@ async def test_request_with_state_with_custom_handler() -> None:
         state={'value': 42},
     )
 
-    async for _ in adapter.run(run_input, deps=CustomStateDeps(state={'value': 0})):
+    async for _ in run_ag_ui(agent, run_input, deps=CustomStateDeps(state={'value': 0})):
         pass
 
     assert seen_states[-1] == {'value': 42}
@@ -1183,7 +1181,6 @@ async def test_concurrent_runs() -> None:
     async def get_state(ctx: RunContext[StateDeps[StateInt]]) -> int:
         return ctx.deps.state.value
 
-    adapter = _Adapter(agent=agent)
     concurrent_tasks: list[asyncio.Task[list[dict[str, Any]]]] = []
 
     for i in range(5):  # Test with 5 concurrent runs
@@ -1196,7 +1193,7 @@ async def test_concurrent_runs() -> None:
             thread_id=f'test_thread_{i}',
         )
 
-        task = asyncio.create_task(collect_events_from_adapter(adapter, run_input, deps=StateDeps(StateInt())))
+        task = asyncio.create_task(run_and_collect_events(agent, run_input, deps=StateDeps(StateInt())))
         concurrent_tasks.append(task)
 
     results = await asyncio.gather(*concurrent_tasks)

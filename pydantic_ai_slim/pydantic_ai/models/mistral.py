@@ -333,7 +333,7 @@ class MistralModel(Model):
 
         parts: list[ModelResponsePart] = []
         if text := _map_content(content):
-            parts.extend(split_content_into_text_and_thinking(text))
+            parts.extend(split_content_into_text_and_thinking(text, self.profile.thinking_tags))
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
