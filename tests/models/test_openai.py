@@ -1164,6 +1164,10 @@ def tool_with_kwargs(x: int, **kwargs: Any) -> str:
     return f'{x} {kwargs}'  # pragma: no cover
 
 
+def tool_with_typed_kwargs(x: int, **kwargs: int) -> str:
+    return f'{x} {kwargs}'  # pragma: no cover
+
+
 def tool_with_union(x: int | MyDefaultDc) -> str:
     return f'{x}'  # pragma: no cover
 
@@ -1193,6 +1197,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             False,
             snapshot(
                 {
+                    'additionalProperties': False,
                     'properties': {'x': {'type': 'integer'}},
                     'required': ['x'],
                     'type': 'object',
@@ -1407,13 +1412,13 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             None,
             snapshot(
                 {
+                    'additionalProperties': True,
                     'properties': {'x': {'type': 'integer'}},
                     'required': ['x'],
                     'type': 'object',
-                    'additionalProperties': False,
                 }
             ),
-            snapshot(True),
+            snapshot(None),
         ),
         (
             tool_with_kwargs,
@@ -1427,6 +1432,19 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 }
             ),
             snapshot(True),
+        ),
+        (
+            tool_with_typed_kwargs,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': {'type': 'integer'},
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
         ),
         (
             tool_with_union,
@@ -2594,7 +2612,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"additionalProperties": false, "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
 
 Don't include any text or Markdown fencing before or after.\
 """,
@@ -2632,7 +2650,7 @@ Don't include any text or Markdown fencing before or after.\
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"additionalProperties": false, "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
 
 Don't include any text or Markdown fencing before or after.\
 """,
@@ -2693,7 +2711,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"additionalProperties": false, "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"additionalProperties": false, "properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
 
 Don't include any text or Markdown fencing before or after.\
 """,
@@ -2731,7 +2749,7 @@ Don't include any text or Markdown fencing before or after.\
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"additionalProperties": false, "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"additionalProperties": false, "properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
 
 Don't include any text or Markdown fencing before or after.\
 """,

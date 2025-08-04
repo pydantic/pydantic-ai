@@ -387,7 +387,6 @@ def test_response_tuple():
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {
                         'response': {
                             'maxItems': 2,
@@ -466,7 +465,6 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {
                         'a': {'type': 'integer'},
                         'b': {'type': 'string'},
@@ -547,7 +545,6 @@ class Bar(BaseModel):
                 name='final_result_Foo',
                 description='Foo: The final response which ends this conversation',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {
                         'a': {'type': 'integer'},
                         'b': {'type': 'string'},
@@ -562,7 +559,6 @@ class Bar(BaseModel):
                 name='final_result_Bar',
                 description='This is a bar model.',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {'b': {'type': 'string'}},
                     'required': ['b'],
                     'title': 'Bar',
@@ -595,7 +591,6 @@ def test_output_type_with_two_descriptions():
                 name='final_result',
                 description='Description from ToolOutput. Description from docstring',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {'valid': {'type': 'boolean'}},
                     'required': ['valid'],
                     'title': 'MyOutput',
@@ -629,21 +624,18 @@ def test_output_type_tool_output_union():
                 parameters_json_schema={
                     '$defs': {
                         'Bar': {
-                            'additionalProperties': False,
                             'properties': {'c': {'type': 'boolean'}},
                             'required': ['c'],
                             'title': 'Bar',
                             'type': 'object',
                         },
                         'Foo': {
-                            'additionalProperties': False,
                             'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}},
                             'required': ['a', 'b'],
                             'title': 'Foo',
                             'type': 'object',
                         },
                     },
-                    'additionalProperties': False,
                     'properties': {'response': {'anyOf': [{'$ref': '#/$defs/Foo'}, {'$ref': '#/$defs/Bar'}]}},
                     'required': ['response'],
                     'type': 'object',
@@ -1093,7 +1085,6 @@ def test_output_type_function_or_model():
                 name='final_result_Weather',
                 description='Weather: The final response which ends this conversation',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {'temperature': {'type': 'number'}, 'description': {'type': 'string'}},
                     'required': ['temperature', 'description'],
                     'title': 'Weather',
@@ -1282,7 +1273,6 @@ def test_output_type_multiple_custom_tools():
                 name='return_weather',
                 description='Weather: The final response which ends this conversation',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {'temperature': {'type': 'number'}, 'description': {'type': 'string'}},
                     'required': ['temperature', 'description'],
                     'title': 'Weather',
@@ -1426,7 +1416,7 @@ def test_prompted_output():
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"additionalProperties": false, "properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "City & Country", "type": "object", "description": "Description from PromptedOutput. Description from docstring."}
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "City & Country", "type": "object", "description": "Description from PromptedOutput. Description from docstring."}
 
 Don't include any text or Markdown fencing before or after.\
 """,
@@ -1467,7 +1457,7 @@ def test_prompted_output_with_template():
                 instructions="""\
 Gimme some JSON:
 
-{"additionalProperties": false, "properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}\
+{"properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Foo", "type": "object"}\
 """,
             ),
             ModelResponse(
@@ -1535,7 +1525,7 @@ def test_prompted_output_with_defs():
                 instructions="""\
 Always respond with a JSON object that's compatible with this schema:
 
-{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "FooBar"}, "data": {"additionalProperties": false, "properties": {"foo": {"$ref": "#/$defs/Foo"}, "bar": {"$ref": "#/$defs/Bar"}}, "required": ["foo", "bar"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBar", "description": "FooBar description"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "FooBaz"}, "data": {"additionalProperties": false, "properties": {"foo": {"$ref": "#/$defs/Foo"}, "baz": {"$ref": "#/$defs/Baz"}}, "required": ["foo", "baz"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBaz", "description": "FooBaz description"}]}}, "required": ["result"], "additionalProperties": false, "$defs": {"Bar": {"additionalProperties": false, "description": "Bar description", "properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Bar", "type": "object"}, "Foo": {"additionalProperties": false, "description": "Foo description", "properties": {"foo": {"type": "string"}}, "required": ["foo"], "title": "Foo", "type": "object"}, "Baz": {"additionalProperties": false, "description": "Baz description", "properties": {"baz": {"type": "string"}}, "required": ["baz"], "title": "Baz", "type": "object"}}, "title": "FooBar or FooBaz", "description": "FooBaz description"}
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "FooBar"}, "data": {"properties": {"foo": {"$ref": "#/$defs/Foo"}, "bar": {"$ref": "#/$defs/Bar"}}, "required": ["foo", "bar"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBar", "description": "FooBar description"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "FooBaz"}, "data": {"properties": {"foo": {"$ref": "#/$defs/Foo"}, "baz": {"$ref": "#/$defs/Baz"}}, "required": ["foo", "baz"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "FooBaz", "description": "FooBaz description"}]}}, "required": ["result"], "additionalProperties": false, "$defs": {"Bar": {"description": "Bar description", "properties": {"bar": {"type": "string"}}, "required": ["bar"], "title": "Bar", "type": "object"}, "Foo": {"description": "Foo description", "properties": {"foo": {"type": "string"}}, "required": ["foo"], "title": "Foo", "type": "object"}, "Baz": {"description": "Baz description", "properties": {"baz": {"type": "string"}}, "required": ["baz"], "title": "Baz", "type": "object"}}, "title": "FooBar or FooBaz", "description": "FooBaz description"}
 
 Don't include any text or Markdown fencing before or after.\
 """,
