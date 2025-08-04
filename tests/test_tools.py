@@ -387,7 +387,7 @@ def test_docstring_unknown():
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
             'kind': 'function',
@@ -1031,6 +1031,7 @@ def test_schema_generator():
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
+                    'additionalProperties': True,
                     'properties': {'x': {'default': None, 'type': 'string'}},
                     'type': 'object',
                 },
@@ -1071,7 +1072,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'name': 'get_score',
             'description': None,
             'parameters_json_schema': {
-                'additionalProperties': False,
                 'properties': {
                     'a': {'description': 'The first parameter', 'type': 'integer'},
                     'b': {'description': 'The second parameter', 'type': 'integer'},

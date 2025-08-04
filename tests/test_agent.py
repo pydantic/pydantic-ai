@@ -387,7 +387,6 @@ def test_response_tuple():
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {
                         'response': {
                             'maxItems': 2,
@@ -637,7 +636,6 @@ def test_output_type_tool_output_union():
                             'type': 'object',
                         },
                     },
-                    'additionalProperties': False,
                     'properties': {'response': {'anyOf': [{'$ref': '#/$defs/Foo'}, {'$ref': '#/$defs/Bar'}]}},
                     'required': ['response'],
                     'type': 'object',
