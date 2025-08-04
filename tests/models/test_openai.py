@@ -1094,6 +1094,10 @@ def tool_with_default(x: int = 1) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_datetime(x: datetime) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_recursion(x: MyRecursiveDc, y: MyDefaultRecursiveDc):
     return f'{x} {y}'  # pragma: no cover
 
@@ -1150,6 +1154,19 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_datetime,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'format': 'date-time', 'type': 'string'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1432,16 +1449,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {
-                            'prefixItems': [{'type': 'integer'}],
-                            'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
-                        },
-                        'y': {
-                            'prefixItems': [{'type': 'string'}],
-                            'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
-                        },
+                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
