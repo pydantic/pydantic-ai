@@ -932,7 +932,7 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'type': 'integer'}, 'b': {'default': 1, 'type': 'integer'}},
                     'required': ['a'],
                     'type': 'object',
                 },
@@ -945,7 +945,7 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'default': 1, 'type': 'integer'}, 'b': {'type': 'integer'}},
                     'required': ['b'],
                     'type': 'object',
                 },
@@ -1031,7 +1031,7 @@ def test_schema_generator():
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string'}},
+                    'properties': {'x': {'default': None, 'type': 'string'}},
                     'type': 'object',
                 },
                 'strict': None,
@@ -1042,7 +1042,7 @@ def test_schema_generator():
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string', 'title': 'X title'}},
+                    'properties': {'x': {'default': None, 'type': 'string', 'title': 'X title'}},
                     'type': 'object',
                 },
                 'strict': None,
