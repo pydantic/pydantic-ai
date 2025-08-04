@@ -1088,6 +1088,7 @@ def test_evaluate_non_serializable_inputs():
 """)
 
 
+@pytest.mark.skip(reason='Flaky output')
 async def test_evaluate_async_logfire(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],

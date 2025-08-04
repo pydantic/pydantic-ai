@@ -215,6 +215,8 @@ filterwarnings = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
+parallel = true
+concurrency = ["multiprocessing", "thread"]
 # required to avoid warnings about files created by create_module fixture
 include = [
     "pydantic_ai_slim/**/*.py",
