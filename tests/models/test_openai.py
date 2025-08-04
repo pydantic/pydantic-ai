@@ -12,7 +12,7 @@ import httpx
 import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
@@ -1094,6 +1094,14 @@ def tool_with_default(x: int = 1) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_datetime(x: datetime) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_url(x: AnyUrl) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_recursion(x: MyRecursiveDc, y: MyDefaultRecursiveDc):
     return f'{x} {y}'  # pragma: no cover
 
@@ -1144,12 +1152,50 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(None),
         ),
         (
-            strict_compatible_tool,
+            tool_with_default,
             None,
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'integer'}},
+                    'properties': {'x': {'default': 1, 'type': 'integer'}},
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_datetime,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'format': 'date-time', 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_url,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'format': 'uri', 'minLength': 1, 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_url,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1413,6 +1459,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'properties': {
                         'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                         'y': {
+                            'default': ['abc'],
                             'maxItems': 1,
                             'minItems': 1,
                             'prefixItems': [{'type': 'string'}],
@@ -1432,16 +1479,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {
-                            'prefixItems': [{'type': 'integer'}],
-                            'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
-                        },
-                        'y': {
-                            'prefixItems': [{'type': 'string'}],
-                            'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
-                        },
+                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -1537,9 +1576,10 @@ def test_strict_schema():
                         },
                         'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                         'my_tuple': {
+                            'maxItems': 1,
+                            'minItems': 1,
                             'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
@@ -1555,11 +1595,7 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {
-                    'prefixItems': [{'type': 'integer'}],
-                    'type': 'array',
-                    'description': 'minItems=1, maxItems=1',
-                },
+                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },

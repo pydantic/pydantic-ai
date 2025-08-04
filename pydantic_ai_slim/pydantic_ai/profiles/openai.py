@@ -47,11 +47,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 _STRICT_INCOMPATIBLE_KEYS = [
     'minLength',
     'maxLength',
-    'pattern',
-    'format',
-    'minimum',
-    'maximum',
-    'multipleOf',
     'patternProperties',
     'unevaluatedProperties',
     'propertyNames',
@@ -61,9 +56,19 @@ _STRICT_INCOMPATIBLE_KEYS = [
     'contains',
     'minContains',
     'maxContains',
-    'minItems',
-    'maxItems',
     'uniqueItems',
+]
+
+_STRICT_COMPATIBLE_STRING_FORMATS = [
+    'date-time',
+    'time',
+    'date',
+    'duration',
+    'email',
+    'hostname',
+    'ipv4',
+    'ipv6',
+    'uuid',
 ]
 
 _sentinel = object()
@@ -127,6 +132,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             value = schema.get(key, _sentinel)
             if value is not _sentinel:
                 incompatible_values[key] = value
+        if format := schema.get('format'):
+            if format not in _STRICT_COMPATIBLE_STRING_FORMATS:
+                incompatible_values['format'] = format
         description = schema.get('description')
         if incompatible_values:
             if self.strict is True:
