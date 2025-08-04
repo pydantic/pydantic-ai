@@ -23,6 +23,7 @@ from .output import OutputDataT
 
 try:
     import click
+    from click import HelpFormatter
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, Suggestion
     from prompt_toolkit.buffer import Buffer
@@ -87,6 +88,34 @@ Markdown.elements.update(
 )
 
 
+class ArgparseStyleCommand(click.Command):
+    """Command subclass that keeps the argparse-style output."""
+
+    def get_usage(self, ctx: click.Context) -> str:
+        # exact synopsis argparse produced previously (without the program name)
+        return '[-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [PROMPT]'
+
+    # override usage line
+    def format_usage(self, ctx: click.Context, formatter: HelpFormatter) -> None:
+        formatter.write_usage(ctx.command_path, self.get_usage(ctx))
+
+    # Keep the positional prompt argument details in the README
+    def format_help(self, ctx: click.Context, formatter: HelpFormatter) -> None:
+        # usage
+        self.format_usage(ctx, formatter)
+        formatter.write_paragraph()
+
+        if self.help:
+            with formatter.section('Description'):
+                formatter.write_text(self.help)
+
+        # positional argument description
+        with formatter.section('positional arguments'):
+            formatter.write_dl([('prompt', 'AI Prompt, if omitted fall into interactive mode')])
+
+        self.format_options(ctx, formatter)
+
+
 cli_agent = Agent()
 
 
@@ -115,7 +144,10 @@ def cli(
     """Run the CLI and return the exit code for the process."""
 
     # Create click command for parsing
-    @click.command(context_settings={'help_option_names': ['-h', '--help']})
+    @click.command(
+        cls=ArgparseStyleCommand,
+        context_settings={'help_option_names': ['-h', '--help']},
+    )
     @click.argument('prompt', required=False)
     @click.option(
         '-m',
@@ -169,18 +201,16 @@ def cli(
             default_model=default_model,
         )
 
-    # Check if this is a help or version request that should raise SystemExit
-    should_exit = args_list and any(arg in ['--help', '-h', '--version'] for arg in args_list)
+    # Detect if the user explicitly asked for help (should mimic argparse behaviour)
+    help_requested = args_list and any(arg in ('--help', '-h') for arg in args_list)
 
-    # Invoke click command with appropriate mode
     try:
-        if should_exit:
-            # Use standalone_mode=True for --help/--version to get SystemExit behavior
-            click_cli.main(args_list, standalone_mode=True, prog_name=prog_name)
-        else:
-            # Use standalone_mode=False for normal operations
-            result = click_cli.main(args_list, standalone_mode=False, prog_name=prog_name)
-            return result if result is not None else 0
+        result = click_cli.main(args_list, standalone_mode=False, prog_name=prog_name)
+
+        if help_requested:
+            raise SystemExit(0)
+
+        return result if result is not None else 0
     except click.ClickException as e:
         e.show()
         return 1
