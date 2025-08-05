@@ -1038,7 +1038,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
     """
     try:
         return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
-    except (AttributeError, TypeError):  # pragma: no cover
+    except (AttributeError, TypeError):  # pragma: lax no cover
         return fallback
 
 

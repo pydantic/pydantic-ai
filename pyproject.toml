@@ -215,6 +215,10 @@ filterwarnings = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
+parallel = true
+concurrency = ["multiprocessing", "thread"]
+# We use a subdirectory for coverage data to avoid noisy coverage data files.
+data_file = ".coverage/.coverage"
 # required to avoid warnings about files created by create_module fixture
 include = [
     "pydantic_ai_slim/**/*.py",
@@ -245,6 +249,7 @@ source = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
 [tool.coverage.report]
+fail_under = 100
 skip_covered = true
 show_missing = true
 ignore_errors = true
