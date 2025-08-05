@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_evals.evaluators._spec import (
+    from pydantic_evals.evaluators.spec import (
         EvaluatorSpec,
         _SerializedEvaluatorSpec,  # pyright: ignore[reportPrivateUsage]
     )

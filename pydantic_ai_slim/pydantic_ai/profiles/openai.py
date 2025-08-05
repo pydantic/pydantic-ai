@@ -166,11 +166,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 schema['required'] = list(schema['properties'].keys())
 
             elif self.strict is None:
-                if (
-                    schema.get('additionalProperties') is not False
-                    or 'properties' not in schema
-                    or 'required' not in schema
-                ):
+                if schema.get('additionalProperties', None) not in (None, False):
+                    self.is_strict_compatible = False
+                else:
+                    # additional properties are disallowed by default
+                    schema['additionalProperties'] = False
+
+                if 'properties' not in schema or 'required' not in schema:
                     self.is_strict_compatible = False
                 else:
                     required = schema['required']

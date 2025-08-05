@@ -285,7 +285,6 @@ def _build_schema(
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
-        total=var_kwargs_schema is None,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None

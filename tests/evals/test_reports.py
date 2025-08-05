@@ -57,7 +57,7 @@ def sample_evaluation_result(
         name='MockEvaluator',
         value=True,
         reason=None,
-        source=mock_evaluator,
+        source=mock_evaluator.as_spec(),
     )
 
 
@@ -177,7 +177,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
         name='error_evaluator',
         value=False,  # No result
         reason='Test error message',
-        source=mock_evaluator,
+        source=mock_evaluator.as_spec(),
     )
 
     # Create a case
