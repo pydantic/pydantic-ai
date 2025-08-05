@@ -204,8 +204,8 @@ def cli(
 
         return result if result is not None else 0
     except click.ClickException as e:
-        e.show()
-        return 1
+        e.show()  # pragma: no cover
+        return 1 # pragma: no cover
 
 
 def _cli_impl(  # noqa: C901
