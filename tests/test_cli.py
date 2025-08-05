@@ -154,6 +154,36 @@ def test_list_models(capfd: CaptureFixture[str]):
     assert models == set(), models
 
 
+def test_cli_help(capfd: CaptureFixture[str]):
+    with pytest.raises(SystemExit):
+        cli(['--help'])
+
+    assert capfd.readouterr().out.splitlines() == snapshot(
+        [
+            IsStr(),
+            '           [--version] [PROMPT]',
+            '',
+            '',
+            IsStr(regex='[A-Za-z0-9_]+.*'),
+            '  prompt  AI Prompt, if omitted fall into interactive mode',
+            '',
+            IsStr(regex='[A-Za-z0-9_]+.*'),
+            '  -m, --model TEXT       Model to use, in format "<provider>:<model>" e.g.',
+            '                         "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0".',
+            '                         Defaults to "openai:gpt-4.1".',
+            '  -a, --agent TEXT       Custom Agent to use, in format "module:variable",',
+            '                         e.g. "mymodule.submodule:my_agent"',
+            '  -l, --list-models      List all available models and exit',
+            '  -t, --code-theme TEXT  Which colors to use for code, can be "dark", "light"',
+            '                         or any theme from pygments.org/styles/. Defaults to',
+            '                         "dark" which works well on dark terminals.',
+            '  --no-stream            Disable streaming from the model',
+            '  --version              Show version and exit',
+            '  -h, --help             Show this message and exit.',
+        ]
+    )
+
+
 def test_cli_prompt(capfd: CaptureFixture[str], env: TestEnv):
     env.set('OPENAI_API_KEY', 'test')
     with cli_agent.override(model=TestModel(custom_output_text='# result\n\n```py\nx = 1\n```')):
