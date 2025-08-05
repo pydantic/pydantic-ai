@@ -366,13 +366,11 @@ class GeminiModel(Model):
                             inline_data={'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
                         )
                         content.append(inline_data)
-                    else:
-                        file_data = _GeminiFileDataPart(
-                            file_data={'file_uri': item.url, 'mime_type': item.media_type}
-                        )  # pragma: no cover
-                        content.append(file_data)  # pragma: no cover
+                    else:  # pragma: lax no cover
+                        file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
+                        content.append(file_data)
                 else:
-                    assert_never(item)
+                    assert_never(item)  # pragma: lax no cover
         return content
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
