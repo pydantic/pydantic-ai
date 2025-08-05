@@ -3531,7 +3531,7 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.3.0" },
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
-    { name = "strict-no-cover", specifier = ">=0.1.1" },
+    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=main" },
 ]
 
 [[package]]
@@ -4388,13 +4388,9 @@ wheels = [
 [[package]]
 name = "strict-no-cover"
 version = "0.1.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=main#7fc59da2c4dff919db2095a0f0e47101b657131d" }
 dependencies = [
     { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/76/9c/0d3da51690d0d6d9114dacaacf80d8d7f7bfa2226ebbee4ac113ce872fed/strict_no_cover-0.1.1.tar.gz", hash = "sha256:428512000c2f8407008d4834619869b222f88124a0f330d7578caffa6447ea6b", size = 4671, upload-time = "2025-05-09T14:08:37.661Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/19/dc7194d30abe5850324f4829b240f4a0afb37ff57082eb9fdc993054a7ec/strict_no_cover-0.1.1-py3-none-any.whl", hash = "sha256:0af14678bbe6ec079931a2f3a4cbe4e1a53e41ccf6d3ffb21f042820acba948b", size = 5041, upload-time = "2025-05-09T14:08:36.4Z" },
 ]
 
 [[package]]

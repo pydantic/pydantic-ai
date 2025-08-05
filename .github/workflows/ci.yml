@@ -224,13 +224,9 @@ jobs:
       - run: uv run coverage report --fail-under 100
       - run: uv run diff-cover coverage.xml --fail-under 100
 
-        # TODO(Marcelo): This is a workaround that can be removed once https://github.com/pydantic/strict-no-cover/pull/2 is merged.
-      - run: |
-          mv .coverage cov-directory
-          mv cov-directory/.coverage .coverage
-          rm -rf cov-directory
-
       - run: uv run strict-no-cover
+        env:
+          COVERAGE_FILE: .coverage/.coverage
 
   test-mcp-run-python:
     runs-on: ubuntu-latest
