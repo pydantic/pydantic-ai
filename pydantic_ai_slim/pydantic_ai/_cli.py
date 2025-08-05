@@ -92,24 +92,15 @@ class ArgparseStyleCommand(click.Command):
     """Command subclass that keeps the argparse-style output."""
 
     def get_usage(self, ctx: click.Context) -> str:
-        # exact synopsis argparse produced previously (without the program name)
         return '[-h] [-m [MODEL]] [-a AGENT] [-l] [-t [CODE_THEME]] [--no-stream] [--version] [PROMPT]'
 
-    # override usage line
     def format_usage(self, ctx: click.Context, formatter: HelpFormatter) -> None:
         formatter.write_usage(ctx.command_path, self.get_usage(ctx))
 
-    # Keep the positional prompt argument details in the README
     def format_help(self, ctx: click.Context, formatter: HelpFormatter) -> None:
-        # usage
         self.format_usage(ctx, formatter)
         formatter.write_paragraph()
 
-        if self.help:
-            with formatter.section('Description'):
-                formatter.write_text(self.help)
-
-        # positional argument description
         with formatter.section('positional arguments'):
             formatter.write_dl([('prompt', 'AI Prompt, if omitted fall into interactive mode')])
 
@@ -212,7 +203,7 @@ def cli(
             raise SystemExit(0)
 
         return result if result is not None else 0
-    except click.ClickException as e:
+    except click.ClickException as e:  # pragma: no cover
         e.show()
         return 1
 
