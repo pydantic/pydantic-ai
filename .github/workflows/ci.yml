@@ -154,15 +154,18 @@ jobs:
 
       - run: mkdir .coverage
 
-      # run
-      - name: test only `pydantic-ai-slim` dependencies
-        run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
+      # run tests with just `pydantic-ai-slim` dependencies
+      - run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 
-      - name: test with `pydantic-ai` dependencies
-        run: uv run coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
 
-      - name: test with all extras
-        run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
       - run: uv run --all-extras python tests/import_examples.py
 
@@ -172,6 +175,8 @@ jobs:
         run: |
           unset UV_FROZEN
           uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
@@ -200,6 +205,7 @@ jobs:
           enable-cache: true
 
       - run: uv sync --package pydantic-ai-slim --only-dev
+      - run: rm .coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
       - run: uv run coverage combine
 
       - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
