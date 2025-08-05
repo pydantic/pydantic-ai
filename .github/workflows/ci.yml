@@ -140,6 +140,7 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
+      COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
       - uses: actions/checkout@v4
 
@@ -154,17 +155,14 @@ jobs:
       - run: mkdir .coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
+      - name: test slim
+        run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
 
-      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
+      - name: test standard
+        run: uv run coverage run -m pytest -n auto --dist=loadgroup
 
-      - run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
+      - name: test all extras
+        run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
 
       - run: uv run --all-extras python tests/import_examples.py
 
@@ -174,8 +172,6 @@ jobs:
         run: |
           unset UV_FROZEN
           uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
