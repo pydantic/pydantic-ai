@@ -154,9 +154,14 @@ jobs:
       - run: mkdir .coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
-      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
-      - run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
+      - name: test slim
+        run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
+
+      - name: test standard
+        run: uv run coverage run -m pytest -n auto --dist=loadgroup
+
+      - name: test all extras
+        run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
 
       - run: uv run --all-extras python tests/import_examples.py
 
@@ -194,8 +199,7 @@ jobs:
           enable-cache: true
 
       - run: uv sync --package pydantic-ai-slim --only-dev
-      - run: rm coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
-      - run: uv run coverage combine coverage
+      - run: uv run coverage combine
 
       - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
 
