@@ -166,6 +166,8 @@ jobs:
         env:
           COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
+      - run: ls -lh coverage
+
       - run: uv run --all-extras python tests/import_examples.py
 
       # this must run last as it modifies the environment!
