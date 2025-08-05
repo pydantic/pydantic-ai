@@ -203,7 +203,7 @@ def cli(
             raise SystemExit(0)
 
         return result if result is not None else 0
-    except click.ClickException as e:  # pragma: no cover
+    except click.ClickException as e:
         e.show()
         return 1
 
