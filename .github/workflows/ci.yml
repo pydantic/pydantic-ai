@@ -154,14 +154,14 @@ jobs:
 
       - run: mkdir .coverage
 
-      # run tests with just `pydantic-ai-slim` dependencies
-      - name: test slim
+      # run
+      - name: test only `pydantic-ai-slim` dependencies
         run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
 
-      - name: test standard
+      - name: test with `pydantic-ai` dependencies
         run: uv run coverage run -m pytest -n auto --dist=loadgroup
 
-      - name: test all extras
+      - name: test with all extras
         run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
 
       - run: uv run --all-extras python tests/import_examples.py
@@ -223,6 +223,13 @@ jobs:
 
       - run: uv run coverage report --fail-under 100
       - run: uv run diff-cover coverage.xml --fail-under 100
+
+        # TODO(Marcelo): This is a workaround that can be removed once https://github.com/pydantic/strict-no-cover/pull/2 is merged.
+      - run: |
+          mv .coverage cov-directory
+          mv cov-directory/.coverage .coverage
+          rm -rf cov-directory
+
       - run: uv run strict-no-cover
 
   test-mcp-run-python:
