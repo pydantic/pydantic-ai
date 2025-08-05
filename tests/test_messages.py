@@ -41,6 +41,24 @@ def test_youtube_video_url(url: str, is_youtube: bool):
     assert video_url.format == 'mp4'
 
 
+@pytest.mark.parametrize(
+    'url, expected_data_type',
+    [
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md', 'text/markdown'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.txt', 'text/plain'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.pdf', 'application/pdf'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.rtf', 'application/rtf'),
+        (
+            'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.asciidoc',
+            'text/x-asciidoc',
+        ),
+    ],
+)
+def test_document_url_other_types(url: str, expected_data_type: str) -> None:
+    document_url = DocumentUrl(url=url)
+    assert document_url.media_type == expected_data_type
+
+
 def test_document_url():
     document_url = DocumentUrl(url='https://example.com/document.pdf')
     assert document_url.media_type == 'application/pdf'
@@ -135,7 +153,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Unknown audio file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
         AudioUrl('foobar.potato').media_type
 
 
@@ -155,10 +173,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Unknown image file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Unknown image file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
         ImageUrl('foobar.potato').format
 
 
@@ -195,7 +213,7 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Unknown document file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
         DocumentUrl('foobar.potato').media_type
 
     with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
@@ -283,7 +301,7 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Unknown video file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
 
 
