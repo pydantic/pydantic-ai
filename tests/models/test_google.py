@@ -318,7 +318,9 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
         await agent.run('What is the capital of France?')
 
 
-async def test_google_model_vertex_provider(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_model_vertex_provider(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
     result = await agent.run('What is the capital of France?')
@@ -774,7 +776,7 @@ async def test_google_url_input(
     expected_output: str,
     allow_model_requests: None,
     vertex_provider: GoogleProvider,
-) -> None:
+) -> None:  # pragma: lax no cover
     m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
     result = await agent.run(['What is the main content of this URL?', url])
@@ -806,7 +808,7 @@ async def test_google_url_input(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_google_url_input_force_download(allow_model_requests: None) -> None:
+async def test_google_url_input_force_download(allow_model_requests: None) -> None:  # pragma: lax no cover
     provider = GoogleProvider(project='pydantic-ai', location='us-central1')
     m = GoogleModel('gemini-2.0-flash', provider=provider)
     agent = Agent(m)
