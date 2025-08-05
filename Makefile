@@ -60,7 +60,8 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests and collect coverage data
-	uv run coverage run -m pytest -n auto --dist=loadgroup
+	COVERAGE_PROCESS_START=./pyproject.toml uv run coverage run -m pytest -n auto --dist=loadgroup
+	@uv run coverage combine
 	@uv run coverage report
 
 .PHONY: test-all-python

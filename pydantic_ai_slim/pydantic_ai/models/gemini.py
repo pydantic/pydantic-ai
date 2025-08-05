@@ -236,7 +236,7 @@ class GeminiModel(Model):
 
         if gemini_labels := model_settings.get('gemini_labels'):
             if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels
+                request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -367,8 +367,10 @@ class GeminiModel(Model):
                         )
                         content.append(inline_data)
                     else:
-                        file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
-                        content.append(file_data)
+                        file_data = _GeminiFileDataPart(
+                            file_data={'file_uri': item.url, 'mime_type': item.media_type}
+                        )  # pragma: no cover
+                        content.append(file_data)  # pragma: no cover
                 else:
                     assert_never(item)
         return content
