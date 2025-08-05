@@ -30,12 +30,6 @@ class EvaluatorSpec(BaseModel):
     * `'MyEvaluator'` - Just the (string) name of the Evaluator subclass is used if its `__init__` takes no arguments
     * `{'MyEvaluator': first_arg}` - A single argument is passed as the first positional argument to `MyEvaluator.__init__`
     * `{'MyEvaluator': {k1: v1, k2: v2}}` - Multiple kwargs are passed to `MyEvaluator.__init__`
-
-    Args:
-        name: The serialization name of the evaluator class returned by `EvaluatorClass.get_serialization_name()`;
-            this is usually just the class name itself.
-        arguments: The arguments to pass to the evaluator's constructor. Can be None (for no arguments),
-            a tuple (for a single positional argument), or a dict (for multiple keyword arguments).
     """
 
     name: str
