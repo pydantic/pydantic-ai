@@ -96,7 +96,7 @@ This is a uv workspace with multiple packages:
 - **VCR cassettes**: `tests/cassettes/` for recorded LLM API interactions
 - **Test models**: Use `TestModel` for deterministic testing
 - **Examples testing**: `tests/test_examples.py` validates all documentation examples
-- **Multi-version testing**: Python 3.9-3.13 support
+- **Multi-version testing**: Python 3.9-3.14 support
 
 ## Key Configuration Files
 
