@@ -1252,3 +1252,122 @@ async def test_to_ag_ui() -> None:
                         events.append(json.loads(line.removeprefix('data: ')))
 
             assert events == simple_result()
+
+
+async def test_callback_sync() -> None:
+    """Test that sync callbacks work correctly."""
+    from pydantic_ai.agent import AgentRun
+
+    captured_runs: list[AgentRun[Any, Any]] = []
+
+    def sync_callback(agent_run: AgentRun[Any, Any]) -> None:
+        captured_runs.append(agent_run)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg1',
+            content='Hello!',
+        )
+    )
+
+    events: list[dict[str, Any]] = []
+    async for event in run_ag_ui(agent, run_input, on_complete=sync_callback):
+        events.append(json.loads(event.removeprefix('data: ')))
+
+    # Verify callback was called
+    assert len(captured_runs) == 1
+    agent_run = captured_runs[0]
+
+    # Verify we can access messages
+    assert agent_run.result is not None, 'AgentRun result should be available in callback'
+    messages = agent_run.result.all_messages()
+    assert len(messages) >= 1
+
+    # Verify events were still streamed normally
+    assert len(events) > 0
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_callback_async() -> None:
+    """Test that async callbacks work correctly."""
+    from pydantic_ai.agent import AgentRun
+
+    captured_runs: list[AgentRun[Any, Any]] = []
+
+    async def async_callback(agent_run: AgentRun[Any, Any]) -> None:
+        captured_runs.append(agent_run)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg1',
+            content='Hello!',
+        )
+    )
+
+    events: list[dict[str, Any]] = []
+    async for event in run_ag_ui(agent, run_input, on_complete=async_callback):
+        events.append(json.loads(event.removeprefix('data: ')))
+
+    # Verify callback was called
+    assert len(captured_runs) == 1
+    agent_run = captured_runs[0]
+
+    # Verify we can access messages
+    assert agent_run.result is not None, 'AgentRun result should be available in callback'
+    messages = agent_run.result.all_messages()
+    assert len(messages) >= 1
+
+    # Verify events were still streamed normally
+    assert len(events) > 0
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_callback_none() -> None:
+    """Test that passing None for callback works (backwards compatibility)."""
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg1',
+            content='Hello!',
+        )
+    )
+
+    events: list[dict[str, Any]] = []
+    async for event in run_ag_ui(agent, run_input, on_complete=None):
+        events.append(json.loads(event.removeprefix('data: ')))
+
+    # Verify events were still streamed normally
+    assert len(events) > 0
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_callback_with_error() -> None:
+    """Test that callbacks are not called when errors occur."""
+    from pydantic_ai.agent import AgentRun
+
+    captured_runs: list[AgentRun[Any, Any]] = []
+
+    def error_callback(agent_run: AgentRun[Any, Any]) -> None:
+        captured_runs.append(agent_run)
+
+    agent = Agent(TestModel())
+    # Empty messages should cause an error
+    run_input = create_input()  # No messages will cause _NoMessagesError
+
+    events: list[dict[str, Any]] = []
+    async for event in run_ag_ui(agent, run_input, on_complete=error_callback):
+        events.append(json.loads(event.removeprefix('data: ')))
+
+    # Verify callback was not called due to error
+    assert len(captured_runs) == 0
+
+    # Verify error event was sent
+    assert len(events) > 0
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert any(event['type'] == 'RUN_ERROR' for event in events)
