@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
@@ -1327,7 +1327,7 @@ wheels = [
 
 [[package]]
 name = "google-genai"
-version = "1.25.0"
+version = "1.28.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1339,9 +1339,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/59/c9b9148c8702b60253f5a251f16ae436534c5d4362da193c9db05ac9858c/google_genai-1.25.0.tar.gz", hash = "sha256:a08a79c819a5d949d9948cd372e36e512bf85cd28158994daaa36d0ec4cb2b02", size = 228141, upload-time = "2025-07-09T20:53:47.885Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/23/f1/039bb08df4670e204c55b5da0b2fa5228dff3346bda01389a86b300f6f58/google_genai-1.28.0.tar.gz", hash = "sha256:e93053c02e616842679ba5ecce5b99db8c0ca6310623c55ff6245b5b1d293138", size = 221029, upload-time = "2025-07-30T21:39:57.002Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/ec/149f3d49b56cf848142071772aabb1c290b535bd9b5327a5dfccf1d00332/google_genai-1.25.0-py3-none-any.whl", hash = "sha256:fb5cee79b9a0a1b2afd5cfdf279099ecebd186551eefcaa6ec0c6016244e6138", size = 226847, upload-time = "2025-07-09T20:53:46.532Z" },
+    { url = "https://files.pythonhosted.org/packages/3f/ea/b704df3b348d3ae3572b0db5b52438fa426900b0830cff664107abfdba69/google_genai-1.28.0-py3-none-any.whl", hash = "sha256:7fd506799005cc87d3c5704a2eb5a2cb020d45b4d216a802e606700308f7f2f3", size = 219384, upload-time = "2025-07-30T21:39:55.652Z" },
 ]
 
 [[package]]
@@ -3490,7 +3490,7 @@ requires-dist = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.24.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.28.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.19.0" },
     { name = "httpx", specifier = ">=0.27" },
