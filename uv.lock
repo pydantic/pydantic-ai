@@ -3531,7 +3531,7 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.3.0" },
     { name = "pytest-recording", specifier = ">=0.13.2" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
-    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=main" },
+    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
 ]
 
 [[package]]
@@ -4388,7 +4388,7 @@ wheels = [
 [[package]]
 name = "strict-no-cover"
 version = "0.1.1"
-source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=main#7fc59da2c4dff919db2095a0f0e47101b657131d" }
+source = { git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d#7fc59da2c4dff919db2095a0f0e47101b657131d" }
 dependencies = [
     { name = "pydantic" },
 ]
