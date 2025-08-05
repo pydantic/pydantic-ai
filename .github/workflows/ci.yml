@@ -151,22 +151,12 @@ jobs:
         with:
           deno-version: v2.x
 
-      - run: mkdir coverage
+      - run: mkdir .coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
       - run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
-
       - run: uv run coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
-
       - run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
-
-      - run: ls -lh coverage
 
       - run: uv run --all-extras python tests/import_examples.py
 
@@ -176,8 +166,6 @@ jobs:
         run: |
           unset UV_FROZEN
           uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
