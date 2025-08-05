@@ -251,7 +251,7 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 def mock_vcr_aiohttp_content(mocker: MockerFixture):
     try:
         from vcr.stubs import aiohttp_stubs
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         return
 
     # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
@@ -416,9 +416,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider():
+async def vertex_provider():  # pragma: lax no cover
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):  # pragma: lax no cover
+    if not os.getenv('CI', False):
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
