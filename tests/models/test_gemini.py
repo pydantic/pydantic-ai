@@ -360,24 +360,25 @@ async def test_json_def_enum(allow_model_requests: None):
 
     # This tests that the enum values are properly converted to strings for Gemini
     assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
                         'properties': {
                             'progress': {
                                 'items': {'enum': ['100', '80', '60', '40', '20'], 'type': 'string'},
                                 'type': 'array',
                                 'nullable': True,
+                                'default': None,
                             }
                         },
                         'type': 'object',
                     },
-                )
+                }
             ]
-        )
+        }
     )
 
 
@@ -406,12 +407,12 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
     )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
                         'properties': {
                             'op_location': {
                                 'properties': {
@@ -421,13 +422,14 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                                 'required': ['lat', 'lng'],
                                 'nullable': True,
                                 'type': 'object',
+                                'default': None,
                             }
                         },
                         'type': 'object',
                     },
-                )
+                }
             ]
-        )
+        }
     )
 
 

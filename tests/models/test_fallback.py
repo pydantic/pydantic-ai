@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -247,6 +248,14 @@ def test_all_failed() -> None:
     assert exceptions[0].body == {'error': 'test error'}
 
 
+def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for span in spans:
+        attrs = span.setdefault('attributes', {})
+        if 'gen_ai.request.model' in attrs:
+            attrs.setdefault('gen_ai.response.model', attrs['gen_ai.request.model'])
+    return spans
+
+
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
@@ -260,7 +269,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert add_missing_response_model(capfire.exporter.exported_spans_as_dict()) == snapshot(
         [
             {
                 'name': 'chat fallback:function:failure_response:,function:failure_response:',
@@ -277,6 +286,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'logfire.level_num': 17,
+                    'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },
                 'events': [
                     {

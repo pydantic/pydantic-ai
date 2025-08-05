@@ -387,7 +387,6 @@ def test_response_tuple():
                 name='final_result',
                 description='The final response which ends this conversation',
                 parameters_json_schema={
-                    'additionalProperties': False,
                     'properties': {
                         'response': {
                             'maxItems': 2,
@@ -637,7 +636,6 @@ def test_output_type_tool_output_union():
                             'type': 'object',
                         },
                     },
-                    'additionalProperties': False,
                     'properties': {'response': {'anyOf': [{'$ref': '#/$defs/Foo'}, {'$ref': '#/$defs/Bar'}]}},
                     'required': ['response'],
                     'type': 'object',
@@ -2924,7 +2922,7 @@ def test_custom_output_type_invalid() -> None:
         agent.run_sync('Hello', output_type=int)
 
 
-def test_binary_content_all_messages_json():
+def test_binary_content_serializable():
     agent = Agent('test')
 
     content = BinaryContent(data=b'Hello', media_type='text/plain')
@@ -2967,6 +2965,57 @@ def test_binary_content_all_messages_json():
                 'timestamp': IsStr(),
                 'kind': 'response',
                 'vendor_details': None,
+            },
+        ]
+    )
+
+    # We also need to be able to round trip the serialized messages.
+    messages = ModelMessagesTypeAdapter.validate_json(serialized)
+    assert messages == result.all_messages()
+
+
+def test_image_url_serializable():
+    agent = Agent('test')
+
+    content = ImageUrl('https://example.com/chart', media_type='image/jpeg')
+    result = agent.run_sync(['Hello', content])
+
+    serialized = result.all_messages_json()
+    assert json.loads(serialized) == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': [
+                            'Hello',
+                            {
+                                'url': 'https://example.com/chart',
+                                'force_download': False,
+                                'vendor_metadata': None,
+                                'kind': 'image-url',
+                            },
+                        ],
+                        'timestamp': IsStr(),
+                        'part_kind': 'user-prompt',
+                    }
+                ],
+                'instructions': None,
+                'kind': 'request',
+            },
+            {
+                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'usage': {
+                    'requests': 1,
+                    'request_tokens': 51,
+                    'response_tokens': 4,
+                    'total_tokens': 55,
+                    'details': None,
+                },
+                'model_name': 'test',
+                'timestamp': IsStr(),
+                'kind': 'response',
+                'vendor_details': None,
+                'vendor_id': None,
             },
         ]
     )

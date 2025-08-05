@@ -38,9 +38,9 @@ from pydantic_evals._utils import get_event_loop
 from ._utils import get_unwrapped_function_name, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._run_evaluator import run_evaluator
-from .evaluators._spec import EvaluatorSpec
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
+from .evaluators.spec import EvaluatorSpec
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
@@ -1038,7 +1038,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
     """
     try:
         return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
-    except (AttributeError, TypeError):  # pragma: no cover
+    except (AttributeError, TypeError):  # pragma: lax no cover
         return fallback
 
 

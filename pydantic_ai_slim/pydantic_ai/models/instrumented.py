@@ -18,11 +18,7 @@ from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provide
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from ..messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-)
+from ..messages import ModelMessage, ModelRequest, ModelResponse
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
@@ -138,7 +134,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
-        except TypeError:
+        except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore

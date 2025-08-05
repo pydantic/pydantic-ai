@@ -12,8 +12,8 @@ import httpx
 import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Discriminator, Field, Tag
-from typing_extensions import TypedDict
+from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -1082,7 +1082,37 @@ class MyDefaultRecursiveDc:
     field: MyDefaultRecursiveDc | None = None
 
 
-class MyModel(BaseModel, extra='allow'):
+class MyModel(BaseModel):
+    foo: str
+
+
+class MyDc(BaseModel):
+    foo: str
+
+
+class MyOptionalDc(BaseModel):
+    foo: str | None
+    bar: str
+
+
+class MyExtrasDc(BaseModel, extra='allow'):
+    foo: str
+
+
+class MyNormalTypedDict(TypedDict):
+    foo: str
+
+
+class MyOptionalTypedDict(TypedDict):
+    foo: NotRequired[str]
+    bar: str
+
+
+class MyPartialTypedDict(TypedDict, total=False):
+    foo: str
+
+
+class MyExtrasModel(BaseModel, extra='allow'):
     pass
 
 
@@ -1094,15 +1124,55 @@ def tool_with_default(x: int = 1) -> str:
     return f'{x}'  # pragma: no cover
 
 
+def tool_with_datetime(x: datetime) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_url(x: AnyUrl) -> str:
+    return f'{x}'  # pragma: no cover
+
+
 def tool_with_recursion(x: MyRecursiveDc, y: MyDefaultRecursiveDc):
     return f'{x} {y}'  # pragma: no cover
 
 
-def tool_with_additional_properties(x: MyModel) -> str:
+def tool_with_model(x: MyModel) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_dataclass(x: MyDc) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_optional_dataclass(x: MyOptionalDc) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_dataclass_with_extras(x: MyExtrasDc) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_typed_dict(x: MyNormalTypedDict) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_optional_typed_dict(x: MyOptionalTypedDict) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_partial_typed_dict(x: MyPartialTypedDict) -> str:
+    return f'{x}'  # pragma: no cover
+
+
+def tool_with_model_with_extras(x: MyExtrasModel) -> str:
     return f'{x}'  # pragma: no cover
 
 
 def tool_with_kwargs(x: int, **kwargs: Any) -> str:
+    return f'{x} {kwargs}'  # pragma: no cover
+
+
+def tool_with_typed_kwargs(x: int, **kwargs: int) -> str:
     return f'{x} {kwargs}'  # pragma: no cover
 
 
@@ -1144,12 +1214,50 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(None),
         ),
         (
-            strict_compatible_tool,
+            tool_with_default,
             None,
             snapshot(
                 {
                     'additionalProperties': False,
-                    'properties': {'x': {'type': 'integer'}},
+                    'properties': {'x': {'default': 1, 'type': 'integer'}},
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_datetime,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'format': 'date-time', 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_url,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'format': 'uri', 'minLength': 1, 'type': 'string'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_url,
+            True,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'x': {'type': 'string', 'description': 'minLength=1, format=uri'}},
                     'required': ['x'],
                     'type': 'object',
                 }
@@ -1170,6 +1278,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                                 }
                             },
                             'type': 'object',
+                            'additionalProperties': False,
                         },
                         'MyEnum': {'enum': ['a', 'b'], 'type': 'string'},
                         'MyRecursiveDc': {
@@ -1179,6 +1288,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                             },
                             'required': ['field', 'my_enum'],
                             'type': 'object',
+                            'additionalProperties': False,
                         },
                     },
                     'additionalProperties': False,
@@ -1229,7 +1339,97 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(True),
         ),
         (
-            tool_with_additional_properties,
+            tool_with_model,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'foo': {'type': 'string'}},
+                    'required': ['foo'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_dataclass,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'foo': {'type': 'string'}},
+                    'required': ['foo'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_optional_dataclass,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'foo': {'anyOf': [{'type': 'string'}, {'type': 'null'}]}, 'bar': {'type': 'string'}},
+                    'required': ['foo', 'bar'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_dataclass_with_extras,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': True,
+                    'properties': {'foo': {'type': 'string'}},
+                    'required': ['foo'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_typed_dict,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'foo': {'type': 'string'}},
+                    'required': ['foo'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(True),
+        ),
+        (
+            tool_with_optional_typed_dict,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'foo': {'type': 'string'}, 'bar': {'type': 'string'}},
+                    'required': ['bar'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_partial_typed_dict,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': False,
+                    'properties': {'foo': {'type': 'string'}},
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
+            tool_with_model_with_extras,
             None,
             snapshot(
                 {
@@ -1241,7 +1441,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(None),
         ),
         (
-            tool_with_additional_properties,
+            tool_with_model_with_extras,
             True,
             snapshot(
                 {
@@ -1258,6 +1458,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             None,
             snapshot(
                 {
+                    'additionalProperties': True,
                     'properties': {'x': {'type': 'integer'}},
                     'required': ['x'],
                     'type': 'object',
@@ -1279,6 +1480,19 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
             snapshot(True),
         ),
         (
+            tool_with_typed_kwargs,
+            None,
+            snapshot(
+                {
+                    'additionalProperties': {'type': 'integer'},
+                    'properties': {'x': {'type': 'integer'}},
+                    'required': ['x'],
+                    'type': 'object',
+                }
+            ),
+            snapshot(None),
+        ),
+        (
             tool_with_union,
             None,
             snapshot(
@@ -1287,6 +1501,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'MyDefaultDc': {
                             'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
+                            'additionalProperties': False,
                         }
                     },
                     'additionalProperties': False,
@@ -1327,6 +1542,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'MyDefaultDc': {
                             'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
+                            'additionalProperties': False,
                         }
                     },
                     'additionalProperties': False,
@@ -1367,6 +1583,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                         'MyDefaultDc': {
                             'properties': {'x': {'default': 1, 'type': 'integer'}},
                             'type': 'object',
+                            'additionalProperties': False,
                         }
                     },
                     'additionalProperties': False,
@@ -1413,6 +1630,7 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                     'properties': {
                         'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                         'y': {
+                            'default': ['abc'],
                             'maxItems': 1,
                             'minItems': 1,
                             'prefixItems': [{'type': 'string'}],
@@ -1432,16 +1650,8 @@ def tool_with_tuples(x: tuple[int], y: tuple[str] = ('abc',)) -> str:
                 {
                     'additionalProperties': False,
                     'properties': {
-                        'x': {
-                            'prefixItems': [{'type': 'integer'}],
-                            'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
-                        },
-                        'y': {
-                            'prefixItems': [{'type': 'string'}],
-                            'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
-                        },
+                        'x': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
+                        'y': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'string'}], 'type': 'array'},
                     },
                     'required': ['x', 'y'],
                     'type': 'object',
@@ -1537,9 +1747,10 @@ def test_strict_schema():
                         },
                         'my_recursive': {'anyOf': [{'$ref': '#'}, {'type': 'null'}]},
                         'my_tuple': {
+                            'maxItems': 1,
+                            'minItems': 1,
                             'prefixItems': [{'type': 'integer'}],
                             'type': 'array',
-                            'description': 'minItems=1, maxItems=1',
                         },
                     },
                     'required': ['my_recursive', 'my_patterns', 'my_tuple', 'my_list', 'my_discriminated_union'],
@@ -1555,11 +1766,7 @@ def test_strict_schema():
                     'properties': {},
                     'required': [],
                 },
-                'my_tuple': {
-                    'prefixItems': [{'type': 'integer'}],
-                    'type': 'array',
-                    'description': 'minItems=1, maxItems=1',
-                },
+                'my_tuple': {'maxItems': 1, 'minItems': 1, 'prefixItems': [{'type': 'integer'}], 'type': 'array'},
                 'my_list': {'items': {'type': 'number'}, 'type': 'array'},
                 'my_discriminated_union': {'anyOf': [{'$ref': '#/$defs/Apple'}, {'$ref': '#/$defs/Banana'}]},
             },

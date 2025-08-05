@@ -137,8 +137,9 @@ class JsonSchemaTransformer(ABC):
         return schema
 
     def _handle_union(self, schema: JsonSchema, union_kind: Literal['anyOf', 'oneOf']) -> JsonSchema:
-        members = schema.get(union_kind)
-        if not members:
+        try:
+            members = schema.pop(union_kind)
+        except KeyError:
             return schema
 
         handled = [self._handle(member) for member in members]
@@ -149,7 +150,7 @@ class JsonSchemaTransformer(ABC):
 
         if len(handled) == 1:
             # In this case, no need to retain the union
-            return handled[0]
+            return handled[0] | schema
 
         # If we have keys besides the union kind (such as title or discriminator), keep them without modifications
         schema = schema.copy()

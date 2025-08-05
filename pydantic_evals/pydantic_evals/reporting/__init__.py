@@ -4,7 +4,7 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from io import StringIO
-from typing import Any, Callable, Generic, Literal, Protocol
+from typing import Any, Callable, Generic, Literal, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console
@@ -168,6 +168,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         self,
         width: int | None = None,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
+        *,
         include_input: bool = False,
         include_metadata: bool = False,
         include_expected_output: bool = False,
@@ -183,6 +184,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         label_configs: dict[str, RenderValueConfig] | None = None,
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
+        include_reasons: bool = False,
     ):  # pragma: no cover
         """Print this report to the console, optionally comparing it to a baseline report.
 
@@ -205,12 +207,14 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             label_configs=label_configs,
             metric_configs=metric_configs,
             duration_config=duration_config,
+            include_reasons=include_reasons,
         )
         Console(width=width).print(table)
 
     def console_table(
         self,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
+        *,
         include_input: bool = False,
         include_metadata: bool = False,
         include_expected_output: bool = False,
@@ -226,6 +230,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         label_configs: dict[str, RenderValueConfig] | None = None,
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
+        include_reasons: bool = False,
     ) -> Table:
         """Return a table containing the data from this report, or the diff between this report and a baseline report.
 
@@ -247,6 +252,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             label_configs=label_configs or {},
             metric_configs=metric_configs or {},
             duration_config=duration_config or _DEFAULT_DURATION_CONFIG,
+            include_reasons=include_reasons,
         )
         if baseline is None:
             return renderer.build_table(self)
@@ -529,15 +535,16 @@ class ReportCaseRenderer:
     include_labels: bool
     include_metrics: bool
     include_assertions: bool
+    include_reasons: bool
     include_durations: bool
     include_total_duration: bool
 
     input_renderer: _ValueRenderer
     metadata_renderer: _ValueRenderer
     output_renderer: _ValueRenderer
-    score_renderers: dict[str, _NumberRenderer]
-    label_renderers: dict[str, _ValueRenderer]
-    metric_renderers: dict[str, _NumberRenderer]
+    score_renderers: Mapping[str, _NumberRenderer]
+    label_renderers: Mapping[str, _ValueRenderer]
+    metric_renderers: Mapping[str, _NumberRenderer]
     duration_renderer: _NumberRenderer
 
     def build_base_table(self, title: str) -> Table:
@@ -581,10 +588,10 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.output) or EMPTY_CELL_STR)
 
         if self.include_scores:
-            row.append(self._render_dict({k: v.value for k, v in case.scores.items()}, self.score_renderers))
+            row.append(self._render_dict({k: v for k, v in case.scores.items()}, self.score_renderers))
 
         if self.include_labels:
-            row.append(self._render_dict({k: v.value for k, v in case.labels.items()}, self.label_renderers))
+            row.append(self._render_dict({k: v for k, v in case.labels.items()}, self.label_renderers))
 
         if self.include_metrics:
             row.append(self._render_dict(case.metrics, self.metric_renderers))
@@ -669,7 +676,11 @@ class ReportCaseRenderer:
             row.append(scores_diff)
 
         if self.include_labels:  # pragma: no branch
-            labels_diff = self._render_dicts_diff(baseline.labels, new_case.labels, self.label_renderers)
+            labels_diff = self._render_dicts_diff(
+                {k: v.value for k, v in baseline.labels.items()},
+                {k: v.value for k, v in new_case.labels.items()},
+                self.label_renderers,
+            )
             row.append(labels_diff)
 
         if self.include_metrics:  # pragma: no branch
@@ -779,26 +790,36 @@ class ReportCaseRenderer:
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
-    @staticmethod
     def _render_dict(
-        case_dict: dict[str, T],
+        self,
+        case_dict: Mapping[str, EvaluationResult[T] | T],
         renderers: Mapping[str, _AbstractRenderer[T]],
         *,
         include_names: bool = True,
     ) -> str:
         diff_lines: list[str] = []
         for key, val in case_dict.items():
-            rendered = renderers[key].render_value(key if include_names else None, val)
+            value = cast(EvaluationResult[T], val).value if isinstance(val, EvaluationResult) else val
+            rendered = renderers[key].render_value(key if include_names else None, value)
+            if self.include_reasons and isinstance(val, EvaluationResult) and (reason := val.reason):
+                rendered += f'\n  Reason: {reason}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
-    @staticmethod
     def _render_assertions(
+        self,
         assertions: list[EvaluationResult[bool]],
     ) -> str:
         if not assertions:
             return EMPTY_CELL_STR
-        return ''.join(['[green]✔[/]' if a.value else '[red]✗[/]' for a in assertions])
+        lines: list[str] = []
+        for a in assertions:
+            line = '[green]✔[/]' if a.value else '[red]✗[/]'
+            if self.include_reasons:
+                line = f'{a.name}: {line}\n'
+                line = f'{line}  Reason: {a.reason}\n\n' if a.reason else line
+            lines.append(line)
+        return ''.join(lines)
 
     @staticmethod
     def _render_aggregate_assertions(
@@ -859,6 +880,10 @@ class EvaluationRenderer:
     metric_configs: dict[str, RenderNumberConfig]
     duration_config: RenderNumberConfig
 
+    # TODO: Make this class kw-only so we can reorder the kwargs
+    # Data to include
+    include_reasons: bool  # only applies to reports, not to diffs
+
     def include_scores(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.scores for case in self._all_cases(report, baseline))
 
@@ -905,6 +930,7 @@ class EvaluationRenderer:
             include_labels=self.include_labels(report, baseline),
             include_metrics=self.include_metrics(report, baseline),
             include_assertions=self.include_assertions(report, baseline),
+            include_reasons=self.include_reasons,
             include_durations=self.include_durations,
             include_total_duration=self.include_total_duration,
             input_renderer=input_renderer,

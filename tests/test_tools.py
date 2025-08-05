@@ -387,7 +387,7 @@ def test_docstring_unknown():
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
             'kind': 'function',
@@ -932,7 +932,7 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'type': 'integer'}, 'b': {'default': 1, 'type': 'integer'}},
                     'required': ['a'],
                     'type': 'object',
                 },
@@ -945,7 +945,7 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'default': 1, 'type': 'integer'}, 'b': {'type': 'integer'}},
                     'required': ['b'],
                     'type': 'object',
                 },
@@ -1031,7 +1031,8 @@ def test_schema_generator():
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string'}},
+                    'additionalProperties': True,
+                    'properties': {'x': {'default': None, 'type': 'string'}},
                     'type': 'object',
                 },
                 'strict': None,
@@ -1042,7 +1043,7 @@ def test_schema_generator():
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string', 'title': 'X title'}},
+                    'properties': {'x': {'default': None, 'type': 'string', 'title': 'X title'}},
                     'type': 'object',
                 },
                 'strict': None,
@@ -1071,7 +1072,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'name': 'get_score',
             'description': None,
             'parameters_json_schema': {
-                'additionalProperties': False,
                 'properties': {
                     'a': {'description': 'The first parameter', 'type': 'integer'},
                     'b': {'description': 'The second parameter', 'type': 'integer'},

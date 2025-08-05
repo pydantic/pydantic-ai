@@ -665,4 +665,4 @@ class _AsyncIteratorWrapper(Generic[T]):
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:
-                raise e  # pragma: no cover
+                raise e  # pragma: lax no cover
