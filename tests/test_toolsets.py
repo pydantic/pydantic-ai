@@ -27,9 +27,10 @@ pytestmark = pytest.mark.anyio
 T = TypeVar('T')
 
 
-def build_run_context(deps: T) -> RunContext[T]:
+def build_run_context(deps: T) -> RunContext[T, None]:
     return RunContext(
         deps=deps,
+        input=None,
         model=TestModel(),
         usage=Usage(),
         prompt=None,

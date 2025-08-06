@@ -6,13 +6,13 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, cast
 
 from . import _utils
-from ._run_context import AgentDepsT, RunContext
+from ._run_context import AgentDepsT, InputDataT, RunContext
 from .tools import SystemPromptFunc
 
 
 @dataclass
-class SystemPromptRunner(Generic[AgentDepsT]):
-    function: SystemPromptFunc[AgentDepsT]
+class SystemPromptRunner(Generic[AgentDepsT, InputDataT]):
+    function: SystemPromptFunc[AgentDepsT, InputDataT]
     dynamic: bool = False
     _takes_ctx: bool = field(init=False)
     _is_async: bool = field(init=False)
@@ -21,7 +21,7 @@ class SystemPromptRunner(Generic[AgentDepsT]):
         self._takes_ctx = len(inspect.signature(self.function).parameters) > 0
         self._is_async = _utils.is_async_callable(self.function)
 
-    async def run(self, run_context: RunContext[AgentDepsT]) -> str:
+    async def run(self, run_context: RunContext[AgentDepsT, InputDataT]) -> str:
         if self._takes_ctx:
             args = (run_context,)
         else:

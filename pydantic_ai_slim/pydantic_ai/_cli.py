@@ -220,7 +220,7 @@ Special prompts:
 
 async def run_chat(
     stream: bool,
-    agent: Agent[AgentDepsT, OutputDataT],
+    agent: Agent[AgentDepsT, OutputDataT, Any],
     console: Console,
     code_theme: str,
     prog_name: str,

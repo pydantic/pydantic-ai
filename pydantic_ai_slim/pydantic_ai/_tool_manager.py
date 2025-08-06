@@ -31,7 +31,9 @@ class ToolManager(Generic[AgentDepsT]):
     """Names of tools that failed in this run step."""
 
     @classmethod
-    async def build(cls, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
+    async def build(
+        cls, toolset: AbstractToolset[AgentDepsT], ctx: RunContext[AgentDepsT, Any]
+    ) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for a specific run step."""
         return cls(
             ctx=ctx,
@@ -39,7 +41,7 @@ class ToolManager(Generic[AgentDepsT]):
             tools=await toolset.get_tools(ctx),
         )
 
-    async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
+    async def for_run_step(self, ctx: RunContext[AgentDepsT, Any]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
         retries = {
             failed_tool_name: self.ctx.retries.get(failed_tool_name, 0) + 1 for failed_tool_name in self.failed_tools

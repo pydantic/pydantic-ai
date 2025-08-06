@@ -1683,6 +1683,52 @@ Don't include any text or Markdown fencing before or after.\
     )
 
 
+def test_run_with_input():
+    class InputModel(BaseModel):
+        name: str
+
+    model = TestModel()
+    agent = Agent(model=model, input_type=InputModel)
+
+    @agent.instructions
+    def instructions(run_context: RunContext[Any, InputModel]) -> str:
+        return f'Hello {run_context.input.name}'
+
+    result: AgentRunResult[str] = agent.run_sync(input=InputModel(name='VALUE FROM INPUT MODEL'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[], instructions='Hello VALUE FROM INPUT MODEL'),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=50, response_tokens=4, total_tokens=54),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
+def test_run_with_input_no_instructions():
+    class InputModel(BaseModel):
+        name: str
+
+    model = TestModel()
+    agent = Agent(model=model, input_type=InputModel)
+
+    result: AgentRunResult[str] = agent.run_sync(input=InputModel(name='VALUE FROM INPUT MODEL'))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[], instructions='<name>VALUE FROM INPUT MODEL</name>'),
+            ModelResponse(
+                parts=[TextPart(content='success (no tool calls)')],
+                usage=Usage(requests=1, request_tokens=50, response_tokens=4, total_tokens=54),
+                model_name='test',
+                timestamp=IsNow(tz=timezone.utc),
+            ),
+        ]
+    )
+
+
 def test_run_with_history_new():
     m = TestModel()
 
