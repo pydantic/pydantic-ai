@@ -137,6 +137,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        uv-install: ["--package pydantic-ai-slim", "", "--all-extras"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
@@ -150,27 +151,38 @@ jobs:
 
       - run: mkdir .coverage
 
-      # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
+      - run: uv run ${{ matrix.uv-install }} coverage run -m pytest -n auto --dist=loadgroup
 
-      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
+      - name: store coverage files
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: .coverage
+          include-hidden-files: true
 
-      - run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
+  test-lowest-versions:
+    name: test lowest versions on ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      CI: true
+      COVERAGE_PROCESS_START: ./pyproject.toml
+      UV_FROZEN: "0"
+    steps:
+      - uses: actions/checkout@v4
 
-      - run: uv run --all-extras python tests/import_examples.py
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
-      # this must run last as it modifies the environment!
-      - name: test lowest versions
-        if: matrix.python-version != '3.9'
-        run: |
-          unset UV_FROZEN
-          uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
+      - run: mkdir .coverage
+
+      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
@@ -180,6 +192,30 @@ jobs:
           name: coverage-${{ matrix.python-version }}
           path: .coverage
           include-hidden-files: true
+
+  test-examples:
+    name: test examples on ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+      CI: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - run: uv run --all-extras python tests/import_examples.py
 
   coverage:
     runs-on: ubuntu-latest
