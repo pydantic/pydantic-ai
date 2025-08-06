@@ -30,7 +30,7 @@ See [#2445](https://github.com/pydantic/pydantic-ai/pull/2445) - The `get_data` 
 See [#2446](https://github.com/pydantic/pydantic-ai/pull/2446) - The `format_as_xml` function was moved to the `pydantic_ai.format_as_xml` module.
 Import it via `from pydantic_ai import format_as_xml` instead.
 
-See [#2450](https://github.com/pydantic/pydantic-ai/pull/2450) - ...
+See [#2451](https://github.com/pydantic/pydantic-ai/pull/2451) - Removed deprecated `Agent.result_validator` method, `Agent.last_run_messages` property, `AgentRunResult.data` property, and `result_tool_return_content` parameters from result classes.
 
 ### v0.5.0 (2025-08-04)
 
