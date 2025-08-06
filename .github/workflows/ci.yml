@@ -151,7 +151,8 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv run ${{ matrix.uv-install }} coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv sync ${{ matrix.uv-install }}
+      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
@@ -182,9 +183,8 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
-        env:
-          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
+      - run: uv sync --all-extras --resolution lowest-direct
+      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
