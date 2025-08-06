@@ -12,7 +12,7 @@ import httpx
 import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
-from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
@@ -1775,6 +1775,44 @@ def test_strict_schema():
             'additionalProperties': False,
         }
     )
+
+
+def test_native_output_strict_mode(allow_model_requests: None):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    c = completion_message(
+        ChatCompletionMessage(content='{"city": "Mexico City", "country": "Mexico"}', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Explicit strict=True
+    agent = Agent(model, output_type=NativeOutput(CityLocation, strict=True))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is True
+
+    # Explicit strict=False
+    agent = Agent(model, output_type=NativeOutput(CityLocation, strict=False))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
+
+    # Strict-compatible
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is True
+
+    # Strict-incompatible
+    CityLocation.model_config = ConfigDict(extra='allow')
+
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
 
 
 async def test_openai_instructions(allow_model_requests: None, openai_api_key: str):
