@@ -18,6 +18,7 @@ from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
@@ -27,7 +28,6 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
-    BuiltinToolCallPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -1332,7 +1332,7 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
                             tool_name='web_search',
                             args={'query': 'current events news today May 26 2025'},
                             tool_call_id='srvtoolu_01MqVvTi9LWTrMRuZ2KttD3M',
-                            model_name='anthropic',
+                            provider_name='anthropic',
                         ),
                         BuiltinToolReturnPart(
                             tool_name='web_search_tool_result',
@@ -1403,6 +1403,7 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
                             ],
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
+                            provider_name='anthropic',
                         ),
                         TextPart(
                             content="""\
@@ -1477,7 +1478,7 @@ print(f"3 * 12390 = {result}")\
 """
                         },
                         tool_call_id=IsStr(),
-                        model_name='anthropic',
+                        provider_name='anthropic',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution_tool_result',
@@ -1490,6 +1491,7 @@ print(f"3 * 12390 = {result}")\
                         ),
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        provider_name='anthropic',
                     ),
                     TextPart(content='The answer is **37,170**.'),
                 ],
@@ -2104,6 +2106,7 @@ async def test_anthropic_unsupported_server_tool_name_error():
                     tool_name='unsupported_tool',  # This should trigger the error
                     content='some content',
                     tool_call_id='test_id',
+                    provider_name='anthropic',  # Need to set provider_name for validation
                 )
             ]
         )

@@ -505,7 +505,7 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
     agent = Agent(
         m,
         instructions='You are a helpful assistant.',
-        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'region': 'NL'})],
     )
 
     result = await agent.run('What is the current temperature?')

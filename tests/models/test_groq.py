@@ -19,6 +19,7 @@ from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavi
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
@@ -27,7 +28,6 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
-    BuiltinToolCallPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -705,7 +705,7 @@ async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_k
                         tool_name='search',
                         args='{"query": "What is the current date?"}',
                         tool_call_id=IsStr(),
-                        model_name='groq',
+                        provider_name='groq',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='search',
@@ -788,6 +788,7 @@ Score: 0.2134
 """,
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
+                        provider_name='groq',
                     ),
                     ThinkingPart(
                         content="""\
