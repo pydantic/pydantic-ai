@@ -81,6 +81,9 @@ members = [
     "examples",
 ]
 
+[tool.uv]
+default-groups = ["dev", "lint", "docs"]
+
 [dependency-groups]
 dev = [
     "anyio>=4.5.0",
