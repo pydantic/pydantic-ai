@@ -12,6 +12,10 @@ Pydantic AI is still pre-version 1, so breaking changes will occur, however:
 !!! note
     Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v0.6.0 (2025-08-06)
+
+See [#2440](https://github.com/pydantic/pydantic-ai/pull/2440) - The `next` method was removed from the `Graph` class. Use `async with graph.iter(...) as run:  run.next()` instead.
+
 ### v0.5.0 (2025-08-04)
 
 See [#2388](https://github.com/pydantic/pydantic-ai/pull/2388) - The `source` field of an `EvaluationResult` is now of type `EvaluatorSpec` rather than the actual source `Evaluator` instance, to help with serialization/deserialization.
