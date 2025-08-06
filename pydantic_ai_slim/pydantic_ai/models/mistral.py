@@ -218,7 +218,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -333,7 +333,7 @@ class MistralModel(Model):
 
         parts: list[ModelResponsePart] = []
         if text := _map_content(content):
-            parts.extend(split_content_into_text_and_thinking(text))
+            parts.extend(split_content_into_text_and_thinking(text, self.profile.thinking_tags))
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:

@@ -33,6 +33,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfile
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
@@ -244,7 +245,7 @@ class HuggingFaceModel(Model):
         items: list[ModelResponsePart] = []
 
         if content is not None:
-            items.extend(split_content_into_text_and_thinking(content))
+            items.extend(split_content_into_text_and_thinking(content, self.profile.thinking_tags))
         if tool_calls is not None:
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -267,6 +268,7 @@ class HuggingFaceModel(Model):
 
         return HuggingFaceStreamedResponse(
             _model_name=self._model_name,
+            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
@@ -412,6 +414,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Hugging Face models."""
 
     _model_name: str
+    _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _timestamp: datetime
 
@@ -428,7 +431,9 @@ class HuggingFaceStreamedResponse(StreamedResponse):
             content = choice.delta.content
             if content:
                 maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content', content=content, extract_think_tags=True
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

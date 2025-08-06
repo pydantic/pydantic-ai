@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from dirty_equals import HasRepr, IsNumber
+from dirty_equals import HasRepr, IsNumber, IsPartialDict
 from inline_snapshot import snapshot
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
-from ..conftest import IsStr, try_import
+from ..conftest import try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
@@ -20,7 +20,7 @@ with try_import() as imports_successful:
 
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, LLMJudge, Python
+    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, EvaluatorSpec, LLMJudge, Python
     from pydantic_evals.evaluators.context import EvaluatorContext
 
     @dataclass
@@ -32,7 +32,7 @@ with try_import() as imports_successful:
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
 
-    from pydantic_evals.reporting import ReportCase, ReportCaseAdapter
+    from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
 
@@ -456,13 +456,13 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},
@@ -482,13 +482,13 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 scores={},
                 labels={
                     'output': EvaluationResult(
-                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'})
+                        name='output', value='a', reason=None, source=MockEvaluator(output={'output': 'a'}).as_spec()
                     ),
                     'output_2': EvaluationResult(
-                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'})
+                        name='output', value='b', reason=None, source=MockEvaluator(output={'output': 'b'}).as_spec()
                     ),
                     'output_3': EvaluationResult(
-                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'})
+                        name='output', value='c', reason=None, source=MockEvaluator(output={'output': 'c'}).as_spec()
                     ),
                 },
                 assertions={},
@@ -499,6 +499,73 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
             ),
         ]
     )
+
+
+async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
+    """Test the increment_eval_metric function."""
+
+    async def my_task(inputs: TaskInput) -> TaskOutput:
+        return TaskOutput(answer=f'answer to {inputs.query}')
+
+    example_dataset.add_evaluator(MockEvaluator({'output': 'a'}))
+
+    report = await example_dataset.evaluate(my_task)
+    assert report == snapshot(
+        EvaluationReport(
+            name='my_task',
+            cases=[
+                ReportCase(
+                    name='case1',
+                    inputs=TaskInput(query='What is 2+2?'),
+                    metadata=TaskMetadata(difficulty='easy', category='general'),
+                    expected_output=TaskOutput(answer='4', confidence=1.0),
+                    output=TaskOutput(answer='answer to What is 2+2?', confidence=1.0),
+                    metrics={},
+                    attributes={},
+                    scores={},
+                    labels={
+                        'output': EvaluationResult(
+                            name='output',
+                            value='a',
+                            reason=None,
+                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                        )
+                    },
+                    assertions={},
+                    task_duration=1.0,
+                    total_duration=6.0,
+                    trace_id='00000000000000000000000000000001',
+                    span_id='0000000000000003',
+                ),
+                ReportCase(
+                    name='case2',
+                    inputs=TaskInput(query='What is the capital of France?'),
+                    metadata=TaskMetadata(difficulty='medium', category='geography'),
+                    expected_output=TaskOutput(answer='Paris', confidence=1.0),
+                    output=TaskOutput(answer='answer to What is the capital of France?', confidence=1.0),
+                    metrics={},
+                    attributes={},
+                    scores={},
+                    labels={
+                        'output': EvaluationResult(
+                            name='output',
+                            value='a',
+                            reason=None,
+                            source=EvaluatorSpec(name='MockEvaluator', arguments=({'output': 'a'},)),
+                        )
+                    },
+                    assertions={},
+                    task_duration=1.0,
+                    total_duration=4.0,
+                    trace_id='00000000000000000000000000000001',
+                    span_id='0000000000000007',
+                ),
+            ],
+        )
+    )
+
+    report_adapter = TypeAdapter(EvaluationReport[TaskInput, TaskOutput, TaskMetadata])
+    assert report == report_adapter.validate_json(report_adapter.dump_json(report, indent=2))
 
 
 async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
@@ -1092,7 +1159,7 @@ async def test_evaluate_async_logfire(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
     capfire: CaptureLogfire,
-):
+):  # pragma: lax no cover
     """Test evaluating a dataset."""
     example_dataset.add_evaluator(simple_evaluator())
 
@@ -1130,90 +1197,90 @@ async def test_evaluate_async_logfire(
             'parent': None,
             'start_time': 1000000000,
         },
-        {
-            'attributes': {
-                'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
-                'attributes': '{}',
-                'case_name': 'case1',
-                'code.filepath': IsStr(),
-                'code.lineno': 123,
-                'expected_output': '{"answer":"4","confidence":1.0}',
-                'inputs': '{"query":"What is 2+2?"}',
-                'labels': '{}',
-                'logfire.json_schema': '{"type":"object","properties":{"task_name":{},"case_name":{},"inputs":{"type":"object","title":"TaskInput","x-python-datatype":"PydanticModel"},"metadata":{"type":"object","title":"TaskMetadata","x-python-datatype":"PydanticModel"},"expected_output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"task_duration":{},"metrics":{"type":"object"},"attributes":{"type":"object"},"assertions":{"type":"object"},"scores":{"type":"object"},"labels":{"type":"object"}}}',
-                'logfire.msg': 'case: case1',
-                'logfire.msg_template': 'case: {case_name}',
-                'logfire.span_type': 'span',
-                'metadata': '{"difficulty":"easy","category":"general"}',
-                'metrics': '{}',
-                'output': '{"answer":"4","confidence":1.0}',
-                'scores': '{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
-                'task_duration': 1.0,
-                'task_name': 'mock_async_task',
-            },
-            'context': {'is_remote': False, 'span_id': 3, 'trace_id': 1},
-            'end_time': 8000000000,
-            'name': 'case: {case_name}',
-            'parent': {'is_remote': False, 'span_id': 1, 'trace_id': 1},
-            'start_time': 2000000000,
-        },
-        {
-            'attributes': {
-                'code.filepath': IsStr(),
-                'code.lineno': 123,
-                'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
-                'logfire.msg': 'execute mock_async_task',
-                'logfire.msg_template': 'execute {task}',
-                'logfire.span_type': 'span',
-                'task': 'mock_async_task',
-            },
-            'context': {'is_remote': False, 'span_id': 5, 'trace_id': 1},
-            'end_time': 4000000000,
-            'name': 'execute {task}',
-            'parent': {'is_remote': False, 'span_id': 3, 'trace_id': 1},
-            'start_time': 3000000000,
-        },
-        {
-            'attributes': {
-                'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
-                'attributes': '{}',
-                'case_name': 'case2',
-                'code.filepath': IsStr(),
-                'code.lineno': 123,
-                'expected_output': '{"answer":"Paris","confidence":1.0}',
-                'inputs': '{"query":"What is the capital of France?"}',
-                'labels': '{}',
-                'logfire.json_schema': '{"type":"object","properties":{"task_name":{},"case_name":{},"inputs":{"type":"object","title":"TaskInput","x-python-datatype":"PydanticModel"},"metadata":{"type":"object","title":"TaskMetadata","x-python-datatype":"PydanticModel"},"expected_output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"task_duration":{},"metrics":{"type":"object"},"attributes":{"type":"object"},"assertions":{"type":"object"},"scores":{"type":"object"},"labels":{"type":"object"}}}',
-                'logfire.msg': 'case: case2',
-                'logfire.msg_template': 'case: {case_name}',
-                'logfire.span_type': 'span',
-                'metadata': '{"difficulty":"medium","category":"geography"}',
-                'metrics': '{}',
-                'output': '{"answer":"Paris","confidence":1.0}',
-                'scores': '{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
-                'task_duration': 1.0,
-                'task_name': 'mock_async_task',
-            },
-            'context': {'is_remote': False, 'span_id': 7, 'trace_id': 1},
-            'end_time': 9000000000,
-            'name': 'case: {case_name}',
-            'parent': {'is_remote': False, 'span_id': 1, 'trace_id': 1},
-            'start_time': 5000000000,
-        },
-        {
-            'attributes': {
-                'code.filepath': IsStr(),
-                'code.lineno': 123,
-                'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
-                'logfire.msg': 'execute mock_async_task',
-                'logfire.msg_template': 'execute {task}',
-                'logfire.span_type': 'span',
-                'task': 'mock_async_task',
-            },
-            'context': {'is_remote': False, 'span_id': 9, 'trace_id': 1},
-            'end_time': 7000000000,
-            'name': 'execute {task}',
-            'parent': {'is_remote': False, 'span_id': 7, 'trace_id': 1},
-            'start_time': 6000000000,
-        },
+        IsPartialDict(
+            {
+                'attributes': {
+                    'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                    'attributes': '{}',
+                    'case_name': 'case1',
+                    'expected_output': '{"answer":"4","confidence":1.0}',
+                    'inputs': '{"query":"What is 2+2?"}',
+                    'labels': '{}',
+                    'logfire.json_schema': '{"type":"object","properties":{"task_name":{},"case_name":{},"inputs":{"type":"object","title":"TaskInput","x-python-datatype":"PydanticModel"},"metadata":{"type":"object","title":"TaskMetadata","x-python-datatype":"PydanticModel"},"expected_output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"task_duration":{},"metrics":{"type":"object"},"attributes":{"type":"object"},"assertions":{"type":"object"},"scores":{"type":"object"},"labels":{"type":"object"}}}',
+                    'logfire.msg': 'case: case1',
+                    'logfire.msg_template': 'case: {case_name}',
+                    'logfire.span_type': 'span',
+                    'metadata': '{"difficulty":"easy","category":"general"}',
+                    'metrics': '{}',
+                    'output': '{"answer":"4","confidence":1.0}',
+                    'scores': '{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                    'task_duration': 1.0,
+                    'task_name': 'mock_async_task',
+                },
+                'context': {'is_remote': False, 'span_id': 3, 'trace_id': 1},
+                'end_time': 8000000000,
+                'name': 'case: {case_name}',
+                'parent': {'is_remote': False, 'span_id': 1, 'trace_id': 1},
+                'start_time': 2000000000,
+            }
+        ),
+        IsPartialDict(
+            {
+                'attributes': {
+                    'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
+                    'logfire.msg': 'execute mock_async_task',
+                    'logfire.msg_template': 'execute {task}',
+                    'logfire.span_type': 'span',
+                    'task': 'mock_async_task',
+                },
+                'context': {'is_remote': False, 'span_id': 5, 'trace_id': 1},
+                'end_time': 4000000000,
+                'name': 'execute {task}',
+                'parent': {'is_remote': False, 'span_id': 3, 'trace_id': 1},
+                'start_time': 3000000000,
+            }
+        ),
+        IsPartialDict(
+            {
+                'attributes': {
+                    'assertions': '{"correct":{"name":"correct","value":true,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                    'attributes': '{}',
+                    'case_name': 'case2',
+                    'expected_output': '{"answer":"Paris","confidence":1.0}',
+                    'inputs': '{"query":"What is the capital of France?"}',
+                    'labels': '{}',
+                    'logfire.json_schema': '{"type":"object","properties":{"task_name":{},"case_name":{},"inputs":{"type":"object","title":"TaskInput","x-python-datatype":"PydanticModel"},"metadata":{"type":"object","title":"TaskMetadata","x-python-datatype":"PydanticModel"},"expected_output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"output":{"type":"object","title":"TaskOutput","x-python-datatype":"PydanticModel"},"task_duration":{},"metrics":{"type":"object"},"attributes":{"type":"object"},"assertions":{"type":"object"},"scores":{"type":"object"},"labels":{"type":"object"}}}',
+                    'logfire.msg': 'case: case2',
+                    'logfire.msg_template': 'case: {case_name}',
+                    'logfire.span_type': 'span',
+                    'metadata': '{"difficulty":"medium","category":"geography"}',
+                    'metrics': '{}',
+                    'output': '{"answer":"Paris","confidence":1.0}',
+                    'scores': '{"confidence":{"name":"confidence","value":1.0,"reason":null,"source":{"name":"SimpleEvaluator","arguments":null}}}',
+                    'task_duration': 1.0,
+                    'task_name': 'mock_async_task',
+                },
+                'context': {'is_remote': False, 'span_id': 7, 'trace_id': 1},
+                'end_time': 9000000000,
+                'name': 'case: {case_name}',
+                'parent': {'is_remote': False, 'span_id': 1, 'trace_id': 1},
+                'start_time': 5000000000,
+            }
+        ),
+        IsPartialDict(
+            {
+                'attributes': {
+                    'logfire.json_schema': '{"type":"object","properties":{"task":{}}}',
+                    'logfire.msg': 'execute mock_async_task',
+                    'logfire.msg_template': 'execute {task}',
+                    'logfire.span_type': 'span',
+                    'task': 'mock_async_task',
+                },
+                'context': {'is_remote': False, 'span_id': 9, 'trace_id': 1},
+                'end_time': 7000000000,
+                'name': 'execute {task}',
+                'parent': {'is_remote': False, 'span_id': 7, 'trace_id': 1},
+                'start_time': 6000000000,
+            }
+        ),
     ]

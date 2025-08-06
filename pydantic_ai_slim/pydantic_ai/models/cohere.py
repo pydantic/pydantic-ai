@@ -183,7 +183,7 @@ class CohereModel(Model):
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -192,7 +192,7 @@ class CohereModel(Model):
             # While Cohere's API returns a list, it only does that for future proofing
             # and currently only one item is being returned.
             choice = response.message.content[0]
-            parts.extend(split_content_into_text_and_thinking(choice.text))
+            parts.extend(split_content_into_text_and_thinking(choice.text, self.profile.thinking_tags))
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(

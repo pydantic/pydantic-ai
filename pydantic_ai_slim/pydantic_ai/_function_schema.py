@@ -154,9 +154,13 @@ def function_schema(  # noqa: C901
             if p.kind == Parameter.VAR_POSITIONAL:
                 annotation = list[annotation]
 
-            # FieldInfo.from_annotation expects a type, `annotation` is Any
+            required = p.default is Parameter.empty
+            # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
             annotation = cast(type[Any], annotation)
-            field_info = FieldInfo.from_annotation(annotation)
+            if required:
+                field_info = FieldInfo.from_annotation(annotation)
+            else:
+                field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
 
@@ -164,7 +168,7 @@ def function_schema(  # noqa: C901
                 field_name,
                 field_info,
                 decorators,
-                required=p.default is Parameter.empty,
+                required=required,
             )
             # noinspection PyTypeChecker
             td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)
@@ -281,7 +285,6 @@ def _build_schema(
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
-        total=var_kwargs_schema is None,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None

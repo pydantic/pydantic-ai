@@ -403,29 +403,30 @@ from function_toolset import weather_toolset, datetime_toolset
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import WrapperToolset, FunctionToolset
+from pydantic_ai.toolsets import WrapperToolset
 
 togglable_toolset = WrapperToolset(weather_toolset)
 
+test_model = TestModel() # (1)!
+agent = Agent(
+    test_model,
+    deps_type=WrapperToolset # (2)!
+)
+
+@agent.tool
 def toggle(ctx: RunContext[WrapperToolset]):
     if ctx.deps.wrapped == weather_toolset:
         ctx.deps.wrapped = datetime_toolset
     else:
         ctx.deps.wrapped = weather_toolset
 
-test_model = TestModel() # (1)!
-agent = Agent(
-    test_model,
-    deps_type=WrapperToolset, # (2)!
-    toolsets=[togglable_toolset, FunctionToolset([toggle])]
-)
-result = agent.run_sync('Toggle the toolset', deps=togglable_toolset)
+result = agent.run_sync('Toggle the toolset', deps=togglable_toolset, toolsets=[togglable_toolset])
 print([t.name for t in test_model.last_model_request_parameters.function_tools]) # (3)!
-#> ['now', 'toggle']
+#> ['toggle', 'now']
 
-result = agent.run_sync('Toggle the toolset', deps=togglable_toolset)
+result = agent.run_sync('Toggle the toolset', deps=togglable_toolset, toolsets=[togglable_toolset])
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
-#> ['temperature_celsius', 'temperature_fahrenheit', 'conditions', 'toggle']
+#> ['toggle', 'temperature_celsius', 'temperature_fahrenheit', 'conditions']
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.

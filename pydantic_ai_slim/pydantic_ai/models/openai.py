@@ -37,7 +37,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -120,10 +120,10 @@ class OpenAIModelSettings(ModelSettings, total=False):
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
-    openai_service_tier: Literal['auto', 'default', 'flex']
+    openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
     """The service tier to use for the model request.
 
-    Currently supported values are `auto`, `default`, and `flex`.
+    Currently supported values are `auto`, `default`, `flex`, and `priority`.
     For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
     """
 
@@ -359,7 +359,7 @@ class OpenAIModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -407,7 +407,7 @@ class OpenAIModel(Model):
             }
 
         if choice.message.content is not None:
-            items.extend(split_content_into_text_and_thinking(choice.message.content))
+            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
@@ -433,6 +433,7 @@ class OpenAIModel(Model):
 
         return OpenAIStreamedResponse(
             _model_name=self._model_name,
+            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
         )
@@ -803,6 +804,7 @@ class OpenAIResponsesModel(Model):
                 top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
+                service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
@@ -812,7 +814,7 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
@@ -1008,6 +1010,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
 
     _model_name: OpenAIModelName
+    _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
 
@@ -1024,7 +1027,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             content = choice.delta.content
             if content:
                 maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content', content=content, extract_think_tags=True
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
