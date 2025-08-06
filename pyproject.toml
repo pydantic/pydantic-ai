@@ -81,13 +81,7 @@ members = [
     "examples",
 ]
 
-[tool.uv]
-default-groups = ["dev", "lint", "docs"]
-
 [dependency-groups]
-dev = [
-    "pydantic-ai-slim[dev]",
-]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
     "pydantic-ai[a2a]",
