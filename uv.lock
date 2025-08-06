@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
@@ -3294,6 +3294,26 @@ logfire = [
 ]
 
 [package.dev-dependencies]
+dev = [
+    { name = "anyio" },
+    { name = "asgi-lifespan" },
+    { name = "boto3-stubs", extra = ["bedrock-runtime"] },
+    { name = "coverage", extra = ["toml"] },
+    { name = "coverage-enable-subprocess" },
+    { name = "devtools" },
+    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
+    { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
+    { name = "dirty-equals" },
+    { name = "duckduckgo-search" },
+    { name = "inline-snapshot" },
+    { name = "pytest" },
+    { name = "pytest-examples" },
+    { name = "pytest-mock" },
+    { name = "pytest-pretty" },
+    { name = "pytest-recording" },
+    { name = "pytest-xdist" },
+    { name = "strict-no-cover" },
+]
 docs = [
     { name = "black" },
     { name = "mkdocs" },
@@ -3323,6 +3343,25 @@ requires-dist = [
 provides-extras = ["a2a", "examples", "logfire"]
 
 [package.metadata.requires-dev]
+dev = [
+    { name = "anyio", specifier = ">=4.5.0" },
+    { name = "asgi-lifespan", specifier = ">=2.1.0" },
+    { name = "boto3-stubs", extras = ["bedrock-runtime"] },
+    { name = "coverage", extras = ["toml"], specifier = ">=7.10.2" },
+    { name = "coverage-enable-subprocess", specifier = ">=0.1.0" },
+    { name = "devtools", specifier = ">=0.12.2" },
+    { name = "diff-cover", specifier = ">=9.2.0" },
+    { name = "dirty-equals", specifier = ">=0.9.0" },
+    { name = "duckduckgo-search", specifier = ">=7.0.0" },
+    { name = "inline-snapshot", specifier = ">=0.19.3" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "pytest-examples", specifier = ">=0.0.14" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
+    { name = "pytest-pretty", specifier = ">=1.3.0" },
+    { name = "pytest-recording", specifier = ">=0.13.2" },
+    { name = "pytest-xdist", specifier = ">=3.6.1" },
+    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
+]
 docs = [
     { name = "black", specifier = ">=24.10.0" },
     { name = "mkdocs", specifier = ">=1.6.1" },
@@ -3456,28 +3495,6 @@ vertexai = [
     { name = "requests" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "anyio" },
-    { name = "asgi-lifespan" },
-    { name = "boto3-stubs", extra = ["bedrock-runtime"] },
-    { name = "coverage", extra = ["toml"] },
-    { name = "coverage-enable-subprocess" },
-    { name = "devtools" },
-    { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
-    { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
-    { name = "dirty-equals" },
-    { name = "duckduckgo-search" },
-    { name = "inline-snapshot" },
-    { name = "pytest" },
-    { name = "pytest-examples" },
-    { name = "pytest-mock" },
-    { name = "pytest-pretty" },
-    { name = "pytest-recording" },
-    { name = "pytest-xdist" },
-    { name = "strict-no-cover" },
-]
-
 [package.metadata]
 requires-dist = [
     { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.8" },
@@ -3512,27 +3529,6 @@ requires-dist = [
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "vertexai"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "anyio", specifier = ">=4.5.0" },
-    { name = "asgi-lifespan", specifier = ">=2.1.0" },
-    { name = "boto3-stubs", extras = ["bedrock-runtime"] },
-    { name = "coverage", extras = ["toml"], specifier = ">=7.10.2" },
-    { name = "coverage-enable-subprocess", specifier = ">=0.1.0" },
-    { name = "devtools", specifier = ">=0.12.2" },
-    { name = "diff-cover", specifier = ">=9.2.0" },
-    { name = "dirty-equals", specifier = ">=0.9.0" },
-    { name = "duckduckgo-search", specifier = ">=7.0.0" },
-    { name = "inline-snapshot", specifier = ">=0.19.3" },
-    { name = "pytest", specifier = ">=8.3.3" },
-    { name = "pytest-examples", specifier = ">=0.0.14" },
-    { name = "pytest-mock", specifier = ">=3.14.0" },
-    { name = "pytest-pretty", specifier = ">=1.3.0" },
-    { name = "pytest-recording", specifier = ">=0.13.2" },
-    { name = "pytest-xdist", specifier = ">=3.6.1" },
-    { name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=7fc59da2c4dff919db2095a0f0e47101b657131d" },
-]
 
 [[package]]
 name = "pydantic-core"
