@@ -1,4 +1,5 @@
 """This file is used to test static typing, it's analyzed with pyright and mypy."""
+# pyright: reportUnnecessaryTypeIgnoreComment=false
 
 import re
 from collections.abc import Awaitable
@@ -156,7 +157,7 @@ class Bar:
     b: str
 
 
-union_agent = Agent(output_type=Union[Foo, Bar])
+union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[call-overload]
 assert_type(union_agent, Agent[None, Union[Foo, Bar]])
 
 
