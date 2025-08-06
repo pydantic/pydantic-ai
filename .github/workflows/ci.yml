@@ -198,6 +198,8 @@ jobs:
 
       - run: mkdir .coverage
 
+      - run: uv sync --group dev --all-extras
+
       - run: |
           unset UV_FROZEN
           uv run --group dev --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
@@ -205,7 +207,7 @@ jobs:
       - name: store coverage files
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.python-version }}
+          name: coverage-${{ matrix.python-version }}-lowest-versions
           path: .coverage
           include-hidden-files: true
 
