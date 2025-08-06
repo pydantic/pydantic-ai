@@ -11,7 +11,7 @@ from uuid import uuid4
 import httpx
 import pydantic
 from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
-from typing_extensions import NotRequired, TypedDict, assert_never
+from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 
 from pydantic_ai.providers import Provider, infer_provider
 
@@ -92,6 +92,7 @@ class GeminiModelSettings(ModelSettings, total=False):
     """
 
 
+@deprecated('Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details.')
 @dataclass(init=False)
 class GeminiModel(Model):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
