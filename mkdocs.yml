@@ -228,6 +228,10 @@ plugins:
             group_by_category: false
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
+            extensions:
+              - griffe_warnings_deprecated:
+                  kind: danger
+                  title: Deprecated
           import:
             - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
@@ -237,10 +241,6 @@ plugins:
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
-          extensions:
-            - griffe_warnings_deprecated:
-                kind: danger
-                title: Deprecated
   - llmstxt:
       enabled: !ENV [CI, false]
       full_output: llms-full.txt
