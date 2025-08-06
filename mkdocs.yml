@@ -237,6 +237,10 @@ plugins:
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
+          extensions:
+            - griffe_warnings_deprecated:
+                kind: danger
+                title: Deprecated
   - llmstxt:
       enabled: !ENV [CI, false]
       full_output: llms-full.txt
