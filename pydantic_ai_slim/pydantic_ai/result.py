@@ -507,11 +507,6 @@ class FinalResult(Generic[OutputDataT]):
     tool_call_id: str | None = None
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
 
-    @property
-    @deprecated('`data` is deprecated, use `output` instead.')
-    def data(self) -> OutputDataT:
-        return self.output
-
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
