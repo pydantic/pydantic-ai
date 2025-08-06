@@ -654,6 +654,25 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
     )
 
 
+async def test_bedrock_anthropic_tool_with_thinking(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    """When using thinking with tool calls in Anthropic, we need to send the thinking part back to the provider.
+
+    This tests the issue raised in https://github.com/pydantic/pydantic-ai/issues/2453.
+    """
+    m = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
+    settings = BedrockModelSettings(
+        bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', 'budget_tokens': 1024}},
+    )
+    agent = Agent(m, model_settings=settings)
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot()
+
+
 async def test_bedrock_group_consecutive_tool_return_parts(bedrock_provider: BedrockProvider):
     """
     Test that consecutive ToolReturnPart objects are grouped into a single user message for Bedrock.
