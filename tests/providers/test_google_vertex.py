@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -69,6 +70,7 @@ async def mock_refresh_token():
     return 'my-token'
 
 
+@pytest.mark.skipif(sys.version_info < (3, 10), reason='Flaky test in 3.9')
 async def test_google_vertex_provider_service_account_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allow_model_requests: None
 ):
@@ -81,6 +83,18 @@ async def test_google_vertex_provider_service_account_file(
     assert provider.region == 'us-central1'
     assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
 
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason='Flaky test in 3.9')
+async def test_google_vertex_provider_service_account_file_info(
+    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
+):
+    account_info = prepare_service_account_contents('my-project-id')
+
+    provider = GoogleVertexProvider(service_account_info=account_info)
+    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
+    await provider.client.post('/gemini-1.0-pro:generateContent')
+    assert provider.region == 'us-central1'
+    assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
 
 
 async def test_google_vertex_provider_service_account_xor(allow_model_requests: None):
