@@ -11,10 +11,12 @@ from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 from opentelemetry._events import NoOpEventLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
+    FinalResultEvent,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -90,8 +92,9 @@ class MyModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        yield MyResponseStream()
+        yield MyResponseStream(model_request_parameters=model_request_parameters)
 
 
 class MyResponseStream(StreamedResponse):
@@ -358,6 +361,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
         assert [event async for event in response_stream] == snapshot(
             [
                 PartStartEvent(index=0, part=TextPart(content='text1')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='text2')),
             ]
         )

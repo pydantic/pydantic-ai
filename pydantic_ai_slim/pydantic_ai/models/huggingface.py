@@ -5,14 +5,13 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-from pydantic_ai.providers import Provider, infer_provider
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._run_context import RunContext
+from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
 from ..messages import (
     AudioUrl,
@@ -34,9 +33,15 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfile
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+)
 
 try:
     import aiohttp
@@ -147,12 +152,13 @@ class HuggingFaceModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
-        yield await self._process_streamed_response(response)
+        yield await self._process_streamed_response(response, model_request_parameters)
 
     @property
     def model_name(self) -> HuggingFaceModelName:
@@ -257,7 +263,9 @@ class HuggingFaceModel(Model):
             vendor_id=response.id,
         )
 
-    async def _process_streamed_response(self, response: AsyncIterable[ChatCompletionStreamOutput]) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncIterable[ChatCompletionStreamOutput], model_request_parameters: ModelRequestParameters
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
@@ -267,6 +275,7 @@ class HuggingFaceModel(Model):
             )
 
         return HuggingFaceStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _model_profile=self.profile,
             _response=peekable_response,
@@ -274,10 +283,7 @@ class HuggingFaceModel(Model):
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     async def _map_messages(
         self, messages: list[ModelMessage]

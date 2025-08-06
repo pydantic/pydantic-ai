@@ -3616,17 +3616,6 @@ def test_deprecated_kwargs_validation_agent_init():
         Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
 
 
-def test_deprecated_kwargs_validation_agent_run():
-    """Test that invalid kwargs raise UserError in Agent.run method."""
-    agent = Agent('test')
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        agent.run_sync('test', invalid_kwarg='value')  # type: ignore[call-arg]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        agent.run_sync('test', foo='value1', bar='value2')  # type: ignore[call-arg]
-
-
 def test_deprecated_kwargs_still_work():
     """Test that valid deprecated kwargs still work with warnings."""
     import warnings

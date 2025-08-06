@@ -264,6 +264,10 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    @property
+    def id(self) -> str | None:
+        return None
+
     async def __aenter__(self) -> MockMCPServer:
         return self
 
