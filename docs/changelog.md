@@ -18,7 +18,7 @@ See [#2440](https://github.com/pydantic/pydantic-ai/pull/2440) - The `next` meth
 
 See [#2443](https://github.com/pydantic/pydantic-ai/pull/2443) - The `data` property was removed from the `FinalResult` class. Use `output` instead.
 
-See [#2444](https://github.com/pydantic/pydantic-ai/pull/2444) - The `get_data` and `validate_structured_result` methods were removed from the
+See [#2445](https://github.com/pydantic/pydantic-ai/pull/2445) - The `get_data` and `validate_structured_result` methods were removed from the
 `StreamedRunResult` class. Use `get_output` and `validate_structured_output` instead.
 
 ### v0.5.0 (2025-08-04)
