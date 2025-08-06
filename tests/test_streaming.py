@@ -926,7 +926,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, Union[OutputType, NotOutputType]]('test', output_type=Union[OutputType, NotOutputType])  # pyright: ignore[reportArgumentType]
+    agent = Agent[None, Union[OutputType, NotOutputType]]('test', output_type=Union[OutputType, NotOutputType])
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
@@ -1100,6 +1100,42 @@ async def test_iter_stream_structured_output():
                     assert [c async for c in stream.stream_output(debounce_by=None)] == snapshot(
                         [
                             CityLocation(city='Mexico '),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                        ]
+                    )
+
+
+async def test_iter_stream_output_tool_dont_hit_retry_limit():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream partial JSON data that will initially fail validation."""
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(json_args='{"c')}
+        yield {0: DeltaToolCall(json_args='ity":')}
+        yield {0: DeltaToolCall(json_args=' "Mex')}
+        yield {0: DeltaToolCall(json_args='ico City",')}
+        yield {0: DeltaToolCall(json_args=' "cou')}
+        yield {0: DeltaToolCall(json_args='ntry": "Mexico"}')}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
+
+    async with agent.iter('Generate city info') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    assert [c async for c in stream.stream_output(debounce_by=None)] == snapshot(
+                        [
+                            CityLocation(city='Mex'),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City'),
                             CityLocation(city='Mexico City', country='Mexico'),

@@ -106,7 +106,7 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
-    _media_type: str | None = field(init=False, repr=False)
+    _media_type: str | None = field(init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -120,19 +120,21 @@ class FileUrl(ABC):
         self.force_download = force_download
         self._media_type = media_type
 
-    @abstractmethod
-    def _infer_media_type(self) -> str:
-        """Return the media type of the file, based on the url."""
-
     @property
     def media_type(self) -> str:
-        """Return the media type of the file, based on the url or the provided `_media_type`."""
+        """Return the media type of the file, based on the URL or the provided `media_type`."""
         return self._media_type or self._infer_media_type()
+
+    @abstractmethod
+    def _infer_media_type(self) -> str:
+        """Infer the media type of the file based on the URL."""
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def format(self) -> str:
         """The file format."""
+        raise NotImplementedError
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -182,7 +184,9 @@ class VideoUrl(FileUrl):
         elif self.is_youtube:
             return 'video/mp4'
         else:
-            raise ValueError(f'Unknown video file extension: {self.url}')
+            raise ValueError(
+                f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
 
     @property
     def is_youtube(self) -> bool:
@@ -238,7 +242,9 @@ class AudioUrl(FileUrl):
         if self.url.endswith('.aac'):
             return 'audio/aac'
 
-        raise ValueError(f'Unknown audio file extension: {self.url}')
+        raise ValueError(
+            f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
+        )
 
     @property
     def format(self) -> AudioFormat:
@@ -278,7 +284,9 @@ class ImageUrl(FileUrl):
         elif self.url.endswith('.webp'):
             return 'image/webp'
         else:
-            raise ValueError(f'Unknown image file extension: {self.url}')
+            raise ValueError(
+                f'Could not infer media type from image URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
 
     @property
     def format(self) -> ImageFormat:
@@ -312,9 +320,28 @@ class DocumentUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
+        # Common document types are hardcoded here as mime-type support for these
+        # extensions varies across operating systems.
+        if self.url.endswith(('.md', '.mdx', '.markdown')):
+            return 'text/markdown'
+        elif self.url.endswith('.asciidoc'):
+            return 'text/x-asciidoc'
+        elif self.url.endswith('.txt'):
+            return 'text/plain'
+        elif self.url.endswith('.pdf'):
+            return 'application/pdf'
+        elif self.url.endswith('.rtf'):
+            return 'application/rtf'
+        elif self.url.endswith('.docx'):
+            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif self.url.endswith('.xlsx'):
+            return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
         type_, _ = guess_type(self.url)
         if type_ is None:
-            raise ValueError(f'Unknown document file extension: {self.url}')
+            raise ValueError(
+                f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
         return type_
 
     @property
@@ -412,8 +439,8 @@ class ToolReturn:
     return_value: Any
     """The return value to be used in the tool response."""
 
-    content: Sequence[UserContent] | None = None
-    """The content sequence to be sent to the model as a UserPromptPart."""
+    content: str | Sequence[UserContent] | None = None
+    """The content to be sent to the model as a UserPromptPart."""
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""

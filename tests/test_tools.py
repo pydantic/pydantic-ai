@@ -13,7 +13,16 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolCalls, ToolOutput
@@ -21,8 +30,9 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.deferred import DeferredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
+from pydantic_ai.usage import Usage
 
-from .conftest import IsStr
+from .conftest import IsDatetime, IsStr
 
 
 def test_tool_no_ctx():
@@ -377,7 +387,7 @@ def test_docstring_unknown():
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
             'kind': 'function',
@@ -922,7 +932,7 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'type': 'integer'}, 'b': {'default': 1, 'type': 'integer'}},
                     'required': ['a'],
                     'type': 'object',
                 },
@@ -935,7 +945,7 @@ def test_json_schema_required_parameters():
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'default': 1, 'type': 'integer'}, 'b': {'type': 'integer'}},
                     'required': ['b'],
                     'type': 'object',
                 },
@@ -1021,7 +1031,8 @@ def test_schema_generator():
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string'}},
+                    'additionalProperties': True,
+                    'properties': {'x': {'default': None, 'type': 'string'}},
                     'type': 'object',
                 },
                 'strict': None,
@@ -1032,7 +1043,7 @@ def test_schema_generator():
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string', 'title': 'X title'}},
+                    'properties': {'x': {'default': None, 'type': 'string', 'title': 'X title'}},
                     'type': 'object',
                 },
                 'strict': None,
@@ -1061,7 +1072,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'name': 'get_score',
             'description': None,
             'parameters_json_schema': {
-                'additionalProperties': False,
                 'properties': {
                     'a': {'description': 'The first parameter', 'type': 'integer'},
                     'b': {'description': 'The second parameter', 'type': 'integer'},
@@ -1321,3 +1331,91 @@ def test_output_type_deferred_tool_calls_by_itself():
 def test_output_type_empty():
     with pytest.raises(UserError, match='At least one output type must be provided.'):
         Agent(TestModel(), output_type=[])
+
+
+def test_parallel_tool_return():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('get_price', {'fruit': 'apple'}), ToolCallPart('get_price', {'fruit': 'banana'})]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_price(fruit: str) -> ToolReturn:
+        return ToolReturn(
+            return_value=10.0,
+            content=f'The price of {fruit} is 10.0',
+            metadata={'foo': 'bar'},
+        )
+
+    result = agent.run_sync('What do an apple and a banana cost?')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What do an apple and a banana cost?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id=IsStr(),
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=58, response_tokens=10, total_tokens=68),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of apple is 10.0',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of banana is 10.0',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=Usage(requests=1, request_tokens=76, response_tokens=11, total_tokens=87),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

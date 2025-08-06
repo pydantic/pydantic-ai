@@ -251,7 +251,7 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 def mock_vcr_aiohttp_content(mocker: MockerFixture):
     try:
         from vcr.stubs import aiohttp_stubs
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         return
 
     # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
@@ -416,9 +416,9 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider():
+async def vertex_provider():  # pragma: lax no cover
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):  # pragma: lax no cover
+    if not os.getenv('CI', False):
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
@@ -478,10 +478,10 @@ def model(
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
         elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider
+            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
+            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
 
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider

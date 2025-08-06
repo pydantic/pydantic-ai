@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
-    ServerToolCallPart,
+    BuiltinToolCallPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -1328,7 +1328,7 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
                 ModelResponse(
                     parts=[
                         TextPart(content="Let me search for current events to help establish today's date."),
-                        ServerToolCallPart(
+                        BuiltinToolCallPart(
                             tool_name='web_search',
                             args={'query': 'current events news today May 26 2025'},
                             tool_call_id='srvtoolu_01MqVvTi9LWTrMRuZ2KttD3M',
@@ -1468,7 +1468,7 @@ async def test_anthropic_code_execution_tool(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     TextPart(content="I'll calculate 3 * 12390 for you."),
-                    ServerToolCallPart(
+                    BuiltinToolCallPart(
                         tool_name='code_execution',
                         args={
                             'code': """\
@@ -2023,7 +2023,7 @@ async def test_anthropic_web_search_tool_pass_history_back(env: TestEnv, allow_m
     result = await agent.run('What day is today?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolCallPart)]
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
     server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1
@@ -2075,7 +2075,7 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     result = await agent.run('What is 2 + 2?')
 
     # Verify we have server tool parts in the history
-    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, ServerToolCallPart)]
+    server_tool_calls = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolCallPart)]
     server_tool_returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, BuiltinToolReturnPart)]
     assert len(server_tool_calls) == 1
     assert len(server_tool_returns) == 1

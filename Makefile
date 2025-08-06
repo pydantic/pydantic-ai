@@ -60,12 +60,9 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests and collect coverage data
-	uv run coverage run -m pytest
+	COVERAGE_PROCESS_START=./pyproject.toml uv run coverage run -m pytest -n auto --dist=loadgroup
+	@uv run coverage combine
 	@uv run coverage report
-
-.PHONY: test-fast
-test-fast: ## Same as test except no coverage and 4x faster depending on hardware
-	uv run pytest -n auto --dist=loadgroup
 
 .PHONY: test-all-python
 test-all-python: ## Run tests on Python 3.9 to 3.13

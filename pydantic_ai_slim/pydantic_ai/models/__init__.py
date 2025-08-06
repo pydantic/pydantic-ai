@@ -35,8 +35,6 @@ from ..usage import Usage
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
-        'anthropic:claude-2.0',
-        'anthropic:claude-2.1',
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
         'anthropic:claude-3-5-sonnet-20240620',
@@ -47,10 +45,10 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-3-haiku-20240307',
         'anthropic:claude-3-opus-20240229',
         'anthropic:claude-3-opus-latest',
-        'anthropic:claude-3-sonnet-20240229',
         'anthropic:claude-4-opus-20250514',
         'anthropic:claude-4-sonnet-20250514',
         'anthropic:claude-opus-4-0',
+        'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
@@ -101,8 +99,6 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
-        'claude-2.0',
-        'claude-2.1',
         'claude-3-5-haiku-20241022',
         'claude-3-5-haiku-latest',
         'claude-3-5-sonnet-20240620',
@@ -113,10 +109,10 @@ KnownModelName = TypeAliasType(
         'claude-3-haiku-20240307',
         'claude-3-opus-20240229',
         'claude-3-opus-latest',
-        'claude-3-sonnet-20240229',
         'claude-4-opus-20250514',
         'claude-4-sonnet-20250514',
         'claude-opus-4-0',
+        'claude-opus-4-1-20250805',
         'claude-opus-4-20250514',
         'claude-sonnet-4-0',
         'claude-sonnet-4-20250514',
@@ -138,12 +134,12 @@ KnownModelName = TypeAliasType(
         'google-gla:gemini-2.0-flash',
         'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-flash-lite-preview-06-17',
+        'google-gla:gemini-2.5-flash-lite',
         'google-gla:gemini-2.5-pro',
         'google-vertex:gemini-2.0-flash',
         'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-flash-lite-preview-06-17',
+        'google-vertex:gemini-2.5-flash-lite',
         'google-vertex:gemini-2.5-pro',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
@@ -796,12 +792,18 @@ def get_user_agent() -> str:
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
     schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
     parameters_json_schema = schema_transformer.walk()
-    if t.strict is None:
-        t = replace(t, strict=schema_transformer.is_strict_compatible)
-    return replace(t, parameters_json_schema=parameters_json_schema)
+    return replace(
+        t,
+        parameters_json_schema=parameters_json_schema,
+        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+    )
 
 
 def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=True)
-    son_schema = schema_transformer.walk()
-    return replace(o, json_schema=son_schema)
+    schema_transformer = transformer(o.json_schema, strict=o.strict)
+    json_schema = schema_transformer.walk()
+    return replace(
+        o,
+        json_schema=json_schema,
+        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+    )

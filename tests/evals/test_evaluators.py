@@ -19,7 +19,6 @@ with try_import() as imports_successful:
     from logfire.testing import CaptureLogfire
 
     from pydantic_evals.evaluators._run_evaluator import run_evaluator
-    from pydantic_evals.evaluators._spec import EvaluatorSpec
     from pydantic_evals.evaluators.common import (
         Contains,
         Equals,
@@ -36,6 +35,7 @@ with try_import() as imports_successful:
         Evaluator,
         EvaluatorOutput,
     )
+    from pydantic_evals.evaluators.spec import EvaluatorSpec
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
@@ -162,7 +162,7 @@ async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutp
     assert results[0].name == 'result'
     assert results[0].value == 'passed'
     assert results[0].reason is None
-    assert results[0].source is evaluator
+    assert results[0].source == EvaluatorSpec(name='ExampleEvaluator', arguments=None)
 
 
 async def test_is_instance_evaluator():
@@ -242,7 +242,14 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
     evaluator = CustomNameFieldEvaluator(result=123, evaluation_name='abc')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
-        [{'name': 'abc', 'reason': None, 'source': {'evaluation_name': 'abc', 'result': 123}, 'value': 123}]
+        [
+            {
+                'name': 'abc',
+                'reason': None,
+                'source': {'arguments': {'evaluation_name': 'abc', 'result': 123}, 'name': 'CustomNameFieldEvaluator'},
+                'value': 123,
+            }
+        ]
     )
 
     @dataclass
@@ -260,7 +267,14 @@ async def test_custom_evaluator_name(test_context: EvaluatorContext[TaskInput, T
     evaluator = CustomNamePropertyEvaluator(result=123, my_name='marcelo')
 
     assert to_jsonable_python(await run_evaluator(evaluator, test_context)) == snapshot(
-        [{'name': 'hello marcelo', 'reason': None, 'source': {'my_name': 'marcelo', 'result': 123}, 'value': 123}]
+        [
+            {
+                'name': 'hello marcelo',
+                'reason': None,
+                'source': {'arguments': {'my_name': 'marcelo', 'result': 123}, 'name': 'CustomNamePropertyEvaluator'},
+                'value': 123,
+            }
+        ]
     )
 
 

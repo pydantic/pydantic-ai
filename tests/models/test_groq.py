@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
-    ServerToolCallPart,
+    BuiltinToolCallPart,
     SystemPromptPart,
     TextPart,
     TextPartDelta,
@@ -701,7 +701,7 @@ async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_k
             ModelRequest(parts=[UserPromptPart(content='What day is today?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ServerToolCallPart(
+                    BuiltinToolCallPart(
                         tool_name='search',
                         args='{"query": "What is the current date?"}',
                         tool_call_id=IsStr(),

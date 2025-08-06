@@ -22,7 +22,6 @@ nav:
           - models/index.md
           - models/openai.md
           - models/anthropic.md
-          - models/gemini.md
           - models/google.md
           - models/bedrock.md
           - models/cohere.md
@@ -66,6 +65,7 @@ nav:
       - examples/chat-app.md
       - examples/question-graph.md
       - examples/slack-lead-qualifier.md
+      - examples/data-analyst.md
 
   - API Reference:
       - api/ag_ui.md
@@ -80,7 +80,6 @@ nav:
       - api/settings.md
       - api/usage.md
       - api/mcp.md
-      - api/format_as_xml.md
       - api/format_prompt.md
       - api/direct.md
       - api/ext.md
@@ -89,7 +88,6 @@ nav:
       - api/models/anthropic.md
       - api/models/bedrock.md
       - api/models/cohere.md
-      - api/models/gemini.md
       - api/models/google.md
       - api/models/groq.md
       - api/models/huggingface.md
@@ -229,6 +227,10 @@ plugins:
             group_by_category: false
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
+            extensions:
+              - griffe_warnings_deprecated:
+                  kind: warning
+                  title: Deprecated
           import:
             - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
