@@ -16,7 +16,7 @@ Pydantic AI is still pre-version 1, so breaking changes will occur, however:
 
 See [#2440](https://github.com/pydantic/pydantic-ai/pull/2440) - The `next` method was removed from the `Graph` class. Use `async with graph.iter(...) as run:  run.next()` instead.
 
-See [#2442](https://github.com/pydantic/pydantic-ai/pull/2442) - The `data` property was removed from the `FinalResult` class. Use `output` instead.
+See [#2443](https://github.com/pydantic/pydantic-ai/pull/2443) - The `data` property was removed from the `FinalResult` class. Use `output` instead.
 
 ### v0.5.0 (2025-08-04)
 
