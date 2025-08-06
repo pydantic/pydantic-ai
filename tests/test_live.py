@@ -92,7 +92,7 @@ def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 params = [
     pytest.param(openai, id='openai'),
     pytest.param(gemini, marks=pytest.mark.skip(reason='API seems very flaky'), id='gemini'),
-    pytest.param(vertexai, id='vertexai'),
+    pytest.param(vertexai, marks=pytest.mark.skip(reason='API seems very flaky'), id='vertexai'),
     pytest.param(groq, id='groq'),
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),
