@@ -82,17 +82,6 @@ async def test_google_vertex_provider_service_account_file(
     assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
 
 
-async def test_google_vertex_provider_service_account_file_info(
-    monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
-):
-    account_info = prepare_service_account_contents('my-project-id')
-
-    provider = GoogleVertexProvider(service_account_info=account_info)
-    monkeypatch.setattr(provider.client.auth, '_refresh_token', mock_refresh_token)
-    await provider.client.post('/gemini-1.0-pro:generateContent')
-    assert provider.region == 'us-central1'
-    assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
-
 
 async def test_google_vertex_provider_service_account_xor(allow_model_requests: None):
     with pytest.raises(

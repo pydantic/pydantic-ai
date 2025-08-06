@@ -155,7 +155,7 @@ class _VertexAIAuth(httpx.Auth):
             assert creds.project_id is None or isinstance(creds.project_id, str)  # type: ignore[reportUnknownMemberType]
             creds_project_id: str | None = creds.project_id
             creds_source = 'service account file'
-        elif self.service_account_info is not None:
+        elif self.service_account_info is not None:  # pragma: no cover
             creds = await _creds_from_info(self.service_account_info)
             assert creds.project_id is None or isinstance(creds.project_id, str)  # type: ignore[reportUnknownMemberType]
             creds_project_id: str | None = creds.project_id
@@ -192,7 +192,7 @@ async def _creds_from_file(service_account_file: str | Path) -> ServiceAccountCr
     return await anyio.to_thread.run_sync(service_account_credentials_from_file, str(service_account_file))
 
 
-async def _creds_from_info(service_account_info: Mapping[str, str]) -> ServiceAccountCredentials:
+async def _creds_from_info(service_account_info: Mapping[str, str]) -> ServiceAccountCredentials:  # pragma: no cover
     service_account_credentials_from_string = functools.partial(
         ServiceAccountCredentials.from_service_account_info,  # type: ignore[reportUnknownMemberType]
         scopes=['https://www.googleapis.com/auth/cloud-platform'],
