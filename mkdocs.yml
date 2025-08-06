@@ -230,7 +230,7 @@ plugins:
             heading_level: 3
             extensions:
               - griffe_warnings_deprecated:
-                  kind: danger
+                  kind: warning
                   title: Deprecated
           import:
             - url: https://logfire.pydantic.dev/docs/objects.inv
