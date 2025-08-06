@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
-from . import ModelProfile
-from ._json_schema import InlineDefsJsonSchemaTransformer
+from . import InlineDefsJsonSchemaTransformer, ModelProfile
 
 
 def amazon_model_profile(model_name: str) -> ModelProfile | None:
