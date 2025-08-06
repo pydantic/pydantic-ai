@@ -21,6 +21,9 @@ See [#2443](https://github.com/pydantic/pydantic-ai/pull/2443) - The `data` prop
 See [#2445](https://github.com/pydantic/pydantic-ai/pull/2445) - The `get_data` and `validate_structured_result` methods were removed from the
 `StreamedRunResult` class. Use `get_output` and `validate_structured_output` instead.
 
+See [#2446](https://github.com/pydantic/pydantic-ai/pull/2446) - The `format_as_xml` function was moved to the `pydantic_ai.format_as_xml` module.
+Import it via `from pydantic_ai import format_as_xml` instead.
+
 ### v0.5.0 (2025-08-04)
 
 See [#2388](https://github.com/pydantic/pydantic-ai/pull/2388) - The `source` field of an `EvaluationResult` is now of type `EvaluatorSpec` rather than the actual source `Evaluator` instance, to help with serialization/deserialization.

@@ -80,7 +80,6 @@ nav:
       - api/settings.md
       - api/usage.md
       - api/mcp.md
-      - api/format_as_xml.md
       - api/format_prompt.md
       - api/direct.md
       - api/ext.md
