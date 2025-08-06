@@ -1792,19 +1792,19 @@ def test_native_output_strict_mode(allow_model_requests: None):
     agent = Agent(model, output_type=NativeOutput(CityLocation, strict=True))
 
     agent.run_sync('What is the capital of Mexico?')
-    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['strict'] is True
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is True
 
     # Explicit strict=False
     agent = Agent(model, output_type=NativeOutput(CityLocation, strict=False))
 
     agent.run_sync('What is the capital of Mexico?')
-    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['strict'] is False
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
 
     # Strict-compatible
     agent = Agent(model, output_type=NativeOutput(CityLocation))
 
     agent.run_sync('What is the capital of Mexico?')
-    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['strict'] is True
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is True
 
     # Strict-incompatible
     CityLocation.model_config = ConfigDict(extra='allow')
@@ -1812,7 +1812,7 @@ def test_native_output_strict_mode(allow_model_requests: None):
     agent = Agent(model, output_type=NativeOutput(CityLocation))
 
     agent.run_sync('What is the capital of Mexico?')
-    assert 'strict' not in get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
 
 
 async def test_openai_instructions(allow_model_requests: None, openai_api_key: str):
