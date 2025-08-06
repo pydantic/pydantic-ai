@@ -1,0 +1,54 @@
+name: Docker Release (mcp-run-python)
+
+# Build and publish the MCP Run Python server Docker image to GHCR whenever a new
+# git tag is pushed
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read # allows reading from repo
+  packages: write # allows pushing to GHCR
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch builds) # needed to build for both amd64 and arm64
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          # strip leading "v" if present so that image tags are like "0.0.15"
+          VERSION=${TAG#v}
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./mcp-run-python
+          file: ./mcp-run-python/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/pydantic/mcp-run-python:${{ steps.version.outputs.version }}
+            ghcr.io/pydantic/mcp-run-python:latest
