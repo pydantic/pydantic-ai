@@ -460,10 +460,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         await self._marked_completed(self._stream_response.get())
         return output
 
-    @deprecated('`get_data` is deprecated, use `get_output` instead.')
-    async def get_data(self) -> OutputDataT:
-        return await self.get_output()
-
     def usage(self) -> Usage:
         """Return the usage of the whole run.
 
@@ -475,12 +471,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._stream_response.timestamp()
-
-    @deprecated('`validate_structured_result` is deprecated, use `validate_structured_output` instead.')
-    async def validate_structured_result(
-        self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> OutputDataT:
-        return await self.validate_structured_output(message, allow_partial=allow_partial)
 
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
