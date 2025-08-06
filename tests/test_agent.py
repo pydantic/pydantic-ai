@@ -2617,13 +2617,6 @@ def test_heterogeneous_responses_non_streaming() -> None:
     )
 
 
-def test_last_run_messages() -> None:
-    agent = Agent('test')
-
-    with pytest.raises(AttributeError, match='The `last_run_messages` attribute has been removed,'):
-        agent.last_run_messages  # pyright: ignore[reportDeprecated]
-
-
 def test_nested_capture_run_messages() -> None:
     agent = Agent('test')
 

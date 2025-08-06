@@ -1266,13 +1266,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._output_validators.append(_output.OutputValidator[AgentDepsT, Any](func))
         return func
 
-    @deprecated('`result_validator` is deprecated, use `output_validator` instead.')
-    def result_validator(self, func: Any, /) -> Any:
-        warnings.warn(
-            '`result_validator` is deprecated, use `output_validator` instead.', DeprecationWarning, stacklevel=2
-        )
-        return self.output_validator(func)  # type: ignore
-
     @overload
     def tool(self, func: ToolFuncContext[AgentDepsT, ToolParams], /) -> ToolFuncContext[AgentDepsT, ToolParams]: ...
 
@@ -1552,13 +1545,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
                         if item is self:
                             self.name = name
                             return
-
-    @property
-    @deprecated(
-        'The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.', category=None
-    )
-    def last_run_messages(self) -> list[_messages.ModelMessage]:
-        raise AttributeError('The `last_run_messages` attribute has been removed, use `capture_run_messages` instead.')
 
     def _prepare_output_schema(
         self, output_type: OutputSpec[RunOutputDataT] | None, model_profile: ModelProfile
@@ -2125,11 +2111,6 @@ class AgentRunResult(Generic[OutputDataT]):
             raise AttributeError('No span was created for this agent run')
         return self._traceparent_value
 
-    @property
-    @deprecated('`result.data` is deprecated, use `result.output` instead.')
-    def data(self) -> OutputDataT:
-        return self.output
-
     def _set_output_tool_return(self, return_content: str) -> list[_messages.ModelMessage]:
         """Set return content for the output tool.
 
@@ -2151,16 +2132,7 @@ class AgentRunResult(Generic[OutputDataT]):
 
         raise LookupError(f'No tool call found with tool name {self._output_tool_name!r}.')
 
-    @overload
-    def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def all_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    def all_messages(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> list[_messages.ModelMessage]:
+    def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
 
         Args:
@@ -2168,27 +2140,16 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             List of messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        if content is not None:
-            return self._set_output_tool_return(content)
+        if output_tool_return_content is not None:
+            return self._set_output_tool_return(output_tool_return_content)
         else:
             return self._state.message_history
 
-    @overload
-    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def all_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
-
-    def all_messages_json(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> bytes:
+    def all_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return all messages from [`all_messages`][pydantic_ai.agent.AgentRunResult.all_messages] as JSON bytes.
 
         Args:
@@ -2196,24 +2157,15 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.all_messages(output_tool_return_content=content))
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.all_messages(output_tool_return_content=output_tool_return_content)
+        )
 
-    @overload
-    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def new_messages(self, *, result_tool_return_content: str | None = None) -> list[_messages.ModelMessage]: ...
-
-    def new_messages(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> list[_messages.ModelMessage]:
+    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
         Messages from older runs are excluded.
@@ -2223,24 +2175,13 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             List of new messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        return self.all_messages(output_tool_return_content=content)[self._new_message_index :]
+        return self.all_messages(output_tool_return_content=output_tool_return_content)[self._new_message_index :]
 
-    @overload
-    def new_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes: ...
-
-    @overload
-    @deprecated('`result_tool_return_content` is deprecated, use `output_tool_return_content` instead.')
-    def new_messages_json(self, *, result_tool_return_content: str | None = None) -> bytes: ...
-
-    def new_messages_json(
-        self, *, output_tool_return_content: str | None = None, result_tool_return_content: str | None = None
-    ) -> bytes:
+    def new_messages_json(self, *, output_tool_return_content: str | None = None) -> bytes:
         """Return new messages from [`new_messages`][pydantic_ai.agent.AgentRunResult.new_messages] as JSON bytes.
 
         Args:
@@ -2248,13 +2189,13 @@ class AgentRunResult(Generic[OutputDataT]):
                 This provides a convenient way to modify the content of the output tool call if you want to continue
                 the conversation and want to set the response to the output tool call. If `None`, the last message will
                 not be modified.
-            result_tool_return_content: Deprecated, use `output_tool_return_content` instead.
 
         Returns:
             JSON bytes representing the new messages.
         """
-        content = result.coalesce_deprecated_return_content(output_tool_return_content, result_tool_return_content)
-        return _messages.ModelMessagesTypeAdapter.dump_json(self.new_messages(output_tool_return_content=content))
+        return _messages.ModelMessagesTypeAdapter.dump_json(
+            self.new_messages(output_tool_return_content=output_tool_return_content)
+        )
 
     def usage(self) -> _usage.Usage:
         """Return the usage of the whole run."""
