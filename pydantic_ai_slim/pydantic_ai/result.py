@@ -460,10 +460,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         await self._marked_completed(self._stream_response.get())
         return output
 
-    @deprecated('`get_data` is deprecated, use `get_output` instead.')
-    async def get_data(self) -> OutputDataT:
-        return await self.get_output()
-
     def usage(self) -> Usage:
         """Return the usage of the whole run.
 
@@ -475,12 +471,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._stream_response.timestamp()
-
-    @deprecated('`validate_structured_result` is deprecated, use `validate_structured_output` instead.')
-    async def validate_structured_result(
-        self, message: _messages.ModelResponse, *, allow_partial: bool = False
-    ) -> OutputDataT:
-        return await self.validate_structured_output(message, allow_partial=allow_partial)
 
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
@@ -506,11 +496,6 @@ class FinalResult(Generic[OutputDataT]):
     """Name of the final output tool; `None` if the output came from unstructured text content."""
     tool_call_id: str | None = None
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
-
-    @property
-    @deprecated('`data` is deprecated, use `output` instead.')
-    def data(self) -> OutputDataT:
-        return self.output
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
