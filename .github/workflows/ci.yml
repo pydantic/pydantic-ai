@@ -130,14 +130,14 @@ jobs:
           CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
 
   test:
-    name: test on ${{ matrix.python-version }}
+    name: test on ${{ matrix.python-version }} (${{ matrix.install }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-        uv-install: ["--package pydantic-ai-slim", "", "--all-extras"]
+        install: ["slim", "standard", "all-extras"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
@@ -149,15 +149,24 @@ jobs:
         with:
           enable-cache: true
 
+      - run: |
+          if [ "${{ matrix.install }}" = "slim" ]; then
+            echo "--package pydantic-ai-slim"
+          elif [ "${{ matrix.install }}" = "standard" ]; then
+            echo ""
+          elif [ "${{ matrix.install }}" = "all-extras" ]; then
+            echo "--all-extras"
+          fi
+        id: install-command
+
       - run: mkdir .coverage
 
-      - run: uv sync ${{ matrix.uv-install }}
-      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv run ${{ steps.install-command.outputs.install-command }} coverage run -m pytest -n auto --dist=loadgroup
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.python-version }}
+          name: coverage-${{ matrix.python-version }}-${{ matrix.install }}
           path: .coverage
           include-hidden-files: true
 
@@ -200,7 +209,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
