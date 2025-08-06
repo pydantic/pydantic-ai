@@ -790,12 +790,18 @@ def get_user_agent() -> str:
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
     schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
     parameters_json_schema = schema_transformer.walk()
-    if t.strict is None:
-        t = replace(t, strict=schema_transformer.is_strict_compatible)
-    return replace(t, parameters_json_schema=parameters_json_schema)
+    return replace(
+        t,
+        parameters_json_schema=parameters_json_schema,
+        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+    )
 
 
 def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
-    schema_transformer = transformer(o.json_schema, strict=True)
-    son_schema = schema_transformer.walk()
-    return replace(o, json_schema=son_schema)
+    schema_transformer = transformer(o.json_schema, strict=o.strict)
+    json_schema = schema_transformer.walk()
+    return replace(
+        o,
+        json_schema=json_schema,
+        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+    )
