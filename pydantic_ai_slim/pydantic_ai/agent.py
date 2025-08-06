@@ -258,7 +258,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
-    def __init__(
+    def __init__(  # type: ignore[misc]
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
@@ -341,6 +341,21 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.end_strategy = end_strategy
         self.name = name
         self.model_settings = model_settings
+
+        # Handle deprecated parameters
+        if result_type := _deprecated_kwargs.pop('result_type', None):
+            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
+            output_type = result_type
+
+        if _deprecated_kwargs.pop('result_tool_name', None):
+            warnings.warn('`result_tool_name` is deprecated and no longer used', DeprecationWarning)
+
+        if _deprecated_kwargs.pop('result_tool_description', None):
+            warnings.warn('`result_tool_description` is deprecated and no longer used', DeprecationWarning)
+
+        if result_retries := _deprecated_kwargs.pop('result_retries', None):
+            warnings.warn('`result_retries` is deprecated, use `output_retries` instead', DeprecationWarning)
+            output_retries = result_retries
 
         self.output_type = output_type
         self.instrument = instrument

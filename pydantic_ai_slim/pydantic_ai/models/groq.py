@@ -320,7 +320,7 @@ class GroqModel(Model):
             if isinstance(tool, WebSearchTool):
                 # Groq uses the web_search tool similar to Anthropic
                 # Based on https://console.groq.com/docs/agentic-tooling
-                web_search_tool = {
+                web_search_tool: chat.ChatCompletionToolParam = {
                     'type': 'function',
                     'function': {
                         'name': 'web_search',
