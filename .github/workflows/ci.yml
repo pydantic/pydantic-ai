@@ -109,7 +109,6 @@ jobs:
 
       - run: >
           uv run
-          --group dev
           --package pydantic-ai-slim
           --extra openai
           --extra vertexai
