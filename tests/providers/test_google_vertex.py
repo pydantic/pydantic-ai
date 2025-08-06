@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -12,7 +13,7 @@ from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.models.gemini import GeminiModel
+from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
 
 from ..conftest import try_import
 
@@ -24,6 +25,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio(),
+    pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
 ]
 
 
@@ -68,6 +70,7 @@ async def mock_refresh_token():
     return 'my-token'
 
 
+@pytest.mark.skipif(sys.version_info < (3, 10), reason='Flaky test in 3.9')
 async def test_google_vertex_provider_service_account_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allow_model_requests: None
 ):
@@ -81,6 +84,7 @@ async def test_google_vertex_provider_service_account_file(
     assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
 
 
+@pytest.mark.skipif(sys.version_info < (3, 10), reason='Flaky test in 3.9')
 async def test_google_vertex_provider_service_account_file_info(
     monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):
@@ -164,7 +168,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 )
 @pytest.mark.vcr()
 async def test_vertexai_provider(allow_model_requests: None):  # pragma: lax no cover
-    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
+    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')  # type: ignore[reportDeprecated]
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')

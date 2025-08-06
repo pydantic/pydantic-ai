@@ -57,7 +57,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 """
 ```
 
-1. We configure the agent to use [Gemini 1.5's Flash](api/models/gemini.md) model, but you can also set the model when running the agent.
+1. We configure the agent to use [Gemini 1.5's Flash](api/models/google.md) model, but you can also set the model when running the agent.
 2. Register a static [system prompt](agents.md#system-prompts) using a keyword argument to the agent.
 3. [Run the agent](agents.md#running-agents) synchronously, conducting a conversation with the LLM.
 

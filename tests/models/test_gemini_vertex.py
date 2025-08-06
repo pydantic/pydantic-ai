@@ -1,3 +1,4 @@
+# pyright: reportDeprecated=false
 import os
 from dataclasses import dataclass
 from typing import Union
@@ -32,6 +33,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
 ]
 
 
