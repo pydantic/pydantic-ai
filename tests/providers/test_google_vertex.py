@@ -1,3 +1,4 @@
+# pyright: reportDeprecated=false
 from __future__ import annotations as _annotations
 
 import json
@@ -13,7 +14,7 @@ from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
+from pydantic_ai.models.gemini import GeminiModel
 
 from ..conftest import try_import
 
@@ -26,6 +27,7 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio(),
     pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning'),
 ]
 
 
@@ -168,7 +170,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 )
 @pytest.mark.vcr()
 async def test_vertexai_provider(allow_model_requests: None):  # pragma: lax no cover
-    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')  # type: ignore[reportDeprecated]
+    m = GeminiModel('gemini-2.0-flash', provider='google-vertex')
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')
