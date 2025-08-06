@@ -167,6 +167,7 @@ jobs:
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
+        if: matrix.python-version != '3.9'
         with:
           name: coverage-${{ matrix.python-version }}-${{ matrix.install }}
           path: .coverage
@@ -190,6 +191,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
 
       - run: mkdir .coverage
 
@@ -247,8 +252,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv sync --package pydantic-ai-slim --only-dev
-      - run: rm .coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
+      - run: uv sync --group dev
       - run: uv run coverage combine
 
       - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
