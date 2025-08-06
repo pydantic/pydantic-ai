@@ -109,6 +109,7 @@ jobs:
 
       - run: >
           uv run
+          --group dev
           --package pydantic-ai-slim
           --extra openai
           --extra vertexai
@@ -191,11 +192,9 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --all-extras --group dev
-
       - run: |
           unset UV_FROZEN
-          uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
+          uv run --group dev --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
