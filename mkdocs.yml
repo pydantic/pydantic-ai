@@ -228,6 +228,10 @@ plugins:
             group_by_category: false
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
+            extensions:
+              - griffe_warnings_deprecated:
+                  kind: warning
+                  title: Deprecated
           import:
             - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv

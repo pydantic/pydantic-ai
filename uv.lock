@@ -1424,6 +1424,18 @@ wheels = [
 ]
 
 [[package]]
+name = "griffe-warnings-deprecated"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "griffe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/0e/f034e1714eb2c694d6196c75f77a02f9c69d19f9961c4804a016397bf3e5/griffe_warnings_deprecated-1.1.0.tar.gz", hash = "sha256:7bf21de327d59c66c7ce08d0166aa4292ce0577ff113de5878f428d102b6f7c5", size = 33260, upload-time = "2024-12-10T21:02:18.395Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/43/4c/b7241f03ad1f22ec2eed33b0f90c4f8c949e3395c4b7488670b07225a20b/griffe_warnings_deprecated-1.1.0-py3-none-any.whl", hash = "sha256:e7b0e8bfd6e5add3945d4d9805b2a41c72409e456733965be276d55f01e8a7a2", size = 5854, upload-time = "2024-12-10T21:02:16.96Z" },
+]
+
+[[package]]
 name = "groq"
 version = "0.22.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3296,6 +3308,7 @@ logfire = [
 [package.dev-dependencies]
 docs = [
     { name = "black" },
+    { name = "griffe-warnings-deprecated" },
     { name = "mkdocs" },
     { name = "mkdocs-glightbox" },
     { name = "mkdocs-llmstxt" },
@@ -3325,6 +3338,7 @@ provides-extras = ["a2a", "examples", "logfire"]
 [package.metadata.requires-dev]
 docs = [
     { name = "black", specifier = ">=24.10.0" },
+    { name = "griffe-warnings-deprecated", specifier = ">=1.1.0" },
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-glightbox", specifier = ">=0.4.0" },
     { name = "mkdocs-llmstxt", specifier = ">=0.2.0" },
