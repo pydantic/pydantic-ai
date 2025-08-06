@@ -54,7 +54,6 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
     * Anthropic (https://docs.anthropic.com/en/docs/build-with-claude/tool-use/web-search-tool#domain-filtering)
     * Groq (https://console.groq.com/docs/agentic-tooling#search-settings)
-    * MistralAI
     """
 
     allowed_domains: list[str] | None = None
@@ -84,9 +83,16 @@ class WebSearchUserLocation(TypedDict, total=False):
     """
 
     city: str
+    """The city where the user is located."""
+
     country: str
+    """The country where the user is located. For OpenAI, this must be a 2-letter country code (e.g., 'US', 'GB')."""
+
     region: str
+    """The region or state where the user is located."""
+
     timezone: str
+    """The timezone of the user's location."""
 
 
 class CodeExecutionTool(AbstractBuiltinTool):

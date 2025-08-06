@@ -24,6 +24,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
@@ -33,7 +34,6 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
-    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -294,6 +294,7 @@ class AnthropicModel(Model):
             elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
                 items.append(
                     BuiltinToolReturnPart(
+                        provider_name='anthropic',
                         tool_name=item.type,
                         content=item.content,
                         tool_call_id=item.tool_use_id,
@@ -301,8 +302,8 @@ class AnthropicModel(Model):
                 )
             elif isinstance(item, BetaServerToolUseBlock):
                 items.append(
-                    ServerToolCallPart(
-                        model_name='anthropic',
+                    BuiltinToolCallPart(
+                        provider_name='anthropic',
                         tool_name=item.name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
@@ -428,27 +429,29 @@ class AnthropicModel(Model):
                                     thinking=response_part.content, signature=response_part.signature, type='thinking'
                                 )
                             )
-                    elif isinstance(response_part, ServerToolCallPart):
-                        server_tool_use_block_param = BetaServerToolUseBlockParam(
-                            id=_guard_tool_call_id(t=response_part),
-                            type='server_tool_use',
-                            name=cast(Literal['web_search', 'code_execution'], response_part.tool_name),
-                            input=response_part.args_as_dict(),
-                        )
-                        assistant_content_params.append(server_tool_use_block_param)
+                    elif isinstance(response_part, BuiltinToolCallPart):
+                        if response_part.provider_name == 'anthropic':
+                            server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                id=_guard_tool_call_id(t=response_part),
+                                type='server_tool_use',
+                                name=cast(Literal['web_search', 'code_execution'], response_part.tool_name),
+                                input=response_part.args_as_dict(),
+                            )
+                            assistant_content_params.append(server_tool_use_block_param)
                     elif isinstance(response_part, BuiltinToolReturnPart):
-                        tool_use_id = _guard_tool_call_id(t=response_part)
-                        if response_part.tool_name == 'web_search_tool_result':
-                            server_tool_result_block_param = BetaWebSearchToolResultBlockParam(
-                                tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
-                            )
-                        elif response_part.tool_name == 'code_execution_tool_result':
-                            server_tool_result_block_param = BetaCodeExecutionToolResultBlockParam(
-                                tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
-                            )
-                        else:
-                            raise ValueError(f'Unsupported tool name: {response_part.tool_name}')
-                        assistant_content_params.append(server_tool_result_block_param)
+                        if response_part.provider_name == 'anthropic':
+                            tool_use_id = _guard_tool_call_id(t=response_part)
+                            if response_part.tool_name == 'web_search_tool_result':
+                                server_tool_result_block_param = BetaWebSearchToolResultBlockParam(
+                                    tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
+                                )
+                            elif response_part.tool_name == 'code_execution_tool_result':
+                                server_tool_result_block_param = BetaCodeExecutionToolResultBlockParam(
+                                    tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
+                                )
+                            else:
+                                raise ValueError(f'Unsupported tool name: {response_part.tool_name}')
+                            assistant_content_params.append(server_tool_result_block_param)
                     else:
                         assert_never(response_part)
                 if len(assistant_content_params) > 0:

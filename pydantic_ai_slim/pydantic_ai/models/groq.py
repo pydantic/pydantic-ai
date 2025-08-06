@@ -13,8 +13,10 @@ from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
@@ -24,7 +26,6 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
-    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -213,8 +214,13 @@ class GroqModel(Model):
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
+        # Check for unsupported builtin tools
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, CodeExecutionTool):
+                raise ValueError('Groq does not support CodeExecutionTool')
+
         tools = self._get_tools(model_request_parameters)
-        # standalone function to make it easier to override
+        tools += self._get_builtin_tools(model_request_parameters)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:
@@ -262,11 +268,15 @@ class GroqModel(Model):
             for tool in choice.message.executed_tools:
                 tool_call_id = generate_tool_call_id()
                 items.append(
-                    ServerToolCallPart(
-                        tool_name=tool.type, args=tool.arguments, model_name='groq', tool_call_id=tool_call_id
+                    BuiltinToolCallPart(
+                        tool_name=tool.type, args=tool.arguments, provider_name='groq', tool_call_id=tool_call_id
                     )
                 )
-                items.append(BuiltinToolReturnPart(tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id))
+                items.append(
+                    BuiltinToolReturnPart(
+                        provider_name='groq', tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id
+                    )
+                )
         # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
         if choice.message.reasoning is not None:
             items.append(ThinkingPart(content=choice.message.reasoning))
@@ -301,6 +311,25 @@ class GroqModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
+    def _get_builtin_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionToolParam]:
+        tools: list[chat.ChatCompletionToolParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                # Groq uses the web_search tool similar to Anthropic
+                # Based on https://console.groq.com/docs/agentic-tooling
+                web_search_tool = {
+                    'type': 'function',
+                    'function': {
+                        'name': 'web_search',
+                        'description': 'Search the web for information',
+                        'parameters': {'type': 'object', 'properties': {}, 'required': []},
+                    },
+                }
+                tools.append(web_search_tool)
+        return tools
+
     def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
@@ -318,8 +347,8 @@ class GroqModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Skip thinking parts when mapping to Groq messages
                         continue
-                    elif isinstance(item, ServerToolCallPart):  # pragma: no cover
-                        # ServerToolCallPart is handled separately in server-side tools
+                    elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
+                        # BuiltinToolCallPart is handled separately in built-in tools
                         # This is currently never returned from groq
                         pass
                     elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover

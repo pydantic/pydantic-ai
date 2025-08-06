@@ -11,13 +11,13 @@ from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     RetryPromptPart,
-    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -146,6 +146,9 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        # Check for unsupported builtin tools
+        if model_request_parameters.builtin_tools:
+            raise ValueError('Cohere does not support built-in tools')
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
         model_response.usage.requests = 1
@@ -225,12 +228,10 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, ServerToolCallPart):  # pragma: no cover
-                        # ServerToolCallPart represents a tool call from a remote server
+                    elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
                         # This is currently never returned from cohere
                         pass
                     elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
-                        # BuiltinToolReturnPart represents a tool return from a remote server
                         # This is currently never returned from cohere
                         pass
                     else:
@@ -254,7 +255,7 @@ class CohereModel(Model):
         return tools
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart | ServerToolCallPart) -> ToolCallV2:
+    def _map_tool_call(t: ToolCallPart | BuiltinToolCallPart) -> ToolCallV2:
         return ToolCallV2(
             id=_guard_tool_call_id(t=t),
             type='function',

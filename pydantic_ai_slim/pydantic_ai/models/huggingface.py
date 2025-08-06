@@ -17,6 +17,7 @@ from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
@@ -26,7 +27,6 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
-    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -135,6 +135,9 @@ class HuggingFaceModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        # Check for unsupported builtin tools
+        if model_request_parameters.builtin_tools:
+            raise ValueError('HuggingFace does not support built-in tools')
         response = await self._completions_create(
             messages, False, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
@@ -301,12 +304,10 @@ class HuggingFaceModel(Model):
                         # please open an issue. The below code is the code to send thinking to the provider.
                         # texts.append(f'<think>\n{item.content}\n</think>')
                         pass
-                    elif isinstance(item, ServerToolCallPart):  # pragma: no cover
-                        # ServerToolCallPart represents a tool call from a remote server
+                    elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
                         # This is currently never returned from huggingface
                         pass
                     elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
-                        # BuiltinToolReturnPart represents a tool return from a remote server
                         # This is currently never returned from huggingface
                         pass
                     else:

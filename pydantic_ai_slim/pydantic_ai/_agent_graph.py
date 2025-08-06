@@ -446,10 +446,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             texts.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
-                    elif isinstance(part, _messages.ServerToolCallPart):
-                        yield _messages.ServerToolCallEvent(part)
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        yield _messages.BuiltinToolCallEvent(part)
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
-                        yield _messages.ServerToolResultEvent(part)
+                        yield _messages.BuiltinToolResultEvent(part)
                     elif isinstance(part, _messages.ThinkingPart):
                         # We don't need to do anything with thinking parts in this tool-calling node.
                         # We need to handle text parts in case there are no tool calls and/or the desired output comes

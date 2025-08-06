@@ -20,6 +20,7 @@ from .._output import OutputObjectDefinition
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FileUrl,
     ModelMessage,
@@ -28,7 +29,6 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
-    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -611,8 +611,8 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
-        elif isinstance(item, ServerToolCallPart):  # pragma: no cover
-            # Handle ServerToolCallPart the same as ToolCallPart
+        elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
+            # Handle BuiltinToolCallPart the same as ToolCallPart
             # This is currently never returned from gemini
             pass
         elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover

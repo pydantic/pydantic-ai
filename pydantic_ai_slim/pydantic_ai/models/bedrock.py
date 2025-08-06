@@ -252,6 +252,9 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        # Check for unsupported builtin tools
+        if model_request_parameters.builtin_tools:
+            raise ValueError('Bedrock does not support built-in tools')
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)

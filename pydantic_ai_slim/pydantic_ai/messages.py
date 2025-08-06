@@ -566,7 +566,10 @@ class ToolReturnPart(BaseToolReturnPart):
 
 @dataclass(repr=False)
 class BuiltinToolReturnPart(BaseToolReturnPart):
-    """A tool return message from a server tool."""
+    """A tool return message from a built-in tool."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
 
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -776,18 +779,18 @@ class ToolCallPart(BaseToolCallPart):
 
 
 @dataclass(repr=False)
-class ServerToolCallPart(BaseToolCallPart):
-    """A tool call from a server tool."""
+class BuiltinToolCallPart(BaseToolCallPart):
+    """A tool call to a built-in tool."""
 
-    model_name: str | None = None
-    """The name of the model that generated the response."""
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
 
-    part_kind: Literal['server-tool-call'] = 'server-tool-call'
+    part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
 
 
 ModelResponsePart = Annotated[
-    Union[TextPart, ToolCallPart, ServerToolCallPart, BuiltinToolReturnPart, ThinkingPart],
+    Union[TextPart, ToolCallPart, BuiltinToolCallPart, BuiltinToolReturnPart, ThinkingPart],
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -1182,28 +1185,28 @@ class FunctionToolResultEvent:
 
 
 @dataclass(repr=False)
-class ServerToolCallEvent:
-    """An event indicating the start to a call to a server tool."""
+class BuiltinToolCallEvent:
+    """An event indicating the start to a call to a built-in tool."""
 
-    part: ServerToolCallPart
-    """The server tool call to make."""
+    part: BuiltinToolCallPart
+    """The built-in tool call to make."""
 
-    event_kind: Literal['server_tool_call'] = 'server_tool_call'
+    event_kind: Literal['builtin_tool_call'] = 'builtin_tool_call'
     """Event type identifier, used as a discriminator."""
 
 
 @dataclass(repr=False)
-class ServerToolResultEvent:
-    """An event indicating the result of a server tool call."""
+class BuiltinToolResultEvent:
+    """An event indicating the result of a built-in tool call."""
 
     result: BuiltinToolReturnPart
-    """The result of the call to the server tool."""
+    """The result of the call to the built-in tool."""
 
-    event_kind: Literal['server_tool_result'] = 'server_tool_result'
+    event_kind: Literal['builtin_tool_result'] = 'builtin_tool_result'
     """Event type identifier, used as a discriminator."""
 
 
 HandleResponseEvent = Annotated[
-    Union[FunctionToolCallEvent, FunctionToolResultEvent, ServerToolCallEvent, ServerToolResultEvent],
+    Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
     pydantic.Discriminator('event_kind'),
 ]

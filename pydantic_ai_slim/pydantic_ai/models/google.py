@@ -16,6 +16,7 @@ from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FileUrl,
     ModelMessage,
@@ -24,7 +25,6 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
-    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -507,7 +507,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
             pass
-        elif isinstance(item, ServerToolCallPart):  # pragma: no cover
+        elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
             # This is currently never returned from google
             pass
         elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
@@ -528,14 +528,18 @@ def _process_response_from_parts(
     items: list[ModelResponsePart] = []
     for part in parts:
         if part.executable_code is not None:
-            items.append(ServerToolCallPart(args=part.executable_code.model_dump(), tool_name='code_execution'))
+            items.append(
+                BuiltinToolCallPart(
+                    provider_name='google', args=part.executable_code.model_dump(), tool_name='code_execution'
+                )
+            )
         elif part.code_execution_result is not None:
-            # TODO(Marcelo): Is the idea to generate the tool_call_id on the `executable_code`, and then pass it here?
             items.append(
                 BuiltinToolReturnPart(
+                    provider_name='google',
                     tool_name='code_execution',
                     content=part.code_execution_result.output,
-                    tool_call_id="It doesn't have.",
+                    tool_call_id='not_provided',
                 )
             )
         elif part.text is not None:

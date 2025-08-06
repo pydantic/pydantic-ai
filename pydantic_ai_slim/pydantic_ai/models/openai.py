@@ -19,6 +19,7 @@ from ..builtin_tools import WebSearchTool
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
@@ -28,7 +29,6 @@ from ..messages import (
     ModelResponsePart,
     ModelResponseStreamEvent,
     RetryPromptPart,
-    ServerToolCallPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -300,7 +300,6 @@ class OpenAIModel(Model):
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
-        # standalone function to make it easier to override
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif (
@@ -480,9 +479,9 @@ class OpenAIModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    # OpenAI doesn't return server tool calls
-                    elif isinstance(item, (ServerToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
-                        continue
+                    # OpenAI doesn't return built-in tool calls
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        pass
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -772,7 +771,6 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
-        tools = list(model_settings.get('openai_builtin_tools', [])) + tools
         tools = self._get_builtin_tools(model_request_parameters) + tools
 
         if not tools:
@@ -863,7 +861,9 @@ class OpenAIResponsesModel(Model):
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, WebSearchTool):  # pragma: no branch
+            if isinstance(tool, WebSearchTool):
+                if tool.user_location and len(tool.user_location.get('region', '')) != 2:
+                    raise ValueError('Region must be a 2-letter country code')
                 web_search_tool = responses.WebSearchToolParam(
                     type='web_search_preview', search_context_size=tool.search_context_size
                 )
@@ -928,9 +928,9 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
-                    # OpenAI doesn't return server tool calls
-                    elif isinstance(item, (ServerToolCallPart, BuiltinToolReturnPart)):
-                        continue
+                    # OpenAI doesn't return built-in tool calls
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                        pass
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
                         # please open an issue. The below code is the code to send thinking to the provider.

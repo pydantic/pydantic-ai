@@ -419,10 +419,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self._system_prompt_dynamic_functions = {}
 
         self._max_result_retries = output_retries if output_retries is not None else retries
-        self._builtin_tools: list[AbstractBuiltinTool] = []
-
-        for tool in builtin_tools:
-            self._builtin_tools.append(tool)
+        self._builtin_tools = builtin_tools
 
         self._prepare_tools = prepare_tools
         self._prepare_output_tools = prepare_output_tools
