@@ -710,7 +710,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic-ai", editable = "." },
-    { name = "textual", specifier = ">=5.2.0" },
+    { name = "textual", specifier = ">=5.3.0" },
 ]
 
 [[package]]
@@ -4467,7 +4467,7 @@ wheels = [
 
 [[package]]
 name = "textual"
-version = "5.2.0"
+version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markdown-it-py", extra = ["linkify", "plugins"] },
@@ -4476,9 +4476,9 @@ dependencies = [
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/41/55/2f7ede2f7a2aa852f062019ab96204dd311dda9103f0b73980e8aeb4e7cc/textual-5.2.0.tar.gz", hash = "sha256:6d4a77fddde7aa659acc25c3e14ed27ff75e125c6730c6f57263cf91b60e0d50", size = 1556452, upload-time = "2025-08-01T18:45:33.262Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/ce/f0f938d33d9bebbf8629e0020be00c560ddfa90a23ebe727c2e5aa3f30cf/textual-5.3.0.tar.gz", hash = "sha256:1b6128b339adef2e298cc23ab4777180443240ece5c232f29b22960efd658d4d", size = 1557651, upload-time = "2025-08-07T12:36:50.342Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/10/81b3c0cac7d5c6b0b32f38b663fdae3773fb2843623c1e0ff7626dfef7c9/textual-5.2.0-py3-none-any.whl", hash = "sha256:5df1ef970a88ac9a266cbcace098f595f22706990f2506f6e545d9bb55983f1d", size = 701823, upload-time = "2025-08-01T18:45:31.17Z" },
+    { url = "https://files.pythonhosted.org/packages/00/2f/f7c8a533bee50fbf5bb37ffc1621e7b2cdd8c9a6301fc51faa35fa50b09d/textual-5.3.0-py3-none-any.whl", hash = "sha256:02a6abc065514c4e21f94e79aaecea1f78a28a85d11d7bfc64abf3392d399890", size = 702671, upload-time = "2025-08-07T12:36:48.272Z" },
 ]
 
 [[package]]
