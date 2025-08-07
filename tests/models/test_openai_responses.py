@@ -574,17 +574,21 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
     assert event_parts.pop(0) == snapshot(PartStartEvent(index=0, part=TextPart(content='Here')))
     assert event_parts.pop(0) == snapshot(FinalResultEvent(tool_name=None, tool_call_id=None))
     assert ''.join(event.delta.content_delta for event in event_parts) == snapshot("""\
- are the top three news stories from around the world as of July 16, 2025:
+ are the top three news stories from around the world as of August 7, 2025:
 
-1. **Severe Flooding in the United States**: Central Texas experienced catastrophic flash flooding over the Fourth of July weekend, resulting in at least 111 fatalities and over 160 missing persons. The Guadalupe River rose 26 feet in under an hour, making it the deadliest inland flood in U.S. history. Additionally, Ruidoso, New Mexico, faced rapid floodwaters, leading to numerous rescues and missing individuals. Chicago's west side also saw significant rainfall, causing widespread flooding and emergency responses. ([wizard-withwords.com](https://www.wizard-withwords.com/p/weekly-world-wrap-up-july-6-12-2025?utm_source=openai))
+1. **U.S. Imposes New Tariffs Amid Market Optimism**
 
-2. **International Tensions Over Russian Oil Imports**: U.S. President Donald Trump has threatened sanctions on countries like India and China for purchasing Russian oil. While urging peace talks between Russia and Ukraine, the U.S. continues to supply arms to Ukraine, highlighting the complex geopolitical landscape. ([leverageedu.com](https://leverageedu.com/discover/school-education/school-assembly-news-headlines-16-july-2025/?utm_source=openai))
+   The United States has implemented new tariffs ranging from 10% to 50% on imports from multiple countries. Despite this, global markets have shown resilience, buoyed by expectations of interest rate cuts and positive earnings reports. Notably, exemptions were granted to Taiwan and South Korea, shielding major chipmakers like TSMC, Samsung, and SK Hynix from the highest levies. ([reuters.com](https://www.reuters.com/business/finance/global-markets-view-usa-2025-08-07/?utm_source=openai))
 
-3. **Scientific Milestones Achieved**: In June 2025, the European Space Agency's Solar Orbiter captured the first-ever images of the Sun's south pole. Additionally, Chinese scientists demonstrated a parallel optical computing chip capable of 100 simultaneous operations, marking a significant advancement in light-based AI hardware. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2025_in_science?utm_source=openai))
+2. **Ghanaian Ministers Killed in Helicopter Crash**
 
+   Ghana's Defence Minister Edward Omane Boamah and Environment Minister Ibrahim Murtala Muhammed, along with six others, have died in a military helicopter crash in the Ashanti region. The incident has been described as a "national tragedy" by Chief of Staff Julius Debrah. ([anewz.tv](https://anewz.tv/world/world-news/11722/anewz-morning-brief-7th-august-2025/news?utm_source=openai))
 
-## Top World News Stories on July 16, 2025:
-- [Morning Bid: Tariff imprint spied in US CPI](https://www.reuters.com/world/europe/global-markets-view-europe-2025-07-16/?utm_source=openai) \
+3. **Massive Wildfire in France Claims Lives**
+
+   A significant wildfire in southern France's Aude region has resulted in at least one death and nine injuries. The fire, which began on August 6, has destroyed or damaged 25 homes, with over 1,800 firefighters working to control the blaze. ([anewz.tv](https://anewz.tv/world/world-news/11722/anewz-morning-brief-7th-august-2025/news?utm_source=openai))
+
+Please note that news developments are continually evolving. For the most current information, refer to reputable news sources. \
 """)
 
 
