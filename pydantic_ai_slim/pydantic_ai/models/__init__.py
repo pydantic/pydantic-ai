@@ -26,7 +26,6 @@ from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from ..exceptions import UserError
 from ..messages import (
-    BaseCountTokensResponse,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -396,7 +395,7 @@ class Model(ABC):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> BaseCountTokensResponse:
+    ) -> Usage:
         """Make a request to the model for counting tokens."""
         # This method is not required, but you need to implement it if you want to support token counting before making a request
         raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')

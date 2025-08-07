@@ -1698,3 +1698,39 @@ async def test_google_model_usage_limit_exceeded(allow_model_requests: None, goo
             'The quick brown fox jumps over the lazydog.',
             usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
         )
+
+
+async def test_google_model_usage_limit_exceeded_with_event_check_failed(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+    event_parts: list[Any] = []
+    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=12\\)'):
+        async with agent.iter(
+            user_prompt='The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
+        ) as agent_run:
+            async for node in agent_run:
+                if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                    async with node.stream(agent_run.ctx) as request_stream:
+                        async for event in request_stream:
+                            event_parts.append(event)
+
+    assert event_parts == [], 'No events should be emitted if the error occurs before the request'
+
+
+async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider='google-vertex')
+
+    agent = Agent(model, system_prompt='You are a chatbot.')
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=36\\)'):
+        await agent.run(
+            'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+            usage_limits=UsageLimits(request_tokens_limit=50, count_tokens_before_request=True),
+        )

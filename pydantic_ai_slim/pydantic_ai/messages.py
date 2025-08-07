@@ -1237,19 +1237,3 @@ HandleResponseEvent = Annotated[
     Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
     pydantic.Discriminator('event_kind'),
 ]
-
-
-@dataclass(repr=False)
-class BaseCountTokensResponse:
-    """Structured response for token count API calls from various model providers."""
-
-    total_tokens: int | None = field(
-        default=None, metadata={'description': 'Total number of tokens counted in the messages.'}
-    )
-    """Total number of tokens counted in the messages."""
-
-    def to_usage(self) -> Usage:
-        """Usage object conversion for compatibility with Usage.incr."""
-        return Usage(request_tokens=self.total_tokens)
-
-    __repr__ = _utils.dataclasses_no_defaults_repr

@@ -328,11 +328,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> AsyncIterator[models.StreamedResponse]:
         assert not self._did_stream, 'stream() should only be called once per node'
 
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
+        model_settings, model_request_parameters, message_history = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+
         async with ctx.deps.model.request_stream(
             message_history, model_settings, model_request_parameters
         ) as streamed_response:
@@ -354,11 +352,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
+        model_settings, model_request_parameters, message_history = await self._prepare_request(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -366,30 +361,32 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> tuple[ModelSettings | None, models.ModelRequestParameters]:
+    ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage]]:
         ctx.state.message_history.append(self.request)
 
-        # Check usage
-        if ctx.deps.usage_limits:  # pragma: no branch
-            if ctx.deps.usage_limits.count_tokens_before_request:
-                model_request_parameters = await _prepare_request_parameters(ctx)
-                message_history = await _process_message_history(
-                    ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-                )
-                token_count = await ctx.deps.model.count_tokens(
-                    message_history, ctx.deps.model_settings, model_request_parameters
-                )
-                ctx.state.usage.incr(token_count.to_usage())
-                ctx.deps.usage_limits.check_tokens(ctx.state.usage)
-            else:
-                ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+        model_settings = merge_model_settings(ctx.deps.model_settings, None)
+        model_request_parameters = await _prepare_request_parameters(ctx)
 
         # Increment run_step
         ctx.state.run_step += 1
 
-        model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        model_request_parameters = await _prepare_request_parameters(ctx)
-        return model_settings, model_request_parameters
+        # Process message history
+        message_history = await _process_message_history(
+            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
+        )
+
+        # Check usage
+        if ctx.deps.usage_limits:  # pragma: no branch
+            ctx.deps.usage_limits.check_before_request(ctx.state.usage)
+            if ctx.deps.usage_limits.count_tokens_before_request:
+                temp_usage = dataclasses.replace(ctx.state.usage)
+                token_count = await ctx.deps.model.count_tokens(
+                    message_history, ctx.deps.model_settings, model_request_parameters
+                )
+                temp_usage.incr(token_count)
+                ctx.deps.usage_limits.check_tokens(temp_usage)
+
+        return model_settings, model_request_parameters, message_history
 
     def _finish_handling(
         self,

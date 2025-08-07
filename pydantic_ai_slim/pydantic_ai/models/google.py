@@ -16,7 +16,6 @@ from .._output import OutputObjectDefinition
 from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
-    BaseCountTokensResponse,
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -54,7 +53,6 @@ try:
         ContentDict,
         ContentUnionDict,
         CountTokensConfigDict,
-        CountTokensResponse,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -195,10 +193,11 @@ class GoogleModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> BaseCountTokensResponse:
+    ) -> usage.Usage:
         check_allow_model_requests()
         model_settings = cast(GoogleModelSettings, model_settings or {})
-        _, contents = await self._map_messages(messages)
+        system_instruction, contents = await self._map_messages(messages)
+        tools = self._get_tools(model_request_parameters)
         http_options: HttpOptionsDict = {
             'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         }
@@ -207,19 +206,28 @@ class GoogleModel(Model):
                 http_options['timeout'] = int(1000 * timeout)
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
-        # system_instruction and tools parameter are not supported for Count Tokens https://github.com/googleapis/python-genai/blob/038ecd3375f7c63a8ee8c1afa50cff1976343625/google/genai/models.py#L1169
-        config = CountTokensConfigDict(
-            http_options=http_options,
-            system_instruction=None,
-            tools=None,
-        )
+
+        if self.system != 'google-gla':
+            config = CountTokensConfigDict(
+                http_options=http_options,
+                system_instruction=system_instruction,
+                tools=tools,
+            )
+        else:
+            config = CountTokensConfigDict(
+                http_options=http_options,
+                system_instruction=None,
+                tools=None,
+            )
 
         response = await self.client.aio.models.count_tokens(
             model=self._model_name,
             contents=contents,
             config=config,
         )
-        return self._process_count_tokens_response(response)
+        if response.total_tokens is None:
+            raise UnexpectedModelBehavior('Total tokens missing from Gemini response', str(response))
+        return usage.Usage(request_tokens=response.total_tokens)
 
     @asynccontextmanager
     async def request_stream(
@@ -382,14 +390,6 @@ class GoogleModel(Model):
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
         )
-
-    def _process_count_tokens_response(
-        self,
-        response: CountTokensResponse,
-    ) -> BaseCountTokensResponse:
-        if not hasattr(response, 'total_tokens') or response.total_tokens is None:
-            raise UnexpectedModelBehavior('Total tokens missing from Gemini response', str(response))
-        return BaseCountTokensResponse(total_tokens=response.total_tokens)
 
     async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
