@@ -65,7 +65,13 @@ class PromptInput(Input):
     ALLOW_MAXIMIZE = False
 
 
-class Prompt(containers.HorizontalGroup):
+class PromptTextArea(TextArea):
+    """A custom textarea."""
+
+    BINDING_GROUP_TITLE = 'Prompt'
+
+
+class Prompt(containers.HorizontalGroup, can_focus=False):
     """Takes input from the user."""
 
     BINDINGS = [
@@ -105,7 +111,7 @@ class Prompt(containers.HorizontalGroup):
                 ]
             ),
         )
-        yield TextArea(
+        yield PromptTextArea(
             id='prompt-textarea',
             language='markdown',
             highlight_cursor_line=False,
@@ -116,10 +122,12 @@ class Prompt(containers.HorizontalGroup):
             self.input.display = False
             self.text_area.display = True
             self.text_area.load_text(self.input.value)
+            self.text_area.focus()
         else:
             self.input.display = True
             self.text_area.display = False
             self.input.value = self.text_area.text.partition('\n')[0]
+            self.input.focus()
 
     @property
     def value(self) -> str:
