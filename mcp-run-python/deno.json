@@ -15,6 +15,7 @@
   "imports": {
     "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@^1.15.1",
     "@std/cli": "jsr:@std/cli@^1.0.15",
+    "@std/fs": "jsr:@std/fs@^1.0.8",
     "@std/path": "jsr:@std/path@^1.0.8",
     // do NOT upgrade above this version until there is a workaround for https://github.com/pyodide/pyodide/pull/5621
     "pyodide": "npm:pyodide@0.27.6",

@@ -3,8 +3,11 @@
   "specifiers": {
     "jsr:@std/cli@*": "1.0.15",
     "jsr:@std/cli@^1.0.15": "1.0.15",
+    "jsr:@std/fs@^1.0.8": "1.0.19",
+    "jsr:@std/internal@^1.0.9": "1.0.10",
     "jsr:@std/path@*": "1.0.8",
     "jsr:@std/path@^1.0.8": "1.0.8",
+    "jsr:@std/path@^1.1.1": "1.1.1",
     "npm:@modelcontextprotocol/sdk@^1.15.1": "1.15.1_express@5.1.0_zod@3.24.2",
     "npm:@types/node@*": "22.12.0",
     "npm:@types/node@22.12.0": "22.12.0",
@@ -16,8 +19,23 @@
     "@std/cli@1.0.15": {
       "integrity": "e79ba3272ec710ca44d8342a7688e6288b0b88802703f3264184b52893d5e93f"
     },
+    "@std/fs@1.0.19": {
+      "integrity": "051968c2b1eae4d2ea9f79a08a3845740ef6af10356aff43d3e2ef11ed09fb06",
+      "dependencies": [
+        "jsr:@std/path@^1.1.1"
+      ]
+    },
+    "@std/internal@1.0.10": {
+      "integrity": "e3be62ce42cab0e177c27698e5d9800122f67b766a0bea6ca4867886cbde8cf7"
+    },
     "@std/path@1.0.8": {
       "integrity": "548fa456bb6a04d3c1a1e7477986b6cffbce95102d0bb447c67c4ee70e0364be"
+    },
+    "@std/path@1.1.1": {
+      "integrity": "fe00026bd3a7e6a27f73709b83c607798be40e20c81dde655ce34052fd82ec76",
+      "dependencies": [
+        "jsr:@std/internal"
+      ]
     }
   },
   "npm": {
@@ -914,6 +932,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/cli@^1.0.15",
+      "jsr:@std/fs@^1.0.8",
       "jsr:@std/path@^1.0.8",
       "npm:@modelcontextprotocol/sdk@^1.15.1",
       "npm:pyodide@0.27.6",
