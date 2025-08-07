@@ -302,6 +302,8 @@ def StructuredDict(
     #> {'name': 'John Doe', 'age': 30}
     ```
     """
+    # Resolve any $ref references in the schema to avoid KeyError issues
+    json_schema = _utils.resolve_json_schema_refs(json_schema)
     json_schema = _utils.check_object_json_schema(json_schema)
 
     if name:

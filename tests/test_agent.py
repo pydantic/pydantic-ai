@@ -1357,6 +1357,51 @@ def test_output_type_structured_dict():
     )
 
 
+def test_structured_dict_with_refs():
+    """Test StructuredDict with $defs and $ref references."""
+    CarDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'make': {'type': 'string'},
+                'model': {'type': 'string'},
+                'tires': {
+                    'type': 'array',
+                    'items': {'$ref': '#/$defs/Tire'}
+                }
+            },
+            'required': ['make', 'model', 'tires'],
+            '$defs': {
+                'Tire': {
+                    'type': 'object',
+                    'properties': {
+                        'brand': {'type': 'string'},
+                        'size': {'type': 'string'}
+                    },
+                    'required': ['brand', 'size']
+                }
+            }
+        },
+        name='Car',
+        description='A car with tires',
+    )
+    
+    output_tools = None
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        nonlocal output_tools
+        output_tools = info.output_tools
+        args_json = '{"make": "Toyota", "model": "Camry", "tires": [{"brand": "Michelin", "size": "225/60R16"}]}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+    
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=CarDict,
+    )
+    result = agent.run_sync('Generate a car')
+    assert result.output == snapshot({'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': '225/60R16'}]})
+
+
 def test_default_structured_output_mode():
     def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover

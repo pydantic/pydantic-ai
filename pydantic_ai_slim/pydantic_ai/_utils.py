@@ -71,6 +71,56 @@ def is_model_like(type_: Any) -> bool:
     )
 
 
+def resolve_json_schema_refs(schema: JsonSchemaValue) -> JsonSchemaValue:
+    """Recursively resolve all $ref references in a JSON schema by inlining them.
+    
+    Args:
+        schema: The JSON schema to resolve references in
+        
+    Returns:
+        A new JSON schema with all $ref references resolved and inlined
+    """
+    if not isinstance(schema, dict):
+        return schema
+    
+    # If there are no $refs in the schema, return as-is
+    if '$defs' not in schema and '$ref' not in str(schema):
+        return schema
+    
+    # Get the definitions from the schema
+    defs = schema.get('$defs', {})
+    
+    def resolve_refs(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            if '$ref' in obj:
+                # Resolve the reference
+                ref = obj['$ref']
+                if ref.startswith('#/$defs/'):
+                    def_name = ref[8:]  # Remove '#/$defs/' prefix
+                    if def_name in defs:
+                        # Get the referenced definition and recursively resolve it
+                        resolved_def = resolve_refs(defs[def_name])
+                        return resolved_def
+                    else:
+                        # If reference can't be resolved, return as-is
+                        return obj
+                else:
+                    # Non-local reference, return as-is
+                    return obj
+            else:
+                # Recursively process dictionary values, but skip $defs in root to avoid infinite recursion
+                return {
+                    k: resolve_refs(v) for k, v in obj.items()
+                    if not (k == '$defs' and obj is schema)
+                }
+        elif isinstance(obj, list):
+            return [resolve_refs(item) for item in obj]
+        else:
+            return obj
+    
+    return resolve_refs(schema)
+
+
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     from .exceptions import UserError
 
