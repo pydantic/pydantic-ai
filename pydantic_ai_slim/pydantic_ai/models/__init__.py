@@ -18,6 +18,7 @@ from typing import Generic, TypeVar, overload
 import httpx
 from typing_extensions import Literal, TypeAliasType, TypedDict
 
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 
 from .. import _utils
@@ -336,6 +337,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list)
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None

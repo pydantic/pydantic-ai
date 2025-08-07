@@ -1,0 +1,86 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '250'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content:
+        - text: How much is 3 * 12390?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '927'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      container:
+        expires_at: '2025-05-26T13:30:45.703429+00:00'
+        id: container_011CPW9LpfbF8dmXMvVNCiQJ
+      content:
+      - text: I'll calculate 3 * 12390 for you.
+        type: text
+      - id: srvtoolu_01CPfaeVC7ju4VsdzxjSLDrY
+        input:
+          code: |-
+            result = 3 * 12390
+            print(f"3 * 12390 = {result}")
+        name: code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            3 * 12390 = 37170
+          type: code_execution_result
+        tool_use_id: srvtoolu_01CPfaeVC7ju4VsdzxjSLDrY
+        type: code_execution_tool_result
+      - text: The answer is **37,170**.
+        type: text
+      id: msg_015H6Emn2T8vZhE52mU2jF1U
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1630
+        output_tokens: 105
+        server_tool_use:
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

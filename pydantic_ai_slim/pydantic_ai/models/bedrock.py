@@ -15,9 +15,12 @@ import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, usage
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -342,6 +345,9 @@ class BedrockConverseModel(Model):
         if tool_config:
             params['toolConfig'] = tool_config
 
+        if model_request_parameters.builtin_tools:
+            raise UserError('Bedrock does not support built-in tools')
+
         # Bedrock supports a set of specific extra parameters
         if model_settings:
             if guardrail_config := model_settings.get('bedrock_guardrail_config', None):
@@ -478,6 +484,8 @@ class BedrockConverseModel(Model):
                         else:
                             # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
                             pass
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                        pass
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
