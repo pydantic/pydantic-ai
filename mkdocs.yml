@@ -41,6 +41,7 @@ nav:
       - input.md
       - thinking.md
       - direct.md
+      - builtin-tools.md
       - common-tools.md
       - retries.md
       - MCP:

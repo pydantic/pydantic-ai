@@ -25,7 +25,7 @@ async def test_builtin_tools_not_supported_web_search_stream(model: Model, allow
             ...  # pragma: no cover
 
 
-@pytest.mark.parametrize('model', ('groq',), indirect=True)
+@pytest.mark.parametrize('model', ('groq', 'openai'), indirect=True)
 async def test_builtin_tools_not_supported_code_execution(model: Model, allow_model_requests: None):
     agent = Agent(model=model, builtin_tools=[CodeExecutionTool()])
 
@@ -33,7 +33,7 @@ async def test_builtin_tools_not_supported_code_execution(model: Model, allow_mo
         await agent.run('What day is tomorrow?')
 
 
-@pytest.mark.parametrize('model', ('groq',), indirect=True)
+@pytest.mark.parametrize('model', ('groq', 'openai'), indirect=True)
 async def test_builtin_tools_not_supported_code_execution_stream(model: Model, allow_model_requests: None):
     agent = Agent(model=model, builtin_tools=[CodeExecutionTool()])
 

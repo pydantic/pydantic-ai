@@ -11,6 +11,8 @@ from typing import Any, Literal, Union, cast, overload
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
+from pydantic_ai.exceptions import UserError
+
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._thinking_part import split_content_into_text_and_thinking
@@ -459,6 +461,8 @@ class OpenAIModel(Model):
                         ),
                     )
                 return WebSearchOptions(search_context_size=tool.search_context_size)
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                raise UserError('`CodeExecutionTool` is not supported by OpenAI')
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
@@ -1210,6 +1214,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):  # pragma: lax no cover
                 pass  # there's nothing we need to do here
 
             else:  # pragma: no cover
