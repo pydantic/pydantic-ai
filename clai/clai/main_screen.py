@@ -25,9 +25,9 @@ from pydantic_ai.output import OutputDataT
 
 HELP = Template("""\
 ## $title
-                                
+
 - **Powered by Pydantic AI**
-    
+
     The Python agent framework designed to make it less painful to build production grade applications with Generative AI.
 
 | Command | Purpose |
