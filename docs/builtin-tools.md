@@ -35,19 +35,16 @@ making it ideal for queries that require up-to-date data.
 !!! note "Groq Support"
     To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound).
 
-### Basic Usage
+### Usage
 
 ```py title="web_search_basic.py"
 from pydantic_ai import Agent, WebSearchTool
 
-agent = Agent(
-    'anthropic:claude-4-0-sonnet',
-    builtin_tools=[WebSearchTool()],
-    system_prompt='You are a helpful assistant that can search the web.',
-)
+agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[WebSearchTool()])
 
-result = agent.run_sync('What are the latest developments in AI this week?')
-...
+result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
+# > Scientists have developed a universal AI detector that can identify deepfake videos.
+
 ```
 
 ### Configuration Options
@@ -57,28 +54,26 @@ The `WebSearchTool` supports several configuration parameters:
 ```py title="web_search_configured.py"
 from pydantic_ai import Agent, WebSearchTool, WebSearchUserLocation
 
-# Configure web search with location and domain filtering
-web_search = WebSearchTool(
-    search_context_size='high',  # OpenAI only: 'low', 'medium', 'high'
-    user_location=WebSearchUserLocation(
-        city='San Francisco',
-        country='US',  # 2-letter code for OpenAI
-        region='CA',
-        timezone='America/Los_Angeles'
-    ),
-    blocked_domains=['example.com', 'spam-site.net'],
-    allowed_domains=None,  # Cannot use both blocked_domains and allowed_domains with Anthropic
-    max_uses=5  # Anthropic only: limit tool usage
-)
-
 agent = Agent(
-    'anthropic:claude-4-0-sonnet',
-    builtin_tools=[web_search],
-    system_prompt='Search for local information and provide current results.',
+    'anthropic:claude-sonnet-4-0',
+    builtin_tools=[
+        WebSearchTool(
+            search_context_size='high',
+            user_location=WebSearchUserLocation(
+                city='San Francisco',
+                country='US',
+                region='CA',
+                timezone='America/Los_Angeles',
+            ),
+            blocked_domains=['example.com', 'spam-site.net'],
+            allowed_domains=None,  # Cannot use both blocked_domains and allowed_domains with Anthropic
+            max_uses=5,  # Anthropic only: limit tool usage
+        )
+    ],
 )
 
-result = agent.run_sync('What is the weather like today?')
-...
+result = agent.run_sync('Use the web to get the current time.')
+# > In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.
 ```
 
 ### Parameter Support by Provider
@@ -112,50 +107,15 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Cohere | ❌ |
 | HuggingFace | ❌ |
 
-### Basic Usage
+### Usage
 
 ```py title="code_execution_basic.py"
 from pydantic_ai import Agent, CodeExecutionTool
 
-agent = Agent(
-    'openai:gpt-4o',
-    builtin_tools=[CodeExecutionTool()],
-    system_prompt='You can execute Python code to solve problems and perform calculations.',
-)
+agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[CodeExecutionTool()])
 
 result = agent.run_sync('Calculate the factorial of 15 and show your work')
-...
-```
-
-### Advanced Examples
-
-```py title="code_execution_advanced.py"
-from pydantic_ai import Agent, CodeExecutionTool
-
-# Agent that can perform data analysis
-agent = Agent(
-    'anthropic:claude-4-0-sonnet',
-    builtin_tools=[CodeExecutionTool()],
-    system_prompt='''You are a data analyst that can execute Python code.
-    When given data or mathematical problems, write and execute code to provide accurate solutions.
-    Always show your work and explain your approach.''',
-)
-
-# Complex mathematical calculation
-result = agent.run_sync('''
-    Calculate the compound interest on $10,000 invested at 5% annual interest
-    for 10 years, compounded monthly. Show the formula and intermediate steps.
-    '''
-)
-...
-
-# Data analysis task
-result = agent.run_sync('''
-    Create a dataset of 100 random numbers from a normal distribution (mean=50, std=10).
-    Calculate the mean, median, standard deviation, and create a histogram.
-    '''
-)
-...
+# > The factorial of 15 is **1,307,674,368,000**.
 ```
 
 ## API Reference
