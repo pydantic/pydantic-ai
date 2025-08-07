@@ -198,9 +198,12 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: |
+      - run: uv sync --group dev
+
+      - name: test lowest versions
+        run: |
           unset UV_FROZEN
-          uv run --group dev --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
+          uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
