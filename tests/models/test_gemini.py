@@ -796,7 +796,30 @@ async def test_unexpected_response(client_with_handler: ClientWithHandler, env: 
     with pytest.raises(ModelHTTPError) as exc_info:
         await agent.run('Hello')
 
-    assert str(exc_info.value) == snapshot('status_code: 401, model_name: gemini-1.5-flash, body: invalid request')
+    assert str(exc_info.value) == snapshot("""\
+status_code: 400, model_name: gemini-1.5-flash, body: {
+  "error": {
+    "code": 400,
+    "message": "API key not valid. Please pass a valid API key.",
+    "status": "INVALID_ARGUMENT",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "API_KEY_INVALID",
+        "domain": "googleapis.com",
+        "metadata": {
+          "service": "generativelanguage.googleapis.com"
+        }
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.LocalizedMessage",
+        "locale": "en-US",
+        "message": "API key not valid. Please pass a valid API key."
+      }
+    ]
+  }
+}
+""")
 
 
 async def test_stream_text(get_gemini_client: GetGeminiClient):
@@ -1499,7 +1522,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
         ]
     )
@@ -1530,7 +1553,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
             ModelRequest(
                 parts=[
@@ -1710,7 +1733,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1740,7 +1763,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1795,7 +1818,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1825,7 +1848,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1887,7 +1910,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id='TT9IaNfGN_DmqtsPzKnE4AE',
+                id='TT9IaNfGN_DmqtsPzKnE4AE',
             ),
         ]
     )
@@ -1957,7 +1980,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
         ]
     )
@@ -2016,7 +2039,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
         ]
     )
@@ -2068,7 +2091,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
         ]
     )
@@ -2122,7 +2145,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2153,7 +2176,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
         ]
     )
@@ -2209,7 +2232,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                id=IsStr(),
             ),
         ]
     )
