@@ -504,20 +504,21 @@ The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from mode
 
 ### Model specific settings
 
-If you wish to further customize model behavior, you can use a subclass of [`ModelSettings`][pydantic_ai.settings.ModelSettings], like [`GeminiModelSettings`][pydantic_ai.models.gemini.GeminiModelSettings], associated with your model of choice.
+If you wish to further customize model behavior, you can use a subclass of [`ModelSettings`][pydantic_ai.settings.ModelSettings], like
+[`GoogleModelSettings`][pydantic_ai.models.google.GoogleModelSettings], associated with your model of choice.
 
 For example:
 
 ```py
 from pydantic_ai import Agent, UnexpectedModelBehavior
-from pydantic_ai.models.gemini import GeminiModelSettings
+from pydantic_ai.models.google import GoogleModelSettings
 
 agent = Agent('google-gla:gemini-1.5-flash')
 
 try:
     result = agent.run_sync(
         'Write a list of 5 very rude things that I might say to the universe after stubbing my toe in the dark:',
-        model_settings=GeminiModelSettings(
+        model_settings=GoogleModelSettings(
             temperature=0.0,  # general model settings can also be specified
             gemini_safety_settings=[
                 {

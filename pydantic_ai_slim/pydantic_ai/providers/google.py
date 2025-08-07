@@ -3,6 +3,8 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, overload
 
+import httpx
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import get_user_agent
 from pydantic_ai.profiles import ModelProfile
@@ -12,6 +14,7 @@ from pydantic_ai.providers import Provider
 try:
     from google import genai
     from google.auth.credentials import Credentials
+    from google.genai.types import HttpOptionsDict
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -89,17 +92,17 @@ class GoogleProvider(Provider[genai.Client]):
             if vertexai is None:
                 vertexai = bool(location or project or credentials)
 
+            http_options: HttpOptionsDict = {
+                'headers': {'User-Agent': get_user_agent()},
+                'async_client_args': {'transport': httpx.AsyncHTTPTransport()},
+            }
             if not vertexai:
                 if api_key is None:
                     raise UserError(  # pragma: no cover
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                         'to use the Google Generative Language API.'
                     )
-                self._client = genai.Client(
-                    vertexai=vertexai,
-                    api_key=api_key,
-                    http_options={'headers': {'User-Agent': get_user_agent()}},
-                )
+                self._client = genai.Client(vertexai=vertexai, api_key=api_key, http_options=http_options)
             else:
                 self._client = genai.Client(
                     vertexai=vertexai,
@@ -111,7 +114,7 @@ class GoogleProvider(Provider[genai.Client]):
                     # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
                     location=location or os.environ.get('GOOGLE_CLOUD_LOCATION') or 'us-central1',
                     credentials=credentials,
-                    http_options={'headers': {'User-Agent': get_user_agent()}},
+                    http_options=http_options,
                 )
         else:
             self._client = client
