@@ -36,6 +36,7 @@ class BedrockModelProfile(ModelProfile):
 
     bedrock_supports_tool_choice: bool = True
     bedrock_tool_result_format: Literal['text', 'json'] = 'text'
+    bedrock_send_back_thinking_parts: bool = False
 
 
 class BedrockProvider(Provider[BaseClient]):
@@ -55,9 +56,9 @@ class BedrockProvider(Provider[BaseClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: BedrockModelProfile(bedrock_supports_tool_choice=False).update(
-                anthropic_model_profile(model_name)
-            ),
+            'anthropic': lambda model_name: BedrockModelProfile(
+                bedrock_supports_tool_choice=False, bedrock_send_back_thinking_parts=True
+            ).update(anthropic_model_profile(model_name)),
             'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
                 mistral_model_profile(model_name)
             ),

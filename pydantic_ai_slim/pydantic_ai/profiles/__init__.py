@@ -7,7 +7,15 @@ from typing import Callable, Union
 from typing_extensions import Self
 
 from ..output import StructuredOutputMode
-from ._json_schema import JsonSchemaTransformer
+from ._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+
+__all__ = [
+    'ModelProfile',
+    'ModelProfileSpec',
+    'DEFAULT_PROFILE',
+    'InlineDefsJsonSchemaTransformer',
+    'JsonSchemaTransformer',
+]
 
 
 @dataclass
