@@ -215,10 +215,6 @@ class GroqModel(Model):
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
-        for tool in model_request_parameters.builtin_tools:
-            if isinstance(tool, CodeExecutionTool):
-                raise UserError('Groq does not support CodeExecutionTool')
-
         tools = self._get_tools(model_request_parameters)
         tools += self._get_builtin_tools(model_request_parameters)
         if not tools:
@@ -329,6 +325,8 @@ class GroqModel(Model):
                     },
                 }
                 tools.append(web_search_tool)
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                raise UserError('`CodeExecutionTool` is not supported by Groq')
         return tools
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:

@@ -12,6 +12,7 @@ import pydantic_core
 from typing_extensions import assert_never
 
 from .. import _utils
+from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
@@ -108,9 +109,6 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        # Check for unsupported builtin tools
-        if model_request_parameters.builtin_tools:
-            raise ValueError('TestModel does not support built-in tools')
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
@@ -184,6 +182,9 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        if model_request_parameters.builtin_tools:
+            raise UserError('TestModel does not support built-in tools')
+
         tool_calls = self._get_tool_calls(model_request_parameters)
         output_wrapper = self._get_output(model_request_parameters)
         output_tools = model_request_parameters.output_tools

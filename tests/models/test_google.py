@@ -42,6 +42,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import Usage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from google.genai.types import CodeExecutionResult, HarmBlockThreshold, HarmCategory, Language, Outcome
@@ -780,6 +781,110 @@ print(f'{day_of_week=}')
                 timestamp=IsDatetime(),
                 vendor_details={'finish_reason': 'STOP'},
             ),
+        ]
+    )
+
+
+async def test_google_model_server_tool_receive_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+    )
+
+    result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+        ]
+    )
+
+
+async def test_google_model_receive_web_search_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_agent = Agent(model=anthropic_model, builtin_tools=[WebSearchTool()])
+
+    result = await anthropic_agent.run('What are the latest news in the Netherlands?')
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+            ],
+        ]
+    )
+
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_agent = Agent(model=google_model)
+    result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+            ],
+            [UserPromptPart],
+            [TextPart],
         ]
     )
 

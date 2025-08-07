@@ -8,8 +8,8 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -17,9 +17,11 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -30,6 +32,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import Usage
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
+from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -527,6 +530,35 @@ Daily Forecast:
 """)
 
 
+async def test_openai_responses_model_web_search_tool_with_invalid_region(
+    allow_model_requests: None, openai_api_key: str
+):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[WebSearchTool(user_location={'city': 'Salvador', 'region': 'BRLO'})],
+    )
+
+    result = await agent.run('What is the current temperature?')
+    assert result.output == snapshot("""\
+As of 12:15 PM on Thursday, August 7, 2025, in Salvador, Brazil, the current weather conditions are:
+
+- **Temperature:** 84°F (29°C)
+- **Feels Like:** 88°F (31°C)
+- **Condition:** Sunny
+- **Wind:** East at 16 mph (25 km/h)
+- **Humidity:** 65%
+- **Dew Point:** 71°F (22°C)
+- **Pressure:** 29.88 in (1012 mb)
+- **Visibility:** 8 miles (13 km)
+
+([aerisweather.com](https://www.aerisweather.com/weather/local/br/salvador?utm_source=openai))
+
+The forecast for today indicates partly cloudy skies with temperatures remaining around 84°F (29°C) this afternoon. \
+""")
+
+
 async def test_openai_responses_model_web_search_tool_stream(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
@@ -554,6 +586,47 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
 ## Top World News Stories on July 16, 2025:
 - [Morning Bid: Tariff imprint spied in US CPI](https://www.reuters.com/world/europe/global-markets-view-europe-2025-07-16/?utm_source=openai) \
 """)
+
+
+async def test_openai_responses_code_execution_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('What is 3 * 12390?')
+    # NOTE: OpenAI doesn't return neither the `BuiltinToolCallPart` nor the `BuiltinToolReturnPart`.
+    assert part_types_from_messages(result.all_messages()) == snapshot([[UserPromptPart], [TextPart]])
+
+
+async def test_openai_responses_code_execution_tool_stream(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[CodeExecutionTool()])
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='What is 3 * 12390?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='\\(')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='3')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' \\')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='times')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='123')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='90')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' =')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='371')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='70')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='\\')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=').')),
+        ]
+    )
 
 
 def test_model_profile_strict_not_supported():

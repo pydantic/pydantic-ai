@@ -8,7 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 
 
-@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere'), indirect=True)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'cohere', 'huggingface', 'test'), indirect=True)
 async def test_builtin_tools_not_supported_web_search(model: Model, allow_model_requests: None):
     agent = Agent(model=model, builtin_tools=[WebSearchTool()])
 
@@ -16,7 +16,7 @@ async def test_builtin_tools_not_supported_web_search(model: Model, allow_model_
         await agent.run('What day is tomorrow?')
 
 
-@pytest.mark.parametrize('model', ('bedrock', 'mistral'), indirect=True)
+@pytest.mark.parametrize('model', ('bedrock', 'mistral', 'huggingface'), indirect=True)
 async def test_builtin_tools_not_supported_web_search_stream(model: Model, allow_model_requests: None):
     agent = Agent(model=model, builtin_tools=[WebSearchTool()])
 

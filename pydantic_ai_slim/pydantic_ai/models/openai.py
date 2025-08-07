@@ -15,7 +15,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import WebSearchTool
+from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -65,6 +65,7 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.tool_param import CodeInterpreter
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -864,8 +865,6 @@ class OpenAIResponsesModel(Model):
         tools: list[responses.ToolParam] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
-                if tool.user_location and len(tool.user_location.get('region', '')) != 2:
-                    raise ValueError('Region must be a 2-letter country code')
                 web_search_tool = responses.WebSearchToolParam(
                     type='web_search_preview', search_context_size=tool.search_context_size
                 )
@@ -874,6 +873,8 @@ class OpenAIResponsesModel(Model):
                         type='approximate', **tool.user_location
                     )
                 tools.append(web_search_tool)
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
@@ -1109,6 +1110,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
+            # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
@@ -1209,9 +1211,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
-                pass  # there's nothing we need to do here
-
-            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):
                 pass  # there's nothing we need to do here
 
             else:  # pragma: no cover

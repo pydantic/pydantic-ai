@@ -26,8 +26,8 @@ class WebSearchTool(AbstractBuiltinTool):
     The parameters that PydanticAI passes depend on the model, as some parameters may not be supported by certain models.
 
     Supported by:
-    * OpenAI
     * Anthropic
+    * OpenAI
     * Groq
     """
 
@@ -100,5 +100,6 @@ class CodeExecutionTool(AbstractBuiltinTool):
 
     Supported by:
     * Anthropic
+    * OpenAI
     * Google
     """

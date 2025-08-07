@@ -43,6 +43,7 @@ from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
+from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -1315,7 +1316,6 @@ What specifically would you like to know about potatoes?\
 """)
 
 
-@pytest.mark.vcr()
 async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, builtin_tools=[WebSearchTool()])
@@ -1458,7 +1458,6 @@ Based on the search results, today is Monday, May 26, 2025. This is confirmed by
     )
 
 
-@pytest.mark.vcr()
 async def test_anthropic_code_execution_tool(allow_model_requests: None, anthropic_api_key: str):
     m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m, builtin_tools=[CodeExecutionTool()])
@@ -1516,7 +1515,6 @@ print(f"3 * 12390 = {result}")\
     )
 
 
-@pytest.mark.vcr
 async def test_anthropic_server_tool_pass_history_to_another_provider(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
 ):
@@ -1563,6 +1561,32 @@ The year 2025 is a regular year with 365 days
                 timestamp=IsDatetime(),
                 vendor_id='resp_6834631faf2481918638284f62855ddf040b4e5d7e74f261',
             ),
+        ]
+    )
+
+
+async def test_anthropic_server_tool_receive_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('How much is 3 * 12390?', model=google_model)
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [[UserPromptPart], [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+    )
+
+    result = await agent.run('Multiplied by 12390', model=anthropic_model, message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [UserPromptPart],
+            [BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
         ]
     )
 

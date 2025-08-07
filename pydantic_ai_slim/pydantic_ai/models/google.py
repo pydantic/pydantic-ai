@@ -512,11 +512,11 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             pass
         elif isinstance(item, BuiltinToolCallPart):
             if item.provider_name == 'google':
-                if item.tool_name == 'code_execution':
+                if item.tool_name == 'code_execution':  # pragma: no branch
                     parts.append({'executable_code': cast(ExecutableCodeDict, item.args)})
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == 'google':
-                if item.tool_name == 'code_execution':
+                if item.tool_name == 'code_execution':  # pragma: no branch
                     parts.append({'code_execution_result': item.content})
         else:
             assert_never(item)
