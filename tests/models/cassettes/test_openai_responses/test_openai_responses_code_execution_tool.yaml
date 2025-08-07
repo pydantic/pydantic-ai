@@ -1,0 +1,108 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '223'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is 3 * 12390?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - container:
+          type: auto
+        type: code_interpreter
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1487'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '3283'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1754567678
+      error: null
+      id: resp_689493fdfbc08192abcc3932b6d57146056b97be5d7d0ada
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: \(3 \times 12390 = 37170\).
+          type: output_text
+        id: msg_68949400d32481928d1825ed03563132056b97be5d7d0ada
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - container:
+          type: auto
+        type: code_interpreter
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 165
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 15
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 180
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

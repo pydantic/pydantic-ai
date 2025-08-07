@@ -22,6 +22,7 @@ from .. import _utils
 from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
 from .._run_context import RunContext
+from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
     AgentStreamEvent,
@@ -229,6 +230,9 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-7-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-3-haiku',
+        'heroku:gpt-oss-120b',
+        'heroku:nova-lite',
+        'heroku:nova-pro',
         'huggingface:Qwen/QwQ-32B',
         'huggingface:Qwen/Qwen2.5-72B-Instruct',
         'huggingface:Qwen/Qwen3-235B-A22B',
@@ -345,6 +349,7 @@ class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list)
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
 
     output_mode: OutputMode = 'text'
     output_object: OutputObjectDefinition | None = None

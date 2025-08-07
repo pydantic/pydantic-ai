@@ -16,8 +16,11 @@ from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
     ModelRequest,
@@ -527,7 +530,6 @@ async def test_no_delta(allow_model_requests: None):
         assert result.is_complete
 
 
-@pytest.mark.vcr()
 async def test_extra_headers(allow_model_requests: None, groq_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(api_key=groq_api_key))
@@ -535,7 +537,6 @@ async def test_extra_headers(allow_model_requests: None, groq_api_key: str):
     await agent.run('hello')
 
 
-@pytest.mark.vcr()
 async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('meta-llama/llama-4-scout-17b-16e-instruct', provider=GroqProvider(api_key=groq_api_key))
     agent = Agent(m)
@@ -551,7 +552,6 @@ async def test_image_url_input(allow_model_requests: None, groq_api_key: str):
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, groq_api_key: str, image_content: BinaryContent
 ):
@@ -690,6 +690,208 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
     )
 
 
+async def test_groq_model_web_search_tool(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('compound-beta', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What day is today?')
+    assert result.output == snapshot('The current day is Tuesday.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What day is today?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='search',
+                        args='{"query": "What is the current date?"}',
+                        tool_call_id=IsStr(),
+                        provider_name='groq',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='search',
+                        content="""\
+Title: Today's Date - Find Out Quickly What's The Date Today ️
+URL: https://calendarhours.com/todays-date/
+Content: The current date in RFC 2822 Format with shortened day of week, numerical date, three-letter month abbreviation, year, time, and time zone is: Tue, 13 May 2025 06:07:56 -0400; The current date in Unix Epoch Format with number of seconds that have elapsed since January 1, 1970 (midnight UTC/GMT) is:
+Score: 0.8299
+
+Title: Today's Date | Current date now - MaxTables
+URL: https://maxtables.com/tools/todays-date.html
+Content: The current date, including day of the week, month, day, and year. The exact time, down to seconds. Details on the time zone, its location, and its GMT difference. A tool to select the present date. A visual calendar chart. Why would I need to check Today's Date on this platform instead of my device?
+Score: 0.7223
+
+Title: Current Time and Date - Exact Time!
+URL: https://time-and-calendar.com/
+Content: The actual time is: Mon May 12 2025 22:14:39 GMT-0700 (Pacific Daylight Time) Your computer time is: 22:14:38 The time of your computer is synchronized with our web server. This mean that it is synchronizing in real time with our server clock.
+Score: 0.6799
+
+Title: Today's Date - CalendarDate.com
+URL: https://www.calendardate.com/todays.htm
+Content: Details about today's date with count of days, weeks, and months, Sun and Moon cycles, Zodiac signs and holidays. Monday May 12, 2025 . Home; Calendars. 2025 Calendar; ... Current Season Today: Spring with 40 days until the start of Summer. S. Hemisphere flip seasons - i.e. Winter is Summer.
+Score: 0.6416
+
+Title: What is the date today | Today's Date
+URL: https://www.datetoday.info/
+Content: Master time tracking with Today's Date. Stay updated with real-time information on current date, time, day of the week, days left in the week, current day and remaining days of the year. Explore time in globally accepted formats. Keep up with the current week and month, along with the remaining weeks and months for the year. Embrace efficient time tracking with Today's Date.
+Score: 0.6282
+
+Title: Explore Today's Date, Time Zones, Holidays & More
+URL: https://whatdateis.today/
+Content: Check what date and time it is today (May 8, 2025). View current time across different time zones, upcoming holidays, and use our date calculator. Your one-stop destination for all date and time information.
+Score: 0.6181
+
+Title: Today's Date and Time - Date and Time Tools
+URL: https://todaysdatetime.com/
+Content: Discover today's exact date and time, learn about time zones, date formats, and explore our comprehensive collection of date and time tools including calculators, converters, and calendars. ... Get the exact current date and time, along with powerful calculation tools for all your scheduling needs. 12h. Today. Day 76 of year (366) Yesterday
+Score: 0.5456
+
+Title: Current Time Now - What time is it? - RapidTables.com
+URL: https://www.rapidtables.com/tools/current-time.html
+Content: This page includes the following information: Current time: hours, minutes, seconds. Today's date: day of week, month, day, year. Time zone with location and GMT offset.
+Score: 0.4255
+
+Title: Current Time
+URL: https://www.timeanddate.com/
+Content: Welcome to the world's top site for time, time zones, and astronomy. Organize your life with free online info and tools you can rely on. No sign-up needed. Sign in. News. News Home; Astronomy News; ... Current Time. Monday May 12, 2025 Roanoke Rapids, North Carolina, USA. Set home location. 11:27: 03 pm. World Clock.
+Score: 0.3876
+
+Title: Current local time in the United States - World clock
+URL: https://dateandtime.info/country.php?code=US
+Content: Time and Date of DST Change Time Change; DST started: Sunday, March 9, 2025 at 2:00 AM: The clocks were put forward an hour to 3:00 AM. DST ends: Sunday, November 2, 2025 at 2:00 AM: The clocks will be put back an hour to 1:00 AM. DST starts: Sunday, March 8, 2026 at 2:00 AM: The clocks will be put forward an hour to 3:00 AM.
+Score: 0.3042
+
+Title: Time.is - exact time, any time zone
+URL: https://time.is/
+Content: 7 million locations, 58 languages, synchronized with atomic clock time. Time.is. Get Time.is Ad-free! Exact time now: 05:08:45. Tuesday, 13 May, 2025, week 20. Sun: ↑ 05:09 ↓ 20:45 (15h 36m) - More info - Make London time default - Remove from favorite locations
+Score: 0.2796
+
+Title: Time in United States now
+URL: https://time.is/United_States
+Content: Exact time now, time zone, time difference, sunrise/sunset time and key facts for United States. Time.is. Get Time.is Ad-free! Time in United States now . 11:17:42 PM. Monday, May 12, 2025. United States (incl. dependent territories) has 11 time zones. The time zone for the capital Washington, D.C. is used here.
+Score: 0.2726
+
+Title: Current Local Time in the United States - timeanddate.com
+URL: https://www.timeanddate.com/worldclock/usa
+Content: United States time now. USA time zones and time zone map with current time in each state.
+Score: 0.2519
+
+Title: Current local time in United States - World Time Clock & Map
+URL: https://24timezones.com/United-States/time
+Content: Check the current time in United States and time zone information, the UTC offset and daylight saving time dates in 2025.
+Score: 0.2221
+
+Title: The World Clock — Worldwide - timeanddate.com
+URL: https://www.timeanddate.com/worldclock/
+Content: World time and date for cities in all time zones. International time right now. Takes into account all DST clock changes.
+Score: 0.2134
+
+""",
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                        provider_name='groq',
+                    ),
+                    ThinkingPart(
+                        content="""\
+
+To determine the current day, I need to access real-time information. I will use the search tool to find out the current date.
+
+<tool>
+search(What is the current date?)
+</tool>
+<output>Title: Today's Date - Find Out Quickly What's The Date Today ️
+URL: https://calendarhours.com/todays-date/
+Content: The current date in RFC 2822 Format with shortened day of week, numerical date, three-letter month abbreviation, year, time, and time zone is: Tue, 13 May 2025 06:07:56 -0400; The current date in Unix Epoch Format with number of seconds that have elapsed since January 1, 1970 (midnight UTC/GMT) is:
+Score: 0.8299
+
+Title: Today's Date | Current date now - MaxTables
+URL: https://maxtables.com/tools/todays-date.html
+Content: The current date, including day of the week, month, day, and year. The exact time, down to seconds. Details on the time zone, its location, and its GMT difference. A tool to select the present date. A visual calendar chart. Why would I need to check Today's Date on this platform instead of my device?
+Score: 0.7223
+
+Title: Current Time and Date - Exact Time!
+URL: https://time-and-calendar.com/
+Content: The actual time is: Mon May 12 2025 22:14:39 GMT-0700 (Pacific Daylight Time) Your computer time is: 22:14:38 The time of your computer is synchronized with our web server. This mean that it is synchronizing in real time with our server clock.
+Score: 0.6799
+
+Title: Today's Date - CalendarDate.com
+URL: https://www.calendardate.com/todays.htm
+Content: Details about today's date with count of days, weeks, and months, Sun and Moon cycles, Zodiac signs and holidays. Monday May 12, 2025 . Home; Calendars. 2025 Calendar; ... Current Season Today: Spring with 40 days until the start of Summer. S. Hemisphere flip seasons - i.e. Winter is Summer.
+Score: 0.6416
+
+Title: What is the date today | Today's Date
+URL: https://www.datetoday.info/
+Content: Master time tracking with Today's Date. Stay updated with real-time information on current date, time, day of the week, days left in the week, current day and remaining days of the year. Explore time in globally accepted formats. Keep up with the current week and month, along with the remaining weeks and months for the year. Embrace efficient time tracking with Today's Date.
+Score: 0.6282
+
+Title: Explore Today's Date, Time Zones, Holidays & More
+URL: https://whatdateis.today/
+Content: Check what date and time it is today (May 8, 2025). View current time across different time zones, upcoming holidays, and use our date calculator. Your one-stop destination for all date and time information.
+Score: 0.6181
+
+Title: Today's Date and Time - Date and Time Tools
+URL: https://todaysdatetime.com/
+Content: Discover today's exact date and time, learn about time zones, date formats, and explore our comprehensive collection of date and time tools including calculators, converters, and calendars. ... Get the exact current date and time, along with powerful calculation tools for all your scheduling needs. 12h. Today. Day 76 of year (366) Yesterday
+Score: 0.5456
+
+Title: Current Time Now - What time is it? - RapidTables.com
+URL: https://www.rapidtables.com/tools/current-time.html
+Content: This page includes the following information: Current time: hours, minutes, seconds. Today's date: day of week, month, day, year. Time zone with location and GMT offset.
+Score: 0.4255
+
+Title: Current Time
+URL: https://www.timeanddate.com/
+Content: Welcome to the world's top site for time, time zones, and astronomy. Organize your life with free online info and tools you can rely on. No sign-up needed. Sign in. News. News Home; Astronomy News; ... Current Time. Monday May 12, 2025 Roanoke Rapids, North Carolina, USA. Set home location. 11:27: 03 pm. World Clock.
+Score: 0.3876
+
+Title: Current local time in the United States - World clock
+URL: https://dateandtime.info/country.php?code=US
+Content: Time and Date of DST Change Time Change; DST started: Sunday, March 9, 2025 at 2:00 AM: The clocks were put forward an hour to 3:00 AM. DST ends: Sunday, November 2, 2025 at 2:00 AM: The clocks will be put back an hour to 1:00 AM. DST starts: Sunday, March 8, 2026 at 2:00 AM: The clocks will be put forward an hour to 3:00 AM.
+Score: 0.3042
+
+Title: Time.is - exact time, any time zone
+URL: https://time.is/
+Content: 7 million locations, 58 languages, synchronized with atomic clock time. Time.is. Get Time.is Ad-free! Exact time now: 05:08:45. Tuesday, 13 May, 2025, week 20. Sun: ↑ 05:09 ↓ 20:45 (15h 36m) - More info - Make London time default - Remove from favorite locations
+Score: 0.2796
+
+Title: Time in United States now
+URL: https://time.is/United_States
+Content: Exact time now, time zone, time difference, sunrise/sunset time and key facts for United States. Time.is. Get Time.is Ad-free! Time in United States now . 11:17:42 PM. Monday, May 12, 2025. United States (incl. dependent territories) has 11 time zones. The time zone for the capital Washington, D.C. is used here.
+Score: 0.2726
+
+Title: Current Local Time in the United States - timeanddate.com
+URL: https://www.timeanddate.com/worldclock/usa
+Content: United States time now. USA time zones and time zone map with current time in each state.
+Score: 0.2519
+
+Title: Current local time in United States - World Time Clock & Map
+URL: https://24timezones.com/United-States/time
+Content: Check the current time in United States and time zone information, the UTC offset and daylight saving time dates in 2025.
+Score: 0.2221
+
+Title: The World Clock — Worldwide - timeanddate.com
+URL: https://www.timeanddate.com/worldclock/
+Content: World time and date for cities in all time zones. International time right now. Takes into account all DST clock changes.
+Score: 0.2134
+
+</output>
+The current date is Tuesday, May 13, 2025.
+
+
+
+The current day is Tuesday.\
+"""
+                    ),
+                    TextPart(content='The current day is Tuesday.'),
+                ],
+                usage=Usage(requests=1, request_tokens=4287, response_tokens=117, total_tokens=4404),
+                model_name='compound-beta',
+                timestamp=IsDatetime(),
+                vendor_id='stub',
+            ),
+        ]
+    )
+
+
 async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key: str):
     m = GroqModel('deepseek-r1-distill-llama-70b', provider=GroqProvider(api_key=groq_api_key))
     settings = GroqModelSettings(groq_reasoning_format='raw')
@@ -703,64 +905,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 instructions='You are a chef.',
             ),
             ModelResponse(
-                parts=[
-                    ThinkingPart(content=IsStr()),
-                    TextPart(
-                        content="""\
-
-
-To make Uruguayan alfajores, follow these organized steps for a delightful baking experience:
-
-### Ingredients:
-- 2 cups all-purpose flour
-- 1 cup cornstarch
-- 1 tsp baking powder
-- 1/2 tsp salt
-- 1 cup unsalted butter, softened
-- 1 cup powdered sugar
-- 1 egg
-- 1 tsp vanilla extract
-- Dulce de leche (store-bought or homemade)
-- Powdered sugar for coating
-
-### Instructions:
-
-1. **Preheat Oven:**
-   - Preheat your oven to 300°F (150°C). Line a baking sheet with parchment paper.
-
-2. **Prepare Dough:**
-   - In a bowl, whisk together flour, cornstarch, baking powder, and salt.
-   - In another bowl, cream butter and powdered sugar until smooth. Add egg and vanilla, mixing well.
-   - Gradually incorporate the dry ingredients into the wet mixture until a dough forms. Wrap and let rest for 30 minutes.
-
-3. **Roll and Cut:**
-   - Roll dough to 1/4 inch thickness. Cut into 2-inch circles using a cutter or glass.
-
-4. **Bake:**
-   - Place cookies on the prepared baking sheet, bake for 15-20 minutes until edges are lightly golden. Cool on the sheet for 5 minutes, then transfer to a wire rack to cool completely.
-
-5. **Assemble Alfajores:**
-   - Spread a layer of dulce de leche on one cookie half. Sandwich with another cookie. Handle gently to avoid breaking.
-
-6. **Coat with Powdered Sugar:**
-   - Roll each alfajor in powdered sugar, pressing gently to adhere.
-
-7. **Optional Chocolate Coating:**
-   - For a chocolate version, melt chocolate and dip alfajores, then chill to set.
-
-8. **Storage:**
-   - Store in an airtight container at room temperature for up to a week. Freeze for longer storage.
-
-### Tips:
-- Ensure butter is softened for smooth creaming.
-- Check cookies after 15 minutes to avoid over-browning.
-- Allow cookies to cool completely before handling.
-- Homemade dulce de leche can be made by heating condensed milk until thickened.
-
-Enjoy your traditional Uruguayan alfajores with a cup of coffee or tea!\
-"""
-                    ),
-                ],
+                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
                 usage=Usage(requests=1, request_tokens=21, response_tokens=1414, total_tokens=1435),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
@@ -785,7 +930,7 @@ Enjoy your traditional Uruguayan alfajores with a cup of coffee or tea!\
                 usage=Usage(requests=1, request_tokens=21, response_tokens=1414, total_tokens=1435),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                vendor_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
             ),
             ModelRequest(
                 parts=[
@@ -797,112 +942,11 @@ Enjoy your traditional Uruguayan alfajores with a cup of coffee or tea!\
                 instructions='You are a chef.',
             ),
             ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content="""\
-Alright, so I want to make Argentinian alfajores after successfully making the Uruguayan ones. I know that both countries have their own versions of alfajores, but I'm not entirely sure how they differ. Maybe the ingredients or the preparation steps are slightly different? I should probably start by researching what makes Argentinian alfajores unique compared to the Uruguayan ones.
-
-First, I remember that in the Uruguayan recipe, the cookies were more delicate, and the filling was a generous amount of dulce de leche. The process involved making the dough from scratch, baking the cookies, and then assembling them with the filling and sometimes coating them in powdered sugar or chocolate.
-
-For Argentinian alfajores, I think the cookies might have a different texture—perhaps they're crunchier or have a different flavor profile. Maybe the type of flour used is different, or there's an addition like cocoa powder for a chocolate version. Also, the filling might have variations, like adding caramel or nuts to the dulce de leche.
-
-I should look up some authentic Argentinian recipes to see the differences. Maybe the method of making the dough is slightly different, or the baking time and temperature vary. I also wonder if Argentinian alfajores are typically coated in something else besides powdered sugar, like cinnamon or coconut flakes.
-
-Another thing to consider is the size and shape of the cookies. Uruguayan alfajores might be smaller and rounder, while Argentinian ones could be larger or have a different shape. I should also check if there are any additional steps, like toasting the cookies or adding a layer of meringue.
-
-I need to make sure I have all the necessary ingredients. If the Argentinian version requires something different, like a specific type of flour or a particular flavoring, I'll need to adjust my shopping list. Also, if the filling is different, I might need to prepare it in a different way or add extra ingredients.
-
-I should also think about the assembly process. Maybe Argentinian alfajores are sandwiched with more filling or have a different way of sealing the cookies together. Perhaps they're rolled in coconut after being filled, or there's a step involving dipping them in chocolate.
-
-It would be helpful to watch a video or read a detailed recipe from an Argentinian source to get a better understanding. That way, I can follow the traditional method and ensure that my alfajores turn out authentic. I should also consider any tips or tricks that Argentinian bakers use to make their alfajores special.
-
-Finally, I need to plan the timing. Making alfajores can be a bit time-consuming, especially if you're making the dulce de leche from scratch. I should allocate enough time for preparing the dough, baking the cookies, and assembling the alfajores.
-
-Overall, the key steps I think I'll need to follow are:
-
-1. Research authentic Argentinian alfajores recipes to identify unique ingredients and steps.
-2. Adjust the ingredient list based on the differences from the Uruguayan version.
-3. Prepare the dough according to the Argentinian method, which might involve different mixing techniques or additional ingredients.
-4. Bake the cookies, possibly at a different temperature or for a different duration.
-5. Prepare the filling, which might include variations like caramel or nuts.
-6. Assemble the alfajores, possibly adding extra coatings or layers.
-7. Allow the alfajores to set before serving, to ensure the flavors meld together.
-
-By carefully following these steps and paying attention to the unique aspects of Argentinian alfajores, I should be able to create a delicious and authentic batch that captures the essence of this traditional South American treat.
-"""
-                    ),
-                    TextPart(
-                        content="""\
-To create authentic Argentinian alfajores, follow these organized steps, which highlight the unique characteristics and differences from the Uruguayan version:
-
-### Ingredients:
-- **For the Cookies:**
-  - 2 cups all-purpose flour
-  - 1/2 cup cornstarch
-  - 1/4 cup unsweetened cocoa powder (optional for chocolate version)
-  - 1 teaspoon baking powder
-  - 1/2 teaspoon salt
-  - 1 cup unsalted butter, softened
-  - 1 cup powdered sugar
-  - 1 egg
-  - 1 teaspoon vanilla extract
-
-- **For the Filling:**
-  - Dulce de leche (store-bought or homemade)
-  - Optional: caramel sauce, chopped nuts, or cinnamon for added flavor
-
-- **For Coating:**
-  - Powdered sugar
-  - Optional: cinnamon, shredded coconut, or melted chocolate
-
-### Instructions:
-
-1. **Prepare the Dough:**
-   - In a large bowl, whisk together the flour, cornstarch, cocoa powder (if using), baking powder, and salt.
-   - In another bowl, cream the softened butter and powdered sugar until smooth. Add the egg and vanilla extract, mixing well.
-   - Gradually incorporate the dry ingredients into the wet mixture until a dough forms. Wrap the dough in plastic wrap and let it rest for 30 minutes.
-
-2. **Roll and Cut the Cookies:**
-   - Roll the dough to about 1/4 inch thickness on a lightly floured surface.
-   - Use a round cookie cutter or the rim of a glass to cut out circles of dough. Argentinian alfajores are often slightly larger than their Uruguayan counterparts.
-
-3. **Bake the Cookies:**
-   - Preheat the oven to 300°F (150°C). Line a baking sheet with parchment paper.
-   - Place the cookie rounds on the prepared baking sheet, leaving about 1 inch of space between each cookie.
-   - Bake for 15-20 minutes, or until the edges are lightly golden. Allow the cookies to cool on the baking sheet for 5 minutes before transferring them to a wire rack to cool completely.
-
-4. **Prepare the Filling:**
-   - Use store-bought dulce de leche or make your own by heating sweetened condensed milk until thickened.
-   - Optional: Stir in caramel sauce or chopped nuts into the dulce de leche for added flavor.
-
-5. **Assemble the Alfajores:**
-   - Once the cookies are completely cool, spread a generous amount of dulce de leche on the flat side of one cookie.
-   - Sandwich with another cookie, pressing gently to adhere. For an extra touch, roll the edges in chopped nuts or shredded coconut.
-
-6. **Coat with Powdered Sugar or Chocolate:**
-   - Roll each alfajor in powdered sugar, pressing gently to ensure it adheres.
-   - Optional: Melt chocolate and dip the alfajores, then sprinkle with cinnamon or coconut before the chocolate sets.
-
-7. **Allow to Set:**
-   - Let the alfajores sit for about 30 minutes to allow the flavors to meld together.
-
-8. **Serve and Enjoy:**
-   - Serve with a cup of coffee or tea. Store any leftovers in an airtight container at room temperature for up to a week.
-
-### Tips:
-- **Dough Handling:** Ensure the butter is softened for a smooth dough, and don't overwork the dough to maintain the cookies' tender texture.
-- **Baking:** Keep an eye on the cookies after 15 minutes to prevent over-browning.
-- **Filling Variations:** Experiment with different fillings like caramel or nuts to create unique flavor profiles.
-- **Coating Options:** Try different coatings such as cinnamon or coconut for a varied texture and taste.
-
-By following these steps, you'll create authentic Argentinian alfajores that capture the rich flavors and traditions of this beloved South American treat.\
-"""
-                    ),
-                ],
+                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
                 usage=Usage(requests=1, request_tokens=524, response_tokens=1590, total_tokens=2114),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                vendor_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
             ),
         ]
     )

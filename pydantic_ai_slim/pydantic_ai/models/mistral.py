@@ -15,8 +15,11 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -200,6 +203,11 @@ class MistralModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
+        # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
+        # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
+        if model_request_parameters.builtin_tools:
+            raise UserError('Mistral does not support built-in tools')
+
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
@@ -233,6 +241,11 @@ class MistralModel(Model):
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = self._map_messages(messages)
+
+        # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
+        # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
+        if model_request_parameters.builtin_tools:
+            raise UserError('Mistral does not support built-in tools')
 
         if model_request_parameters.function_tools:
             # Function Calling
@@ -496,6 +509,9 @@ class MistralModel(Model):
                         pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
+                    elif isinstance(part, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from mistral
+                        pass
                     else:
                         assert_never(part)
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))

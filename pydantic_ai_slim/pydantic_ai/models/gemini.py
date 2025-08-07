@@ -19,6 +19,8 @@ from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -616,6 +618,9 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
+        elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+            # This is currently never returned from gemini
+            pass
         else:
             assert_never(item)
     return _GeminiContent(role='model', parts=parts)

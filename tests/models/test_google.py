@@ -11,10 +11,13 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -39,9 +42,10 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import Usage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
-    from google.genai.types import HarmBlockThreshold, HarmCategory
+    from google.genai.types import CodeExecutionResult, HarmBlockThreshold, HarmCategory, Language, Outcome
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -596,6 +600,293 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
 
     with pytest.raises(UnexpectedModelBehavior, match='Safety settings triggered'):
         await agent.run('Tell me a joke about a Brazilians.')
+
+
+async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What day is today in Utrecht?')
+    assert result.output == snapshot('Today is Wednesday, May 28, 2025, in Utrecht.\n')
+
+
+async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('What day is today in Utrecht?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+now = datetime.datetime.now()
+day_of_week = now.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Today is Thursday in Utrecht.\n'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=13,
+                    response_tokens=95,
+                    total_tokens=209,
+                    details={
+                        'tool_use_prompt_tokens': 101,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 13,
+                        'text_tool_use_prompt_tokens': 101,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+    result = await agent.run('What day is tomorrow?', message_history=result.all_messages())
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+now = datetime.datetime.now()
+day_of_week = now.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Today is Thursday in Utrecht.\n'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=13,
+                    response_tokens=95,
+                    total_tokens=209,
+                    details={
+                        'tool_use_prompt_tokens': 101,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 13,
+                        'text_tool_use_prompt_tokens': 101,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine what day is tomorrow, I'll use the python tool to calculate tomorrow's date and then find the corresponding day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+today = datetime.date.today()
+tomorrow = today + datetime.timedelta(days=1)
+day_of_week = tomorrow.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Friday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Tomorrow is Friday.\n'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=113,
+                    response_tokens=95,
+                    total_tokens=411,
+                    details={
+                        'tool_use_prompt_tokens': 203,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 113,
+                        'text_tool_use_prompt_tokens': 203,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+
+async def test_google_model_server_tool_receive_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+    )
+
+    result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+        ]
+    )
+
+
+async def test_google_model_receive_web_search_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_agent = Agent(model=anthropic_model, builtin_tools=[WebSearchTool()])
+
+    result = await anthropic_agent.run('What are the latest news in the Netherlands?')
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+            ],
+        ]
+    )
+
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_agent = Agent(model=google_model)
+    result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+            ],
+            [UserPromptPart],
+            [TextPart],
+        ]
+    )
 
 
 async def test_google_model_empty_user_prompt(allow_model_requests: None, google_provider: GoogleProvider):

@@ -1,0 +1,280 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '312'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 1024
+      messages:
+      - content:
+        - text: What day is today?
+          type: text
+        role: user
+      model: claude-3-5-sonnet-latest
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - allowed_domains: null
+        blocked_domains: null
+        name: web_search
+        type: web_search_20250305
+        user_location: null
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '15304'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: Let me search for today's date.
+        type: text
+      - id: srvtoolu_01BJh8n7va96puUF3hhNnYnY
+        input:
+          query: current date today May 26 2025
+        name: web_search
+        type: server_tool_use
+      - content:
+        - encrypted_content: EtMNCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDMls1HqcdgUH1+5FNRoMOi5Mua0GMHXeHmk7IjBBQ9UrZ9tuM/Wz8gR3MDcbNC1pIzqqRQKgY/7jx84iSpfWWrA8ZuaeSTAl7oQc3wIq1gxORDCDZizvXpEuwM2MP1BMSmcVjoLJSP4jcvDBG36KWY5vqRmPG3xgFLOML6Kb5BgE4zcmQDmYxmqTwmQLavNEJ01gmSnMcweZrT0++SGIvTfd/P5qqLrxI3m4bYEMeEcOEMqYCTLke1Y00BMq4QJllJanxBDjQ/fMfeJqrE6fvWqc1lpqNxeDlUeO3jIWDxFyma0tHDcAb8+M7eosB2fjhKGfOeO4avENE3HUDXmGYJBR9qNE/bFzshx+S850r4YKAK81kinG9QtbrEal4NVAepc59wYbuTm6ZZE88khRqi/iXX2/I5J4VZ1UFlg3eAVs034ekJ/Tru2owFNfUv3FAVix7eUZHfKNg+a+6//smhJSnOHHcmJeBEO8QPSpWs0sRyTJinT+nMQ3GBMkbNFW5KYOzy4naRMmIUxB0dFvtMkaUGd+GULqDMpzdosn9EJUkdx/DSLjOFFUJP3bQnE+FQRBaQRVz2NI9tmulS0g879Ldxg8dIV4h+7cyi236nchhCDCAsBNIrVLOS+1cOu3rdmVjifSE9wlk75HjzQs74ra+BrsbyAoRMLIOnbUok3KWjBjh0NEjlJszzNOgdMka/umaNYQ8xCscg6T2GeisFWDKN9xEAqOYsOsvtkpKrgw+Bx0j7ejncXMevA5We65coC6iEECIk6GKyoVK7Av0i8ipKg1n0INdf+ESTWaIByLTlts0Y0dj0DJvyP9dO4dkm17WgxmviX7B0X6hIu24W7phRYAIXnSQFNo3ptIB+kRoBFhBk0/L3BqHcyBaipsKDjzEwQ5UxuqRiqjGaVv08AkFR6PVgbXUAjNs5AJyefMvQl3OOZfsOMEWplyEJ7XsQrT83VAHGqGSTzUnDd/uYW8S3kJ6rBfQa6QNrnkTAeqJZ4HsVfmytY55xqSE7Rshnl3dkeY4ux5yhjtDgszEqpveKnqrfjrkct+eneV7rg/u2VEl2/60LQPSeI+3EV7n9WIEhiwWiDcoF37lwCpkzqYRrjvN/y79TgzuxDOIGEbzuBtGlBp6a8eRvY08i/lr6wPvNJ88YEuQnMgnB0kqnBSkOOKFbH8Q8ctMmKPOV/kRYzwkOcEP45X12Jj92VqHFADO7X240wzQnmUn4XslRq6btoMU/xsUX6kAqSAEgjbeYaKomBhcR7cZqapC6ajpGmSeWiUZROpT0n2TabbuGATH664E5KwSNTvcl2bS1J5JpC5Zo/y4+kSIogSJzcnJw2/nWTpjzbBsSJKh8wO8fqJuhmOA2NHzWnt0XbUQlZduy6LVli+cm9qO59lCZKOjfNl+Z5hm+iQHzimEe/8IKMOWgKaUVUm6y7f6FT9zydVy6aaBfZ0een1M459iYgDGzC79LX+OjmycRm+2yP3/txcnoJ+szHTEAflbm0PduzyANcnHLsW64X44InlWNncva1N6Cf/nw9X+5PZVaVk83Ea7F3/a3AeVdJ8nAOvYoGUl5G7Etby3elGPhFRootmiMohMSY7okfykm9AuEJlumGvaVlNoW3Z3uC0yr13zRnzmovkIib7nMbZcqn9z9B2G5dHR2ZPNO3sARxXmWxjbJgV10o64yFV76DKbU6QgQoR8nQGQOSrxEs1/khnVWqRRdERqb/uqYNPQpkniqbscvpiGsGkJbpBoKfd2KUfeSFoJ8Oy2J8kE3t3ursEP8gOJhAJQwI5K5nGzSpoz+QfVAnRstc7oMRYYfUGrDRhln9W8bDfjDQqO70P+PF40ADTk6jYyv5vy2qWKl3E4SwgblZRv+45ZqkiNQJFWyscoytsew7BugWHKamA3fCK2uQNNTCvrBliXY3K3yKxI4sPDXPh1WCvScJWatRYCFY+YGU3K9+abdJWJ5OvDE7SIdJGvOoCbn3ODFB+Rkrki5U34a5Gz+i2d++6rJsuAdIc5IWLsz2rTka9QOcEfCa1RiHvnkHvQo0M5s6EnR4Q65WKCirr8LT7hzbQ46hmjvRKbrniC0rEQpbc9i9+P36x4GmyqQFeK0Lro6KCGbTzPQ/A0rc4Zp4GBEwEL3OFOe9QVkPfQX9HP6pG/pqzv+0cJ6hK/0zIu8Ym48F8tH482smAtjUJ/3/rm8L+MdW1Q6LAOpYdcj/B7sQPHO9QZ3e9lAwEu7xPFpsliTjy16nLijSER1/eVW7SPBgD
+          page_age: null
+          title: May 2025 Calendar
+          type: web_search_result
+          url: https://www.calendar-365.com/calendar/2025/May.html
+        - encrypted_content: EuwCCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNOs+T2nScTnsxVJZRoM3g9Mm5RlKN0sgiPBIjC1PJPZRfoUgRpmpfVZcF8sBTMUr6Lu9BK9xOxTQ8nMMBGjC7kFOrwJZ3ENgXLhRzcq7wF51cgLQ+Pb0MiXBGozKXa1r7DbogMoIacrDz92bvzbwXbo4mTQMipnow47//PYVelJXipxVAA6ISswEiYPGXyCjqSy6QEIde1TOc8nvMpaM0Y4u3DdOXez5EsgP+ZxIYly/I7JS35h/azV0nbpzEKsptZwNWwuBtNIYbkklPaluda13QbkE0KK1Cl6PnkNMVbO0Uo9XURcwLn5aDLJol0GJGVpuiApXVJoMk7e7L/Ib+p1BE77VW619KzDmQvuAjQXZR28Fb5KEbRxXkSaq7xAZnYZyQFtOlqg/07Tv+V4g0WYZhI3tn0phBe0w+95NhgD
+          page_age: null
+          title: May 26, 2025 Calendar with Holidays & Count Down - USA
+          type: web_search_result
+          url: https://www.wincalendar.com/Calendar/Date/May-26-2025
+        - encrypted_content: Es0ICioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDE+yP8aOxk+46r0AERoMFOlAyJD/AGdtDxeVIjDDhlbQbqqMmuMK9bN7ZNTwHWQwahkAaZd/LltU3eIPifLnfk4Apnck+mUOM61zRiQq0Ac12DCFUzhrlxvkXqpK3gWjgosGbUyzt8WbmwSaEmCbXf9F4bNc7+LKvQUtEceYmCesYcQa0lOT+88IhhRTxYBMyXo0Ws3Pw1yrLJi9P1JqfpcnWebg8McOGY/pD/MFeJORQvH+0UvGjBoMD0uaPPY1U6cFC7EWL+IebMjjmpj80RqAi/xjOOnU2XO8N98dFCzW4GiI9IWut8OBv8u3kLpmyYOV6cVxr3WTEntDv3onveQvTIyJFiDG8bmOKK72ONWrevnrKGQ7JY2gPYp5CakS+SYahIKiJOOY3cWQfUEheIfEZeuGadI907uvREyb1bf4h/0KsFjnOBWrHXdl7LIDRSfz8OIwfJufTERGCfG0vzMiHzFJbFcezciz3K9m25QjxL676NcrYbgZGFhIXar9jNvPAjGcUecpaOLAEztHx7pd0nHMsW5KKUTS0yU5sMFNY1+RMSKk8kVoCcBtOuOsiegf+BJV/J997IvbQG5A7h/72VsVyUbiBDT1z77VjKTPcerZr4EReCobAoyGdMKt1mihwvYvsyvZepAkvrxOoKnb+2pkzhZQtxGt0ub23yhSZyLgi0frVSS04KeYncVWW7cQJJygzfDS37pdSPnU0wZmAgZLzQ3X1NVmR9AQVSQ+IcIoVSCuru/WiBcS7aJPC4uh6cn5sB9C6yThrD8i7T7DJGbR/uutIADP9IgGUzdoppStgQugx4TwnQI9SC6e36zjfsK6NeUkxLi2b4T1uuRDvjgUDc0OXGZdoGQgc8nHoe7rexoLJqeWat19KNwy4DqnM7oywivVJWDJ2ThV4863f3+hYRlXeuxnojBsmENJsSxZtF46ye1gfPSvBYlEpO/Uu9FzR3yy4bB3b/qOh2+JMTLkk3R5u4C6Ca/Nye0bpnsKG7xjW2cKguqfKhUuUFaSucCCJqg/hT21DlUiHXZQ6wq6Ywi9C9l+wJbzfJWWHczjkTJvWhFq8saXSAzfWDd8tTKH1zje7NN38jRQPUDxS0CWMM78/+BgWoqsB5+IjkEl5QHV55GSCg+05HQPLyHQWWjBdMLWr+Uu3T0kKI0B/QDJPHO1mSX5AsGot5HZzva5qEPzn3vGly1n1vs14JWE+RrtIJTBHi0ypFhaO6oCRGejMRDbZhotP4gWW1VW0gLNikgfW0Z5waOb8wmLcN4vQhsHRFfZiXsqUF0dTXsme8+kF8qcVZNnPtghyf1ACvFgZ8TAF4PaM1wzpa8kDeBFvyp14U39R8XDJ3T6lGWR2rpv0WjS8d5h0RCZ3XlFuqPUXWEQ89OpEH8vEiYXGAM=
+          page_age: null
+          title: Daily Calendar for Monday, May 26, 2025 | Almanac.com
+          type: web_search_result
+          url: https://www.almanac.com/calendar/date/2025-05-26
+        - encrypted_content: EpoFCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDClGwxB0YzJdub7VGhoMASvr8D1KqeBCa4knIjAV1lHpDjDIw6nag+Y/ax/aq2LhfZ1/CXJoRyRFiUGLVQHpERodH6/Kg+l8aLy01gAqnQQR8cCm+MlfMM3pSSNah8dZ0m5wam3enQ+5A3VLu0P/CF/TlwL5yB21pfaiu0lad9Ee99YFvs7LInvXpyFcUgLuhankIzNNZZbUIeS4sZIK39RrN+pmifOl6KQqT1f2tpJE6x7erDlAscnMvbRIr9U8Pwf8Au709bI6zcHqCg4GNJk2CqDf6kAXRHRRhcWYFtm8b0wvg9HaWVYZFOunZMJ1gFD3D82dSm3m4awyDSZm54A/9hmzE/lcQyiSVBC73NOmJMBxbNec16qaeJdUTZp33JYk0Fdro1VnkUiJyq5Kb2W7VYvfeQ1a2dLXPTYIsXeQXLHesmVTe7m0X70w0BgCAC+yKZPp68bbsEbsbjwxaWOxQ50seu8kkXDiEgscUK5e4N5YnPXMNjyMNZmlbhmFtw3abOmOCVdpcDORXGOgJZBWBkEqQ4mE8b+aEzXMGRqLzYjDKZHx11wolF3MGu/V/+f4lWEyNwR2Kipp67teOx1ypvl4DiZiPVkZwx9lt08u+TJGEGbTYtdPMQRLVX1K2K4YOEcP5/abNrdT9KdYH7dNscRDqDY04gi+47JyyTSRObcCjQun9LUqh0q6/NfIIWQwjguZ6dbYL67ymiuRgHJDXsPnc/P58qP4kRsClz9lu/XPTFuAzCQwaXioK3XiBNW73nSKyRaxm6/OxbYetPGIG2JUTkQtrmGL5AYJTfFbI6XOB1AFDcsoSC7nGAM=
+          page_age: null
+          title: How long ago was May 26th 2025? | howlongagogo.com
+          type: web_search_result
+          url: https://howlongagogo.com/date/2025/may/26
+        - encrypted_content: Eq0DCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDT/5zRyvf5kzhhLgxoM5vWn/Zjmu43rvWgPIjCf4z9SIoZxgNKyiLOqk422DLmHbFXGX+mhy6FPo43NOogfLhu/a3F3EPkiMxfd0UMqsAKIhRJKuEhfoi2saPCA3LpNhJ3YPO2NZyYL75SJdCbkfACe2YJOcCXHmt4hkrbA98Mrvh9DmtP6HNA9iYdsotXkDi0BuTlmiIcspblXnkpXLIURVpNYqqZ2jbjBEmi/mVlTonm9NJwx1rZHzwciKhaIrz440Vk/uTIqpiMb22U00hWrQ563gNlMSXpvIpyayhJcCnNEjQybJjQUsKaMqb/3Xbp8NUoWtidUb4ARNeoNe4BlzMEEcIPc0QWi1CKoQJH3JazxAhMSqvc4SVWXRyspZZP6lSHhMcIYlf/yorVYVF3FmL1djZfxXbVnI/VbFbpoNejvnOh5QIdbDrHu6UN3u2iGZBUJLgs6i9OUwMWw8kpi2WUm+3JeRkdyThE0M9WAhK+4qYD3UHgFCcucX7ZeGAM=
+          page_age: null
+          title: How many days until 26th May 2025?
+          type: web_search_result
+          url: https://days.to/26-may/2025
+        - encrypted_content: EpACCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNXuvVNnWjvXgGql0RoMXwqBXk4fJbTzoM0pIjC1HFbYVJOlp39xpYzw/uJVUO6cC2L9ScOu9ceP2MDjyBWuE0X2LxBsyFjM3ZwzQtYqkwHukWybclFQu5CuM7gntDFNVYsSAVDbslXo5WwOlljEXnC7ohNjuB4lJfXS5HomdOmnUs0/thHHvR5mvCvHt5o+XrnTV8PSOXJvZonVctfjBeMe/3VWaQX2Pr8F71hiBVghYnc4lqnvA/nebBXcqdz2VTlG7V2/u+KCGVfR27l0+BX9s8vroR6dZ7flEBZBSDDzt3QYAw==
+          page_age: null
+          title: What day of the week will May 26th 2025 be on? | howlongagogo.com
+          type: web_search_result
+          url: https://howlongagogo.com/day-of-the-week/2025-05-26
+        - encrypted_content: EtkGCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDNqnvrEdyAJMqZiouRoMl3zAD6YOqFa5Y+LGIjCFzjG2cb9Uv/fUGE2iFHKU3CP5i7yVrpvusD4UBOrARkME7qTDdfIczSbj1PvU7ygq3AUQ9yGVSgg9AB7qawws2Zx43sVi5sDW/thrC8owactbSzc2qE9IsmucxwknSZXemJFSMW3I2vWhlpJVcfipESwRyVSnVNoTivU7/aIbnI15/NOGATtd/TR0mkyO2MMMAFIHiEfq0iuvMUX/EmnEqlSzDngrlWdPvb0qDrZIkSVEYFE5FEPHXuXEFEWZ/yLs7rUK7M9kc161gTbQ/NMALrWDjKtFtgI20Wf2luvbfX8G8kivyPttdUk9aiBxStWetpJZqsBEGT1auj3hk7FaHU2FTNW0LGvIe++QZNL+w/nKa+YuNGpJCxAiLt3X+2hnZmz8Mskfyfl5I5EWt7eOQmoR0qStl7Fh9Myb3vZ0rpZ8gZeaLd1xn6pKKa+tBonm1Oq1zQvsoMkMwTcMRK3LA53dF3rtkgSFyBAWis/tenbdrRVUGlicecn/bSd9FVFoGM5RWYvXR9/3zr3SBf2qNTT2jmeLqcl07LYUk+WDGcas6vAVGDXxVoAh+uAC0WziUtKfv//V4IeleGEOLJNdX1jDC8uQMKyGuRCXNRJAoHRhgUr2F46Ax9xJOHWXKDheklfqTFff0wf93d5U/d4p52RaeM7jcBexjz0wMQRBL91ZOZVweRHbV2BVTBpPH79Y9W/UmBEycRnTmurJJspZre10EVH7MIX/4DRhxBipdZrQFgqTrCgbN6dRFLlQR9w1n+Y2pSEXnSeHdwOTPVHSKBKQO43XCKWmJPgNFELcRBZdVxGcE9xd2/dzs0C6Aa7vXZ/5ZPx9rgis1TY2UegdpiyWmKV0yw1K2LKpq8BOdH4t3OPDTPvJrymaZwldTb+w6rLGf0p1YAkZIBPpUX9tAstQ1HAz58zHnLhQfUzpm5ft4S3m2i+WkyjzIkh4F2Y1bIvbwQvqT2x3rGJRRWJGyg9PDEVCY4gjKObhjkQbanRG58uPuf7mBofFqKbUBJOngnAvSmGibWNn9uSftf8YAw==
+          page_age: null
+          title: Calendar 2025
+          type: web_search_result
+          url: https://www.timeanddate.com/calendar/
+        - encrypted_content: Eq0CCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJI9LlFy1IIRylVnDxoMIXCLnspt86G8qxeIIjD0AiJH0r4ULSsSOXmrBj0ntQEjeADrBeCC4P53iCMga7fv0Uxic9EYRY73zIkr7aAqsAFql3nOsfaopCrkf/WC9qvKgDAeuBfKcTNjj+rfHn5HXgVM4BOpomSXxBc0CHUe3Heqw2mD9+Hy99flWI60pgPB+umunXeOjz5HC4W1q39ROTzvMkdpJzvXoUgG/dbgjJ9vEvZ0VC4z+ZwRAYSNgOgiRt3zApcZJ4iSsF/XgrQNs2L2ThcQyc84+lKKAaKPrSl6Lwm1bH+HTFYIm9KPyhvlbfEbp5buj/wQgn4Na/3qrhgD
+          page_age: null
+          title: May 26
+          type: web_search_result
+          url: https://www.nationaldaycalendar.com/may/may-26
+        - encrypted_content: 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
+          page_age: null
+          title: Day Numbers for 2025
+          type: web_search_result
+          url: https://www.epochconverter.com/days/2025
+        - encrypted_content: EosGCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDVXhko+GaoaARLiWxoMhhwixTlmn7YeimyXIjBqLMdGYisjngIKCxw2kKV4whivBWinF+rFSah3+1JUtoRUor9o+HmU0StGZxaPydsqjgUGl0OUiZ7Dlc0YqCN8bOGaoUeUv7MpoODHTH97tj67PKZmSbEkDp0J1bJzxHd4WeL1SdNnExDsDcSk4joJFA4lBVAAgxvBogir7w/ws8fRoANAp3F4T9IoZHSQVR2PhtRpymmT1JIaelypYDnda1cLVKrOhF26o8zSp3sDKsilZRW7TSGG1YmzEEKdFK0h/jrGO9yr35kL8vzIF1vdXeJbJa79pFo8e1OLxq9Z2e3y5thBAB3aMK+WMT6n3vRaaRpG4/sqL69lUB/J8Ju1X2VAqfUhYe1GbTKVwAqv+Fllq/NQfZywAaqkHF0YqzMFNYYNB0KTpzrPetfmvXMvog2I0qn8Xuuefw6ROAgsUJaIbyY2b2AbO9Ohxlqv08Lgt/CEmghIi2I/zvt4Y5AjUZzpRUqYAomrkagze50qj5P5Mj191pU+SLehkArpjDp131C5k3jhJ/6m7EaRpv7R4JWxWZCETvqonBRkooPRYqTZkHAD61WjNrFzDOn3fOHjrK9XjQMYE6C9rLOQf/Cy3XdlJgmSa6OKzak0NhRzIA8h7O16Mlf5kaMz5gW4vhIY/luKVQCgo7O39nxitIw94BlW0u0qT0XzCFgS05ADWdIC7SHJaU8NB4x2h0zQTTX2P5m0U2giLYPO86lUWicae08l14+JUB+uPlpDhNU7UQl29SM77+XnzdGiX/Kk99k8FcMrgp6+X5riQWuE0+rBhuDzOnVhGOgFCazxWCIpXIAvYqin429shbJtttU/upLPrbj9HsXpCJjOPI7+FLK7JXH5tH3rz1OCa/14jkNd4GTg5eGNnJSDgSJ2dWxC9oRQyFub6rPc58n9BCkHzcqrF502Q4TTEfNUuQsqBMJL8yEYAw==
+          page_age: null
+          title: Countdown to May 26, 2025 in Washington DC, District of Columbia
+          type: web_search_result
+          url: https://www.timeanddate.com/countdown/to?msg=Cressida_Glitter's+birthday&year=2025&month=5&day=26&hour=0&min=0&sec=0&fromtheme=birthday
+        tool_use_id: srvtoolu_01BJh8n7va96puUF3hhNnYnY
+        type: web_search_tool_result
+      - text: "\n\nBased on the search results, "
+        type: text
+      - citations:
+        - cited_text: Current moon phase · Moon calendar 2025 · Moon phases (Full Moon) 2025 & 2026 · World Clock · World
+            Clock · Calculate · Period between two dates · Mon...
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDEgJNRfMEmnW19PSuBoMpvnoqkDvIRkx6yxdIjBNsAkQg3SrCCN1zCEKO4LtptywdqMNvgULDnwzA4e8JoIj6nDuov4EZIdg37AOh2QqEx0w/3OTuMMUW8z0FsIsEkBStrkYBA==
+          title: May 2025 Calendar
+          type: web_search_result_location
+          url: https://www.calendar-365.com/calendar/2025/May.html
+        text: today is Monday, May 26, 2025 (Week 22)
+        type: text
+      - text: '. This is notably '
+        type: text
+      - citations:
+        - cited_text: The custom of honoring ancestors by cleaning cemeteries and decorating graves is an ancient and worldwide
+            tradition, but the specific origin of Memori...
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDDh1HLd3wIXrMlbIYRoMJbIyO6jhVRytVw9tIjBp5E9G6P/4oCUT+AvhQia2q7og82j1ZKFJMEyZllOT5wNB8wxo/hua8sprObTuApUqEwNbgxwhB3Rzdzbu8jotXE3VzSYYBA==
+          title: Daily Calendar for Monday, May 26, 2025 | Almanac.com
+          type: web_search_result_location
+          url: https://www.almanac.com/calendar/date/2025-05-26
+        text: Memorial Day, which was originally known as Decoration Day
+        type: text
+      - text: '. '
+        type: text
+      - citations:
+        - cited_text: 'The year 2025 has 365 days. '
+          encrypted_index: Eo8BCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGSJfkRRZt9POYx8TRoM9ZykWxngb2XQ3vvZIjDwg7OYkVRW8t1wzFmTQ1TL5akbS2y3zcQRN/I2nU4v3NsNZbfOSHEBhWOql3U/nekqE4EtVZ7XYLel8iTWpvOfRFX8iUAYBA==
+          title: Day Numbers for 2025
+          type: web_search_result_location
+          url: https://www.epochconverter.com/days/2025
+        text: The year 2025 is a regular year with 365 days
+        type: text
+      - text: .
+        type: text
+      id: msg_014DEwKKUs2hUThC8aqhrc5d
+      model: claude-3-5-sonnet-20241022
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 9582
+        output_tokens: 178
+        server_tool_use:
+          web_search_requests: 1
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '732'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What day is today?
+        role: user
+      - content: Let me search for today's date.
+        role: assistant
+      - content: "\n\nBased on the search results, "
+        role: assistant
+      - content: today is Monday, May 26, 2025 (Week 22)
+        role: assistant
+      - content: '. This is notably '
+        role: assistant
+      - content: Memorial Day, which was originally known as Decoration Day
+        role: assistant
+      - content: '. '
+        role: assistant
+      - content: The year 2025 is a regular year with 365 days
+        role: assistant
+      - content: .
+        role: assistant
+      - content: What day is tomorrow?
+        role: user
+      model: gpt-4.1
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1494'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '1271'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1748263711
+      error: null
+      id: resp_6834631faf2481918638284f62855ddf040b4e5d7e74f261
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4.1-2025-04-14
+      object: response
+      output:
+      - content:
+        - annotations: []
+          text: Tomorrow will be **Tuesday, May 27, 2025**.
+          type: output_text
+        id: msg_68346320b7608191a49fcd12e06dd3b5040b4e5d7e74f261
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 410
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 17
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 427
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

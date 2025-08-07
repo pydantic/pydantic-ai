@@ -452,7 +452,11 @@ def model(
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
-        if request.param == 'openai':
+        if request.param == 'test':
+            from pydantic_ai.models.test import TestModel
+
+            return TestModel()
+        elif request.param == 'openai':
             from pydantic_ai.models.openai import OpenAIModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
