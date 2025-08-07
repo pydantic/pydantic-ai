@@ -3987,7 +3987,7 @@ def test_toolsets():
     assert toolset in agent.toolsets
 
     async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return tool_defs
+        return tool_defs  # pragma: no cover
 
     agent = Agent('test', toolsets=[toolset], prepare_tools=prepare_tools)
     assert agent.toolsets == [IsInstance(PreparedToolset)]
