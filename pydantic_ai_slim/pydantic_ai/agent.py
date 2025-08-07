@@ -276,7 +276,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
             builtin_tools: The builtin tools that the agent will use. This depends on the model, as some models may not
-                support certain tools. On models that don't support certain tools, the tool will be ignored.
+                support certain tools. If the model doesn't support the builtin tools, an error will be raised.
             prepare_tools: Custom function to prepare the tool definition of all tools for each step, except output tools.
                 This is useful if you want to customize the definition of multiple tools or you want to register
                 a subset of tools for a given step. See [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc]

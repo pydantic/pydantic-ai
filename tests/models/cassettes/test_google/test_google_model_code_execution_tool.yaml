@@ -32,11 +32,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1462'
+      - '1421'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=7674
+      - gfet4t7; dur=8265
       transfer-encoding:
       - chunked
       vary:
@@ -48,41 +48,149 @@ interactions:
       - content:
           parts:
           - text: |+
-              To determine the current day in Utrecht, I need to know the current date and time. I will use a tool to get this information.
+              To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
 
           - executableCode:
               code: |
                 import datetime
-                import pytz
 
-                utrecht_timezone = pytz.timezone('Europe/Amsterdam')
-                now_utrecht = datetime.datetime.now(utrecht_timezone)
-                print(now_utrecht.strftime("%A, %Y-%m-%d"))
+                now = datetime.datetime.now()
+                day_of_week = now.strftime("%A")
+                print(f'{day_of_week=}')
               language: PYTHON
           - codeExecutionResult:
               outcome: OUTCOME_OK
               output: |
-                Wednesday, 2025-05-28
+                day_of_week='Thursday'
           - text: |
-              Today is Wednesday, May 28, 2025 in Utrecht.
+              Today is Thursday in Utrecht.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 8ww3aLDxJY24qsMP97vYeA
+      responseId: 0HqUaLilMrq5qsMPif2bEQ
       usageMetadata:
-        candidatesTokenCount: 119
+        candidatesTokenCount: 95
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 119
+          tokenCount: 95
         promptTokenCount: 13
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 13
-        toolUsePromptTokenCount: 114
+        toolUsePromptTokenCount: 101
         toolUsePromptTokensDetails:
         - modality: TEXT
-          tokenCount: 114
-        totalTokenCount: 246
+          tokenCount: 101
+        totalTokenCount: 209
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '825'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: What day is today in Utrecht?
+        role: user
+      - parts:
+        - text: |+
+            To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
+
+        - executableCode:
+            code: |
+              import datetime
+
+              now = datetime.datetime.now()
+              day_of_week = now.strftime("%A")
+              print(f'{day_of_week=}')
+            language: PYTHON
+        - codeExecutionResult:
+            outcome: OUTCOME_OK
+            output: |
+              day_of_week='Thursday'
+        - text: |
+            Today is Thursday in Utrecht.
+        role: model
+      - parts:
+        - text: What day is tomorrow?
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: You are a helpful chatbot.
+        role: user
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1424'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=8179
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |+
+              To determine what day is tomorrow, I'll use the python tool to calculate tomorrow's date and then find the corresponding day of the week.
+
+          - executableCode:
+              code: |
+                import datetime
+
+                today = datetime.date.today()
+                tomorrow = today + datetime.timedelta(days=1)
+                day_of_week = tomorrow.strftime("%A")
+                print(f'{day_of_week=}')
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_OK
+              output: |
+                day_of_week='Friday'
+          - text: |
+              Tomorrow is Friday.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: 2XqUaMPcDNCC_NUP7avMWA
+      usageMetadata:
+        candidatesTokenCount: 95
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 95
+        promptTokenCount: 113
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 113
+        toolUsePromptTokenCount: 203
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 203
+        totalTokenCount: 411
     status:
       code: 200
       message: OK

@@ -44,7 +44,7 @@ from pydantic_ai.result import Usage
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
-    from google.genai.types import HarmBlockThreshold, HarmCategory, Language
+    from google.genai.types import CodeExecutionResult, HarmBlockThreshold, HarmCategory, Language, Outcome
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
@@ -626,7 +626,7 @@ async def test_google_model_code_execution_tool(allow_model_requests: None, goog
                 parts=[
                     TextPart(
                         content="""\
-To determine the current day in Utrecht, I need to know the current date and time. I will use a tool to get this information.
+To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
 
 """
                     ),
@@ -635,11 +635,10 @@ To determine the current day in Utrecht, I need to know the current date and tim
                         args={
                             'code': """\
 import datetime
-import pytz
 
-utrecht_timezone = pytz.timezone('Europe/Amsterdam')
-now_utrecht = datetime.datetime.now(utrecht_timezone)
-print(now_utrecht.strftime("%A, %Y-%m-%d"))
+now = datetime.datetime.now()
+day_of_week = now.strftime("%A")
+print(f'{day_of_week=}')
 """,
                             'language': Language.PYTHON,
                         },
@@ -648,23 +647,133 @@ print(now_utrecht.strftime("%A, %Y-%m-%d"))
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content='Wednesday, 2025-05-28\n',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
                         tool_call_id='not_provided',
                         timestamp=IsDatetime(),
                         provider_name='google',
                     ),
-                    TextPart(content='Today is Wednesday, May 28, 2025 in Utrecht.\n'),
+                    TextPart(content='Today is Thursday in Utrecht.\n'),
                 ],
                 usage=Usage(
                     requests=1,
                     request_tokens=13,
-                    response_tokens=119,
-                    total_tokens=246,
+                    response_tokens=95,
+                    total_tokens=209,
                     details={
-                        'tool_use_prompt_tokens': 114,
-                        'text_candidates_tokens': 119,
+                        'tool_use_prompt_tokens': 101,
+                        'text_candidates_tokens': 95,
                         'text_prompt_tokens': 13,
-                        'text_tool_use_prompt_tokens': 114,
+                        'text_tool_use_prompt_tokens': 101,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+        ]
+    )
+
+    result = await agent.run('What day is tomorrow?', message_history=result.all_messages())
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+now = datetime.datetime.now()
+day_of_week = now.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Today is Thursday in Utrecht.\n'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=13,
+                    response_tokens=95,
+                    total_tokens=209,
+                    details={
+                        'tool_use_prompt_tokens': 101,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 13,
+                        'text_tool_use_prompt_tokens': 101,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                vendor_details={'finish_reason': 'STOP'},
+            ),
+            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine what day is tomorrow, I'll use the python tool to calculate tomorrow's date and then find the corresponding day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+today = datetime.date.today()
+tomorrow = today + datetime.timedelta(days=1)
+day_of_week = tomorrow.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Friday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Tomorrow is Friday.\n'),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=113,
+                    response_tokens=95,
+                    total_tokens=411,
+                    details={
+                        'tool_use_prompt_tokens': 203,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 113,
+                        'text_tool_use_prompt_tokens': 203,
                     },
                 ),
                 model_name='gemini-2.0-flash',

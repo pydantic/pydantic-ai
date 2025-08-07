@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 from uuid import uuid4
 
+from google.genai.types import ExecutableCodeDict
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
@@ -509,9 +510,14 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
             pass
-        elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
-            # This is currently never returned from google
-            pass
+        elif isinstance(item, BuiltinToolCallPart):
+            if item.provider_name == 'google':
+                if item.tool_name == 'code_execution':
+                    parts.append({'executable_code': cast(ExecutableCodeDict, item.args)})
+        elif isinstance(item, BuiltinToolReturnPart):
+            if item.provider_name == 'google':
+                if item.tool_name == 'code_execution':
+                    parts.append({'code_execution_result': item.content})
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)
@@ -537,7 +543,7 @@ def _process_response_from_parts(
                 BuiltinToolReturnPart(
                     provider_name='google',
                     tool_name='code_execution',
-                    content=part.code_execution_result.output,
+                    content=part.code_execution_result,
                     tool_call_id='not_provided',
                 )
             )
