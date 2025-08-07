@@ -1,0 +1,17 @@
+# Ollama Local Configuration Example
+# Copy this file to config.yaml and adjust as needed
+
+provider: "openai"              # Use OpenAI-compatible client
+model_name: "phi3"              # Your local Ollama model name
+temperature: 0.0                # Creativity level (0.0 = deterministic)
+
+# Ollama settings
+ollama_url: "http://localhost:11434"     # Ollama server URL
+ollama_api_key: "ollama"                 # Ollama API key (usually "ollama")
+
+# Optional: System prompt configuration
+system_prompt: "semantic_translator"     # Default prompt type
+
+# Optional: Output configuration
+output_format: "json"                    # json, pretty, minimal
+verbose: false                           # Enable debug output
