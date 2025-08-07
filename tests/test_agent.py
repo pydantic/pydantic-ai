@@ -3684,6 +3684,37 @@ def test_override_toolsets():
     assert result.output == snapshot('{"baz":"Hello from baz"}')
 
 
+def test_override_tools():
+    def foo() -> str:
+        return 'Hello from foo'
+
+    def bar() -> str:
+        return 'Hello from bar'
+
+    available_tools: list[list[str]] = []
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        nonlocal available_tools
+        available_tools.append([tool_def.name for tool_def in tool_defs])
+        return tool_defs
+
+    agent = Agent('test', tools=[foo], prepare_tools=prepare_tools)
+
+    result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['foo'])
+    assert result.output == snapshot('{"foo":"Hello from foo"}')
+
+    with agent.override(tools=[bar]):
+        result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['bar'])
+    assert result.output == snapshot('{"bar":"Hello from bar"}')
+
+    with agent.override(tools=[]):
+        result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot([])
+    assert result.output == snapshot('success (no tool calls)')
+
+
 def test_adding_tools_during_run():
     toolset = FunctionToolset()
 
@@ -3942,3 +3973,14 @@ def test_set_mcp_sampling_model():
     agent.set_mcp_sampling_model(function_model2)
     assert server1.sampling_model is function_model2
     assert server2.sampling_model is function_model2
+
+
+def test_toolsets():
+    toolset = FunctionToolset()
+
+    @toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'
+
+    agent = Agent('test', toolsets=[toolset])
+    assert toolset in agent.toolsets
