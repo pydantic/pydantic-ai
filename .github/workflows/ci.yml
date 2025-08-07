@@ -198,8 +198,6 @@ jobs:
 
       - run: mkdir .coverage
 
-      - run: uv sync --group dev --all-extras
-
       - run: |
           unset UV_FROZEN
           uv run --group dev --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
