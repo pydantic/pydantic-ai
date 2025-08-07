@@ -15,9 +15,12 @@ import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, usage
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -59,6 +62,8 @@ if TYPE_CHECKING:
         MessageUnionTypeDef,
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
+        ReasoningContentBlockOutputTypeDef,
+        ReasoningTextBlockTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -276,9 +281,10 @@ class BedrockConverseModel(Model):
                 if reasoning_content := item.get('reasoningContent'):
                     reasoning_text = reasoning_content.get('reasoningText')
                     if reasoning_text:  # pragma: no branch
-                        thinking_part = ThinkingPart(content=reasoning_text['text'])
-                        if reasoning_signature := reasoning_text.get('signature'):
-                            thinking_part.signature = reasoning_signature
+                        thinking_part = ThinkingPart(
+                            content=reasoning_text['text'],
+                            signature=reasoning_text.get('signature'),
+                        )
                         items.append(thinking_part)
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
@@ -338,6 +344,9 @@ class BedrockConverseModel(Model):
         tool_config = self._map_tool_config(model_request_parameters)
         if tool_config:
             params['toolConfig'] = tool_config
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Bedrock does not support built-in tools')
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -462,7 +471,20 @@ class BedrockConverseModel(Model):
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't pass the thinking part to Bedrock since it raises an error.
+                        if BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts:
+                            reasoning_text: ReasoningTextBlockTypeDef = {
+                                'text': item.content,
+                            }
+                            if item.signature:
+                                reasoning_text['signature'] = item.signature
+                            reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                'reasoningText': reasoning_text,
+                            }
+                            content.append({'reasoningContent': reasoning_content})
+                        else:
+                            # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
+                            pass
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
                         pass
                     else:
                         assert isinstance(item, ToolCallPart)
@@ -610,7 +632,11 @@ class BedrockStreamedResponse(StreamedResponse):
                 delta = chunk['contentBlockDelta']['delta']
                 if 'reasoningContent' in delta:
                     if text := delta['reasoningContent'].get('text'):
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=index, content=text)
+                        yield self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=index,
+                            content=text,
+                            signature=delta['reasoningContent'].get('signature'),
+                        )
                     else:  # pragma: no cover
                         warnings.warn(
                             f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '

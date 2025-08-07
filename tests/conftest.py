@@ -452,7 +452,11 @@ def model(
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
-        if request.param == 'openai':
+        if request.param == 'test':
+            from pydantic_ai.models.test import TestModel
+
+            return TestModel()
+        elif request.param == 'openai':
             from pydantic_ai.models.openai import OpenAIModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -478,10 +482,10 @@ def model(
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
         elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider
+            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
+            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
 
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider

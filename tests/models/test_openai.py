@@ -12,10 +12,11 @@ import httpx
 import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
-from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -37,12 +38,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models.gemini import GeminiModel
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers.google_gla import GoogleGLAProvider
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -65,6 +64,7 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
 
+    from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import (
         OpenAIModel,
         OpenAIModelSettings,
@@ -73,6 +73,7 @@ with try_import() as imports_successful:
         OpenAISystemPromptRole,
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+    from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -1016,7 +1017,7 @@ async def test_max_completion_tokens(allow_model_requests: None, model_name: str
 
 
 async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_key: str, openai_api_key: str):
-    gemini_model = GeminiModel('gemini-2.0-flash-exp', provider=GoogleGLAProvider(api_key=gemini_api_key))
+    gemini_model = GoogleModel('gemini-2.0-flash-exp', provider=GoogleProvider(api_key=gemini_api_key))
     openai_model = OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(api_key=openai_api_key))
 
     agent = Agent(model=gemini_model)
@@ -1777,6 +1778,44 @@ def test_strict_schema():
     )
 
 
+def test_native_output_strict_mode(allow_model_requests: None):
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    c = completion_message(
+        ChatCompletionMessage(content='{"city": "Mexico City", "country": "Mexico"}', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    # Explicit strict=True
+    agent = Agent(model, output_type=NativeOutput(CityLocation, strict=True))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is True
+
+    # Explicit strict=False
+    agent = Agent(model, output_type=NativeOutput(CityLocation, strict=False))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
+
+    # Strict-compatible
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is True
+
+    # Strict-incompatible
+    CityLocation.model_config = ConfigDict(extra='allow')
+
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    agent.run_sync('What is the capital of Mexico?')
+    assert get_mock_chat_completion_kwargs(mock_client)[-1]['response_format']['json_schema']['strict'] is False
+
+
 async def test_openai_instructions(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.')
@@ -2107,10 +2146,7 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
         'gpt-4o',
         provider=OpenAIProvider(openai_client=mock_client),
     )
-    agent = Agent(
-        m,
-        instructions='You are a helpful assistant.',
-    )
+    agent = Agent(m, instructions='You are a helpful assistant.')
     result = await agent.run(
         'What is the capital of Minas Gerais?',
         model_settings=OpenAIModelSettings(openai_logprobs=True),
@@ -2126,6 +2162,56 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
             'top_logprobs': [],
         }
     ]
+
+
+@pytest.mark.vcr()
+async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+    )
+
+    with pytest.raises(ModelHTTPError, match='.*Web search options not supported with this model.*'):
+        await agent.run('What day is today?')
+
+
+@pytest.mark.vcr()
+async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+    )
+
+    result = await agent.run('What day is today?')
+    assert result.output == snapshot('May 14, 2025, 8:51:29 AM ')
+
+
+@pytest.mark.vcr()
+async def test_openai_web_search_tool_with_user_location(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+    )
+
+    result = await agent.run('What is the current temperature?')
+    assert result.output == snapshot("""\
+Het is momenteel zonnig in Utrecht met een temperatuur van 22°C.
+
+## Weer voor Utrecht, Nederland:
+Huidige omstandigheden: Zonnig, 72°F (22°C)
+
+Dagvoorspelling:
+* woensdag, mei 14: minimum: 48°F (9°C), maximum: 71°F (22°C), beschrijving: Afnemende bewolking
+* donderdag, mei 15: minimum: 43°F (6°C), maximum: 67°F (20°C), beschrijving: Na een bewolkt begin keert de zon terug
+* vrijdag, mei 16: minimum: 45°F (7°C), maximum: 64°F (18°C), beschrijving: Overwegend zonnig
+* zaterdag, mei 17: minimum: 47°F (9°C), maximum: 68°F (20°C), beschrijving: Overwegend zonnig
+* zondag, mei 18: minimum: 47°F (8°C), maximum: 68°F (20°C), beschrijving: Deels zonnig
+* maandag, mei 19: minimum: 49°F (9°C), maximum: 70°F (21°C), beschrijving: Deels zonnig
+* dinsdag, mei 20: minimum: 49°F (10°C), maximum: 72°F (22°C), beschrijving: Zonnig tot gedeeltelijk bewolkt
+ \
+""")
 
 
 @pytest.mark.vcr()

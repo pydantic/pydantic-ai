@@ -10,11 +10,16 @@ from typing import Literal, Union, cast, overload
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.groq import GroqModelProfile
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -212,7 +217,7 @@ class GroqModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
-        # standalone function to make it easier to override
+        tools += self._get_builtin_tools(model_request_parameters)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:
@@ -226,7 +231,7 @@ class GroqModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
-                model=str(self._model_name),
+                model=self._model_name,
                 messages=groq_messages,
                 n=1,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -256,6 +261,19 @@ class GroqModel(Model):
         timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        if choice.message.executed_tools:
+            for tool in choice.message.executed_tools:
+                tool_call_id = generate_tool_call_id()
+                items.append(
+                    BuiltinToolCallPart(
+                        tool_name=tool.type, args=tool.arguments, provider_name='groq', tool_call_id=tool_call_id
+                    )
+                )
+                items.append(
+                    BuiltinToolReturnPart(
+                        provider_name='groq', tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id
+                    )
+                )
         # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
         if choice.message.reasoning is not None:
             items.append(ThinkingPart(content=choice.message.reasoning))
@@ -291,6 +309,18 @@ class GroqModel(Model):
             tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
         return tools
 
+    def _get_builtin_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionToolParam]:
+        tools: list[chat.ChatCompletionToolParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
+                    raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                raise UserError('`CodeExecutionTool` is not supported by Groq')
+        return tools
+
     def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
@@ -308,6 +338,9 @@ class GroqModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Skip thinking parts when mapping to Groq messages
                         continue
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from groq
+                        pass
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')

@@ -1,4 +1,5 @@
 # pyright: reportPrivateUsage=false
+# pyright: reportDeprecated=false
 from __future__ import annotations as _annotations
 
 import datetime
@@ -60,7 +61,11 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning'),
+]
 
 
 async def test_model_simple(allow_model_requests: None):
