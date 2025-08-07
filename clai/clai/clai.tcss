@@ -25,6 +25,11 @@ Conversation {
             border: none;
             height: 1;
         }
+        TextArea {
+            background: transparent;
+            height: auto;
+            min-height: 3;
+        }
     }
 
     UserText {
@@ -48,6 +53,11 @@ Conversation {
                 margin-bottom:0;
             }
         }
+    }
+
+    ErrorMessage {
+        background: $error 10%;
+        color: $text-error;
     }
 }
 

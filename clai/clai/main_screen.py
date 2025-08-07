@@ -1,36 +1,44 @@
 from __future__ import annotations
 
-import asyncio
 from asyncio import Queue
 from dataclasses import dataclass
+from pathlib import Path
+from string import Template
 
+from prompt_toolkit.history import FileHistory
 from textual import containers, getters, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
+from textual.reactive import reactive, var
 from textual.screen import Screen
 from textual.suggester import SuggestFromList
 from textual.widget import Widget
-from textual.widgets import Footer, Input, Label, Markdown
+from textual.widgets import Footer, Input, Label, Markdown, Static, TextArea
+from textual.widgets.input import Selection
 
-from pydantic_ai import __version__
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.agent import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.output import OutputDataT
 
-HELP = f"""\
-## Pydantic AI TUI **v{__version__}**
+HELP = Template("""\
+## $title
+                                
+- **Powered by Pydantic AI**
+    
+    The Python agent framework designed to make it less painful to build production grade applications with Generative AI.
 
-
-| Prompt | Purpose |
+| Command | Purpose |
 | --- | --- |
 | `/markdown` | Show markdown output of last question. |
 |`/multiline` |  Enable multiline mode. |
 | `/exit` | Exit CLAI. |
+""")
 
 
-"""
+class ErrorMessage(Static):
+    """An error message for the user."""
 
 
 class Response(Markdown):
@@ -59,10 +67,41 @@ class PromptInput(Input):
 class Prompt(containers.HorizontalGroup):
     """Takes input from the user."""
 
+    BINDINGS = [
+        Binding('shift+up', 'history(-1)', 'History up', priority=True),
+        Binding('shift+down', 'history(+1)', 'History down', priority=True),
+        Binding('ctrl+j', 'submit', 'Submit prompt', key_display='shift+⏎', priority=True),
+        Binding('escape', 'escape', 'Exit multiline'),
+    ]
+
+    history_position = var(0, bindings=True)
+    multiline = reactive(False)
+    input = getters.query_one('#prompt-input', Input)
+    text_area = getters.query_one('#prompt-textarea', TextArea)
+
+    @dataclass
+    class Submitted(Message):
+        """Prompt text was submitted."""
+
+        value: str
+
+    @dataclass
+    class SetMultiline(Message):
+        """Go back to single line."""
+
+        multiline: bool
+
+    def __init__(self, history: FileHistory, id: str | None = None) -> None:
+        self.history = history
+        self.history_strings: list[str] = []
+        self.edit_prompt = ''
+        super().__init__(id=id)
+
     def compose(self) -> ComposeResult:
         yield Label('clai ➤', id='prompt')
         yield PromptInput(
             id='prompt-input',
+            placeholder='Ask me anything',
             suggester=SuggestFromList(
                 [
                     '/markdown',
@@ -71,11 +110,108 @@ class Prompt(containers.HorizontalGroup):
                 ]
             ),
         )
+        yield TextArea(
+            id='prompt-textarea',
+            language='markdown',
+            highlight_cursor_line=False,
+        )
+
+    def watch_multiline(self, multiline: bool) -> None:
+        if multiline:
+            self.input.display = False
+            self.text_area.display = True
+            self.text_area.load_text(self.input.value)
+        else:
+            self.input.display = True
+            self.text_area.display = False
+            self.input.value = self.text_area.text.partition('\n')[0]
+
+    @property
+    def value(self) -> str:
+        """Value of prompt."""
+        if self.multiline:
+            return self.text_area.text
+        else:
+            return self.input.value
+
+    @value.setter
+    def value(self, value: str) -> None:
+        multiline = '\n' in value
+        self.post_message(self.SetMultiline(multiline))
+        if multiline:
+            self.text_area.load_text(value)
+        else:
+            self.input.value = value
+            self.input.selection = Selection.cursor(len(value))
+
+    def set_prompt(self, prompt: str) -> None:
+        """Set a new prompt value."""
+        self.value = prompt
+
+    def clear(self) -> None:
+        self.input.clear()
+        self.text_area.load_text('')
+
+    async def action_history(self, direction: int) -> None:
+        if self.history_position == 0:
+            self.history_strings.clear()
+            async for prompt in self.history.load():
+                self.history_strings.append(prompt)
+            self.history_strings.reverse()
+        self.history_position = self.history_position + direction
+
+    def action_submit(self) -> None:
+        self.post_message(self.Submitted(self.text_area.text))
+        self.text_area.load_text('')
+        self.action_escape()
+
+    def action_escape(self) -> None:
+        self.post_message(self.SetMultiline(False))
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == 'history':
+            if parameters[0] == +1 and self.history_position == 0:
+                return None
+            if (
+                parameters[0] == -1
+                and self.history_strings
+                and self.history_position == -len(self.history_strings)
+            ):
+                return None
+        if action in ('submit', 'escape'):
+            return self.multiline
+        return True
+
+    def validate_history_position(self, history_position: int) -> int:
+        if history_position > 0:
+            return 0
+        if -history_position > len(self.history_strings):
+            return -len(self.history_strings)
+        return history_position
+
+    async def watch_history_position(self, previous_position: int, position: int) -> None:
+        if previous_position == 0:
+            self.edit_prompt = self.query_one(PromptInput).value
+        if position == 0:
+            self.set_prompt(self.edit_prompt)
+        elif position < 0:
+            prompt = self.history_strings[position]
+            self.set_prompt(prompt)
+
+    @on(Input.Submitted)
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        self.post_message(self.Submitted(event.value))
+        self.clear()
+
+    @on(Submitted)
+    async def on_submitted(self, event: Submitted) -> None:
+        self.history_position = 0
 
 
 class Contents(containers.VerticalScroll):
-    BINDING_GROUP_TITLE = 'Conversation'
+    """The conversation contents."""
 
+    BINDING_GROUP_TITLE = 'Conversation'
     BINDINGS = [Binding('tab', 'screen.focus-next', 'Focus prompt')]
 
 
@@ -83,24 +219,27 @@ class Conversation(containers.Vertical):
     """The conversation with the AI."""
 
     contents = getters.query_one('#contents', containers.VerticalScroll)
+    prompt = getters.query_one(Prompt)
+    multiline = reactive(False)
 
-    @dataclass
-    class Prompt(Message):
-        """A prompt from the user."""
-
-        prompt: str
+    def __init__(self, history: FileHistory, title: str) -> None:
+        self.history = history
+        self.title = title
+        super().__init__()
 
     def compose(self) -> ComposeResult:
-        with Contents(id='contents'):
-            pass
+        yield Contents(id='contents')
+        yield Prompt(self.history, id='prompt').data_bind(Conversation.multiline)
 
-        yield Prompt(id='prompt')
+    def get_last_markdown_source(self) -> str | None:
+        """Get the source of the last markdown response, or `None` if there is no markdown response."""
+        for child in reversed(self.contents.children):
+            if isinstance(child, Markdown):
+                return child.source
+        return None
 
     async def on_mount(self) -> None:
-        await self.post_help()
-
-    async def post_help(self) -> None:
-        await self.post(Response(HELP))
+        await self.post(Response(HELP.safe_substitute(title=self.title)))
 
     async def post(self, widget: Widget) -> None:
         await self.contents.mount(widget)
@@ -109,11 +248,9 @@ class Conversation(containers.Vertical):
     async def post_prompt(self, prompt: str) -> None:
         await self.post(UserText(prompt))
 
-    @on(Input.Submitted)
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        event.stop()
-        self.post_message(self.Prompt(event.input.value))
-        event.input.clear()
+    @on(Prompt.SetMultiline)
+    def on_escape_multiline(self, event: Prompt.SetMultiline) -> None:
+        self.multiline = event.multiline
 
 
 class MainScreen(Screen[None]):
@@ -124,14 +261,23 @@ class MainScreen(Screen[None]):
 
     conversation = getters.query_one(Conversation)
 
-    def __init__(self, agent: Agent[AgentDepsT, OutputDataT], prompt: str | None = None):
+    def __init__(
+        self,
+        agent: Agent[AgentDepsT, OutputDataT],
+        history_path: Path,
+        title: str,
+        *,
+        prompt: str | None = None,
+    ):
         self.agent = agent
         self.prompt = prompt
         self.messages: list[ModelMessage] = []
+        self.history = FileHistory(history_path)
         super().__init__()
+        self.title = title
 
     def compose(self) -> ComposeResult:
-        yield Conversation()
+        yield Conversation(self.history, self.title or 'PyDantic CLAI')
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -149,12 +295,34 @@ class MainScreen(Screen[None]):
         # Tell the response queue task to finish up
         await self.prompt_queue.put(None)
 
-    @on(Conversation.Prompt)
-    async def on_conversation_prompt(self, event: Conversation.Prompt) -> None:
+    @on(Prompt.Submitted)
+    async def on_conversation_prompt(self, event: Prompt.Submitted) -> None:
         """Called when the user submits a prompt."""
-        prompt = event.prompt
-        await self.conversation.post_prompt(prompt)
-        await self.ask_agent(prompt)
+        prompt = event.value.strip()
+        if not prompt:
+            self.app.bell()
+            return
+        if prompt.startswith('/'):
+            await self.process_slash(prompt)
+        else:
+            self.history.append_string(prompt)
+            await self.conversation.post_prompt(prompt)
+            await self.ask_agent(prompt)
+
+    async def process_slash(self, prompt: str) -> None:
+        prompt = prompt.strip()
+        if prompt == '/markdown':
+            markdown = self.conversation.get_last_markdown_source()
+            if not markdown:
+                await self.conversation.post(ErrorMessage('No markdown to display'))
+            else:
+                await self.conversation.post(Static(markdown))
+        elif prompt == '/multiline':
+            self.conversation.multiline = not self.conversation.multiline
+        elif prompt == '/exit':
+            self.app.exit()
+        else:
+            await self.conversation.post(ErrorMessage(f'Unknown command: {prompt!r}'))
 
     async def ask_agent(self, prompt: str) -> None:
         """Send the prompt to the agent."""
@@ -178,7 +346,9 @@ class MainScreen(Screen[None]):
                     async for node in agent_run:
                         if Agent.is_model_request_node(node):
                             async with node.stream(agent_run.ctx) as handle_stream:
-                                async for fragment in handle_stream.stream_text(delta=True, debounce_by=None):
+                                async for fragment in handle_stream.stream_text(
+                                    delta=True, debounce_by=None
+                                ):
                                     await markdown_stream.write(fragment)
                                     response.display = True
                     self.messages[:] = agent_run.result.all_messages()
