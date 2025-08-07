@@ -57,15 +57,6 @@ def test_known_model_names():
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
         n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
     ]
-    # OpenAI SDK may lag new IDs; include latest prefixed GPT-5 variants explicitly
-    openai_names += [
-        'openai:gpt-5',
-        'openai:gpt-5-mini',
-        'openai:gpt-5-nano',
-        'openai:gpt-5-2025-08-07',
-        'openai:gpt-5-mini-2025-08-07',
-        'openai:gpt-5-nano-2025-08-07',
-    ]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
     huggingface_names = [f'huggingface:{n}' for n in get_model_names(HuggingFaceModelName)]
