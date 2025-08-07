@@ -301,7 +301,6 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-mini-search-preview-2025-03-11',
         'openai:gpt-4o-search-preview',
         'openai:gpt-4o-search-preview-2025-03-11',
-        # GPT-5 family
         'openai:gpt-5',
         'openai:gpt-5-mini',
         'openai:gpt-5-nano',
