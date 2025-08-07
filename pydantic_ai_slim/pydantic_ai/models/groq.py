@@ -316,7 +316,7 @@ class GroqModel(Model):
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
-                    raise UserError('`WebSearchTool` is not supported by Groq')
+                    raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 raise UserError('`CodeExecutionTool` is not supported by Groq')
         return tools
