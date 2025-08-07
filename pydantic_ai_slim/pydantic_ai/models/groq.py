@@ -11,6 +11,7 @@ from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.profiles.groq import GroqModelProfile
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
@@ -314,17 +315,8 @@ class GroqModel(Model):
         tools: list[chat.ChatCompletionToolParam] = []
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
-                # Groq uses the web_search tool similar to Anthropic
-                # Based on https://console.groq.com/docs/agentic-tooling
-                web_search_tool: chat.ChatCompletionToolParam = {
-                    'type': 'function',
-                    'function': {
-                        'name': 'web_search',
-                        'description': 'Search the web for information',
-                        'parameters': {'type': 'object', 'properties': {}, 'required': []},
-                    },
-                }
-                tools.append(web_search_tool)
+                if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
+                    raise UserError('`WebSearchTool` is not supported by Groq')
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 raise UserError('`CodeExecutionTool` is not supported by Groq')
         return tools
