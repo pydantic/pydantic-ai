@@ -398,7 +398,7 @@ class Model(ABC):
     ) -> BaseCountTokensResponse:
         """Make a request to the model for counting tokens."""
         # This method is not required, but you need to implement it if you want to support token counting before making a request
-        raise NotImplementedError(f'Token counting API call is not supported by this {self.__class__.__name__}')
+        raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
 
     @asynccontextmanager
     async def request_stream(
