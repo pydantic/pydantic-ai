@@ -47,4 +47,4 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
-        return replace(self, wrapped=visitor(self.wrapped))
+        return replace(self, wrapped=self.wrapped.visit_and_replace(visitor))

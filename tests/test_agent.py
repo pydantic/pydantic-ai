@@ -49,8 +49,9 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -3980,7 +3981,13 @@ def test_toolsets():
 
     @toolset.tool
     def foo() -> str:
-        return 'Hello from foo'
+        return 'Hello from foo'  # pragma: no cover
 
     agent = Agent('test', toolsets=[toolset])
     assert toolset in agent.toolsets
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs
+
+    agent = Agent('test', toolsets=[toolset], prepare_tools=prepare_tools)
+    assert agent.toolsets == [IsInstance(PreparedToolset)]

@@ -129,10 +129,10 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     @property
     def label(self) -> str:
-        if not self.id:
-            return repr(self)
+        if self.id:
+            return super().label  # pragma: no cover
         else:
-            return super().label
+            return repr(self)
 
     @property
     def tool_name_conflict_hint(self) -> str:
@@ -518,7 +518,7 @@ class MCPServerStdio(MCPServer):
             f'args={self.args!r}',
         ]
         if self.id:
-            repr_args.append(f'id={self.id!r}')
+            repr_args.append(f'id={self.id!r}')  # pragma: no cover
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
 

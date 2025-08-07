@@ -84,7 +84,7 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     def label(self) -> str:
         """The name of the toolset for use in error messages."""
         label = self.__class__.__name__
-        if self.id:
+        if self.id:  # pragma: no branch
             label += f' {self.id!r}'
         return label
 

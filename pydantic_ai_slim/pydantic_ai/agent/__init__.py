@@ -8,7 +8,6 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from types import FrameType
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
@@ -281,7 +280,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors: Optional list of callables to process the message history before sending it to the model.
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
-            event_stream_handler: TODO: Optional handler for events from the agent stream.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -396,7 +395,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        """TODO: Optional handler for events from the agent stream."""
+        """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -1223,25 +1222,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return toolset.toolsets
         else:
             return [toolset]
-
-    def _infer_name(self, function_frame: FrameType | None) -> None:
-        """Infer the agent name from the call frame.
-
-        Usage should be `self._infer_name(inspect.currentframe())`.
-        """
-        assert self.name is None, 'Name already set'
-        if function_frame is not None:  # pragma: no branch
-            if parent_frame := function_frame.f_back:  # pragma: no branch
-                for name, item in parent_frame.f_locals.items():
-                    if item is self:
-                        self.name = name
-                        return
-                if parent_frame.f_locals != parent_frame.f_globals:  # pragma: no branch
-                    # if we couldn't find the agent in locals and globals are a different dict, try globals
-                    for name, item in parent_frame.f_globals.items():
-                        if item is self:
-                            self.name = name
-                            return
 
     def _prepare_output_schema(
         self, output_type: OutputSpec[RunOutputDataT] | None, model_profile: ModelProfile

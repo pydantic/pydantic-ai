@@ -66,11 +66,11 @@ EventStreamHandler: TypeAlias = Callable[
     ],
     Awaitable[None],
 ]
-"""TODO: Docstring"""
+"""A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
-    """TODO: Docstring."""
+    """Abstract superclass for [`Agent`][pydantic_ai.agent.Agent], [`WrapperAgent`][pydantic_ai.agent.WrapperAgent], and your own custom agent implementations."""
 
     @property
     @abstractmethod
@@ -102,7 +102,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @property
     @abstractmethod
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        """TODO: Optional handler for events from the agent stream."""
+        """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         raise NotImplementedError
 
     @property
@@ -192,7 +192,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional event stream handler to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
 
         Returns:
             The result of the run.
@@ -300,7 +300,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional event stream handler to use for this run.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools
 
         Returns:
             The result of the run.
@@ -400,7 +400,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager. Note, it does _not_ receive any events after the final result is found.
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
+                It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
+                Note, it does _not_ receive any events after the final result is found.
 
         Returns:
             The result of the run.

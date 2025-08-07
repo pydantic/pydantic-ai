@@ -42,14 +42,11 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     @property
     def label(self) -> str:
-        if len(self.toolsets) == 1:
-            return self.toolsets[0].label
-        else:
-            return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'
+        return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'  # pragma: no cover
 
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
@@ -104,4 +101,4 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
-        return replace(self, toolsets=[visitor(toolset) for toolset in self.toolsets])
+        return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])

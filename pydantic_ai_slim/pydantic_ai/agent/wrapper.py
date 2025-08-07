@@ -23,7 +23,10 @@ from .abstract import AbstractAgent, EventStreamHandler, RunOutputDataT
 
 
 class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
-    """TODO: Docstring."""
+    """Agent which wraps another agent.
+
+    Does nothing on its own, used as a base class.
+    """
 
     def __init__(self, wrapped: AbstractAgent[AgentDepsT, OutputDataT]):
         self.wrapped = wrapped
