@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
-from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
-from .._utils import get_async_lock
 from ..exceptions import UserError
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -31,31 +30,17 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: asyncio.Lock = field(compare=False, init=False)
-    _entered_count: int = field(init=False)
-    _exit_stack: AsyncExitStack | None = field(init=False)
+    @asynccontextmanager
+    async def setup(self) -> AsyncGenerator[Self, Any]:
+        async with AsyncExitStack() as exit_stack:
+            try:
+                for toolset in self.toolsets:
+                    await exit_stack.enter_async_context(toolset.setup())
+            except Exception as e:
+                await exit_stack.aclose()
+                raise e
 
-    def __post_init__(self):
-        self._enter_lock = get_async_lock()
-        self._entered_count = 0
-        self._exit_stack = None
-
-    async def __aenter__(self) -> Self:
-        async with self._enter_lock:
-            if self._entered_count == 0:
-                async with AsyncExitStack() as exit_stack:
-                    for toolset in self.toolsets:
-                        await exit_stack.enter_async_context(toolset)
-                    self._exit_stack = exit_stack.pop_all()
-            self._entered_count += 1
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        async with self._enter_lock:
-            self._entered_count -= 1
-            if self._entered_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+            yield self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))

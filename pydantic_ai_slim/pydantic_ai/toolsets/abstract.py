@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Protocol
 
@@ -79,19 +81,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         """A hint for how to avoid name conflicts with other toolsets for use in error messages."""
         return 'Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.'
 
-    async def __aenter__(self) -> Self:
-        """Enter the toolset context.
+    @asynccontextmanager
+    async def setup(self) -> AsyncGenerator[Self, Any]:
+        """Set up the toolset.
 
         This is where you can set up network connections in a concrete implementation.
         """
-        return self
-
-    async def __aexit__(self, *args: Any) -> bool | None:
-        """Exit the toolset context.
-
-        This is where you can tear down network connections in a concrete implementation.
-        """
-        return None
+        yield self
 
     @abstractmethod
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:

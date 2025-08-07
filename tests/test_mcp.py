@@ -72,7 +72,7 @@ def run_context(model: Model) -> RunContext[int]:
 
 async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
+    async with server.setup():
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
         assert len(tools) == snapshot(16)
         assert tools[0].name == 'celsius_to_fahrenheit'
@@ -86,8 +86,8 @@ async def test_stdio_server(run_context: RunContext[int]):
 
 async def test_reentrant_context_manager():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-    async with server:
-        async with server:
+    async with server.setup():
+        async with server.setup():
             pass
 
 
@@ -96,18 +96,22 @@ async def test_context_manager_initialization_error() -> None:
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     from mcp.client.session import ClientSession
 
+    with pytest.raises(Exception):
+        _ = server.client
+
     with patch.object(ClientSession, 'initialize', side_effect=Exception):
         with pytest.raises(Exception):
-            async with server:
+            async with server.setup():
                 pass
 
-    assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
-    assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert server._client is not None  # pyright: ignore[reportPrivateUsage]
+    assert server._client._read_stream._closed  # pyright: ignore[reportPrivateUsage]
+    assert server._client._write_stream._closed  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
-    async with server:
+    async with server.setup():
         tools = await server.get_tools(run_context)
         assert all(name.startswith('foo_') for name in tools.keys())
 
@@ -120,7 +124,7 @@ async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
 async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     test_dir = Path(__file__).parent
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
-    async with server:
+    async with server.setup():
         tools = await server.get_tools(run_context)
         assert len(tools) == snapshot(16)
 
@@ -140,7 +144,7 @@ async def test_process_tool_call(run_context: RunContext[int]) -> int:
         return await call_tool(name, tool_args, {'deps': ctx.deps})
 
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], process_tool_call=process_tool_call)
-    async with server:
+    async with server.setup():
         agent = Agent(deps_type=int, model=TestModel(call_tools=['echo_deps']), toolsets=[server])
         result = await agent.run('Echo with deps set to 42', deps=42)
         assert result.output == snapshot('{"echo_deps":{"echo":"This is an echo message","deps":42}}')
@@ -180,7 +184,7 @@ def test_sse_server_conflicting_timeout_params():
 
 @pytest.mark.vcr()
 async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
         assert result.output == snapshot('0 degrees Celsius is equal to 32 degrees Fahrenheit.')
         assert result.all_messages() == snapshot(
@@ -257,7 +261,7 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
         """Return nothing"""
         return None
 
-    async with agent:
+    async with agent.setup():
         with pytest.raises(
             UserError,
             match=re.escape(
@@ -280,7 +284,7 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
         """Return nothing"""
         return None
 
-    async with agent:
+    async with agent.setup():
         # This means that we passed the _prepare_request_parameters check and there is no conflict in the tool name
         with pytest.raises(RuntimeError, match='Model requests are not allowed, since ALLOW_MODEL_REQUESTS is False'):
             await agent.run('No conflict')
@@ -295,7 +299,7 @@ async def test_agent_with_server_not_running(agent: Agent, allow_model_requests:
 async def test_log_level_unset(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     assert server.log_level is None
-    async with server:
+    async with server.setup():
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
         assert len(tools) == snapshot(16)
         assert tools[13].name == 'get_log_level'
@@ -307,14 +311,14 @@ async def test_log_level_unset(run_context: RunContext[int]):
 async def test_log_level_set(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
     assert server.log_level == 'info'
-    async with server:
+    async with server.setup():
         result = await server.direct_call_tool('get_log_level', {})
         assert result == snapshot('info')
 
 
 @pytest.mark.vcr()
 async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('What is the weather in Mexico City?')
         assert result.output == snapshot(
             'The weather in Mexico City is currently sunny with a temperature of 26 degrees Celsius.'
@@ -393,7 +397,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_text_resource(allow_model_requests: None, agent: Agent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me the product name')
         assert result.output == snapshot('The product name is "Pydantic AI".')
         assert result.all_messages() == snapshot(
@@ -466,7 +470,7 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
 
 @pytest.mark.vcr()
 async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me the product name via get_product_name_link')
         assert result.output == snapshot('The product name is "Pydantic AI".')
         assert result.all_messages() == snapshot(
@@ -539,7 +543,7 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
 
 @pytest.mark.vcr()
 async def test_tool_returning_image_resource(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me the image resource')
         assert result.output == snapshot(
             'This is an image of a sliced kiwi with a vibrant green interior and black seeds.'
@@ -621,7 +625,7 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
 async def test_tool_returning_image_resource_link(
     allow_model_requests: None, agent: Agent, image_content: BinaryContent
 ):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me the image resource via get_image_resource_link')
         assert result.output == snapshot(
             'This is an image of a sliced kiwi fruit. It shows the green, seed-speckled interior with fuzzy brown skin around the edges.'
@@ -704,7 +708,7 @@ async def test_tool_returning_audio_resource(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
-    async with agent:
+    async with agent.setup():
         result = await agent.run("What's the content of the audio resource?", model=model)
         assert result.output == snapshot('The audio resource contains a voice saying "Hello, my name is Marcelo."')
         assert result.all_messages() == snapshot(
@@ -758,7 +762,7 @@ async def test_tool_returning_audio_resource_link(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
-    async with agent:
+    async with agent.setup():
         result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
         assert result.output == snapshot('00:05')
         assert result.all_messages() == snapshot(
@@ -819,7 +823,7 @@ async def test_tool_returning_audio_resource_link(
 
 @pytest.mark.vcr()
 async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me an image')
         assert result.output == snapshot('Here is an image of a sliced kiwi on a white background.')
         assert result.all_messages() == snapshot(
@@ -899,7 +903,7 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
 
 @pytest.mark.vcr()
 async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me a dict, respond on one line')
         assert result.output == snapshot('{"foo":"bar","baz":123}')
         assert result.all_messages() == snapshot(
@@ -966,7 +970,7 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
         assert result.output == snapshot(
             'I called the tool with the correct parameter, and it returned: "This is not an error."'
@@ -1080,7 +1084,7 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Call the none tool and say Hello')
         assert result.output == snapshot('Hello! How can I assist you today?')
         assert result.all_messages() == snapshot(
@@ -1147,7 +1151,7 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
 
 @pytest.mark.vcr()
 async def test_tool_returning_multiple_items(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
-    async with agent:
+    async with agent.setup():
         result = await agent.run('Get me multiple items and summarize in one sentence')
         assert result.output == snapshot(
             'The data includes two strings, a dictionary with a key-value pair, and an image of a sliced kiwi.'
@@ -1239,7 +1243,7 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
 async def test_client_sampling(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
-    async with server:
+    async with server.setup():
         result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
         assert result == snapshot(
             {
@@ -1255,7 +1259,7 @@ async def test_client_sampling(run_context: RunContext[int]):
 async def test_client_sampling_disabled(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], allow_sampling=False)
     server.sampling_model = TestModel(custom_output_text='sampling model response')
-    async with server:
+    async with server.setup():
         with pytest.raises(ModelRetry, match='Error executing tool use_sampling: Sampling not supported'):
             await server.direct_call_tool('use_sampling', {'foo': 'bar'})
 
@@ -1265,7 +1269,7 @@ async def test_mcp_server_raises_mcp_error(
 ) -> None:
     mcp_error = McpError(error=ErrorData(code=400, message='Test MCP error conversion'))
 
-    async with agent:
+    async with agent.setup():
         with patch.object(
             mcp_server._client,  # pyright: ignore[reportPrivateUsage]
             'send_request',
