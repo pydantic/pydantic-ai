@@ -509,10 +509,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
             pass
-        elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
-            # This is currently never returned from google
-            pass
-        elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
+        elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
             # This is currently never returned from google
             pass
         else:

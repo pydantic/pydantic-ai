@@ -612,12 +612,7 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
-        elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
-            # Handle BuiltinToolCallPart the same as ToolCallPart
-            # This is currently never returned from gemini
-            pass
-        elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
-            # Convert BuiltinToolReturnPart to a function response part
+        elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
             # This is currently never returned from gemini
             pass
         else:

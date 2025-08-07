@@ -348,12 +348,7 @@ class GroqModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Skip thinking parts when mapping to Groq messages
                         continue
-                    elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
-                        # BuiltinToolCallPart is handled separately in built-in tools
-                        # This is currently never returned from groq
-                        pass
-                    elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
-                        # BuiltinToolReturnPart is handled separately in server-side tools
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
                         # This is currently never returned from groq
                         pass
                     else:

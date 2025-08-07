@@ -12,6 +12,7 @@ from httpx import Timeout
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.exceptions import UserError
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
@@ -162,9 +163,6 @@ class MistralModel(Model):
     ) -> ModelResponse:
         """Make a non-streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
-        # Check for unsupported builtin tools
-        if model_request_parameters.builtin_tools:
-            raise ValueError('Mistral does not support built-in tools')
         response = await self._completions_create(
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
@@ -204,6 +202,9 @@ class MistralModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
+        if model_request_parameters.builtin_tools:
+            raise UserError('Mistral does not support built-in tools')
+
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
@@ -383,7 +384,7 @@ class MistralModel(Model):
         return ToolCallPart(func_call.name, func_call.arguments, tool_call_id)
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart | BuiltinToolCallPart) -> MistralToolCall:
+    def _map_tool_call(t: ToolCallPart) -> MistralToolCall:
         """Maps a pydantic-ai ToolCall to a MistralToolCall."""
         return MistralToolCall(
             id=_utils.guard_tool_call_id(t=t),
@@ -507,12 +508,7 @@ class MistralModel(Model):
                         pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
-                    elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
-                        # Handle BuiltinToolCallPart the same as ToolCallPart
-                        # This is currently never returned from mistral
-                        pass
-                    elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
-                        # For now, we'll add BuiltinToolReturnPart as text content
+                    elif isinstance(part, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
                         # This is currently never returned from mistral
                         pass
                     else:

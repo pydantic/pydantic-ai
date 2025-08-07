@@ -10,6 +10,7 @@ from typing import Literal, Union, cast, overload
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -136,9 +137,6 @@ class HuggingFaceModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
-        # Check for unsupported builtin tools
-        if model_request_parameters.builtin_tools:
-            raise ValueError('HuggingFace does not support built-in tools')
         response = await self._completions_create(
             messages, False, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
@@ -202,6 +200,9 @@ class HuggingFaceModel(Model):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('HuggingFace does not support built-in tools')
 
         hf_messages = await self._map_messages(messages)
 
@@ -306,10 +307,7 @@ class HuggingFaceModel(Model):
                         # please open an issue. The below code is the code to send thinking to the provider.
                         # texts.append(f'<think>\n{item.content}\n</think>')
                         pass
-                    elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
-                        # This is currently never returned from huggingface
-                        pass
-                    elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
                         # This is currently never returned from huggingface
                         pass
                     else:
