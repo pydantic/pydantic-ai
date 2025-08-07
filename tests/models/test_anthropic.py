@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     PartDeltaEvent,
@@ -1569,15 +1570,6 @@ The year 2025 is a regular year with 365 days
 async def test_anthropic_empty_content_filtering(env: TestEnv):
     """Test the empty content filtering logic directly."""
 
-    from pydantic_ai.messages import (
-        ModelMessage,
-        ModelRequest,
-        ModelResponse,
-        SystemPromptPart,
-        TextPart,
-        UserPromptPart,
-    )
-
     # Initialize model for all tests
     env.set('ANTHROPIC_API_KEY', 'test-key')
     model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
@@ -2090,13 +2082,10 @@ async def test_anthropic_code_execution_tool_pass_history_back(env: TestEnv, all
     assert result2.output == 'The code execution returned the result: 4'
 
 
-async def test_anthropic_unsupported_server_tool_name_error():
+async def test_anthropic_unsupported_server_tool_name_error(anthropic_api_key: str):
     """Test that unsupported server tool names raise an error."""
-    from pydantic_ai.messages import BuiltinToolReturnPart, ModelMessage, ModelResponse
 
-    env = TestEnv()
-    env.set('ANTHROPIC_API_KEY', 'test-key')
-    model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     # Create a message with an unsupported server tool name
     messages: list[ModelMessage] = [

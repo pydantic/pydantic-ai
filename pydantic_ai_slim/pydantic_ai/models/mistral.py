@@ -202,6 +202,8 @@ class MistralModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
+        # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
+        # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
         if model_request_parameters.builtin_tools:
             raise UserError('Mistral does not support built-in tools')
 
@@ -238,6 +240,11 @@ class MistralModel(Model):
         """Create a streaming completion request to the Mistral model."""
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = self._map_messages(messages)
+
+        # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
+        # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
+        if model_request_parameters.builtin_tools:
+            raise UserError('Mistral does not support built-in tools')
 
         if (
             model_request_parameters.output_tools
