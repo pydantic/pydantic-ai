@@ -55,7 +55,9 @@ def test_known_model_names():
     moonshotai_names = [f'moonshotai:{n}' for n in get_model_names(MoonshotAIModelName)]
     mistral_names = [f'mistral:{n}' for n in get_model_names(MistralModelName)]
     openai_names = [f'openai:{n}' for n in get_model_names(OpenAIModelName)] + [
-        n for n in get_model_names(OpenAIModelName) if n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')
+        n
+        for n in get_model_names(OpenAIModelName)
+        if (n.startswith('o1') or n.startswith('gpt') or n.startswith('o3')) and not n.startswith('gpt-5')
     ]
     bedrock_names = [f'bedrock:{n}' for n in get_model_names(BedrockModelName)]
     deepseek_names = ['deepseek:deepseek-chat', 'deepseek:deepseek-reasoner']
