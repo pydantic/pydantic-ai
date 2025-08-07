@@ -49,17 +49,14 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         return self.wrapped.event_stream_handler
 
     @property
-    def toolset(self) -> AbstractToolset[AgentDepsT]:
-        return self.wrapped.toolset
+    def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return self.wrapped.toolsets
 
     async def __aenter__(self) -> AbstractAgent[AgentDepsT, OutputDataT]:
         return await self.wrapped.__aenter__()
 
     async def __aexit__(self, *args: Any) -> bool | None:
         return await self.wrapped.__aexit__(*args)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._agent, name)
 
     @overload
     def iter(

@@ -20,7 +20,7 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return None
+        return None  # pragma: no cover
 
     @property
     def label(self) -> str:

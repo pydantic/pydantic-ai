@@ -106,16 +106,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """
 
     _model: models.Model | models.KnownModelName | str | None
-    """The default model configured for this agent.
-
-    We allow `str` here since the actual list of allowed models changes frequently.
-    """
 
     _name: str | None
-    """The name of the agent, used for logging.
-
-    If `None`, we try to infer the agent name from the call frame when the agent is first run.
-    """
     end_strategy: EndStrategy
     """Strategy for handling tool calls when a final result is found."""
 
@@ -127,9 +119,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """
 
     _output_type: OutputSpec[OutputDataT]
-    """
-    The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`.
-    """
 
     instrument: InstrumentationSettings | bool | None
     """Options to automatically instrument with OpenTelemetry."""
@@ -376,26 +365,38 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     @property
     def model(self) -> models.Model | models.KnownModelName | str | None:
+        """The default model configured for this agent."""
         return self._model
 
     @model.setter
     def model(self, value: models.Model | models.KnownModelName | str | None) -> None:
+        """Set the default model configured for this agent.
+
+        We allow `str` here since the actual list of allowed models changes frequently.
+        """
         self._model = value
 
     @property
     def name(self) -> str | None:
+        """The name of the agent, used for logging.
+
+        If `None`, we try to infer the agent name from the call frame when the agent is first run.
+        """
         return self._name
 
     @name.setter
     def name(self, value: str | None) -> None:
+        """Set the name of the agent, used for logging."""
         self._name = value
 
     @property
     def output_type(self) -> OutputSpec[OutputDataT]:
+        """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         return self._output_type
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """TODO: Optional handler for events from the agent stream."""
         return self._event_stream_handler
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -1210,12 +1211,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         return toolset
 
     @property
-    def toolset(self) -> AbstractToolset[AgentDepsT]:
-        """The complete toolset combining function tools and toolsets registered to the agent.
+    def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """All toolsets registered on the agent, including a function toolset holding tools that were registered on the agent directly.
+
+        If a `prepare_tools` function was configured on the agent, this will contain just a `PreparedToolset` wrapping the original toolsets.
 
         Output tools are not included.
         """
-        return self._get_toolset()
+        toolset = self._get_toolset()
+        if isinstance(toolset, CombinedToolset):
+            return toolset.toolsets
+        else:
+            return [toolset]
 
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
@@ -1322,7 +1329,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def id(self) -> str:
-        return '<agent>'
+        return '<agent>'  # pragma: no cover
 
     @property
     def label(self) -> str:

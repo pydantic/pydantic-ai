@@ -127,12 +127,13 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         raise NotImplementedError()
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        """Run a visitor function on all concrete toolsets that are not wrappers (i.e. they implement their own tool listing and calling)."""
+        """Run a visitor function on all "leaf" toolsets (i.e. those that implement their own tool listing and calling)."""
         visitor(self)
 
     def visit_and_replace(
         self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
     ) -> AbstractToolset[AgentDepsT]:
+        """Run a visitor function on all "leaf" toolsets (i.e. those that implement their own tool listing and calling) and replace them in the hierarchy with the result of the function."""
         return visitor(self)
 
     def filtered(

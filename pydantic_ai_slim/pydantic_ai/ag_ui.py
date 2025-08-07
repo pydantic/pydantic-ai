@@ -695,9 +695,5 @@ class _AGUIFrontendToolset(DeferredToolset[AgentDepsT]):
         )
 
     @property
-    def id(self) -> str:
-        return '<ag-ui>'
-
-    @property
     def label(self) -> str:
-        return 'the AG-UI frontend tools'
+        return 'the AG-UI frontend tools'  # pragma: no cover

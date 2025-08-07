@@ -84,10 +84,7 @@ def temperature_fahrenheit(city: str) -> float:
     return 69.8
 
 
-weather_toolset = FunctionToolset(
-    tools=[temperature_celsius, temperature_fahrenheit],
-    id='weather',  # (1)!
-)
+weather_toolset = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
 
 
 @weather_toolset.tool
@@ -98,10 +95,10 @@ def conditions(ctx: RunContext, city: str) -> str:
         return "It's raining"
 
 
-datetime_toolset = FunctionToolset(id='datetime')
+datetime_toolset = FunctionToolset()
 datetime_toolset.add_function(lambda: datetime.now(), name='now')
 
-test_model = TestModel()  # (2)!
+test_model = TestModel()  # (1)!
 agent = Agent(test_model)
 
 result = agent.run_sync('What tools are available?', toolsets=[weather_toolset])
@@ -113,8 +110,7 @@ print([t.name for t in test_model.last_model_request_parameters.function_tools])
 #> ['now']
 ```
 
-1. `FunctionToolset` supports an optional `id` argument that can help to identify the toolset in error messages. A toolset also needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
-2. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
+1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
 
 _(This example is complete, it can be run "as is")_
 
@@ -249,7 +245,7 @@ _(This example is complete, it can be run "as is")_
 
 [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the  agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns a list of modified `ToolDefinition`s.
 
-This is the toolset-specific equivalent of the [`prepare_tools`](tools.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered to an agent across toolsets.
+This is the toolset-specific equivalent of the [`prepare_tools`](tools.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
@@ -614,7 +610,7 @@ from pydantic_ai.ext.langchain import LangChainToolset
 
 
 toolkit = SlackToolkit()
-toolset = LangChainToolset(toolkit.get_tools(), id='slack')
+toolset = LangChainToolset(toolkit.get_tools())
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])
 # ...
@@ -639,7 +635,6 @@ toolset = ACIToolset(
         'OPEN_WEATHER_MAP__FORECAST',
     ],
     linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
-    id='open_weather_map',
 )
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])

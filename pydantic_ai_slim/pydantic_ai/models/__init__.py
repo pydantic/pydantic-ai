@@ -519,11 +519,11 @@ class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
     model_request_parameters: ModelRequestParameters
+    final_result_event: FinalResultEvent | None = field(default=None, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _usage: Usage = field(default_factory=Usage, init=False)
-    _final_result_event: FinalResultEvent | None = field(default=None, init=False)
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream the response as an async iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
@@ -542,7 +542,7 @@ class StreamedResponse(ABC):
                     if (
                         final_result_event := _get_final_result_event(event, self.model_request_parameters)
                     ) is not None:
-                        self._final_result_event = final_result_event
+                        self.final_result_event = final_result_event
                         yield final_result_event
                         break
 
@@ -575,10 +575,6 @@ class StreamedResponse(ABC):
             timestamp=self.timestamp,
             usage=self.usage(),
         )
-
-    def get_final_result_event(self) -> FinalResultEvent | None:
-        """Get the final result event for the response."""
-        return self._final_result_event
 
     def usage(self) -> Usage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""

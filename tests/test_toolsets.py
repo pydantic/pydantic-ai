@@ -20,6 +20,7 @@ from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
+from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import Usage
 
 pytestmark = pytest.mark.anyio
@@ -626,3 +627,21 @@ async def test_tool_manager_multiple_failed_tools():
 
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
+
+
+def test_visit_and_replace():
+    toolset1 = FunctionToolset(id='toolset1')
+    toolset2 = FunctionToolset(id='toolset2')
+    toolset = CombinedToolset(
+        [
+            WrapperToolset(toolset1),
+            toolset2,
+        ]
+    )
+    visited_toolset = toolset.visit_and_replace(lambda toolset: WrapperToolset(toolset))
+    assert visited_toolset == CombinedToolset(
+        [
+            WrapperToolset(WrapperToolset(toolset1)),
+            WrapperToolset(toolset2),
+        ]
+    )

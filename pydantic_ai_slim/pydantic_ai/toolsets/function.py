@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any, Callable, overload
 
 from pydantic.json_schema import GenerateJsonSchema
@@ -27,16 +27,15 @@ class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     is_async: bool
 
 
-@dataclass(init=False)
 class FunctionToolset(AbstractToolset[AgentDepsT]):
     """A toolset that lets Python functions be used as tools.
 
     See [toolset docs](../toolsets.md#function-toolset) for more information.
     """
 
-    max_retries: int = field(default=1)
-    tools: dict[str, Tool[Any]] = field(default_factory=dict)
-    _id: str | None = field(init=False, default=None)
+    max_retries: int
+    tools: dict[str, Tool[Any]]
+    _id: str | None
 
     def __init__(
         self,
@@ -52,8 +51,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             max_retries: The maximum number of retries for each tool during a run.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
         """
-        self._id = id
         self.max_retries = max_retries
+        self._id = id
+
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):

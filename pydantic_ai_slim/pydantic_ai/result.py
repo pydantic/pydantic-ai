@@ -60,12 +60,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
         async for response in self.stream_responses(debounce_by=debounce_by):
-            if self._raw_stream_response.get_final_result_event() is not None:
+            if self._raw_stream_response.final_result_event is not None:
                 try:
                     yield await self._validate_response(response, allow_partial=True)
                 except ValidationError:
                     pass
-        if self._raw_stream_response.get_final_result_event() is not None:  # pragma: no branch
+        if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
             yield await self._validate_response(self._raw_stream_response.get())
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
@@ -131,7 +131,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def _validate_response(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        final_result_event = self._raw_stream_response.get_final_result_event()
+        final_result_event = self._raw_stream_response.final_result_event
         if final_result_event is None:
             raise exceptions.UnexpectedModelBehavior('Invalid response, unable to find output')  # pragma: no cover
 
@@ -436,7 +436,7 @@ def _get_usage_checking_stream_response(
 
         return _usage_checking_iterator()
     else:
-
+        # TODO: Use `return aiter(stream_response)` once we drop support for Python 3.9
         async def _iterator():
             async for item in stream_response:
                 yield item

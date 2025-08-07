@@ -75,31 +75,43 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     @property
     @abstractmethod
     def model(self) -> models.Model | models.KnownModelName | str | None:
+        """The default model configured for this agent."""
         raise NotImplementedError
 
     @property
     @abstractmethod
     def name(self) -> str | None:
+        """The name of the agent, used for logging.
+
+        If `None`, we try to infer the agent name from the call frame when the agent is first run.
+        """
         raise NotImplementedError
 
     @name.setter
     @abstractmethod
     def name(self, value: str | None) -> None:
+        """Set the name of the agent, used for logging."""
         raise NotImplementedError
 
     @property
     @abstractmethod
     def output_type(self) -> OutputSpec[OutputDataT]:
+        """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         raise NotImplementedError
 
     @property
     @abstractmethod
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        """TODO: Optional handler for events from the agent stream."""
         raise NotImplementedError
 
     @property
     @abstractmethod
-    def toolset(self) -> AbstractToolset[AgentDepsT]:
+    def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        """All toolsets registered on the agent.
+
+        Output tools are not included.
+        """
         raise NotImplementedError
 
     @overload
@@ -388,7 +400,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
+            event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager. Note, it does _not_ receive any events after the final result is found.
 
         Returns:
             The result of the run.

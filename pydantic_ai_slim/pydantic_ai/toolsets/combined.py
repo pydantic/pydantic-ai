@@ -74,14 +74,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
             for name, tool in tools.items():
-                if existing_tools := all_tools.get(name):
-                    capitalized_toolset_label = toolset.label[0].upper() + toolset.label[1:]
+                tool_toolset = tool.toolset
+                if existing_tool := all_tools.get(name):
+                    capitalized_toolset_label = tool_toolset.label[0].upper() + tool_toolset.label[1:]
                     raise UserError(
-                        f'{capitalized_toolset_label} defines a tool whose name conflicts with existing tool from {existing_tools.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
+                        f'{capitalized_toolset_label} defines a tool whose name conflicts with existing tool from {existing_tool.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
                     )
 
                 all_tools[name] = _CombinedToolsetTool(
-                    toolset=tool.toolset,
+                    toolset=tool_toolset,
                     tool_def=tool.tool_def,
                     max_retries=tool.max_retries,
                     args_validator=tool.args_validator,
