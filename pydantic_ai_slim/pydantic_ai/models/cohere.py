@@ -7,6 +7,7 @@ from typing import Literal, Union, cast
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.exceptions import UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
@@ -146,9 +147,6 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
-        # Check for unsupported builtin tools
-        if model_request_parameters.builtin_tools:
-            raise ValueError('Cohere does not support built-in tools')
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
         model_response.usage.requests = 1
@@ -171,6 +169,10 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> V2ChatResponse:
         tools = self._get_tools(model_request_parameters)
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Cohere does not support built-in tools')
+
         cohere_messages = self._map_messages(messages)
         try:
             return await self.client.chat(
@@ -228,10 +230,7 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, BuiltinToolCallPart):  # pragma: no cover
-                        # This is currently never returned from cohere
-                        pass
-                    elif isinstance(item, BuiltinToolReturnPart):  # pragma: no cover
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
                         # This is currently never returned from cohere
                         pass
                     else:
@@ -255,7 +254,7 @@ class CohereModel(Model):
         return tools
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart | BuiltinToolCallPart) -> ToolCallV2:
+    def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
         return ToolCallV2(
             id=_guard_tool_call_id(t=t),
             type='function',

@@ -10,6 +10,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
+from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
@@ -508,3 +510,10 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
             ),
         ]
     )
+
+
+async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    with pytest.raises(UserError, match='Cohere does not support built-in tools'):
+        await agent.run('Hello')
