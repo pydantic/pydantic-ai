@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Format code**: `make format`
 - **Lint code**: `make lint`
 - **Type checking**: `make typecheck` (uses pyright) or `make typecheck-both` (pyright + mypy)
-- **Run tests**: `make test` (with coverage) or `make test-fast` (parallel, no coverage)
+- **Run tests**: `make test` (with coverage)
 - **Build docs**: `make docs` or `make docs-serve` (local development)
 
 ### Single Test Commands

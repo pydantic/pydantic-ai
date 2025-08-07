@@ -8,14 +8,18 @@ from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 from uuid import uuid4
 
+from google.genai.types import ExecutableCodeDict
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
+from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BaseCountTokensResponse,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -57,12 +61,14 @@ try:
         FunctionDeclarationDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
+        GoogleSearchDict,
         HttpOptionsDict,
         MediaResolution,
         Part,
         PartDict,
         SafetySettingDict,
         ThinkingConfigDict,
+        ToolCodeExecutionDict,
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
@@ -247,6 +253,11 @@ class GoogleModel(Model):
                 ToolDict(function_declarations=[_function_declaration_from_tool(t)])
                 for t in model_request_parameters.output_tools
             ]
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                tools.append(ToolDict(google_search=GoogleSearchDict()))
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
         return tools or None
 
     def _get_tool_config(
@@ -449,7 +460,7 @@ class GoogleModel(Model):
                     content.append(inline_data_dict)  # type: ignore
                 elif isinstance(item, VideoUrl) and item.is_youtube:
                     file_data_dict = {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
-                    if item.vendor_metadata:
+                    if item.vendor_metadata:  # pragma: no branch
                         file_data_dict['video_metadata'] = item.vendor_metadata
                     content.append(file_data_dict)  # type: ignore
                 elif isinstance(item, FileUrl):
@@ -463,7 +474,9 @@ class GoogleModel(Model):
                         inline_data = {'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
                         content.append({'inline_data': inline_data})  # type: ignore
                     else:
-                        content.append({'file_data': {'file_uri': item.url, 'mime_type': item.media_type}})
+                        content.append(
+                            {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
+                        )  # pragma: lax no cover
                 else:
                     assert_never(item)
         return content
@@ -539,6 +552,14 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             # please open an issue. The below code is the code to send thinking to the provider.
             # parts.append({'text': item.content, 'thought': True})
             pass
+        elif isinstance(item, BuiltinToolCallPart):
+            if item.provider_name == 'google':
+                if item.tool_name == 'code_execution':  # pragma: no branch
+                    parts.append({'executable_code': cast(ExecutableCodeDict, item.args)})
+        elif isinstance(item, BuiltinToolReturnPart):
+            if item.provider_name == 'google':
+                if item.tool_name == 'code_execution':  # pragma: no branch
+                    parts.append({'code_execution_result': item.content})
         else:
             assert_never(item)
     return ContentDict(role='model', parts=parts)
@@ -553,7 +574,22 @@ def _process_response_from_parts(
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
-        if part.text is not None:
+        if part.executable_code is not None:
+            items.append(
+                BuiltinToolCallPart(
+                    provider_name='google', args=part.executable_code.model_dump(), tool_name='code_execution'
+                )
+            )
+        elif part.code_execution_result is not None:
+            items.append(
+                BuiltinToolReturnPart(
+                    provider_name='google',
+                    tool_name='code_execution',
+                    content=part.code_execution_result,
+                    tool_call_id='not_provided',
+                )
+            )
+        elif part.text is not None:
             if part.thought:
                 items.append(ThinkingPart(content=part.text))
             else:
@@ -603,7 +639,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
         details['thoughts_tokens'] = thoughts_token_count
 
     if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
-        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
     for key, metadata_details in metadata.items():
         if key.endswith('_details') and metadata_details:

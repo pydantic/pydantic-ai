@@ -17,6 +17,8 @@ from .. import _utils, usage
 from .._utils import PeekableAsyncStream
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -331,6 +333,13 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
+                # TODO(Marcelo): We need to add coverage here.
+                elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
+                    call = part
+                    response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())
+                # TODO(Marcelo): We need to add coverage here.
+                elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
+                    response_tokens += _estimate_string_tokens(part.model_response_str())
                 else:
                     assert_never(part)
         else:

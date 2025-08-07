@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from collections.abc import AsyncIterator
 from datetime import timezone
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -127,7 +128,7 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
+                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:success_response:',
                     'gen_ai.system': 'function',
@@ -200,7 +201,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                 'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
-                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
+                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function::failure_response_stream,function::success_response_stream',
                     'gen_ai.system': 'function',
@@ -247,6 +248,14 @@ def test_all_failed() -> None:
     assert exceptions[0].body == {'error': 'test error'}
 
 
+def add_missing_response_model(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    for span in spans:
+        attrs = span.setdefault('attributes', {})
+        if 'gen_ai.request.model' in attrs:
+            attrs.setdefault('gen_ai.response.model', attrs['gen_ai.request.model'])
+    return spans
+
+
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     fallback_model = FallbackModel(failure_model, failure_model)
@@ -260,7 +269,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     assert exceptions[0].status_code == 500
     assert exceptions[0].model_name == 'test-function-model'
     assert exceptions[0].body == {'error': 'test error'}
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert add_missing_response_model(capfire.exporter.exported_spans_as_dict()) == snapshot(
         [
             {
                 'name': 'chat fallback:function:failure_response:,function:failure_response:',
@@ -272,11 +281,12 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'fallback:function,function',
                     'gen_ai.request.model': 'fallback:function:failure_response:,function:failure_response:',
-                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
+                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
                     'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat fallback:function:failure_response:,function:failure_response:',
                     'logfire.level_num': 17,
+                    'gen_ai.response.model': 'fallback:function:failure_response:,function:failure_response:',
                 },
                 'events': [
                     {

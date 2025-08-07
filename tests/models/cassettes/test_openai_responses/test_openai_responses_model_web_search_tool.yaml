@@ -1,0 +1,114 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '231'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What day is it today?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2569'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '3632'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1747227360
+      error: null
+      id: resp_682492e0aab88191afcadcbbb85e1a490e7f27fcb18d04ed
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: ws_682492e1b7a08191b30170317ea7ee570e7f27fcb18d04ed
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations: []
+          text: "Today is Wednesday, May 14, 2025.\n\n## Weather for San Francisco, CA:\nCurrent Conditions: Mostly clear,
+            50°F (10°C)\n\nDaily Forecast:\n* Wednesday, May 14: Low: 51°F (10°C), High: 65°F (18°C), Description: Areas of
+            low clouds early; otherwise, mostly sunny\n* Thursday, May 15: Low: 53°F (12°C), High: 66°F (19°C), Description:
+            Areas of low clouds, then sun\n* Friday, May 16: Low: 53°F (12°C), High: 64°F (18°C), Description: Partly sunny\n*
+            Saturday, May 17: Low: 52°F (11°C), High: 63°F (17°C), Description: Low clouds breaking for some sun; breezy in
+            the afternoon\n* Sunday, May 18: Low: 51°F (10°C), High: 68°F (20°C), Description: Clouds yielding to sun\n* Monday,
+            May 19: Low: 53°F (12°C), High: 68°F (20°C), Description: Sunny\n* Tuesday, May 20: Low: 52°F (11°C), High: 70°F
+            (21°C), Description: Mostly sunny\n "
+          type: output_text
+        id: msg_682492e36ab08191813ec707a61c272f0e7f27fcb18d04ed
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 317
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 286
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 603
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

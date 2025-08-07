@@ -52,11 +52,11 @@ def test_evaluation_result():
     evaluator = DummyEvaluator()
 
     # Test basic result
-    result = EvaluationResult(name='test', value=True, reason='Success', source=evaluator)
+    result = EvaluationResult(name='test', value=True, reason='Success', source=evaluator.as_spec())
     assert result.name == 'test'
     assert result.value is True
     assert result.reason == 'Success'
-    assert result.source == evaluator
+    assert result.source == evaluator.as_spec()
 
     # Test downcast with matching type
     downcast = result.downcast(bool)
