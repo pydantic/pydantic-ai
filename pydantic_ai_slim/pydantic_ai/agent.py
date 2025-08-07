@@ -200,38 +200,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
     ) -> None: ...
 
     @overload
-    @deprecated(
-        '`result_type`, `result_tool_name` & `result_tool_description` are deprecated, use `output_type` instead. `result_retries` is deprecated, use `output_retries` instead.'
-    )
-    def __init__(
-        self,
-        model: models.Model | models.KnownModelName | str | None = None,
-        *,
-        result_type: type[OutputDataT] = str,
-        instructions: str
-        | _system_prompt.SystemPromptFunc[AgentDepsT]
-        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
-        | None = None,
-        system_prompt: str | Sequence[str] = (),
-        deps_type: type[AgentDepsT] = NoneType,
-        name: str | None = None,
-        model_settings: ModelSettings | None = None,
-        retries: int = 1,
-        result_tool_name: str = _output.DEFAULT_OUTPUT_TOOL_NAME,
-        result_tool_description: str | None = None,
-        result_retries: int | None = None,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
-        builtin_tools: Sequence[AbstractBuiltinTool] = (),
-        prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
-        defer_model_check: bool = False,
-        end_strategy: EndStrategy = 'early',
-        instrument: InstrumentationSettings | bool | None = None,
-        history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
-    ) -> None: ...
-
-    @overload
     @deprecated('`mcp_servers` is deprecated, use `toolsets` instead.')
     def __init__(
         self,
@@ -249,6 +217,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         retries: int = 1,
         output_retries: int | None = None,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = (),
+        builtin_tools: Sequence[AbstractBuiltinTool] = (),
         prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = None,
         mcp_servers: Sequence[MCPServer] = (),
@@ -258,7 +227,7 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
     ) -> None: ...
 
-    def __init__(  # type: ignore[misc]
+    def __init__(
         self,
         model: models.Model | models.KnownModelName | str | None = None,
         *,
@@ -341,21 +310,6 @@ class Agent(Generic[AgentDepsT, OutputDataT]):
         self.end_strategy = end_strategy
         self.name = name
         self.model_settings = model_settings
-
-        # Handle deprecated parameters
-        if result_type := _deprecated_kwargs.pop('result_type', None):
-            warnings.warn('`result_type` is deprecated, use `output_type` instead', DeprecationWarning)
-            output_type = result_type
-
-        if _deprecated_kwargs.pop('result_tool_name', None):
-            warnings.warn('`result_tool_name` is deprecated and no longer used', DeprecationWarning)
-
-        if _deprecated_kwargs.pop('result_tool_description', None):
-            warnings.warn('`result_tool_description` is deprecated and no longer used', DeprecationWarning)
-
-        if result_retries := _deprecated_kwargs.pop('result_retries', None):
-            warnings.warn('`result_retries` is deprecated, use `output_retries` instead', DeprecationWarning)
-            output_retries = result_retries
 
         self.output_type = output_type
         self.instrument = instrument
