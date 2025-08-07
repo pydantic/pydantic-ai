@@ -9,6 +9,7 @@ from prompt_toolkit.history import FileHistory
 from textual import containers, getters, on, work
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.geometry import clamp
 from textual.message import Message
 from textual.reactive import reactive, var
 from textual.screen import Screen
@@ -32,7 +33,7 @@ HELP = Template("""\
 | Command | Purpose |
 | --- | --- |
 | `/markdown` | Show markdown output of last question. |
-|`/multiline` |  Enable multiline mode. |
+| `/multiline` |  Enable multiline mode. |
 | `/exit` | Exit CLAI. |
 """)
 
@@ -85,12 +86,6 @@ class Prompt(containers.HorizontalGroup):
 
         value: str
 
-    @dataclass
-    class SetMultiline(Message):
-        """Go back to single line."""
-
-        multiline: bool
-
     def __init__(self, history: FileHistory, id: str | None = None) -> None:
         self.history = history
         self.history_strings: list[str] = []
@@ -137,36 +132,37 @@ class Prompt(containers.HorizontalGroup):
     @value.setter
     def value(self, value: str) -> None:
         multiline = '\n' in value
-        self.post_message(self.SetMultiline(multiline))
+        self.multiline = multiline
         if multiline:
             self.text_area.load_text(value)
         else:
             self.input.value = value
             self.input.selection = Selection.cursor(len(value))
 
-    def set_prompt(self, prompt: str) -> None:
-        """Set a new prompt value."""
-        self.value = prompt
-
     def clear(self) -> None:
-        self.input.clear()
-        self.text_area.load_text('')
+        with self.prevent(Input.Changed):
+            self.input.clear()
+        with self.prevent(TextArea.Changed):
+            self.text_area.load_text('')
 
     async def action_history(self, direction: int) -> None:
         if self.history_position == 0:
             self.history_strings.clear()
             async for prompt in self.history.load():
-                self.history_strings.append(prompt)
+                if prompt.strip():
+                    self.history_strings.append(prompt)
             self.history_strings.reverse()
         self.history_position = self.history_position + direction
 
     def action_submit(self) -> None:
         self.post_message(self.Submitted(self.text_area.text))
-        self.text_area.load_text('')
+        self.clear()
         self.action_escape()
+        self.history_position = 0
 
     def action_escape(self) -> None:
-        self.post_message(self.SetMultiline(False))
+        self.history_position = 0
+        self.multiline = False
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         if action == 'history':
@@ -183,28 +179,20 @@ class Prompt(containers.HorizontalGroup):
         return True
 
     def validate_history_position(self, history_position: int) -> int:
-        if history_position > 0:
-            return 0
-        if -history_position > len(self.history_strings):
-            return -len(self.history_strings)
-        return history_position
+        return clamp(history_position, -len(self.history_strings), 0)
 
     async def watch_history_position(self, previous_position: int, position: int) -> None:
         if previous_position == 0:
-            self.edit_prompt = self.query_one(PromptInput).value
+            self.edit_prompt = self.value
         if position == 0:
-            self.set_prompt(self.edit_prompt)
+            self.value = self.edit_prompt
         elif position < 0:
-            prompt = self.history_strings[position]
-            self.set_prompt(prompt)
+            self.value = self.history_strings[position]
 
     @on(Input.Submitted)
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.post_message(self.Submitted(event.value))
         self.clear()
-
-    @on(Submitted)
-    async def on_submitted(self, event: Submitted) -> None:
         self.history_position = 0
 
 
@@ -220,7 +208,6 @@ class Conversation(containers.Vertical):
 
     contents = getters.query_one('#contents', containers.VerticalScroll)
     prompt = getters.query_one(Prompt)
-    multiline = reactive(False)
 
     def __init__(self, history: FileHistory, title: str) -> None:
         self.history = history
@@ -229,7 +216,7 @@ class Conversation(containers.Vertical):
 
     def compose(self) -> ComposeResult:
         yield Contents(id='contents')
-        yield Prompt(self.history, id='prompt').data_bind(Conversation.multiline)
+        yield Prompt(self.history, id='prompt')
 
     def get_last_markdown_source(self) -> str | None:
         """Get the source of the last markdown response, or `None` if there is no markdown response."""
@@ -247,10 +234,6 @@ class Conversation(containers.Vertical):
 
     async def post_prompt(self, prompt: str) -> None:
         await self.post(UserText(prompt))
-
-    @on(Prompt.SetMultiline)
-    def on_escape_multiline(self, event: Prompt.SetMultiline) -> None:
-        self.multiline = event.multiline
 
 
 class MainScreen(Screen[None]):
@@ -302,10 +285,10 @@ class MainScreen(Screen[None]):
         if not prompt:
             self.app.bell()
             return
+        self.history.append_string(prompt)
         if prompt.startswith('/'):
             await self.process_slash(prompt)
         else:
-            self.history.append_string(prompt)
             await self.conversation.post_prompt(prompt)
             await self.ask_agent(prompt)
 
@@ -318,7 +301,7 @@ class MainScreen(Screen[None]):
             else:
                 await self.conversation.post(Static(markdown))
         elif prompt == '/multiline':
-            self.conversation.multiline = not self.conversation.multiline
+            self.conversation.prompt.multiline = not self.conversation.prompt.multiline
         elif prompt == '/exit':
             self.app.exit()
         else:
