@@ -54,6 +54,7 @@ from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from .abstract import AbstractAgent, EventStreamHandler, RunOutputDataT
+from .wrapper import WrapperAgent
 
 # Re-exporting like this improves auto-import behavior in PyCharm
 capture_run_messages = _agent_graph.capture_run_messages
@@ -75,6 +76,8 @@ __all__ = (
     'ModelRequestNode',
     'UserPromptNode',
     'InstrumentationSettings',
+    'WrapperAgent',
+    'AbstractAgent',
 )
 
 
@@ -398,7 +401,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Optional handler for events from the model's streaming response and the agent's execution of tools."""
         return self._event_stream_handler
 
-    def __repr__(self) -> str:  # pragma: no cover
+    def __repr__(self) -> str:
         return f'{type(self).__name__}(model={self.model!r}, name={self.name!r}, end_strategy={self.end_strategy!r}, model_settings={self.model_settings!r}, output_type={self.output_type!r}, instrument={self.instrument!r})'
 
     @overload
