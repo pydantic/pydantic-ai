@@ -20,7 +20,7 @@ from .abstract import AbstractToolset, ToolsetTool
 
 
 @dataclass
-class _FunctionToolsetTool(ToolsetTool[AgentDepsT]):
+class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a function toolset tool that keeps track of the function to call."""
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
@@ -222,7 +222,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
 
-            tools[new_name] = _FunctionToolsetTool(
+            tools[new_name] = FunctionToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
                 max_retries=tool.max_retries if tool.max_retries is not None else self.max_retries,
@@ -234,5 +234,5 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        assert isinstance(tool, _FunctionToolsetTool)
+        assert isinstance(tool, FunctionToolsetTool)
         return await tool.call_func(tool_args, ctx)
