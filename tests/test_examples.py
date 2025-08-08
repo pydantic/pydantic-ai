@@ -264,6 +264,10 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    @property
+    def id(self) -> str | None:
+        return None  # pragma: no cover
+
     async def __aenter__(self) -> MockMCPServer:
         return self
 
@@ -294,9 +298,9 @@ text_responses: dict[str, str | ToolCallPart] = {
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
-    'What is the capital of France?': 'Paris',
-    'What is the capital of Italy?': 'Rome',
-    'What is the capital of the UK?': 'London',
+    'What is the capital of France?': 'The capital of France is Paris.',
+    'What is the capital of Italy?': 'The capital of Italy is Rome.',
+    'What is the capital of the UK?': 'The capital of the UK is London.',
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',

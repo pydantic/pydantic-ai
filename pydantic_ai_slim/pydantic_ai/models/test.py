@@ -12,6 +12,7 @@ import pydantic_core
 from typing_extensions import assert_never
 
 from .. import _utils
+from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
     BuiltinToolCallPart,
@@ -121,11 +122,13 @@ class TestModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         self.last_model_request_parameters = model_request_parameters
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _structured_response=model_response,
             _messages=messages,

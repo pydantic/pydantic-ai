@@ -8,11 +8,11 @@ from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 from uuid import uuid4
 
-from google.genai.types import ExecutableCodeDict
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
+from .._run_context import RunContext
 from ..builtin_tools import CodeExecutionTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
@@ -48,10 +48,11 @@ from . import (
 )
 
 try:
-    from google import genai
+    from google.genai import Client
     from google.genai.types import (
         ContentDict,
         ContentUnionDict,
+        ExecutableCodeDict,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -136,10 +137,10 @@ class GoogleModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: genai.Client = field(repr=False)
+    client: Client = field(repr=False)
 
     _model_name: GoogleModelName = field(repr=False)
-    _provider: Provider[genai.Client] = field(repr=False)
+    _provider: Provider[Client] = field(repr=False)
     _url: str | None = field(repr=False)
     _system: str = field(default='google', repr=False)
 
@@ -147,7 +148,7 @@ class GoogleModel(Model):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[genai.Client] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -193,11 +194,12 @@ class GoogleModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
-        yield await self._process_streamed_response(response)  # type: ignore
+        yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
     @property
     def model_name(self) -> GoogleModelName:
@@ -212,13 +214,8 @@ class GoogleModel(Model):
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolDict] | None:
         tools: list[ToolDict] = [
             ToolDict(function_declarations=[_function_declaration_from_tool(t)])
-            for t in model_request_parameters.function_tools
+            for t in model_request_parameters.tool_defs.values()
         ]
-        if model_request_parameters.output_tools:
-            tools += [
-                ToolDict(function_declarations=[_function_declaration_from_tool(t)])
-                for t in model_request_parameters.output_tools
-            ]
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 tools.append(ToolDict(google_search=GoogleSearchDict()))
@@ -336,7 +333,9 @@ class GoogleModel(Model):
             parts, response.model_version or self._model_name, usage, vendor_id=vendor_id, vendor_details=vendor_details
         )
 
-    async def _process_streamed_response(self, response: AsyncIterator[GenerateContentResponse]) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncIterator[GenerateContentResponse], model_request_parameters: ModelRequestParameters
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
@@ -344,6 +343,7 @@ class GoogleModel(Model):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
         return GeminiStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),

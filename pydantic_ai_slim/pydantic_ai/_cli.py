@@ -16,7 +16,7 @@ from typing_inspection.introspection import get_literal_values
 
 from . import __version__
 from ._run_context import AgentDepsT
-from .agent import Agent
+from .agent import AbstractAgent, Agent
 from .exceptions import UserError
 from .messages import ModelMessage
 from .models import KnownModelName, infer_model
@@ -220,7 +220,7 @@ Special prompts:
 
 async def run_chat(
     stream: bool,
-    agent: Agent[AgentDepsT, OutputDataT],
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
     console: Console,
     code_theme: str,
     prog_name: str,
@@ -263,7 +263,7 @@ async def run_chat(
 
 
 async def ask_agent(
-    agent: Agent[AgentDepsT, OutputDataT],
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
     prompt: str,
     stream: bool,
     console: Console,
