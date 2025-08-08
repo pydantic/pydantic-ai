@@ -3998,7 +3998,7 @@ def test_toolsets():
 
 async def test_wrapper_agent():
     async def event_stream_handler(
-        ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
+        ctx: RunContext[None], events: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]]
     ):
         pass  # pragma: no cover
 
