@@ -10,6 +10,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import AgentStreamEvent, HandleResponseEvent
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.toolsets import FunctionToolset
 
 try:
@@ -71,18 +72,32 @@ pytestmark = [
     pytest.mark.vcr,
 ]
 
+
+# We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
+# at the end of each test, but we need this one to live longer.
+http_client = cached_async_http_client(provider='temporal')
+
+
+@pytest.fixture(autouse=True, scope='module')
+async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        await http_client.aclose()
+
+
 TEMPORAL_PORT = 7243
 TASK_QUEUE = 'pydantic-ai-agent-task-queue'
 
 
-@pytest.fixture
-async def env() -> AsyncIterator[WorkflowEnvironment]:
-    async with await WorkflowEnvironment.start_local(port=TEMPORAL_PORT) as env:  # pyright: ignore[reportUnknownMemberType]
+@pytest.fixture(scope='module')
+async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
+    async with await WorkflowEnvironment.start_local(port=TEMPORAL_PORT, ui=True) as env:  # pyright: ignore[reportUnknownMemberType]
         yield env
 
 
 @pytest.fixture
-async def client(env: WorkflowEnvironment) -> Client:
+async def client(temporal_env: WorkflowEnvironment) -> Client:
     return await Client.connect(
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin()],
@@ -90,7 +105,7 @@ async def client(env: WorkflowEnvironment) -> Client:
 
 
 @pytest.fixture
-async def client_with_logfire(env: WorkflowEnvironment) -> Client:
+async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
     return await Client.connect(
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
@@ -130,7 +145,13 @@ class Response:
 
 
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
-model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key')))
+model = OpenAIModel(
+    'gpt-4o',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
 
 
 complex_agent = Agent(
