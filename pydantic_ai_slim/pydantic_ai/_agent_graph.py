@@ -340,6 +340,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
+        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -350,8 +351,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         ctx.state.message_history.append(self.request)
 
-        model_settings = merge_model_settings(ctx.deps.model_settings, None)
-        model_request_parameters = await _prepare_request_parameters(ctx)
+        # Check usage
+        if ctx.deps.usage_limits:  # pragma: no branch
+            ctx.deps.usage_limits.check_before_request(ctx.state.usage)
 
         # Increment run_step
         ctx.state.run_step += 1
@@ -366,6 +368,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         message_history = await _process_message_history(
             ctx.state.message_history, ctx.deps.history_processors, run_context
         )
+
+        if ctx.deps.usage_limits.count_tokens_before_request:  # pragma: no branch
+            temp_usage = dataclasses.replace(ctx.state.usage)
+            token_count = await ctx.deps.model.count_tokens(
+                message_history, ctx.deps.model_settings, model_request_parameters
+            )
+            temp_usage.incr(token_count)
+            ctx.deps.usage_limits.check_tokens(temp_usage)
 
         return model_settings, model_request_parameters, message_history, run_context
 
