@@ -46,7 +46,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
             try:
                 tool = (await toolset.get_tools(ctx))[name]
             except KeyError as e:
-                raise UserError(
+                raise UserError(  # pragma: no cover
                     f'Tool {name!r} not found in toolset {self.id!r}. '
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e

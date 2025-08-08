@@ -46,21 +46,17 @@ class _TemporalStreamedResponse(StreamedResponse):
         yield
 
     def get(self) -> ModelResponse:
-        """Build a [`ModelResponse`][pydantic_ai.messages.ModelResponse] from the data received from the stream so far."""
         return self.response
 
     def usage(self) -> Usage:
-        """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self.response.usage
 
     @property
     def model_name(self) -> str:
-        """Get the model name of the response."""
         return self.response.model_name or ''
 
     @property
     def timestamp(self) -> datetime:
-        """Get the timestamp of the response."""
         return self.response.timestamp
 
 

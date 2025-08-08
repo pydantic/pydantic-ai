@@ -11,7 +11,18 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, HandleResponseEvent
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    HandleResponseEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+)
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.toolsets import FunctionToolset
 
@@ -72,11 +83,12 @@ with workflow.unsafe.imports_passed_through():
     import pytest
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
-    from .conftest import IsStr
+    from .conftest import IsDatetime, IsStr
 
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.xdist_group(name='temporal'),
 ]
 
 
@@ -142,7 +154,7 @@ class SimpleAgentWorkflow:
         return result.output
 
 
-async def test_simple_agent(allow_model_requests: None, client: Client):
+async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: Client):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -228,7 +240,9 @@ class ComplexAgentWorkflow:
         return result.output
 
 
-async def test_complex_agent(allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire):
+async def test_complex_agent_run_in_workflow(
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire
+):
     async with Worker(
         client_with_logfire,
         task_queue=TASK_QUEUE,
@@ -369,6 +383,271 @@ async def test_complex_agent(allow_model_requests: None, client_with_logfire: Cl
             'ctx.run_step=3',
             'complex_agent run',
             'CompleteWorkflow:ComplexAgentWorkflow',
+        ]
+    )
+
+
+async def test_complex_agent_run(allow_model_requests: None):
+    events: list[AgentStreamEvent | HandleResponseEvent] = []
+
+    async def event_stream_handler(
+        ctx: RunContext[Deps],
+        stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    ):
+        async for event in stream:
+            events.append(event)
+
+    result = await complex_temporal_agent.run(
+        'Tell me: the capital of the country; the weather there; the product name',
+        deps=Deps(country='Mexico'),
+        event_stream_handler=event_stream_handler,
+    )
+    assert result.output == snapshot(
+        Response(
+            answers=[
+                Answer(label='Capital', answer='The capital of Mexico is Mexico City.'),
+                Answer(label='Weather', answer='The weather in Mexico City is currently sunny.'),
+                Answer(label='Product Name', answer='The product name is Pydantic AI.'),
+            ]
+        )
+    )
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_country', args='', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
+            ),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='get_product_name', args='', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5'),
+            ),
+            PartDeltaEvent(
+                index=1, delta=ToolCallPartDelta(args_delta='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='get_country', args='{}', tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z')
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(tool_name='get_product_name', args='{}', tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5')
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_country',
+                    content='Mexico',
+                    tool_call_id='call_q2UyBRP7eXNTzAoR8lEhjc9Z',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_product_name',
+                    content='Pydantic AI',
+                    tool_call_id='call_b51ijcpFkDiTQG1bQzsrmtW5',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='get_weather', args='', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='city', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='Mexico', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv')
+            ),
+            FunctionToolCallEvent(
+                part=ToolCallPart(
+                    tool_name='get_weather', args='{"city":"Mexico City"}', tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv'
+                )
+            ),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='get_weather',
+                    content='sunny',
+                    tool_call_id='call_LwxJUB9KppVyogRRLQsamRJv',
+                    timestamp=IsDatetime(),
+                )
+            ),
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='final_result', args='', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
+            ),
+            FinalResultEvent(tool_name='final_result', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn'),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='answers', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":[', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='Capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' capital', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' of', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='Weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' weather', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' in', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' Mexico', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' City', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' currently', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' sunny', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='},{"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='label', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='Product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' Name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='","', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='answer', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='":"', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='The', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' product', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' name', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' is', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' P', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='yd', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='antic', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=' AI', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='."', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta='}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
+            ),
         ]
     )
 
@@ -568,7 +847,180 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
                 task_queue=TASK_QUEUE,
             )
         assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == snapshot('UserError')
+        assert exc_info.value.__cause__.type == UserError.__name__
         assert exc_info.value.__cause__.message == snapshot(
             'Event stream handler cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
         )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithIterModel:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with simple_temporal_agent.iter(prompt, model=model) as run:
+            assert run.result is not None
+            return run.result.output
+
+
+async def test_temporal_agent_iter_in_workflow_with_model(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithIterModel],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithIterModel.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithIterModel.__name__,
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert exc_info.value.__cause__.type == UserError.__name__
+        assert exc_info.value.__cause__.message == snapshot(
+            'Model cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
+        )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithIterToolsets:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with simple_temporal_agent.iter(prompt, toolsets=[FunctionToolset()]) as run:
+            assert run.result is not None
+            return run.result.output
+
+
+async def test_temporal_agent_iter_in_workflow_with_toolsets(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithIterToolsets],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithIterToolsets.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithIterToolsets.__name__,
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert exc_info.value.__cause__.type == UserError.__name__
+        assert exc_info.value.__cause__.message == snapshot(
+            'Toolsets cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
+        )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithOverrideModel:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        with simple_temporal_agent.override(model=model):
+            result = await simple_temporal_agent.run(prompt)
+            return result.output
+
+
+async def test_temporal_agent_override_model_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithOverrideModel],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithOverrideModel.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithOverrideModel.__name__,
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert exc_info.value.__cause__.type == UserError.__name__
+        assert exc_info.value.__cause__.message == snapshot(
+            'Model cannot be contextually overridden when using Temporal, it must be set at agent creation time.'
+        )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithOverrideToolsets:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        with simple_temporal_agent.override(toolsets=[FunctionToolset()]):
+            result = await simple_temporal_agent.run(prompt)
+            return result.output
+
+
+async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithOverrideToolsets],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithOverrideToolsets.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithOverrideToolsets.__name__,
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert exc_info.value.__cause__.type == UserError.__name__
+        assert exc_info.value.__cause__.message == snapshot(
+            'Toolsets cannot be contextually overridden when using Temporal, they must be set at agent creation time.'
+        )
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithOverrideTools:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        with simple_temporal_agent.override(tools=[get_weather]):
+            result = await simple_temporal_agent.run(prompt)
+            return result.output
+
+
+async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithOverrideTools],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithOverrideTools.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithOverrideTools.__name__,
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert exc_info.value.__cause__.type == UserError.__name__
+        assert exc_info.value.__cause__.message == snapshot(
+            'Tools cannot be contextually overridden when using Temporal, they must be set at agent creation time.'
+        )
+
+
+# TODO: f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
+# 'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
+
+# TODO: 'The `deps` object must be a JSON-serializable dictionary in order to be used with Temporal. '
+# 'To use a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
+
+# TODO: Custom run_context_type
+
+# TODO: tool_activity_config
+
+# TODO: f'Temporal activity config for MCP tool {tool_name!r} has been explicitly set to `False` (activity disabled), '
+# 'but MCP tools require the use of IO and so cannot be run outside of an activity.'
+
+# TODO: Custom temporalize_toolset_func
+
+# TODO: raise UserError('Streaming with Temporal requires `Agent` to have an `event_stream_handler` set.')
+
+# TODO: raise UserError('Streaming with Temporal requires `request_stream` to be called with a `run_context`')
+
+# TODO: LogfirePlugin(setup_logfire=<custom>)
+# TODO: LogfirePlugin(metrics=False)

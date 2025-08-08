@@ -18,7 +18,7 @@ class TemporalRunContext(RunContext[Any]):
     def __getattribute__(self, name: str) -> Any:
         try:
             return super().__getattribute__(name)
-        except AttributeError as e:
+        except AttributeError as e:  # pragma: no cover
             if name in RunContext.__dataclass_fields__:
                 raise AttributeError(
                     f'{self.__class__.__name__!r} object has no attribute {name!r}. '
