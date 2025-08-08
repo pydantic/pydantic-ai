@@ -72,6 +72,7 @@ pytestmark = [
 ]
 
 TEMPORAL_PORT = 7243
+TASK_QUEUE = 'pydantic-ai-agent-task-queue'
 
 
 @pytest.fixture
@@ -82,6 +83,14 @@ async def env() -> AsyncIterator[WorkflowEnvironment]:
 
 @pytest.fixture
 async def client(env: WorkflowEnvironment) -> Client:
+    return await Client.connect(
+        f'localhost:{TEMPORAL_PORT}',
+        plugins=[PydanticAIPlugin()],
+    )
+
+
+@pytest.fixture
+async def client_with_logfire(env: WorkflowEnvironment) -> Client:
     return await Client.connect(
         f'localhost:{TEMPORAL_PORT}',
         plugins=[PydanticAIPlugin(), LogfirePlugin()],
@@ -120,9 +129,12 @@ class Response:
     answers: list[Answer]
 
 
-agent = Agent(
-    # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
-    OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'))),
+# Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
+model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key')))
+
+
+complex_agent = Agent(
+    model,
     deps_type=Deps,
     output_type=Response,
     toolsets=[
@@ -131,13 +143,14 @@ agent = Agent(
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
-    name='temporal_agent',
+    name='complex_agent',
 )
 
-# This needs to be done before the `agent` is bound to the workflow.
-temporal_agent = TemporalAgent(
-    agent,
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+complex_temporal_agent = TemporalAgent(
+    complex_agent,
     activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
+    model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
     toolset_activity_config={
         'country': ActivityConfig(start_to_close_timeout=timedelta(seconds=120)),
     },
@@ -151,30 +164,28 @@ temporal_agent = TemporalAgent(
 
 
 @workflow.defn
-class AgentWorkflow:
+class ComplexAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str, deps: Deps) -> Response:
-        result = await temporal_agent.run(prompt, deps=deps)
+        result = await complex_temporal_agent.run(prompt, deps=deps)
         return result.output
 
 
-async def test_temporal(allow_model_requests: None, client: Client, capfire: CaptureLogfire):
-    task_queue = 'pydantic-ai-agent-task-queue'
-
+async def test_complex_agent(allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire):
     async with Worker(
-        client,
-        task_queue=task_queue,
-        workflows=[AgentWorkflow],
-        plugins=[AgentPlugin(temporal_agent)],
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[ComplexAgentWorkflow],
+        plugins=[AgentPlugin(complex_temporal_agent)],
     ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
-            AgentWorkflow.run,
+        output = await client_with_logfire.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            ComplexAgentWorkflow.run,
             args=[
                 'Tell me: the capital of the country; the weather there; the product name',
                 Deps(country='Mexico'),
             ],
-            id='pydantic-ai-agent-workflow',
-            task_queue=task_queue,
+            id=ComplexAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
         )
         assert output == snapshot(
             Response(
@@ -197,38 +208,38 @@ async def test_temporal(allow_model_requests: None, client: Client, capfire: Cap
 
     assert parsed_otel_items == snapshot(
         [
-            'StartWorkflow:AgentWorkflow',
-            'RunWorkflow:AgentWorkflow',
-            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'StartActivity:agent__temporal_agent__model_request_stream',
+            'StartWorkflow:ComplexAgentWorkflow',
+            'RunWorkflow:ComplexAgentWorkflow',
+            'StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__complex_agent__model_request_stream',
             'ctx.run_step=1',
             '{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
-            'RunActivity:agent__temporal_agent__model_request_stream',
+            'RunActivity:agent__complex_agent__model_request_stream',
             'ctx.run_step=1',
             'chat gpt-4o',
             'ctx.run_step=1',
             '{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}',
             '{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}',
             'running tool: get_country',
-            'StartActivity:agent__temporal_agent__mcp_server__mcp__call_tool',
+            'StartActivity:agent__complex_agent__mcp_server__mcp__call_tool',
             IsStr(
                 regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
             ),
-            'RunActivity:agent__temporal_agent__mcp_server__mcp__call_tool',
+            'RunActivity:agent__complex_agent__mcp_server__mcp__call_tool',
             'running tool: get_product_name',
             IsStr(
                 regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
             ),
             'running 2 tools',
-            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'StartActivity:agent__temporal_agent__model_request_stream',
+            'StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__complex_agent__model_request_stream',
             'ctx.run_step=2',
             '{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
@@ -237,21 +248,21 @@ async def test_temporal(allow_model_requests: None, client: Client, capfire: Cap
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
-            'RunActivity:agent__temporal_agent__model_request_stream',
+            'RunActivity:agent__complex_agent__model_request_stream',
             'ctx.run_step=2',
             'chat gpt-4o',
             'ctx.run_step=2',
             '{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}',
-            'StartActivity:agent__temporal_agent__toolset__<agent>__call_tool',
-            'RunActivity:agent__temporal_agent__toolset__<agent>__call_tool',
+            'StartActivity:agent__complex_agent__toolset__<agent>__call_tool',
+            'RunActivity:agent__complex_agent__toolset__<agent>__call_tool',
             'running tool: get_weather',
             IsStr(
                 regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
             ),
             'running 1 tool',
-            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
-            'StartActivity:agent__temporal_agent__model_request_stream',
+            'StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__complex_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__complex_agent__model_request_stream',
             'ctx.run_step=3',
             '{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"tool_name":"final_result","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"final_result"}',
@@ -295,11 +306,41 @@ async def test_temporal(allow_model_requests: None, client: Client, capfire: Cap
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
-            'RunActivity:agent__temporal_agent__model_request_stream',
+            'RunActivity:agent__complex_agent__model_request_stream',
             'ctx.run_step=3',
             'chat gpt-4o',
             'ctx.run_step=3',
-            'temporal_agent run',
-            'CompleteWorkflow:AgentWorkflow',
+            'complex_agent run',
+            'CompleteWorkflow:ComplexAgentWorkflow',
         ]
     )
+
+
+simple_agent = Agent(model, name='simple_agent')
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+simple_temporal_agent = TemporalAgent(simple_agent)
+
+
+@workflow.defn
+class SimpleAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_simple_agent(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflow],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            SimpleAgentWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=SimpleAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
