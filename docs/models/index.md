@@ -4,7 +4,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 
 * [OpenAI](openai.md)
 * [Anthropic](anthropic.md)
-* [Gemini](gemini.md) (via two different APIs: Generative Language API and VertexAI API)
+* [Gemini](google.md) (via two different APIs: Generative Language API and VertexAI API)
 * [Groq](groq.md)
 * [Mistral](mistral.md)
 * [Cohere](cohere.md)
@@ -41,13 +41,13 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   (generally by wrapping a vendor-provided SDK, like the `openai` python SDK). These classes implement a
   vendor-SDK-agnostic API, ensuring a single Pydantic AI agent is portable to different LLM vendors without
   any other code changes just by swapping out the Model it uses. Model classes are named
-  roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIModel`, `AnthropicModel`, `GeminiModel`,
+  roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIModel`, `AnthropicModel`, `GoogleModel`,
   etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-4o`,
   `claude-3-5-sonnet-latest`, `gemini-1.5-flash`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
-  authentication (e.g., you can use Vertex-specific auth with the `GeminiModel` by way of the `VertexProvider`).
+  authentication (e.g., you can use Azure auth with the `OpenAIModel` by way of the `AzureProvider`).
   In particular, this is how you can make use of an AI gateway, or an LLM vendor that offers API compatibility
   with the vendor SDK used by an existing Model (such as `OpenAIModel`).
 - **Profile**: This refers to a description of how requests to a specific model or family of models need to be

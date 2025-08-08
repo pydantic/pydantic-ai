@@ -106,7 +106,7 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
-    _media_type: str | None = field(init=False, repr=False)
+    _media_type: str | None = field(init=False, repr=False, compare=False)
 
     def __init__(
         self,
@@ -120,19 +120,21 @@ class FileUrl(ABC):
         self.force_download = force_download
         self._media_type = media_type
 
-    @abstractmethod
-    def _infer_media_type(self) -> str:
-        """Return the media type of the file, based on the url."""
-
     @property
     def media_type(self) -> str:
-        """Return the media type of the file, based on the url or the provided `_media_type`."""
+        """Return the media type of the file, based on the URL or the provided `media_type`."""
         return self._media_type or self._infer_media_type()
+
+    @abstractmethod
+    def _infer_media_type(self) -> str:
+        """Infer the media type of the file based on the URL."""
+        raise NotImplementedError
 
     @property
     @abstractmethod
     def format(self) -> str:
         """The file format."""
+        raise NotImplementedError
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -182,7 +184,9 @@ class VideoUrl(FileUrl):
         elif self.is_youtube:
             return 'video/mp4'
         else:
-            raise ValueError(f'Unknown video file extension: {self.url}')
+            raise ValueError(
+                f'Could not infer media type from video URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
 
     @property
     def is_youtube(self) -> bool:
@@ -238,7 +242,9 @@ class AudioUrl(FileUrl):
         if self.url.endswith('.aac'):
             return 'audio/aac'
 
-        raise ValueError(f'Unknown audio file extension: {self.url}')
+        raise ValueError(
+            f'Could not infer media type from audio URL: {self.url}. Explicitly provide a `media_type` instead.'
+        )
 
     @property
     def format(self) -> AudioFormat:
@@ -278,7 +284,9 @@ class ImageUrl(FileUrl):
         elif self.url.endswith('.webp'):
             return 'image/webp'
         else:
-            raise ValueError(f'Unknown image file extension: {self.url}')
+            raise ValueError(
+                f'Could not infer media type from image URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
 
     @property
     def format(self) -> ImageFormat:
@@ -312,9 +320,28 @@ class DocumentUrl(FileUrl):
 
     def _infer_media_type(self) -> str:
         """Return the media type of the document, based on the url."""
+        # Common document types are hardcoded here as mime-type support for these
+        # extensions varies across operating systems.
+        if self.url.endswith(('.md', '.mdx', '.markdown')):
+            return 'text/markdown'
+        elif self.url.endswith('.asciidoc'):
+            return 'text/x-asciidoc'
+        elif self.url.endswith('.txt'):
+            return 'text/plain'
+        elif self.url.endswith('.pdf'):
+            return 'application/pdf'
+        elif self.url.endswith('.rtf'):
+            return 'application/rtf'
+        elif self.url.endswith('.docx'):
+            return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        elif self.url.endswith('.xlsx'):
+            return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
         type_, _ = guess_type(self.url)
         if type_ is None:
-            raise ValueError(f'Unknown document file extension: {self.url}')
+            raise ValueError(
+                f'Could not infer media type from document URL: {self.url}. Explicitly provide a `media_type` instead.'
+            )
         return type_
 
     @property
@@ -412,8 +439,8 @@ class ToolReturn:
     return_value: Any
     """The return value to be used in the tool response."""
 
-    content: Sequence[UserContent] | None = None
-    """The content sequence to be sent to the model as a UserPromptPart."""
+    content: str | Sequence[UserContent] | None = None
+    """The content to be sent to the model as a UserPromptPart."""
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
@@ -463,8 +490,8 @@ _video_format_lookup: dict[str, VideoFormat] = {
 class UserPromptPart:
     """A user prompt, generally written by the end user.
 
-    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.Agent.run],
-    [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
+    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
+    [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], and [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
     """
 
     content: str | Sequence[UserContent]
@@ -505,8 +532,8 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
 
 
 @dataclass(repr=False)
-class ToolReturnPart:
-    """A tool return message, this encodes the result of running a tool."""
+class BaseToolReturnPart:
+    """Base class for tool return parts."""
 
     tool_name: str
     """The name of the "tool" was called."""
@@ -522,9 +549,6 @@ class ToolReturnPart:
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
-
-    part_kind: Literal['tool-return'] = 'tool-return'
-    """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
@@ -552,7 +576,30 @@ class ToolReturnPart:
             },
         )
 
+    def has_content(self) -> bool:
+        """Return `True` if the tool return has content."""
+        return self.content is not None  # pragma: no cover
+
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ToolReturnPart(BaseToolReturnPart):
+    """A tool return message, this encodes the result of running a tool."""
+
+    part_kind: Literal['tool-return'] = 'tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolReturnPart(BaseToolReturnPart):
+    """A tool return message from a built-in tool."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
+
+    part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -696,7 +743,7 @@ class ThinkingPart:
 
 
 @dataclass(repr=False)
-class ToolCallPart:
+class BaseToolCallPart:
     """A tool call from a model."""
 
     tool_name: str
@@ -713,9 +760,6 @@ class ToolCallPart:
 
     In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
     """
-
-    part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this is available on all parts as a discriminator."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -753,7 +797,29 @@ class ToolCallPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart, ThinkingPart], pydantic.Discriminator('part_kind')]
+@dataclass(repr=False)
+class ToolCallPart(BaseToolCallPart):
+    """A tool call from a model."""
+
+    part_kind: Literal['tool-call'] = 'tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolCallPart(BaseToolCallPart):
+    """A tool call to a built-in tool."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
+
+    part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+ModelResponsePart = Annotated[
+    Union[TextPart, ToolCallPart, BuiltinToolCallPart, BuiltinToolReturnPart, ThinkingPart],
+    pydantic.Discriminator('part_kind'),
+]
 """A message part returned by a model."""
 
 
@@ -1145,6 +1211,29 @@ class FunctionToolResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class BuiltinToolCallEvent:
+    """An event indicating the start to a call to a built-in tool."""
+
+    part: BuiltinToolCallPart
+    """The built-in tool call to make."""
+
+    event_kind: Literal['builtin_tool_call'] = 'builtin_tool_call'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolResultEvent:
+    """An event indicating the result of a built-in tool call."""
+
+    result: BuiltinToolReturnPart
+    """The result of the call to the built-in tool."""
+
+    event_kind: Literal['builtin_tool_result'] = 'builtin_tool_result'
+    """Event type identifier, used as a discriminator."""
+
+
 HandleResponseEvent = Annotated[
-    Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('event_kind')
+    Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
+    pydantic.Discriminator('event_kind'),
 ]

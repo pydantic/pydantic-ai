@@ -18,11 +18,8 @@ from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provide
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from ..messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-)
+from .._run_context import RunContext
+from ..messages import ModelMessage, ModelRequest, ModelResponse
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
@@ -138,7 +135,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
-        except TypeError:
+        except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
@@ -222,12 +219,13 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:
                 async with super().request_stream(
-                    messages, model_settings, model_request_parameters
+                    messages, model_settings, model_request_parameters, run_context
                 ) as response_stream:
                     yield response_stream
             finally:

@@ -119,7 +119,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
     agent = Agent('openai:gpt-4o')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
-    #> Paris
+    #> The capital of France is Paris.
     ```
 
     1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
@@ -139,7 +139,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
     agent = Agent('openai:gpt-4o')
     result = agent.run_sync('What is the capital of France?')
     print(result.output)
-    #> Paris
+    #> The capital of France is Paris.
     ```
 
     ![Logfire without HTTPX instrumentation](img/logfire-without-httpx.png)
@@ -272,7 +272,7 @@ logfire.instrument_pydantic_ai(event_mode='logs')
 agent = Agent('openai:gpt-4o')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
-#> Paris
+#> The capital of France is Paris.
 ```
 
 For now, this won't look as good in the Logfire UI, but we're working on it.

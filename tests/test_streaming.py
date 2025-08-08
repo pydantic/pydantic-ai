@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import datetime
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
@@ -16,15 +16,19 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.agent import AgentRun
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    HandleResponseEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -926,7 +930,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, Union[OutputType, NotOutputType]]('test', output_type=Union[OutputType, NotOutputType])  # pyright: ignore[reportArgumentType]
+    agent = Agent[None, Union[OutputType, NotOutputType]]('test', output_type=Union[OutputType, NotOutputType])
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
@@ -1108,6 +1112,42 @@ async def test_iter_stream_structured_output():
                     )
 
 
+async def test_iter_stream_output_tool_dont_hit_retry_limit():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream partial JSON data that will initially fail validation."""
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(json_args='{"c')}
+        yield {0: DeltaToolCall(json_args='ity":')}
+        yield {0: DeltaToolCall(json_args=' "Mex')}
+        yield {0: DeltaToolCall(json_args='ico City",')}
+        yield {0: DeltaToolCall(json_args=' "cou')}
+        yield {0: DeltaToolCall(json_args='ntry": "Mexico"}')}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
+
+    async with agent.iter('Generate city info') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    assert [c async for c in stream.stream_output(debounce_by=None)] == snapshot(
+                        [
+                            CityLocation(city='Mex'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                        ]
+                    )
+
+
 def test_function_tool_event_tool_call_id_properties():
     """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
     # Prepare a ToolCallPart with a fixed ID
@@ -1211,5 +1251,135 @@ async def test_deferred_tool_iter():
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+        ]
+    )
+
+
+async def test_run_event_stream_handler():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events: list[AgentStreamEvent | HandleResponseEvent] = []
+
+    async def event_stream_handler(
+        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
+    ):
+        async for event in stream:
+            events.append(event)
+
+    result = await test_agent.run('Hello', event_stream_handler=event_stream_handler)
+    assert result.output == snapshot('{"ret_a":"a-apple"}')
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+        ]
+    )
+
+
+def test_run_sync_event_stream_handler():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events: list[AgentStreamEvent | HandleResponseEvent] = []
+
+    async def event_stream_handler(
+        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
+    ):
+        async for event in stream:
+            events.append(event)
+
+    result = test_agent.run_sync('Hello', event_stream_handler=event_stream_handler)
+    assert result.output == snapshot('{"ret_a":"a-apple"}')
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+        ]
+    )
+
+
+async def test_run_stream_event_stream_handler():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events: list[AgentStreamEvent | HandleResponseEvent] = []
+
+    async def event_stream_handler(
+        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
+    ):
+        async for event in stream:
+            events.append(event)
+
+    async with test_agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+            ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
+        )
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
     )

@@ -8,7 +8,7 @@ Toolsets are used (among many other things) to define [MCP servers](mcp/client.m
 The toolsets that will be available during an agent run can be specified in three different ways:
 
 * at agent construction time, via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent`
-* at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_sync()`][pydantic_ai.Agent.run_sync], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. These toolsets will be additional to those provided to the `Agent` constructor
+* at agent run time, via the `toolsets` keyword argument to [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. These toolsets will be additional to those provided to the `Agent` constructor
 * as a contextual override, via the `toolsets` keyword argument to the [`agent.override()`][pydantic_ai.Agent.iter] context manager. These toolsets will replace those provided at agent construction or run time during the life of the context manager
 
 ```python {title="toolsets.py"}
@@ -98,7 +98,7 @@ def conditions(ctx: RunContext, city: str) -> str:
 datetime_toolset = FunctionToolset()
 datetime_toolset.add_function(lambda: datetime.now(), name='now')
 
-test_model = TestModel() # (1)!
+test_model = TestModel()  # (1)!
 agent = Agent(test_model)
 
 result = agent.run_sync('What tools are available?', toolsets=[weather_toolset])
@@ -245,7 +245,7 @@ _(This example is complete, it can be run "as is")_
 
 [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the  agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns a list of modified `ToolDefinition`s.
 
-This is the toolset-specific equivalent of the [`prepare_tools`](tools.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered to an agent across toolsets.
+This is the toolset-specific equivalent of the [`prepare_tools`](tools.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
@@ -403,29 +403,30 @@ from function_toolset import weather_toolset, datetime_toolset
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import WrapperToolset, FunctionToolset
+from pydantic_ai.toolsets import WrapperToolset
 
 togglable_toolset = WrapperToolset(weather_toolset)
 
+test_model = TestModel() # (1)!
+agent = Agent(
+    test_model,
+    deps_type=WrapperToolset # (2)!
+)
+
+@agent.tool
 def toggle(ctx: RunContext[WrapperToolset]):
     if ctx.deps.wrapped == weather_toolset:
         ctx.deps.wrapped = datetime_toolset
     else:
         ctx.deps.wrapped = weather_toolset
 
-test_model = TestModel() # (1)!
-agent = Agent(
-    test_model,
-    deps_type=WrapperToolset, # (2)!
-    toolsets=[togglable_toolset, FunctionToolset([toggle])]
-)
-result = agent.run_sync('Toggle the toolset', deps=togglable_toolset)
+result = agent.run_sync('Toggle the toolset', deps=togglable_toolset, toolsets=[togglable_toolset])
 print([t.name for t in test_model.last_model_request_parameters.function_tools]) # (3)!
-#> ['now', 'toggle']
+#> ['toggle', 'now']
 
-result = agent.run_sync('Toggle the toolset', deps=togglable_toolset)
+result = agent.run_sync('Toggle the toolset', deps=togglable_toolset, toolsets=[togglable_toolset])
 print([t.name for t in test_model.last_model_request_parameters.function_tools])
-#> ['temperature_celsius', 'temperature_fahrenheit', 'conditions', 'toggle']
+#> ['toggle', 'temperature_celsius', 'temperature_fahrenheit', 'conditions']
 ```
 
 1. We're using [`TestModel`][pydantic_ai.models.test.TestModel] here because it makes it easy to see which tools were available on each run.
@@ -452,7 +453,7 @@ When the model calls a deferred tool, the agent run ends with a [`DeferredToolCa
 
 To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolCalls` to the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. Finally, you should handle the possible `DeferredToolCalls` output by passing it to the service that will produce the results.
 
-If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolCalls` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.Agent.run], [`agent.run_sync()`][pydantic_ai.Agent.run_sync], [`agent.run_stream()`][pydantic_ai.Agent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly.
+If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolCalls` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly.
 
 To demonstrate, let us first define a simple agent _without_ deferred tools:
 

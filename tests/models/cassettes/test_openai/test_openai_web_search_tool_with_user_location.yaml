@@ -1,0 +1,91 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '322'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: You are a helpful assistant.
+        role: system
+      - content: What is the current temperature?
+        role: user
+      model: gpt-4o-search-preview
+      stream: false
+      web_search_options:
+        search_context_size: medium
+        user_location:
+          approximate:
+            city: Utrecht
+            country: NL
+          type: approximate
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1656'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '3979'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          annotations: []
+          content: "Het is momenteel zonnig in Utrecht met een temperatuur van 22°C.\n\n## Weer voor Utrecht, Nederland:\nHuidige
+            omstandigheden: Zonnig, 72°F (22°C)\n\nDagvoorspelling:\n* woensdag, mei 14: minimum: 48°F (9°C), maximum: 71°F
+            (22°C), beschrijving: Afnemende bewolking\n* donderdag, mei 15: minimum: 43°F (6°C), maximum: 67°F (20°C), beschrijving:
+            Na een bewolkt begin keert de zon terug\n* vrijdag, mei 16: minimum: 45°F (7°C), maximum: 64°F (18°C), beschrijving:
+            Overwegend zonnig\n* zaterdag, mei 17: minimum: 47°F (9°C), maximum: 68°F (20°C), beschrijving: Overwegend zonnig\n*
+            zondag, mei 18: minimum: 47°F (8°C), maximum: 68°F (20°C), beschrijving: Deels zonnig\n* maandag, mei 19: minimum:
+            49°F (9°C), maximum: 70°F (21°C), beschrijving: Deels zonnig\n* dinsdag, mei 20: minimum: 49°F (10°C), maximum:
+            72°F (22°C), beschrijving: Zonnig tot gedeeltelijk bewolkt\n "
+          refusal: null
+          role: assistant
+      created: 1747227540
+      id: chatcmpl-da029146-a630-4224-9d12-7d808b031fbc
+      model: gpt-4o-search-preview-2025-03-11
+      object: chat.completion
+      system_fingerprint: ''
+      usage:
+        completion_tokens: 293
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 12
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 305
+    status:
+      code: 200
+      message: OK
+version: 1

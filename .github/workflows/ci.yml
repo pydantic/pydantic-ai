@@ -140,6 +140,7 @@ jobs:
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
+      COVERAGE_PROCESS_START: ./pyproject.toml
     steps:
       - uses: actions/checkout@v4
 
@@ -151,20 +152,20 @@ jobs:
         with:
           deno-version: v2.x
 
-      - run: mkdir coverage
+      - run: mkdir .coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest
+      - run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
         env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 
-      - run: uv run coverage run -m pytest
+      - run: uv run coverage run -m pytest -n auto --dist=loadgroup
         env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-standard
 
-      - run: uv run --all-extras coverage run -m pytest
+      - run: uv run --all-extras coverage run -m pytest -n auto --dist=loadgroup
         env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-all-extras
 
       - run: uv run --all-extras python tests/import_examples.py
 
@@ -173,15 +174,15 @@ jobs:
         if: matrix.python-version != '3.9'
         run: |
           unset UV_FROZEN
-          uv run --all-extras --resolution lowest-direct coverage run -m pytest
+          uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
         env:
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
+          COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-lowest-versions
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ matrix.python-version }}
-          path: coverage
+          path: .coverage
           include-hidden-files: true
 
   coverage:
@@ -197,15 +198,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-          path: coverage
+          path: .coverage
 
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
       - run: uv sync --package pydantic-ai-slim --only-dev
-      - run: rm coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
-      - run: uv run coverage combine coverage
+      - run: rm .coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
+      - run: uv run coverage combine
 
       - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
 
@@ -228,7 +229,10 @@ jobs:
 
       - run: uv run coverage report --fail-under 100
       - run: uv run diff-cover coverage.xml --fail-under 100
+
       - run: uv run strict-no-cover
+        env:
+          COVERAGE_FILE: .coverage/.coverage
 
   test-mcp-run-python:
     runs-on: ubuntu-latest
