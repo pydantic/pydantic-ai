@@ -413,7 +413,7 @@ class GoogleModel(Model):
             _timestamp=first_chunk.create_time or _utils.now_utc(),
         )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:  # noqa: C901  # noqa: C901
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -457,7 +457,27 @@ class GoogleModel(Model):
                     message_parts = [{'text': ''}]
                 contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
-                contents.append(_content_model_response(m))
+                model_content = _content_model_response(m)
+                # Skip model responses with empty parts (e.g., thinking-only responses)
+                if model_content.get('parts'):
+                    # Check if the model response contains only function calls without text
+                    if parts := model_content.get('parts', []):
+                        has_function_calls = False
+                        has_text_parts = False
+                        for part in parts:
+                            if isinstance(part, dict):
+                                if 'function_call' in part:
+                                    has_function_calls = True
+                                if 'text' in part:
+                                    has_text_parts = True
+
+                        # If we only have function calls without text, add minimal text to satisfy Google API
+                        if has_function_calls and not has_text_parts:
+                            # Add a minimal text part to make the conversation valid for Google API
+                            parts.append({'text': 'I have completed the function calls above.'})
+                            model_content['parts'] = parts
+
+                    contents.append(model_content)
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages):
