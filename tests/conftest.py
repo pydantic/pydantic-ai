@@ -129,7 +129,7 @@ def env() -> Iterator[TestEnv]:
     test_env.reset()
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def anyio_backend():
     return 'asyncio'
 

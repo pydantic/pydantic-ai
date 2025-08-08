@@ -54,9 +54,8 @@ from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
-from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -4047,11 +4046,10 @@ def test_toolsets():
     agent = Agent('test', toolsets=[toolset])
     assert toolset in agent.toolsets
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return tool_defs  # pragma: no cover
-
-    agent = Agent('test', toolsets=[toolset], prepare_tools=prepare_tools)
-    assert agent.toolsets == [IsInstance(PreparedToolset)]
+    other_toolset = FunctionToolset()
+    with agent.override(toolsets=[other_toolset]):
+        assert other_toolset in agent.toolsets
+        assert toolset not in agent.toolsets
 
 
 async def test_wrapper_agent():
