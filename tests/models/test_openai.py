@@ -42,9 +42,10 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.result import Usage
+from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -173,31 +174,29 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -232,7 +231,13 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3))
+    assert result.usage() == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=2,
+            output_tokens=1,
+        )
+    )
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -266,10 +271,9 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -356,12 +360,15 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=2, response_tokens=1, total_tokens=3, details={'cached_tokens': 1}
+                usage=RequestUsage(
+                    input_tokens=2,
+                    cache_read_tokens=1,
+                    output_tokens=1,
+                    details={},
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -381,12 +388,15 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=3, response_tokens=2, total_tokens=6, details={'cached_tokens': 2}
+                usage=RequestUsage(
+                    input_tokens=3,
+                    cache_read_tokens=2,
+                    output_tokens=2,
+                    details={},
                 ),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -400,22 +410,13 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(requests=1),
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
-    assert result.usage() == snapshot(
-        Usage(
-            requests=3,
-            request_tokens=5,
-            response_tokens=3,
-            total_tokens=9,
-            details={'cached_tokens': 3},
-        )
-    )
+    assert result.usage() == snapshot(RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3))
 
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
@@ -448,7 +449,7 @@ async def test_stream_text(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=4, request_tokens=6, response_tokens=3, total_tokens=9))
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -520,9 +521,9 @@ async def test_stream_structured(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=11, request_tokens=20, response_tokens=10, total_tokens=30))
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=20, output_tokens=10))
         # double check usage matches stream count
-        assert result.usage().response_tokens == len(stream)
+        assert result.usage().output_tokens == len(stream)
 
 
 async def test_stream_structured_finish_reason(allow_model_requests: None):
@@ -669,7 +670,7 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage() == snapshot(Usage(requests=4, request_tokens=6, response_tokens=3, total_tokens=9))
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
@@ -820,22 +821,21 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_4hrT4QP9jfojtK69vGiFCFjG')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=46,
-                    response_tokens=11,
-                    total_tokens=57,
+                usage=RequestUsage(
+                    input_tokens=46,
+                    cache_read_tokens=0,
+                    output_tokens=11,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
+                provider_request_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
             ),
             ModelRequest(
                 parts=[
@@ -858,22 +858,21 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a potato.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=503,
-                    response_tokens=8,
-                    total_tokens=511,
+                usage=RequestUsage(
+                    input_tokens=503,
+                    cache_read_tokens=0,
+                    output_tokens=8,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
+                provider_request_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
             ),
         ]
     )
@@ -903,22 +902,21 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_Btn0GIzGr4ugNlLmkQghQUMY')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=46,
-                    response_tokens=11,
-                    total_tokens=57,
+                usage=RequestUsage(
+                    input_tokens=46,
+                    cache_read_tokens=0,
+                    output_tokens=11,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
+                provider_request_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
             ),
             ModelRequest(
                 parts=[
@@ -939,22 +937,21 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The image shows a kiwi fruit.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=1185,
-                    response_tokens=9,
-                    total_tokens=1194,
+                usage=RequestUsage(
+                    input_tokens=1185,
+                    cache_read_tokens=0,
+                    output_tokens=9,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
+                provider_request_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
             ),
         ]
     )
@@ -1829,22 +1826,21 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=24,
-                    response_tokens=8,
-                    total_tokens=32,
+                usage=RequestUsage(
+                    input_tokens=24,
+                    cache_read_tokens=0,
+                    output_tokens=8,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
+                provider_request_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
             ),
         ]
     )
@@ -1876,22 +1872,21 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_temperature', args='{"city":"Tokyo"}', tool_call_id=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=50,
-                    response_tokens=15,
-                    total_tokens=65,
+                usage=RequestUsage(
+                    input_tokens=50,
+                    cache_read_tokens=0,
+                    output_tokens=15,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
+                provider_request_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
             ),
             ModelRequest(
                 parts=[
@@ -1903,22 +1898,21 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
             ),
             ModelResponse(
                 parts=[TextPart(content='The temperature in Tokyo is currently 20.0 degrees Celsius.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=75,
-                    response_tokens=15,
-                    total_tokens=90,
+                usage=RequestUsage(
+                    input_tokens=75,
+                    cache_read_tokens=0,
+                    output_tokens=15,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
+                provider_request_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
             ),
         ]
     )
@@ -1942,15 +1936,12 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=2050,
-                    total_tokens=2063,
-                    details={'reasoning_tokens': 1664, 'cached_tokens': 0},
+                usage=RequestUsage(
+                    input_tokens=13, cache_read_tokens=0, output_tokens=2050, details={'reasoning_tokens': 1664}
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                provider_request_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
         ]
     )
@@ -1970,15 +1961,12 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                     ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=2050,
-                    total_tokens=2063,
-                    details={'reasoning_tokens': 1664, 'cached_tokens': 0},
+                usage=RequestUsage(
+                    input_tokens=13, cache_read_tokens=0, output_tokens=2050, details={'reasoning_tokens': 1664}
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                provider_request_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
             ModelRequest(
                 parts=[
@@ -1995,15 +1983,12 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                     ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(
-                    request_tokens=424,
-                    response_tokens=2033,
-                    total_tokens=2457,
-                    details={'reasoning_tokens': 1408, 'cached_tokens': 0},
+                usage=RequestUsage(
+                    input_tokens=424, cache_read_tokens=0, output_tokens=2033, details={'reasoning_tokens': 1408}
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
+                provider_request_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
             ),
         ]
     )
@@ -2028,15 +2013,12 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=1900,
-                    total_tokens=1913,
-                    details={'reasoning_tokens': 1536, 'cached_tokens': 0},
+                usage=RequestUsage(
+                    input_tokens=13, cache_read_tokens=0, output_tokens=1900, details={'reasoning_tokens': 1536}
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
+                provider_request_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
         ]
     )
@@ -2057,15 +2039,12 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                     IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=1900,
-                    total_tokens=1913,
-                    details={'reasoning_tokens': 1536, 'cached_tokens': 0},
+                usage=RequestUsage(
+                    input_tokens=13, cache_read_tokens=0, output_tokens=1900, details={'reasoning_tokens': 1536}
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
+                provider_request_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
             ModelRequest(
                 parts=[
@@ -2077,22 +2056,21 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=822,
-                    response_tokens=2437,
-                    total_tokens=3259,
+                usage=RequestUsage(
+                    input_tokens=822,
+                    cache_read_tokens=0,
+                    output_tokens=2437,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 1792,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
+                provider_request_id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
             ),
         ]
     )
@@ -2153,8 +2131,8 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
     )
     messages = result.all_messages()
     response = cast(Any, messages[1])
-    assert response.vendor_details is not None
-    assert response.vendor_details['logprobs'] == [
+    assert response.provider_details is not None
+    assert response.provider_details['logprobs'] == [
         {
             'token': 'world',
             'logprob': -0.6931,
@@ -2387,22 +2365,21 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=68,
-                    response_tokens=12,
-                    total_tokens=80,
+                usage=RequestUsage(
+                    input_tokens=68,
+                    cache_read_tokens=0,
+                    output_tokens=12,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
+                provider_request_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
             ),
             ModelRequest(
                 parts=[
@@ -2422,22 +2399,21 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=89,
-                    response_tokens=36,
-                    total_tokens=125,
+                usage=RequestUsage(
+                    input_tokens=89,
+                    cache_read_tokens=0,
+                    output_tokens=36,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
+                provider_request_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
             ),
             ModelRequest(
                 parts=[
@@ -2483,22 +2459,21 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_J1YabdC7G7kzEZNbbZopwenH')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=42,
-                    response_tokens=11,
-                    total_tokens=53,
+                usage=RequestUsage(
+                    input_tokens=42,
+                    cache_read_tokens=0,
+                    output_tokens=11,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
+                provider_request_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
             ),
             ModelRequest(
                 parts=[
@@ -2512,22 +2487,21 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
             ),
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=63,
-                    response_tokens=10,
-                    total_tokens=73,
+                usage=RequestUsage(
+                    input_tokens=63,
+                    cache_read_tokens=0,
+                    output_tokens=10,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
+                provider_request_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
             ),
         ]
     )
@@ -2566,22 +2540,21 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_PkRGedQNRFUzJp2R7dO7avWR')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=71,
-                    response_tokens=12,
-                    total_tokens=83,
+                usage=RequestUsage(
+                    input_tokens=71,
+                    cache_read_tokens=0,
+                    output_tokens=12,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
+                provider_request_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
             ),
             ModelRequest(
                 parts=[
@@ -2595,22 +2568,21 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=92,
-                    response_tokens=15,
-                    total_tokens=107,
+                usage=RequestUsage(
+                    input_tokens=92,
+                    cache_read_tokens=0,
+                    output_tokens=15,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
+                provider_request_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
             ),
         ]
     )
@@ -2651,22 +2623,21 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_SIttSeiOistt33Htj4oiHOOX')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=160,
-                    response_tokens=11,
-                    total_tokens=171,
+                usage=RequestUsage(
+                    input_tokens=160,
+                    cache_read_tokens=0,
+                    output_tokens=11,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
+                provider_request_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
             ),
             ModelRequest(
                 parts=[
@@ -2684,22 +2655,21 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=181,
-                    response_tokens=25,
-                    total_tokens=206,
+                usage=RequestUsage(
+                    input_tokens=181,
+                    cache_read_tokens=0,
+                    output_tokens=25,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
+                provider_request_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
             ),
         ]
     )
@@ -2743,22 +2713,21 @@ Don't include any text or Markdown fencing before or after.\
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_s7oT9jaLAsEqTgvxZTmFh0wB')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=109,
-                    response_tokens=11,
-                    total_tokens=120,
+                usage=RequestUsage(
+                    input_tokens=109,
+                    cache_read_tokens=0,
+                    output_tokens=11,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
+                provider_request_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
             ),
             ModelRequest(
                 parts=[
@@ -2779,22 +2748,21 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=130,
-                    response_tokens=11,
-                    total_tokens=141,
+                usage=RequestUsage(
+                    input_tokens=130,
+                    cache_read_tokens=0,
+                    output_tokens=11,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
+                provider_request_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
             ),
         ]
     )
@@ -2842,22 +2810,21 @@ Don't include any text or Markdown fencing before or after.\
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_wJD14IyJ4KKVtjCrGyNCHO09')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=273,
-                    response_tokens=11,
-                    total_tokens=284,
+                usage=RequestUsage(
+                    input_tokens=273,
+                    cache_read_tokens=0,
+                    output_tokens=11,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
+                provider_request_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
             ),
             ModelRequest(
                 parts=[
@@ -2882,22 +2849,21 @@ Don't include any text or Markdown fencing before or after.\
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=294,
-                    response_tokens=21,
-                    total_tokens=315,
+                usage=RequestUsage(
+                    input_tokens=294,
+                    cache_read_tokens=0,
+                    output_tokens=21,
+                    input_audio_tokens=0,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
                         'reasoning_tokens': 0,
                         'rejected_prediction_tokens': 0,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
+                provider_request_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
             ),
         ]
     )

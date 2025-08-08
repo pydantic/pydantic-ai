@@ -24,7 +24,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -35,7 +35,7 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
-        usage=Usage(),
+        usage=RunUsage(),
         prompt=None,
         messages=[],
         run_step=run_step,

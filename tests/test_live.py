@@ -118,7 +118,8 @@ async def test_text(http_client: httpx.AsyncClient, tmp_path: Path, get_model: G
     assert 'paris' in result.output.lower()
     print('Text usage:', result.usage())
     usage = result.usage()
-    assert usage.total_tokens is not None and usage.total_tokens > 0
+    total_tokens = usage.input_output_tokens()
+    assert total_tokens is not None and total_tokens > 0
 
 
 stream_params = [p for p in params if p.id != 'cohere']
@@ -134,7 +135,8 @@ async def test_stream(http_client: httpx.AsyncClient, tmp_path: Path, get_model:
     print('Stream usage:', result.usage())
     usage = result.usage()
     if get_model.__name__ != 'ollama':
-        assert usage.total_tokens is not None and usage.total_tokens > 0
+        total_tokens = usage.input_output_tokens()
+        assert total_tokens is not None and total_tokens > 0
 
 
 class MyModel(BaseModel):
@@ -162,4 +164,5 @@ async def test_structured(http_client: httpx.AsyncClient, tmp_path: Path, get_mo
     assert result.output.city.lower() == 'london'
     print('Structured usage:', result.usage())
     usage = result.usage()
-    assert usage.total_tokens is not None and usage.total_tokens > 0
+    total_tokens = usage.input_output_tokens()
+    assert total_tokens is not None and total_tokens > 0

@@ -39,8 +39,9 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.result import Usage
+from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
 from ..parts_from_messages import part_types_from_messages
@@ -173,11 +174,10 @@ async def test_sync_request_text_response(allow_model_requests: None):
     result = await agent.run('hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=5,
-            response_tokens=10,
-            total_tokens=15,
+            input_tokens=5,
+            output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
         )
     )
@@ -187,11 +187,10 @@ async def test_sync_request_text_response(allow_model_requests: None):
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=5,
-            response_tokens=10,
-            total_tokens=15,
+            input_tokens=5,
+            output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
         )
     )
@@ -200,30 +199,18 @@ async def test_sync_request_text_response(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=5,
-                    response_tokens=10,
-                    total_tokens=15,
-                    details={'input_tokens': 5, 'output_tokens': 10},
-                ),
+                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=5,
-                    response_tokens=10,
-                    total_tokens=15,
-                    details={'input_tokens': 5, 'output_tokens': 10},
-                ),
+                usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -246,11 +233,10 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     result = await agent.run('hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=13,
-            response_tokens=5,
-            total_tokens=18,
+            input_tokens=13,
+            output_tokens=5,
             details={
                 'input_tokens': 3,
                 'output_tokens': 5,
@@ -273,11 +259,10 @@ async def test_async_request_text_response(allow_model_requests: None):
     result = await agent.run('hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=3,
-            response_tokens=5,
-            total_tokens=8,
+            input_tokens=3,
+            output_tokens=5,
             details={'input_tokens': 3, 'output_tokens': 5},
         )
     )
@@ -305,16 +290,10 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=3,
-                    response_tokens=5,
-                    total_tokens=8,
-                    details={'input_tokens': 3, 'output_tokens': 5},
-                ),
+                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -375,16 +354,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=2,
-                    response_tokens=1,
-                    total_tokens=3,
-                    details={'input_tokens': 2, 'output_tokens': 1},
-                ),
+                usage=RequestUsage(input_tokens=2, output_tokens=1, details={'input_tokens': 2, 'output_tokens': 1}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -404,16 +377,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=3,
-                    response_tokens=2,
-                    total_tokens=5,
-                    details={'input_tokens': 3, 'output_tokens': 2},
-                ),
+                usage=RequestUsage(input_tokens=3, output_tokens=2, details={'input_tokens': 3, 'output_tokens': 2}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -427,16 +394,10 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=3,
-                    response_tokens=5,
-                    total_tokens=8,
-                    details={'input_tokens': 3, 'output_tokens': 5},
-                ),
+                usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -690,11 +651,10 @@ async def test_stream_structured(allow_model_requests: None):
         )
         assert result.is_complete
         assert result.usage() == snapshot(
-            Usage(
+            RunUsage(
                 requests=2,
-                request_tokens=20,
-                response_tokens=5,
-                total_tokens=25,
+                input_tokens=20,
+                output_tokens=5,
                 details={'input_tokens': 20, 'output_tokens': 5},
             )
         )
@@ -771,11 +731,9 @@ async def test_image_as_binary_content_tool_response(
                     TextPart(content='Let me get the image and check.'),
                     ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01YJiJ82nETV7aRdJr9f6Np7'),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=372,
-                    response_tokens=45,
-                    total_tokens=417,
+                usage=RequestUsage(
+                    input_tokens=372,
+                    output_tokens=45,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -785,7 +743,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01CC59GmUmYXKCV26rHfr32m',
+                provider_request_id='msg_01CC59GmUmYXKCV26rHfr32m',
             ),
             ModelRequest(
                 parts=[
@@ -810,11 +768,9 @@ async def test_image_as_binary_content_tool_response(
                         content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The fruit's thin, fuzzy brown skin is visible around the edges of the slice."
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=2021,
-                    response_tokens=57,
-                    total_tokens=2078,
+                usage=RequestUsage(
+                    input_tokens=2021,
+                    output_tokens=57,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -824,7 +780,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014MJqSsWD1pUC23Vvi57LoY',
+                provider_request_id='msg_014MJqSsWD1pUC23Vvi57LoY',
             ),
         ]
     )
@@ -943,11 +899,9 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=20,
-                    response_tokens=10,
-                    total_tokens=30,
+                usage=RequestUsage(
+                    input_tokens=20,
+                    output_tokens=10,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -957,7 +911,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01BznVNBje2zyfpCfNQCD5en',
+                provider_request_id='msg_01BznVNBje2zyfpCfNQCD5en',
             ),
         ]
     )
@@ -980,11 +934,9 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=42,
-                    response_tokens=302,
-                    total_tokens=344,
+                usage=RequestUsage(
+                    input_tokens=42,
+                    output_tokens=302,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -994,7 +946,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01FWiSVNCRHvHUYU21BRandY',
+                provider_request_id='msg_01FWiSVNCRHvHUYU21BRandY',
             ),
         ]
     )
@@ -1008,11 +960,9 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=42,
-                    response_tokens=302,
-                    total_tokens=344,
+                usage=RequestUsage(
+                    input_tokens=42,
+                    output_tokens=302,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1022,7 +972,7 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1051,11 +1001,9 @@ I'll structure this as a parallel to the street crossing guide, highlighting the
                     ),
                     TextPart(content=IsStr()),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=303,
-                    response_tokens=486,
-                    total_tokens=789,
+                usage=RequestUsage(
+                    input_tokens=303,
+                    output_tokens=486,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1065,7 +1013,7 @@ I'll structure this as a parallel to the street crossing guide, highlighting the
                 ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -1236,11 +1184,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
     [
         pytest.param(
             lambda: anth_msg(BetaUsage(input_tokens=1, output_tokens=1)),
-            snapshot(
-                Usage(
-                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
-                )
-            ),
+            snapshot(RequestUsage(input_tokens=1, output_tokens=1, details={'input_tokens': 1, 'output_tokens': 1})),
             id='AnthropicMessage',
         ),
         pytest.param(
@@ -1248,10 +1192,9 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
                 BetaUsage(input_tokens=1, output_tokens=1, cache_creation_input_tokens=2, cache_read_input_tokens=3)
             ),
             snapshot(
-                Usage(
-                    request_tokens=6,
-                    response_tokens=1,
-                    total_tokens=7,
+                RequestUsage(
+                    input_tokens=6,
+                    output_tokens=1,
                     details={
                         'cache_creation_input_tokens': 2,
                         'cache_read_input_tokens': 3,
@@ -1266,11 +1209,7 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             lambda: BetaRawMessageStartEvent(
                 message=anth_msg(BetaUsage(input_tokens=1, output_tokens=1)), type='message_start'
             ),
-            snapshot(
-                Usage(
-                    request_tokens=1, response_tokens=1, total_tokens=2, details={'input_tokens': 1, 'output_tokens': 1}
-                )
-            ),
+            snapshot(RequestUsage(input_tokens=1, output_tokens=1, details={'input_tokens': 1, 'output_tokens': 1})),
             id='RawMessageStartEvent',
         ),
         pytest.param(
@@ -1279,13 +1218,15 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
                 usage=BetaMessageDeltaUsage(output_tokens=5),
                 type='message_delta',
             ),
-            snapshot(Usage(response_tokens=5, total_tokens=5, details={'output_tokens': 5})),
+            snapshot(RequestUsage(output_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
-        pytest.param(lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(Usage()), id='RawMessageStopEvent'),
+        pytest.param(
+            lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(RequestUsage()), id='RawMessageStopEvent'
+        ),
     ],
 )
-def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: Usage):
+def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: RunUsage):
     assert _map_usage(message_callback()) == usage
 
 
@@ -1437,11 +1378,9 @@ Based on the search results, today is Monday, May 26, 2025. This is confirmed by
                             content="On May 26, 2025, there are significant developments happening, including India's launch of the Bharat Forecasting System to boost weather prediction and disaster preparedness"
                         ),
                     ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=16312,
-                        response_tokens=258,
-                        total_tokens=16570,
+                    usage=RequestUsage(
+                        input_tokens=16312,
+                        output_tokens=258,
                         details={
                             'cache_creation_input_tokens': 0,
                             'cache_read_input_tokens': 0,
@@ -1451,7 +1390,7 @@ Based on the search results, today is Monday, May 26, 2025. This is confirmed by
                     ),
                     model_name='claude-3-5-sonnet-20241022',
                     timestamp=IsDatetime(),
-                    vendor_id=IsStr(),
+                    provider_request_id='msg_01WWvGdHT1E2kYaV5ZLWMB2N',
                 ),
             ]
         )
@@ -1495,11 +1434,9 @@ print(f"3 * 12390 = {result}")\
                     ),
                     TextPart(content='The answer is **37,170**.'),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=1630,
-                    response_tokens=105,
-                    total_tokens=1735,
+                usage=RequestUsage(
+                    input_tokens=1630,
+                    output_tokens=105,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1509,7 +1446,7 @@ print(f"3 * 12390 = {result}")\
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                provider_request_id='msg_015H6Emn2T8vZhE52mU2jF1U',
             ),
         ]
     )
@@ -1551,15 +1488,12 @@ The year 2025 is a regular year with 365 days
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='Tomorrow will be **Tuesday, May 27, 2025**.')],
-                usage=Usage(
-                    request_tokens=410,
-                    response_tokens=17,
-                    total_tokens=427,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
+                usage=RequestUsage(
+                    input_tokens=410, cache_read_tokens=0, output_tokens=17, details={'reasoning_tokens': 0}
                 ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
-                vendor_id='resp_6834631faf2481918638284f62855ddf040b4e5d7e74f261',
+                provider_request_id='resp_6834631faf2481918638284f62855ddf040b4e5d7e74f261',
             ),
         ]
     )
@@ -1662,11 +1596,9 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=445,
-                    response_tokens=23,
-                    total_tokens=468,
+                usage=RequestUsage(
+                    input_tokens=445,
+                    output_tokens=23,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1676,7 +1608,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01EnfsDTixCmHjqvk9QarBj4',
+                provider_request_id='msg_01EnfsDTixCmHjqvk9QarBj4',
             ),
             ModelRequest(
                 parts=[
@@ -1696,11 +1628,9 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                         tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=497,
-                    response_tokens=56,
-                    total_tokens=553,
+                usage=RequestUsage(
+                    input_tokens=497,
+                    output_tokens=56,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1710,7 +1640,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01Hbm5BtKzfVtWs8Eb7rCNNx',
+                provider_request_id='msg_01Hbm5BtKzfVtWs8Eb7rCNNx',
             ),
             ModelRequest(
                 parts=[
@@ -1762,11 +1692,9 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                     ),
                     ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e'),
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=383,
-                    response_tokens=66,
-                    total_tokens=449,
+                usage=RequestUsage(
+                    input_tokens=383,
+                    output_tokens=66,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1776,7 +1704,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014NE4yfV1Yz2vLAJzapxxef',
+                provider_request_id='msg_014NE4yfV1Yz2vLAJzapxxef',
             ),
             ModelRequest(
                 parts=[
@@ -1794,11 +1722,9 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                         content="Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is also the nation's capital. Mexico City has a population of approximately 9.2 million people in the city proper, and over 21 million people in its metropolitan area, making it one of the largest urban agglomerations in the world. It is both the political and economic center of Mexico, located in the Valley of Mexico in the central part of the country."
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=461,
-                    response_tokens=107,
-                    total_tokens=568,
+                usage=RequestUsage(
+                    input_tokens=461,
+                    output_tokens=107,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1808,7 +1734,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_0193srwo7TCx49h97wDwc7K7',
+                provider_request_id='msg_0193srwo7TCx49h97wDwc7K7',
             ),
         ]
     )
@@ -1853,11 +1779,9 @@ Don't include any text or Markdown fencing before or after.\
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X')
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=459,
-                    response_tokens=38,
-                    total_tokens=497,
+                usage=RequestUsage(
+                    input_tokens=459,
+                    output_tokens=38,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1867,7 +1791,7 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014CpBKzioMqUyLWrMihpvsz',
+                provider_request_id='msg_014CpBKzioMqUyLWrMihpvsz',
             ),
             ModelRequest(
                 parts=[
@@ -1888,11 +1812,9 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=510,
-                    response_tokens=17,
-                    total_tokens=527,
+                usage=RequestUsage(
+                    input_tokens=510,
+                    output_tokens=17,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1902,7 +1824,7 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014JeWCouH6DpdqzMTaBdkpJ',
+                provider_request_id='msg_014JeWCouH6DpdqzMTaBdkpJ',
             ),
         ]
     )
@@ -1947,11 +1869,9 @@ Don't include any text or Markdown fencing before or after.\
                         content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=281,
-                    response_tokens=31,
-                    total_tokens=312,
+                usage=RequestUsage(
+                    input_tokens=281,
+                    output_tokens=31,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
@@ -1961,7 +1881,7 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_013ttUi3HCcKt7PkJpoWs5FT',
+                provider_request_id='msg_013ttUi3HCcKt7PkJpoWs5FT',
             ),
         ]
     )

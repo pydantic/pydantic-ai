@@ -258,7 +258,6 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -299,13 +298,12 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        u = usage.Usage(
-            request_tokens=response['usage']['inputTokens'],
-            response_tokens=response['usage']['outputTokens'],
-            total_tokens=response['usage']['totalTokens'],
+        u = usage.RequestUsage(
+            input_tokens=response['usage']['inputTokens'],
+            output_tokens=response['usage']['outputTokens'],
         )
         vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, vendor_id=vendor_id)
+        return ModelResponse(items, usage=u, model_name=self.model_name, provider_request_id=vendor_id)
 
     @overload
     async def _messages_create(
@@ -670,11 +668,10 @@ class BedrockStreamedResponse(StreamedResponse):
         """Get the model name of the response."""
         return self._model_name
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.Usage:
-        return usage.Usage(
-            request_tokens=metadata['usage']['inputTokens'],
-            response_tokens=metadata['usage']['outputTokens'],
-            total_tokens=metadata['usage']['totalTokens'],
+    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        return usage.RequestUsage(
+            input_tokens=metadata['usage']['inputTokens'],
+            output_tokens=metadata['usage']['outputTokens'],
         )
 
 

@@ -188,7 +188,6 @@ class AnthropicModel(Model):
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -329,7 +328,9 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, vendor_id=response.id)
+        return ModelResponse(
+            items, usage=_map_usage(response), model_name=response.model, provider_request_id=response.id
+        )
 
     async def _process_streamed_response(
         self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
@@ -523,7 +524,7 @@ class AnthropicModel(Model):
         }
 
 
-def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
+def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
@@ -536,7 +537,7 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
         # - RawContentBlockStartEvent
         # - RawContentBlockDeltaEvent
         # - RawContentBlockStopEvent
-        return usage.Usage()
+        return usage.RequestUsage()
 
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
@@ -553,10 +554,9 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
         + details.get('cache_read_input_tokens', 0)
     )
 
-    return usage.Usage(
-        request_tokens=request_tokens or None,
-        response_tokens=response_usage.output_tokens,
-        total_tokens=request_tokens + response_usage.output_tokens,
+    return usage.RequestUsage(
+        input_tokens=request_tokens or None,
+        output_tokens=response_usage.output_tokens,
         details=details or None,
     )
 

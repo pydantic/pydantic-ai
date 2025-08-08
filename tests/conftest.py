@@ -24,6 +24,7 @@ from typing_extensions import TypeAlias
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
+from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
@@ -228,6 +229,24 @@ def event_loop() -> Iterator[None]:
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+@pytest.fixture(autouse=True)
+def no_instrumentation_by_default():
+    Agent.instrument_all(False)
+
+
+try:
+    import logfire
+
+    logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
+
+    @pytest.fixture(autouse=True)
+    def fresh_logfire():
+        logfire.shutdown(flush=False)
+
+except ImportError:
+    pass
 
 
 def raise_if_exception(e: Any) -> None:

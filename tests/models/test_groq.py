@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -142,31 +142,29 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -216,10 +214,9 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -304,10 +301,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -327,10 +324,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
+                usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -344,10 +341,9 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -452,7 +448,7 @@ async def test_stream_structured(allow_model_requests: None):
         )
         assert result.is_complete
 
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
@@ -579,10 +575,10 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
-                usage=Usage(requests=1, request_tokens=192, response_tokens=8, total_tokens=200),
+                usage=RequestUsage(input_tokens=192, output_tokens=8),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                provider_request_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
             ),
             ModelRequest(
                 parts=[
@@ -603,10 +599,10 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=Usage(requests=1, request_tokens=2552, response_tokens=11, total_tokens=2563),
+                usage=RequestUsage(input_tokens=2552, output_tokens=11),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                provider_request_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
             ),
         ]
     )
@@ -681,10 +677,10 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(requests=1, request_tokens=48, response_tokens=8, total_tokens=56),
+                usage=RequestUsage(input_tokens=48, output_tokens=8),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
+                provider_request_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
             ),
         ]
     )
@@ -883,10 +879,10 @@ The current day is Tuesday.\
                     ),
                     TextPart(content='The current day is Tuesday.'),
                 ],
-                usage=Usage(requests=1, request_tokens=4287, response_tokens=117, total_tokens=4404),
+                usage=RequestUsage(input_tokens=4287, output_tokens=117),
                 model_name='compound-beta',
                 timestamp=IsDatetime(),
-                vendor_id='stub',
+                provider_request_id='stub',
             ),
         ]
     )
@@ -906,10 +902,10 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(requests=1, request_tokens=21, response_tokens=1414, total_tokens=1435),
+                usage=RequestUsage(input_tokens=21, output_tokens=1414),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -927,10 +923,10 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(requests=1, request_tokens=21, response_tokens=1414, total_tokens=1435),
+                usage=RequestUsage(input_tokens=21, output_tokens=1414),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
+                provider_request_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
             ),
             ModelRequest(
                 parts=[
@@ -943,10 +939,10 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(requests=1, request_tokens=524, response_tokens=1590, total_tokens=2114),
+                usage=RequestUsage(input_tokens=524, output_tokens=1590),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
+                provider_request_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
             ),
         ]
     )

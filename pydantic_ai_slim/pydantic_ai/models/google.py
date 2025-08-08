@@ -328,9 +328,12 @@ class GoogleModel(Model):
         if finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': finish_reason.value}
         usage = _metadata_as_usage(response)
-        usage.requests = 1
         return _process_response_from_parts(
-            parts, response.model_version or self._model_name, usage, vendor_id=vendor_id, vendor_details=vendor_details
+            parts,
+            response.model_version or self._model_name,
+            usage,
+            vendor_id=vendor_id,
+            vendor_details=vendor_details,
         )
 
     async def _process_streamed_response(
@@ -526,7 +529,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
 def _process_response_from_parts(
     parts: list[Part],
     model_name: GoogleModelName,
-    usage: usage.Usage,
+    usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
@@ -563,7 +566,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, model_name=model_name, usage=usage, vendor_id=vendor_id, vendor_details=vendor_details
+        parts=items, model_name=model_name, usage=usage, provider_request_id=vendor_id, provider_details=vendor_details
     )
 
 
@@ -583,10 +586,10 @@ def _tool_config(function_names: list[str]) -> ToolConfigDict:
     return ToolConfigDict(function_calling_config=function_calling_config)
 
 
-def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
+def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return usage.Usage()  # pragma: no cover
+        return usage.RequestUsage()  # pragma: no cover
     metadata = metadata.model_dump(exclude_defaults=True)
 
     details: dict[str, int] = {}
@@ -605,9 +608,8 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
             for detail in metadata_details:
                 details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
 
-    return usage.Usage(
-        request_tokens=metadata.get('prompt_token_count', 0),
-        response_tokens=metadata.get('candidates_token_count', 0),
-        total_tokens=metadata.get('total_token_count', 0),
+    return usage.RequestUsage(
+        input_tokens=metadata.get('prompt_token_count', 0),
+        output_tokens=metadata.get('candidates_token_count', 0),
         details=details,
     )

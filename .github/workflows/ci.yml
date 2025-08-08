@@ -146,7 +146,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
+          enable-cache: false
 
       - uses: denoland/setup-deno@v2
         with:
@@ -155,7 +155,8 @@ jobs:
       - run: mkdir .coverage
 
       # run tests with just `pydantic-ai-slim` dependencies
-      - run: uv run --package pydantic-ai-slim coverage run -m pytest -n auto --dist=loadgroup
+      - run: |
+          uv run --with pytest-profiling --package pydantic-ai-slim pytest --profile
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ runner.os }}-py${{ matrix.python-version }}-slim
 

@@ -8,7 +8,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime
 
@@ -55,7 +55,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
             ModelRequest(parts=[UserPromptPart(content='New question', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),
@@ -94,7 +94,7 @@ async def test_history_processor_messages_sent_to_provider(
             ModelRequest(parts=[UserPromptPart(content='New question', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=2, total_tokens=56),
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),
