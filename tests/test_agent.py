@@ -4023,7 +4023,7 @@ async def test_wrapper_agent():
 
     @bar_toolset.tool
     def bar() -> str:
-        return 'Hello from bar'  # pragma: no cover
+        return 'Hello from bar'
 
     with wrapper_agent.override(toolsets=[bar_toolset]):
         async with wrapper_agent:
