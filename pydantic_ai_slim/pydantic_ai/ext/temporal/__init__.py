@@ -11,6 +11,7 @@ from temporalio.converter import DefaultPayloadConverter
 from temporalio.worker import Plugin as WorkerPlugin, WorkerConfig
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
+from ...exceptions import UserError
 from ._agent import TemporalAgent
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext, TemporalRunContextWithDeps
@@ -33,7 +34,7 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
             DefaultPayloadConverter,
             PydanticPayloadConverter,
         ):
-            warnings.warn(
+            warnings.warn(  # pragma: no cover
                 'A non-default Temporal data converter was used which has been replaced with the Pydantic data converter.'
             )
 
@@ -42,7 +43,7 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
         runner = config.get('workflow_runner')  # pyright: ignore[reportUnknownMemberType]
-        if isinstance(runner, SandboxedWorkflowRunner):
+        if isinstance(runner, SandboxedWorkflowRunner):  # pragma: no branch
             config['workflow_runner'] = replace(
                 runner,
                 restrictions=runner.restrictions.with_passthrough_modules(
@@ -57,6 +58,10 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
                     'pandas',
                 ),
             )
+
+        # pydantic_ai.exceptions.UserError is not retryable
+        config['workflow_failure_exception_types'] = [*config.get('workflow_failure_exception_types', []), UserError]  # pyright: ignore[reportUnknownMemberType]
+
         return super().configure_worker(config)
 
 
@@ -68,5 +73,6 @@ class AgentPlugin(WorkerPlugin):
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
         activities: Sequence[Callable[..., Any]] = config.get('activities', [])  # pyright: ignore[reportUnknownMemberType]
+        # Activities are checked for name conflicts by Temporal.
         config['activities'] = [*activities, *self.agent.temporal_activities]
         return super().configure_worker(config)

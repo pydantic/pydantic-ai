@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
@@ -9,13 +10,19 @@ from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.ext.temporal._function_toolset import TemporalFunctionToolset
+from pydantic_ai.ext.temporal._mcp_server import TemporalMCPServer
+from pydantic_ai.ext.temporal._model import TemporalModel
 from pydantic_ai.messages import AgentStreamEvent, HandleResponseEvent
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.toolsets import FunctionToolset
 
 try:
     from temporalio import workflow
-    from temporalio.client import Client
+    from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
@@ -112,6 +119,45 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
     )
 
 
+# Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
+model = OpenAIModel(
+    'gpt-4o',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+simple_agent = Agent(model, name='simple_agent')
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+simple_temporal_agent = TemporalAgent(simple_agent)
+
+
+@workflow.defn
+class SimpleAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_simple_agent(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflow],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            SimpleAgentWorkflow.run,
+            args=['What is the capital of Mexico?'],
+            id=SimpleAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
 class Deps(TypedDict):
     country: str
 
@@ -142,16 +188,6 @@ class Answer:
 @dataclass
 class Response:
     answers: list[Answer]
-
-
-# Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
-model = OpenAIModel(
-    'gpt-4o',
-    provider=OpenAIProvider(
-        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
-        http_client=http_client,
-    ),
-)
 
 
 complex_agent = Agent(
@@ -337,26 +373,12 @@ async def test_complex_agent(allow_model_requests: None, client_with_logfire: Cl
     )
 
 
-simple_agent = Agent(model, name='simple_agent')
-
-# This needs to be done before the `TemporalAgent` is bound to the workflow.
-simple_temporal_agent = TemporalAgent(simple_agent)
-
-
-@workflow.defn
-class SimpleAgentWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await simple_temporal_agent.run(prompt)
-        return result.output
-
-
-async def test_simple_agent(allow_model_requests: None, client: Client):
+async def test_multiple_agents(allow_model_requests: None, client: Client):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[SimpleAgentWorkflow],
-        plugins=[AgentPlugin(simple_temporal_agent)],
+        workflows=[SimpleAgentWorkflow, ComplexAgentWorkflow],
+        plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(complex_temporal_agent)],
     ):
         output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
             SimpleAgentWorkflow.run,
@@ -365,3 +387,188 @@ async def test_simple_agent(allow_model_requests: None, client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == snapshot('The capital of Mexico is Mexico City.')
+
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            ComplexAgentWorkflow.run,
+            args=[
+                'Tell me: the capital of the country; the weather there; the product name',
+                Deps(country='Mexico'),
+            ],
+            id=ComplexAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot(
+            Response(
+                answers=[
+                    Answer(label='Capital of the Country', answer='Mexico City'),
+                    Answer(label='Weather in Mexico City', answer='Sunny'),
+                    Answer(label='Product Name', answer='Pydantic AI'),
+                ]
+            )
+        )
+
+
+async def test_agent_name_collision(allow_model_requests: None, client: Client):
+    with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__model_request'):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[SimpleAgentWorkflow],
+            plugins=[AgentPlugin(simple_temporal_agent), AgentPlugin(simple_temporal_agent)],
+        ):
+            pass
+
+
+async def test_agent_without_name():
+    with pytest.raises(
+        UserError,
+        match="An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow.",
+    ):
+        TemporalAgent(Agent())
+
+
+async def test_agent_without_model():
+    with pytest.raises(
+        UserError,
+        match='An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.',
+    ):
+        TemporalAgent(Agent(name='test_agent'))
+
+
+async def test_toolset_without_id():
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
+        ),
+    ):
+        TemporalAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+async def test_temporal_agent():
+    assert isinstance(complex_temporal_agent.model, TemporalModel)
+    assert complex_temporal_agent.model.wrapped == complex_agent.model
+
+    toolsets = complex_temporal_agent.toolsets
+    assert len(toolsets) == 4
+
+    # Empty function toolset for the agent's own tools
+    assert isinstance(toolsets[0], FunctionToolset)
+    assert toolsets[0].id == '<agent>'
+    assert toolsets[0].tools == {}
+
+    # Wrapped function toolset for the agent's own tools
+    assert isinstance(toolsets[1], TemporalFunctionToolset)
+    assert toolsets[1].id == '<agent>'
+    assert isinstance(toolsets[1].wrapped, FunctionToolset)
+    assert toolsets[1].wrapped.tools.keys() == {'get_weather'}
+
+    # Wrapped 'country' toolset
+    assert isinstance(toolsets[2], TemporalFunctionToolset)
+    assert toolsets[2].id == 'country'
+    assert toolsets[2].wrapped == complex_agent.toolsets[1]
+    assert isinstance(toolsets[2].wrapped, FunctionToolset)
+    assert toolsets[2].wrapped.tools.keys() == {'get_country'}
+
+    # Wrapped 'mcp' MCP server
+    assert isinstance(toolsets[3], TemporalMCPServer)
+    assert toolsets[3].id == 'mcp'
+    assert toolsets[3].wrapped == complex_agent.toolsets[2]
+
+    assert [
+        ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
+        for activity in complex_temporal_agent.temporal_activities
+    ] == snapshot(
+        [
+            'agent__complex_agent__model_request',
+            'agent__complex_agent__model_request_stream',
+            'agent__complex_agent__toolset__<agent>__call_tool',
+            'agent__complex_agent__toolset__country__call_tool',
+            'agent__complex_agent__mcp_server__mcp__get_tools',
+            'agent__complex_agent__mcp_server__mcp__call_tool',
+        ]
+    )
+
+
+def test_temporal_agent_run_sync(allow_model_requests: None):
+    result = simple_temporal_agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_temporal_agent_run(allow_model_requests: None):
+    result = await simple_temporal_agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_temporal_agent_run_stream(allow_model_requests: None):
+    async with simple_temporal_agent.run_stream('What is the capital of Mexico?') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            [
+                'The',
+                'The capital',
+                'The capital of',
+                'The capital of Mexico',
+                'The capital of Mexico is',
+                'The capital of Mexico is Mexico',
+                'The capital of Mexico is Mexico City',
+                'The capital of Mexico is Mexico City.',
+            ]
+        )
+
+
+async def test_temporal_agent_iter(allow_model_requests: None):
+    output: list[str] = []
+    async with simple_temporal_agent.iter('What is the capital of Mexico?') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for chunk in stream.stream_text(debounce_by=None):
+                        output.append(chunk)
+    assert output == snapshot(
+        [
+            'The',
+            'The capital',
+            'The capital of',
+            'The capital of Mexico',
+            'The capital of Mexico is',
+            'The capital of Mexico is Mexico',
+            'The capital of Mexico is Mexico City',
+            'The capital of Mexico is Mexico City.',
+        ]
+    )
+
+
+async def simple_event_stream_handler(
+    ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+):
+    pass
+
+
+@workflow.defn
+class SimpleAgentWorkflowWithEventStreamHandler:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await simple_temporal_agent.run(prompt, event_stream_handler=simple_event_stream_handler)
+        return result.output
+
+
+async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithEventStreamHandler],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                SimpleAgentWorkflowWithEventStreamHandler.run,
+                args=['What is the capital of Mexico?'],
+                id=SimpleAgentWorkflowWithEventStreamHandler.__name__,
+                task_queue=TASK_QUEUE,
+            )
+        assert isinstance(exc_info.value.__cause__, ApplicationError)
+        assert exc_info.value.__cause__.type == snapshot('UserError')
+        assert exc_info.value.__cause__.message == snapshot(
+            'Event stream handler cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
+        )

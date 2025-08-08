@@ -39,11 +39,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
-        # An error is raised in `TemporalAgent` if no `id` is set.
-        id = toolset.id
-        assert id is not None
-
-        @activity.defn(name=f'{activity_name_prefix}__toolset__{id}__call_tool')
+        @activity.defn(name=f'{activity_name_prefix}__toolset__{self.id}__call_tool')
         async def call_tool_activity(params: _CallToolParams) -> Any:
             name = params.name
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context)
@@ -51,7 +47,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
                 tool = (await toolset.get_tools(ctx))[name]
             except KeyError as e:
                 raise UserError(
-                    f'Tool {name!r} not found in toolset {id!r}. '
+                    f'Tool {name!r} not found in toolset {self.id!r}. '
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e
 

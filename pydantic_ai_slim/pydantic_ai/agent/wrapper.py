@@ -196,8 +196,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
-        ) as result:
-            yield result
+        ) as run:
+            yield run
 
     @contextmanager
     def override(

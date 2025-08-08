@@ -57,11 +57,7 @@ class TemporalMCPServer(TemporalWrapperToolset):
 
         self.run_context_type = run_context_type
 
-        # An error is raised in `TemporalAgent` if no `id` is set.
-        id = server.id
-        assert id is not None
-
-        @activity.defn(name=f'{activity_name_prefix}__mcp_server__{id}__get_tools')
+        @activity.defn(name=f'{activity_name_prefix}__mcp_server__{self.id}__get_tools')
         async def get_tools_activity(params: _GetToolsParams) -> dict[str, ToolDefinition]:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context)
             tools = await self.wrapped.get_tools(run_context)
@@ -71,7 +67,7 @@ class TemporalMCPServer(TemporalWrapperToolset):
 
         self.get_tools_activity = get_tools_activity
 
-        @activity.defn(name=f'{activity_name_prefix}__mcp_server__{id}__call_tool')
+        @activity.defn(name=f'{activity_name_prefix}__mcp_server__{self.id}__call_tool')
         async def call_tool_activity(params: _CallToolParams) -> ToolResult:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context)
             return await self.wrapped.call_tool(

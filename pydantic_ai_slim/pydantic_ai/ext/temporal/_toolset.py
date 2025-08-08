@@ -15,6 +15,12 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 class TemporalWrapperToolset(WrapperToolset[Any], ABC):
     @property
+    def id(self) -> str:
+        # An error is raised in `TemporalAgent` if no `id` is set.
+        assert self.wrapped.id is not None
+        return self.wrapped.id
+
+    @property
     @abstractmethod
     def temporal_activities(self) -> list[Callable[..., Any]]:
         raise NotImplementedError

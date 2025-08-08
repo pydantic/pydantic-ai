@@ -6,6 +6,7 @@ from datetime import timedelta
 from typing import Any, Callable, Literal, overload
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Never
 
@@ -67,7 +68,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         super().__init__(wrapped)
 
+        # start_to_close_timeout is required
         activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+
+        # pydantic_ai.exceptions.UserError is not retryable
+        retry_policy = activity_config.get('retry_policy') or RetryPolicy()
+        retry_policy.non_retryable_error_types = [*(retry_policy.non_retryable_error_types or []), UserError.__name__]
+        activity_config['retry_policy'] = retry_policy
+
         model_activity_config = model_activity_config or {}
         toolset_activity_config = toolset_activity_config or {}
         tool_activity_config = tool_activity_config or {}
@@ -100,7 +108,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             id = toolset.id
             if id is None:
                 raise UserError(
-                    "Toolsets that implement their own tool calling need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
+                    "Toolsets that are 'leaves' (i.e. those that implement their own tool listing and calling) need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
                 )
 
             toolset = temporalize_toolset_func(
@@ -223,10 +231,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if workflow.in_workflow() and event_stream_handler is not None:
-            raise UserError(
-                'Event stream handler cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
-            )
+        _check_no_run_event_stream_handler_in_workflow(event_stream_handler)
 
         return await super().run(
             user_prompt,
@@ -326,10 +331,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if workflow.in_workflow() and event_stream_handler is not None:
-            raise UserError(
-                'Event stream handler cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
-            )
+        _check_no_run_event_stream_handler_in_workflow(event_stream_handler)
 
         return super().run_sync(
             user_prompt,
@@ -428,10 +430,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if workflow.in_workflow() and event_stream_handler is not None:
-            raise UserError(
-                'Event stream handler cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
-            )
+        _check_no_run_event_stream_handler_in_workflow(event_stream_handler)
 
         async with super().run_stream(
             user_prompt,
@@ -589,8 +588,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 infer_name=infer_name,
                 toolsets=toolsets,
                 **_deprecated_kwargs,
-            ) as result:
-                yield result
+            ) as run:
+                yield run
+            return
 
         if model is not None:
             raise UserError(
@@ -612,8 +612,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 infer_name=infer_name,
                 **_deprecated_kwargs,
-            ) as result:
-                yield result
+            ) as run:
+                yield run
 
     @contextmanager
     def override(
@@ -651,3 +651,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
             yield
+
+
+def _check_no_run_event_stream_handler_in_workflow(event_stream_handler: EventStreamHandler[AgentDepsT] | None) -> None:
+    if workflow.in_workflow() and event_stream_handler is not None:
+        raise UserError(
+            'Event stream handler cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
+        )
