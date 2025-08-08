@@ -11,9 +11,6 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.ext.temporal._function_toolset import TemporalFunctionToolset
-from pydantic_ai.ext.temporal._mcp_server import TemporalMCPServer
-from pydantic_ai.ext.temporal._model import TemporalModel
 from pydantic_ai.messages import AgentStreamEvent, HandleResponseEvent
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.toolsets import FunctionToolset
@@ -34,6 +31,9 @@ try:
         TemporalAgent,
         TemporalRunContextWithDeps,
     )
+    from pydantic_ai.ext.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.ext.temporal._mcp_server import TemporalMCPServer
+    from pydantic_ai.ext.temporal._model import TemporalModel
 except ImportError:
     import pytest
 
