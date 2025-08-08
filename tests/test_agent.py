@@ -4014,6 +4014,8 @@ async def test_wrapper_agent():
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
     assert wrapper_agent.name == agent.name
+    wrapper_agent.name = 'wrapped'
+    assert wrapper_agent.name == 'wrapped'
     assert wrapper_agent.output_type == agent.output_type
     assert wrapper_agent.event_stream_handler == agent.event_stream_handler
 
