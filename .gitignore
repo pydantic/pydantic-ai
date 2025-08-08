@@ -1,5 +1,5 @@
 site
-.venv
+.venv*
 dist
 __pycache__
 .env
@@ -11,7 +11,7 @@ env*/
 /postgres-data/
 .DS_Store
 examples/pydantic_ai_examples/.chat_app_messages.sqlite
-.cache/
+*cache/
 .vscode/
 /question_graph_history.json
 /docs-site/.wrangler/
