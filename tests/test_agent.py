@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Union
@@ -23,9 +24,11 @@ from pydantic_ai._output import (
     TextOutputSchema,
     ToolOutputSchema,
 )
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     BinaryContent,
+    HandleResponseEvent,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -3991,3 +3994,42 @@ def test_toolsets():
 
     agent = Agent('test', toolsets=[toolset], prepare_tools=prepare_tools)
     assert agent.toolsets == [IsInstance(PreparedToolset)]
+
+
+async def test_wrapper_agent():
+    async def event_stream_handler(
+        ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
+    ):
+        pass  # pragma: no cover
+
+    foo_toolset = FunctionToolset()
+
+    @foo_toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'  # pragma: no cover
+
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[foo_toolset], output_type=Foo, event_stream_handler=event_stream_handler)
+    wrapper_agent = WrapperAgent(agent)
+    assert wrapper_agent.toolsets == agent.toolsets
+    assert wrapper_agent.model == agent.model
+    assert wrapper_agent.name == agent.name
+    assert wrapper_agent.output_type == agent.output_type
+    assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+
+    bar_toolset = FunctionToolset()
+
+    @bar_toolset.tool
+    def bar() -> str:
+        return 'Hello from bar'  # pragma: no cover
+
+    with wrapper_agent.override(toolsets=[bar_toolset]):
+        async with wrapper_agent:
+            async with wrapper_agent.iter(user_prompt='Hello') as run:
+                async for _ in run:
+                    pass
+
+    assert run.result is not None
+    assert run.result.output == snapshot(Foo(a=0, b='a'))
+    assert test_model.last_model_request_parameters is not None
+    assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
