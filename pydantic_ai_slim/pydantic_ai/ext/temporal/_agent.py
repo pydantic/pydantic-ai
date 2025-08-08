@@ -93,10 +93,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 activities.extend(toolset.temporal_activities)
             return toolset
 
-        temporal_toolset = agent.toolset.visit_and_replace(temporalize_toolset)
+        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in agent.toolsets]
 
         self._model = temporal_model
-        self._toolset = temporal_toolset
+        self._toolsets = temporal_toolsets
         self._temporal_activities = activities
 
     @property
@@ -104,9 +104,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._model
 
     @property
-    def toolset(self) -> AbstractToolset[AgentDepsT]:
+    def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         with self._temporal_overrides():
-            return super().toolset
+            return super().toolsets
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
@@ -114,8 +114,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _temporal_overrides(self) -> Iterator[None]:
-        # We reset tools here as the temporalized function toolset is already in self._toolset.
-        with super().override(model=self._model, toolsets=[self._toolset], tools=[]):
+        # We reset tools here as the temporalized function toolset is already in self._toolsets.
+        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
             yield
 
     @overload

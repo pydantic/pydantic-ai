@@ -734,18 +734,17 @@ async def test_dynamic_toolset():
         assert inner_toolset.depth_count == 1
 
         # Test that the visitor applies when the toolset is initialized
-        def visitor(toolset: AbstractToolset[None]) -> None:
+        def initialized_visitor(toolset: AbstractToolset[None]) -> None:
             assert toolset is inner_toolset
 
-        toolset.apply(visitor)
+        toolset.apply(initialized_visitor)
 
     assert get_inner_toolset(toolset) is None
 
-    # Test that the visitor doesn't apply when the toolset is not initialized
-    def crash_visitor(toolset: AbstractToolset[None]) -> None:
-        raise Exception('crash')  # pragma: no cover
+    def uninitialized_visitor(visited_toolset: AbstractToolset[None]) -> None:
+        assert visited_toolset is toolset
 
-    assert toolset.apply(crash_visitor) is None
+    toolset.apply(uninitialized_visitor)
 
     assert tools == {}
 

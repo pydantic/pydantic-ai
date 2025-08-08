@@ -5,6 +5,7 @@ from typing import Any, Callable, Literal
 
 from temporalio.workflow import ActivityConfig
 
+from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.ext.temporal._run_context import TemporalRunContext
 from pydantic_ai.mcp import MCPServer
 from pydantic_ai.toolsets.abstract import AbstractToolset
@@ -17,6 +18,12 @@ class TemporalWrapperToolset(WrapperToolset[Any], ABC):
     @abstractmethod
     def temporal_activities(self) -> list[Callable[..., Any]]:
         raise NotImplementedError
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
+    ) -> AbstractToolset[AgentDepsT]:
+        # Temporalized toolsets cannot be swapped out after the fact.
+        return self
 
 
 def temporalize_toolset(
