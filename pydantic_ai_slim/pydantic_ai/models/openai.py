@@ -86,7 +86,6 @@ __all__ = (
 OpenAIModelName = Union[
     str,
     AllModels,
-    # Include latest GPT-5 variants until the SDK enumerates them
     Literal[
         'gpt-5',
         'gpt-5-mini',
@@ -94,6 +93,7 @@ OpenAIModelName = Union[
         'gpt-5-2025-08-07',
         'gpt-5-mini-2025-08-07',
         'gpt-5-nano-2025-08-07',
+        'gpt-5-chat-latest',
     ],
 ]
 """
