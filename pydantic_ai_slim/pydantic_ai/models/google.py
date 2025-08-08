@@ -52,6 +52,7 @@ try:
     from google.genai.types import (
         ContentDict,
         ContentUnionDict,
+        CountTokensConfigDict,
         ExecutableCodeDict,
         FunctionCallDict,
         FunctionCallingConfigDict,
@@ -188,6 +189,33 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.Usage:
+        check_allow_model_requests()
+        model_settings = cast(GoogleModelSettings, model_settings or {})
+        system_instruction, contents, _, http_options = await self._build_content_and_config(
+            messages, model_settings, model_request_parameters
+        )
+
+        config = CountTokensConfigDict(
+            http_options=http_options,
+            system_instruction=system_instruction if self.system != 'google-gla' else None,
+            tools=self._get_tools(model_request_parameters) if self.system != 'google-gla' else None,
+        )
+
+        response = await self.client.aio.models.count_tokens(
+            model=self._model_name,
+            contents=contents,
+            config=config,
+        )
+        if response.total_tokens is None:
+            raise UnexpectedModelBehavior('Total tokens missing from Gemini response', str(response))
+        return usage.Usage(request_tokens=response.total_tokens)
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -261,16 +289,25 @@ class GoogleModel(Model):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
-        tools = self._get_tools(model_request_parameters)
+        _, contents, config, _ = await self._build_content_and_config(
+            messages, model_settings, model_request_parameters
+        )
+        func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
+        return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
 
+    async def _build_content_and_config(
+        self,
+        messages: list[ModelMessage],
+        model_settings: GoogleModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[ContentDict | None, list[ContentUnionDict], GenerateContentConfigDict, HttpOptionsDict]:
+        tools = self._get_tools(model_request_parameters)
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
             if tools:
                 raise UserError('Gemini does not support structured output and tools at the same time.')
-
             response_mime_type = 'application/json'
-
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
@@ -307,9 +344,7 @@ class GoogleModel(Model):
             response_mime_type=response_mime_type,
             response_schema=response_schema,
         )
-
-        func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
-        return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+        return system_instruction, contents, config, http_options
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates or len(response.candidates) != 1:

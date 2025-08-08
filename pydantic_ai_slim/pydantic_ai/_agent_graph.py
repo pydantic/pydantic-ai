@@ -369,6 +369,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.message_history, ctx.deps.history_processors, run_context
         )
 
+        if ctx.deps.usage_limits.count_tokens_before_request:  # pragma: no branch
+            temp_usage = dataclasses.replace(ctx.state.usage)
+            token_count = await ctx.deps.model.count_tokens(
+                message_history, ctx.deps.model_settings, model_request_parameters
+            )
+            temp_usage.incr(token_count)
+            ctx.deps.usage_limits.check_tokens(temp_usage)
+
         return model_settings, model_request_parameters, message_history, run_context
 
     def _finish_handling(
