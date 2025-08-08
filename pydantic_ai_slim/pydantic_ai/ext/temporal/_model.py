@@ -68,25 +68,28 @@ class TemporalModel(WrapperModel):
     def __init__(
         self,
         model: Model,
-        event_stream_handler: EventStreamHandler[Any],
-        activity_config: ActivityConfig = {},
+        *,
+        activity_name_prefix: str,
+        activity_config: ActivityConfig,
         run_context_type: type[TemporalRunContext] = TemporalRunContext,
+        event_stream_handler: EventStreamHandler[Any] | None = None,
     ):
         super().__init__(model)
         self.activity_config = activity_config
-        self.event_stream_handler = event_stream_handler
         self.run_context_type = run_context_type
+        self.event_stream_handler = event_stream_handler
 
-        id = '_'.join([model.system, model.model_name])
-
-        @activity.defn(name=f'model__{id}__request')
+        @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams) -> ModelResponse:
             return await self.wrapped.request(params.messages, params.model_settings, params.model_request_parameters)
 
         self.request_activity = request_activity
 
-        @activity.defn(name=f'model__{id}__request_stream')
+        @activity.defn(name=f'{activity_name_prefix}__model_request_stream')
         async def request_stream_activity(params: _RequestParams) -> ModelResponse:
+            # An error is raised in `request_stream` if no `event_stream_handler` is set.
+            assert self.event_stream_handler is not None
+
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context)
             async with self.wrapped.request_stream(
                 params.messages, params.model_settings, params.model_request_parameters, run_context
@@ -131,6 +134,9 @@ class TemporalModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        if self.event_stream_handler is None:
+            raise UserError('Streaming with Temporal requires `Agent` to have an `event_stream_handler` set.')
+
         if run_context is None:
             raise UserError('Streaming with Temporal requires `request_stream` to be called with a `run_context`')
 

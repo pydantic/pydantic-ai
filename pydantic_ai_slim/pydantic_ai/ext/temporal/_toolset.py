@@ -28,14 +28,16 @@ class TemporalWrapperToolset(WrapperToolset[Any], ABC):
 
 def temporalize_toolset(
     toolset: AbstractToolset[Any],
-    activity_config: ActivityConfig = {},
-    tool_activity_config: dict[str, ActivityConfig | Literal[False]] = {},
+    activity_name_prefix: str,
+    activity_config: ActivityConfig,
+    tool_activity_config: dict[str, ActivityConfig | Literal[False]],
     run_context_type: type[TemporalRunContext] = TemporalRunContext,
 ) -> AbstractToolset[Any]:
     """Temporalize a toolset.
 
     Args:
         toolset: The toolset to temporalize.
+        activity_name_prefix: Prefix for Temporal activity names.
         activity_config: The Temporal activity config to use.
         tool_activity_config: The Temporal activity config to use for specific tools identified by tool name.
         run_context_type: The type of run context to use to serialize and deserialize the run context.
@@ -43,10 +45,22 @@ def temporalize_toolset(
     if isinstance(toolset, FunctionToolset):
         from ._function_toolset import TemporalFunctionToolset
 
-        return TemporalFunctionToolset(toolset, activity_config, tool_activity_config, run_context_type)
+        return TemporalFunctionToolset(
+            toolset,
+            activity_name_prefix=activity_name_prefix,
+            activity_config=activity_config,
+            tool_activity_config=tool_activity_config,
+            run_context_type=run_context_type,
+        )
     elif isinstance(toolset, MCPServer):
         from ._mcp_server import TemporalMCPServer
 
-        return TemporalMCPServer(toolset, activity_config, tool_activity_config, run_context_type)
+        return TemporalMCPServer(
+            toolset,
+            activity_name_prefix=activity_name_prefix,
+            activity_config=activity_config,
+            tool_activity_config=tool_activity_config,
+            run_context_type=run_context_type,
+        )
     else:
         return toolset

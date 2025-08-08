@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from datetime import timedelta
 from typing import Any, Callable, Literal, overload
 
 from temporalio import workflow
@@ -36,13 +37,16 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def __init__(
         self,
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
-        activity_config: ActivityConfig = {},
-        toolset_activity_config: dict[str, ActivityConfig] = {},
-        tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] = {},
+        *,
+        activity_config: ActivityConfig | None = None,
+        model_activity_config: ActivityConfig | None = None,
+        toolset_activity_config: dict[str, ActivityConfig] | None = None,
+        tool_activity_config: dict[str, dict[str, ActivityConfig | Literal[False]]] | None = None,
         run_context_type: type[TemporalRunContext] = TemporalRunContext,
         temporalize_toolset_func: Callable[
             [
                 AbstractToolset[Any],
+                str,
                 ActivityConfig,
                 dict[str, ActivityConfig | Literal[False]],
                 type[TemporalRunContext],
@@ -55,6 +59,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Args:
             wrapped: The agent to wrap.
             activity_config: The Temporal activity config to use.
+            model_activity_config: The Temporal activity config to use for model requests.
             toolset_activity_config: The Temporal activity config to use for specific toolsets identified by ID.
             tool_activity_config: The Temporal activity config to use for specific tools identified by toolset ID and tool name.
             run_context_type: The type of run context to use to serialize and deserialize the run context.
@@ -62,29 +67,45 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         super().__init__(wrapped)
 
+        activity_config = activity_config or ActivityConfig(start_to_close_timeout=timedelta(seconds=60))
+        model_activity_config = model_activity_config or {}
+        toolset_activity_config = toolset_activity_config or {}
+        tool_activity_config = tool_activity_config or {}
+
         agent = wrapped
+
+        if agent.name is None:
+            raise UserError(
+                "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
+            )
+
+        activity_name_prefix = f'agent__{agent.name}'
 
         activities: list[Callable[..., Any]] = []
         if not isinstance(agent.model, Model):
             raise UserError(
-                'Model cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
+                'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
             )
 
-        event_stream_handler = agent.event_stream_handler
-        if event_stream_handler is None:
-            raise UserError('Streaming with Temporal requires `Agent` to have an `event_stream_handler` set.')
-
-        temporal_model = TemporalModel(agent.model, event_stream_handler, activity_config, run_context_type)
+        temporal_model = TemporalModel(
+            agent.model,
+            activity_name_prefix=activity_name_prefix,
+            activity_config=activity_config | model_activity_config,
+            run_context_type=run_context_type,
+            event_stream_handler=agent.event_stream_handler,
+        )
         activities.extend(temporal_model.temporal_activities)
 
         def temporalize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             id = toolset.id
-            if not id:
+            if id is None:
                 raise UserError(
-                    "Toolsets that implement their own tool calling need to have an ID in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
+                    "Toolsets that implement their own tool calling need to have a unique `id` in order to be used with Temporal. The ID will be used to identify the toolset's activities within the workflow."
                 )
+
             toolset = temporalize_toolset_func(
                 toolset,
+                activity_name_prefix,
                 activity_config | toolset_activity_config.get(id, {}),
                 tool_activity_config.get(id, {}),
                 run_context_type,

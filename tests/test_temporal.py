@@ -131,6 +131,7 @@ agent = Agent(
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
+    name='temporal_agent',
 )
 
 # This needs to be done before the `agent` is bound to the workflow.
@@ -186,48 +187,48 @@ async def test_temporal(allow_model_requests: None, client: Client, capfire: Cap
         )
     exporter = capfire.exporter
 
-    parsed_spans: list[str | AgentStreamEvent | HandleResponseEvent] = []
+    parsed_otel_items: list[str] = []
     for span in exporter.exported_spans_as_dict():
         attributes = span['attributes']
         if event := attributes.get('event'):
-            parsed_spans.append(event)
+            parsed_otel_items.append(event)
         else:
-            parsed_spans.append(attributes['logfire.msg'])
+            parsed_otel_items.append(attributes['logfire.msg'])
 
-    assert parsed_spans == snapshot(
+    assert parsed_otel_items == snapshot(
         [
             'StartWorkflow:AgentWorkflow',
             'RunWorkflow:AgentWorkflow',
-            'StartActivity:mcp_server__mcp__get_tools',
-            'RunActivity:mcp_server__mcp__get_tools',
-            'StartActivity:mcp_server__mcp__get_tools',
-            'RunActivity:mcp_server__mcp__get_tools',
-            'StartActivity:model__openai_gpt-4o__request_stream',
+            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__temporal_agent__model_request_stream',
             'ctx.run_step=1',
             '{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
-            'RunActivity:model__openai_gpt-4o__request_stream',
+            'RunActivity:agent__temporal_agent__model_request_stream',
             'ctx.run_step=1',
             'chat gpt-4o',
             'ctx.run_step=1',
             '{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}',
             '{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}',
             'running tool: get_country',
-            'StartActivity:mcp_server__mcp__call_tool',
+            'StartActivity:agent__temporal_agent__mcp_server__mcp__call_tool',
             IsStr(
                 regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
             ),
-            'RunActivity:mcp_server__mcp__call_tool',
+            'RunActivity:agent__temporal_agent__mcp_server__mcp__call_tool',
             'running tool: get_product_name',
             IsStr(
                 regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
             ),
             'running 2 tools',
-            'StartActivity:mcp_server__mcp__get_tools',
-            'RunActivity:mcp_server__mcp__get_tools',
-            'StartActivity:model__openai_gpt-4o__request_stream',
+            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__temporal_agent__model_request_stream',
             'ctx.run_step=2',
             '{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
@@ -236,21 +237,21 @@ async def test_temporal(allow_model_requests: None, client: Client, capfire: Cap
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"Mexico","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":" City","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
-            'RunActivity:model__openai_gpt-4o__request_stream',
+            'RunActivity:agent__temporal_agent__model_request_stream',
             'ctx.run_step=2',
             'chat gpt-4o',
             'ctx.run_step=2',
             '{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}',
-            'StartActivity:function_toolset__<agent>__call_tool',
-            'RunActivity:function_toolset__<agent>__call_tool',
+            'StartActivity:agent__temporal_agent__toolset__<agent>__call_tool',
+            'RunActivity:agent__temporal_agent__toolset__<agent>__call_tool',
             'running tool: get_weather',
             IsStr(
                 regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
             ),
             'running 1 tool',
-            'StartActivity:mcp_server__mcp__get_tools',
-            'RunActivity:mcp_server__mcp__get_tools',
-            'StartActivity:model__openai_gpt-4o__request_stream',
+            'StartActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'RunActivity:agent__temporal_agent__mcp_server__mcp__get_tools',
+            'StartActivity:agent__temporal_agent__model_request_stream',
             'ctx.run_step=3',
             '{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_kind":"tool-call"},"event_kind":"part_start"}',
             '{"tool_name":"final_result","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","event_kind":"final_result"}',
@@ -294,11 +295,11 @@ async def test_temporal(allow_model_requests: None, client: Client, capfire: Cap
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":" AI","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
             '{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}',
-            'RunActivity:model__openai_gpt-4o__request_stream',
+            'RunActivity:agent__temporal_agent__model_request_stream',
             'ctx.run_step=3',
             'chat gpt-4o',
             'ctx.run_step=3',
-            'self run',
+            'temporal_agent run',
             'CompleteWorkflow:AgentWorkflow',
         ]
     )

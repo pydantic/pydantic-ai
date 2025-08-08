@@ -21,8 +21,9 @@ def _default_setup_logfire() -> Logfire:
 class LogfirePlugin(ClientPlugin):
     """Temporal client plugin for Logfire."""
 
-    def __init__(self, setup_logfire: Callable[[], Logfire] = _default_setup_logfire):
+    def __init__(self, setup_logfire: Callable[[], Logfire] = _default_setup_logfire, *, metrics: bool = True):
         self.setup_logfire = setup_logfire
+        self.metrics = metrics
 
     def configure_client(self, config: ClientConfig) -> ClientConfig:
         interceptors = config.get('interceptors', [])
@@ -31,15 +32,17 @@ class LogfirePlugin(ClientPlugin):
 
     async def connect_service_client(self, config: ConnectConfig) -> ServiceClient:
         logfire = self.setup_logfire()
-        logfire_config = logfire.config
-        token = logfire_config.token
-        if token is not None:
-            base_url = logfire_config.advanced.generate_base_url(token)
-            metrics_url = base_url + '/v1/metrics'
-            headers = {'Authorization': f'Bearer {token}'}
 
-            config.runtime = Runtime(
-                telemetry=TelemetryConfig(metrics=OpenTelemetryConfig(url=metrics_url, headers=headers))
-            )
+        if self.metrics:
+            logfire_config = logfire.config
+            token = logfire_config.token
+            if token is not None:
+                base_url = logfire_config.advanced.generate_base_url(token)
+                metrics_url = base_url + '/v1/metrics'
+                headers = {'Authorization': f'Bearer {token}'}
+
+                config.runtime = Runtime(
+                    telemetry=TelemetryConfig(metrics=OpenTelemetryConfig(url=metrics_url, headers=headers))
+                )
 
         return await super().connect_service_client(config)

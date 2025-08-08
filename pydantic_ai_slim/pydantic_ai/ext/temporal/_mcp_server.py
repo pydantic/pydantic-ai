@@ -37,19 +37,31 @@ class TemporalMCPServer(TemporalWrapperToolset):
     def __init__(
         self,
         server: MCPServer,
-        activity_config: ActivityConfig = {},
-        tool_activity_config: dict[str, ActivityConfig | Literal[False]] = {},
+        *,
+        activity_name_prefix: str,
+        activity_config: ActivityConfig,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         run_context_type: type[TemporalRunContext] = TemporalRunContext,
     ):
         super().__init__(server)
         self.activity_config = activity_config
-        self.tool_activity_config = tool_activity_config
+
+        self.tool_activity_config: dict[str, ActivityConfig] = {}
+        for tool_name, tool_config in tool_activity_config.items():
+            if tool_config is False:
+                raise UserError(
+                    f'Temporal activity config for MCP tool {tool_name!r} has been explicitly set to `False` (activity disabled), '
+                    'but MCP tools require the use of IO and so cannot be run outside of an activity.'
+                )
+            self.tool_activity_config[tool_name] = tool_config
+
         self.run_context_type = run_context_type
 
+        # An error is raised in `TemporalAgent` if no `id` is set.
         id = server.id
         assert id is not None
 
-        @activity.defn(name=f'mcp_server__{id}__get_tools')
+        @activity.defn(name=f'{activity_name_prefix}__mcp_server__{id}__get_tools')
         async def get_tools_activity(params: _GetToolsParams) -> dict[str, ToolDefinition]:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context)
             tools = await self.wrapped.get_tools(run_context)
@@ -59,7 +71,7 @@ class TemporalMCPServer(TemporalWrapperToolset):
 
         self.get_tools_activity = get_tools_activity
 
-        @activity.defn(name=f'mcp_server__{id}__call_tool')
+        @activity.defn(name=f'{activity_name_prefix}__mcp_server__{id}__call_tool')
         async def call_tool_activity(params: _CallToolParams) -> ToolResult:
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context)
             return await self.wrapped.call_tool(
@@ -110,13 +122,7 @@ class TemporalMCPServer(TemporalWrapperToolset):
         if not workflow.in_workflow():
             return await super().call_tool(name, tool_args, ctx, tool)
 
-        tool_activity_config = self.tool_activity_config.get(name, {})
-        if tool_activity_config is False:
-            raise UserError(
-                f'Temporal activity config for MCP tool {name!r} is `False` (activity disabled), but MCP tools cannot be run outside of an activity.'
-            )
-
-        tool_activity_config = self.activity_config | tool_activity_config
+        tool_activity_config = self.activity_config | self.tool_activity_config.get(name, {})
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
         return await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.call_tool_activity,

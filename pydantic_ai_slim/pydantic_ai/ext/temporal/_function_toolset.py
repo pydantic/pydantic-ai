@@ -28,8 +28,10 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
     def __init__(
         self,
         toolset: FunctionToolset,
-        activity_config: ActivityConfig = {},
-        tool_activity_config: dict[str, ActivityConfig | Literal[False]] = {},
+        *,
+        activity_name_prefix: str,
+        activity_config: ActivityConfig,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         run_context_type: type[TemporalRunContext] = TemporalRunContext,
     ):
         super().__init__(toolset)
@@ -37,10 +39,11 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
         self.tool_activity_config = tool_activity_config
         self.run_context_type = run_context_type
 
+        # An error is raised in `TemporalAgent` if no `id` is set.
         id = toolset.id
         assert id is not None
 
-        @activity.defn(name=f'function_toolset__{id}__call_tool')
+        @activity.defn(name=f'{activity_name_prefix}__toolset__{id}__call_tool')
         async def call_tool_activity(params: _CallToolParams) -> Any:
             name = params.name
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context)
@@ -48,7 +51,7 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
                 tool = (await toolset.get_tools(ctx))[name]
             except KeyError as e:
                 raise UserError(
-                    f'Tool {name!r} not found in toolset {toolset.id!r}. '
+                    f'Tool {name!r} not found in toolset {id!r}. '
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e
 
@@ -74,7 +77,8 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
             assert isinstance(tool, FunctionToolsetTool)
             if not tool.is_async:
                 raise UserError(
-                    f'Temporal activity config for non-async tool {name!r} is `False` (activity disabled), but only async tools can be run outside of an activity. Make the tool function async instead.'
+                    f'Temporal activity config for tool {name!r} has been explicitly set to `False` (activity disabled), '
+                    'but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.'
                 )
             return await super().call_tool(name, tool_args, ctx, tool)
 
