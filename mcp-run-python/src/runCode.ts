@@ -2,6 +2,7 @@
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
+import { handleMount, handleSyncBack } from './filesystem.ts'
 
 export interface CodeFile {
   name: string
@@ -12,6 +13,7 @@ export interface CodeFile {
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
+  mountPath?: string,
 ): Promise<RunSuccess | RunError> {
   // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
   const realConsoleLog = console.log
@@ -45,6 +47,11 @@ export async function runCode(
 
   await pyodide.loadPackage(['micropip', 'pydantic'])
   const sys = pyodide.pyimport('sys')
+
+  // Handle filesystem mounting if mountPath is provided
+  if (mountPath) {
+    await handleMount(pyodide, mountPath, log)
+  }
 
   const dirPath = '/tmp/mcp_run_python'
   sys.path.append(dirPath)
@@ -88,6 +95,11 @@ export async function runCode(
       }
     }
   }
+  // Sync files back from Pyodide to local filesystem if mountPath is provided
+  if (mountPath && runResult.status === 'success') {
+    await handleSyncBack(pyodide, mountPath, log)
+  }
+
   sys.stdout.flush()
   sys.stderr.flush()
   console.log = realConsoleLog

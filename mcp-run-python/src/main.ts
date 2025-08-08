@@ -18,25 +18,24 @@ import { Buffer } from 'node:buffer'
 const VERSION = '0.0.13'
 
 export async function main() {
+  const flags = parseArgs(Deno.args, {
+    string: ['port', 'mount'],
+    default: { port: '3001' },
+  })
+
   const { args } = Deno
-  if (args.length === 1 && args[0] === 'stdio') {
-    await runStdio()
-  } else if (args.length >= 1 && args[0] === 'streamable_http') {
-    const flags = parseArgs(Deno.args, {
-      string: ['port'],
-      default: { port: '3001' },
-    })
+  const command = args.find((arg) => !arg.startsWith('--') && arg !== flags.port && arg !== flags.mount)
+
+  if (command === 'stdio') {
+    await runStdio(flags.mount)
+  } else if (command === 'streamable_http') {
     const port = parseInt(flags.port)
-    runStreamableHttp(port)
-  } else if (args.length >= 1 && args[0] === 'sse') {
-    const flags = parseArgs(Deno.args, {
-      string: ['port'],
-      default: { port: '3001' },
-    })
+    runStreamableHttp(port, flags.mount)
+  } else if (command === 'sse') {
     const port = parseInt(flags.port)
-    runSse(port)
-  } else if (args.length === 1 && args[0] === 'warmup') {
-    await warmup()
+    runSse(port, flags.mount)
+  } else if (command === 'warmup') {
+    await warmup(flags.mount)
   } else {
     console.error(
       `\
@@ -45,7 +44,8 @@ Invalid arguments.
 Usage: deno run -N -R=node_modules -W=node_modules --node-modules-dir=auto jsr:@pydantic/mcp-run-python [stdio|streamable_http|sse|warmup]
 
 options:
-  --port <port>  Port to run the SSE server on (default: 3001)`,
+  --port <port>    Port to run the SSE server on (default: 3001)
+  --mount <path>   Mount local filesystem path to Pyodide (format: local_path:pyodide_path)`,
     )
     Deno.exit(1)
   }
@@ -54,7 +54,7 @@ options:
 /*
  * Create an MCP server with the `run_python_code` tool registered.
  */
-function createServer(): McpServer {
+function createServer(mountPath?: string): McpServer {
   const server = new McpServer(
     {
       name: 'MCP Run Python',
@@ -104,7 +104,7 @@ print('python code here')
         if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
           logPromises.push(server.server.sendLoggingMessage({ level, data }))
         }
-      })
+      }, mountPath)
       await Promise.all(logPromises)
       return {
         content: [{ type: 'text', text: asXml(result) }],
@@ -162,9 +162,9 @@ function httpSetJsonResponse(res: http.ServerResponse, status: number, text: str
 /*
  * Run the MCP server using the Streamable HTTP transport
  */
-function runStreamableHttp(port: number) {
+function runStreamableHttp(port: number, mountPath?: string) {
   // https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#with-session-management
-  const mcpServer = createServer()
+  const mcpServer = createServer(mountPath)
   const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
 
   const server = http.createServer(async (req, res) => {
@@ -249,8 +249,8 @@ function runStreamableHttp(port: number) {
 /*
  * Run the MCP server using the SSE transport, e.g. over HTTP.
  */
-function runSse(port: number) {
-  const mcpServer = createServer()
+function runSse(port: number, mountPath?: string) {
+  const mcpServer = createServer(mountPath)
   const transports: { [sessionId: string]: SSEServerTransport } = {}
 
   const server = http.createServer(async (req, res) => {
@@ -296,8 +296,8 @@ function runSse(port: number) {
 /*
  * Run the MCP server using the Stdio transport.
  */
-async function runStdio() {
-  const mcpServer = createServer()
+async function runStdio(mountPath?: string) {
+  const mcpServer = createServer(mountPath)
   const transport = new StdioServerTransport()
   await mcpServer.connect(transport)
 }
@@ -305,7 +305,7 @@ async function runStdio() {
 /*
  * Run pyodide to download packages which can otherwise interrupt the server
  */
-async function warmup() {
+async function warmup(mountPath?: string) {
   console.error(
     `Running warmup script for MCP Run Python version ${VERSION}...`,
   )
@@ -321,7 +321,7 @@ a
     active: true,
   }], (level, data) =>
     // use warn to avoid recursion since console.log is patched in runCode
-    console.error(`${level}: ${data}`))
+    console.error(`${level}: ${data}`), mountPath)
   console.log('Tool return value:')
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
