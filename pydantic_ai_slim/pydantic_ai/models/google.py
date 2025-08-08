@@ -393,7 +393,10 @@ class GoogleModel(Model):
                     message_parts = [{'text': ''}]
                 contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
-                contents.append(_content_model_response(m))
+                model_content = _content_model_response(m)
+                # Skip model responses with empty parts (e.g., thinking-only responses)
+                if model_content.get('parts'):
+                    contents.append(model_content)
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages):

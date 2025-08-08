@@ -143,6 +143,24 @@ def is_agent_node(
     return isinstance(node, AgentNode)
 
 
+def _create_thinking_retry_request(parts: list[_messages.ModelResponsePart]) -> _messages.ModelRequest | None:
+    """Handle thinking-only responses (responses that contain only ThinkingPart instances).
+
+    This can happen with models that support thinking mode when they don't provide
+    actionable output alongside their thinking content.
+    """
+    thinking_parts = [p for p in parts if isinstance(p, _messages.ThinkingPart)]
+    if thinking_parts:
+        # Create the retry request using UserPromptPart for API compatibility
+        # We'll use a special content marker to detect this is a thinking retry
+        retry_part = _messages.UserPromptPart(
+            'Based on your thinking above, you MUST now provide '
+            'a specific answer or use the available tools to complete the task. '
+            'Do not respond with only thinking content. Provide actionable output.'
+        )
+        return _messages.ModelRequest(parts=[retry_part])
+
+
 @dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
@@ -426,8 +444,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         if self._events_iterator is None:
             # Ensure that the stream is only run once
-
-            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
+            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 texts: list[str] = []
                 tool_calls: list[_messages.ToolCallPart] = []
                 for part in self.model_response.parts:
@@ -472,6 +489,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                 if last_texts:
                                     self._next_node = await self._handle_text_response(ctx, last_texts)
                                     return
+
+                    # If there are no preceding model responses, we prompt the model to try again and provide actionable output.
+                    breakpoint()
+                    if retry_request := _create_thinking_retry_request(self.model_response.parts):
+                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](request=retry_request)
+                        return
 
                     raise exceptions.UnexpectedModelBehavior('Received empty model response')
 
