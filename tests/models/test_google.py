@@ -1732,5 +1732,5 @@ async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: 
     with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=36\\)'):
         await agent.run(
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
-            usage_limits=UsageLimits(request_tokens_limit=50, count_tokens_before_request=True),
+            usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
         )
