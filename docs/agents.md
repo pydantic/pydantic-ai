@@ -7,14 +7,14 @@ but multiple agents can also interact to embody more complex workflows.
 
 The [`Agent`][pydantic_ai.Agent] class has full API documentation, but conceptually you can think of an agent as a container for:
 
-| **Component**                                 | **Description**                                                                                           |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| [System prompt(s)](#system-prompts)           | A set of instructions for the LLM written by the developer.                                               |
-| [Function tool(s)](tools.md)                  | Functions that the LLM may call to get information while generating a response.                           |
-| [Structured output type](output.md)           | The structured datatype the LLM must return at the end of a run, if specified.                            |
-| [Dependency type constraint](dependencies.md) | System prompt functions, tools, and output validators may all use dependencies when they're run.          |
-| [LLM model](api/models/base.md)               | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
-| [Model Settings](#additional-configuration)   | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
+| **Component**                                             | **Description**                                                                                           |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| [System prompt(s)](#system-prompts)                       | A set of instructions for the LLM written by the developer.                                               |
+| [Function tool(s)](tools.md) and [toolsets](toolsets.md)  | Functions that the LLM may call to get information while generating a response.                           |
+| [Structured output type](output.md)                       | The structured datatype the LLM must return at the end of a run, if specified.                            |
+| [Dependency type constraint](dependencies.md)             | System prompt functions, tools, and output validators may all use dependencies when they're run.          |
+| [LLM model](api/models/base.md)                           | Optional default LLM model associated with the agent. Can also be specified when running the agent.       |
+| [Model Settings](#additional-configuration)               | Optional default model settings to help fine tune requests. Can also be specified when running the agent. |
 
 In typing terms, agents are generic in their dependency and output types, e.g., an agent which required dependencies of type `#!python Foobar` and produced outputs of type `#!python list[str]` would have type `Agent[Foobar, list[str]]`. In practice, you shouldn't need to care about this, it should just mean your IDE can tell you when you have the right type, and if you choose to use [static type checking](#static-type-checking) it should work well with Pydantic AI.
 
@@ -63,9 +63,9 @@ print(result.output)
 
 There are four ways to run an agent:
 
-1. [`agent.run()`][pydantic_ai.Agent.run] — a coroutine which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
-2. [`agent.run_sync()`][pydantic_ai.Agent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
-3. [`agent.run_stream()`][pydantic_ai.Agent.run_stream] — a coroutine which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream a response as an async iterable.
+1. [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] — an async function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response.
+2. [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] — a plain, synchronous function which returns a [`RunResult`][pydantic_ai.agent.AgentRunResult] containing a completed response (internally, this just calls `loop.run_until_complete(self.run())`).
+3. [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] — an async context manager which returns a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], which contains methods to stream text and structured output as an async iterable.
 4. [`agent.iter()`][pydantic_ai.Agent.iter] — a context manager which returns an [`AgentRun`][pydantic_ai.agent.AgentRun], an async-iterable over the nodes of the agent's underlying [`Graph`][pydantic_graph.graph.Graph].
 
 Here's a simple example demonstrating the first three:
@@ -77,28 +77,189 @@ agent = Agent('openai:gpt-4o')
 
 result_sync = agent.run_sync('What is the capital of Italy?')
 print(result_sync.output)
-#> Rome
+#> The capital of Italy is Rome.
 
 
 async def main():
     result = await agent.run('What is the capital of France?')
     print(result.output)
-    #> Paris
+    #> The capital of France is Paris.
 
     async with agent.run_stream('What is the capital of the UK?') as response:
-        print(await response.get_output())
-        #> London
+        async for text in response.stream_text():
+            print(text)
+            #> The capital of
+            #> The capital of the UK is
+            #> The capital of the UK is London.
 ```
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 You can also pass messages from previous runs to continue a conversation or provide context, as described in [Messages and Chat History](message-history.md).
 
+### Streaming Events and Final Output
+
+As shown in the example above, [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] makes it easy to stream the agent's final output as it comes in.
+It also takes an optional `event_stream_handler` argument that you can use to gain insight into what is happening during the run before the final output is produced.
+
+The example below shows how to stream events and text output. You can also [stream structured output](output.md#streaming-structured-output).
+
+!!! note
+    As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
+    it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+
+    If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
+    use [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with an `event_stream_handler` or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead, as described in the following sections.
+
+```python {title="run_stream_events.py"}
+import asyncio
+from collections.abc import AsyncIterable
+from datetime import date
+from typing import Union
+
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    HandleResponseEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+    ThinkingPartDelta,
+    ToolCallPartDelta,
+)
+from pydantic_ai.tools import RunContext
+
+weather_agent = Agent(
+    'openai:gpt-4o',
+    system_prompt='Providing a weather forecast at the locations the user provides.',
+)
+
+
+@weather_agent.tool
+async def weather_forecast(
+    ctx: RunContext,
+    location: str,
+    forecast_date: date,
+) -> str:
+    return f'The forecast in {location} on {forecast_date} is 24°C and sunny.'
+
+
+output_messages: list[str] = []
+
+
+async def event_stream_handler(
+    ctx: RunContext,
+    event_stream: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]],
+):
+    async for event in event_stream:
+        if isinstance(event, PartStartEvent):
+            output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
+        elif isinstance(event, PartDeltaEvent):
+            if isinstance(event.delta, TextPartDelta):
+                output_messages.append(f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}')
+            elif isinstance(event.delta, ThinkingPartDelta):
+                output_messages.append(f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}')
+            elif isinstance(event.delta, ToolCallPartDelta):
+                output_messages.append(f'[Request] Part {event.index} args delta: {event.delta.args_delta}')
+        elif isinstance(event, FunctionToolCallEvent):
+            output_messages.append(
+                f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
+            )
+        elif isinstance(event, FunctionToolResultEvent):
+            output_messages.append(f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}')
+        elif isinstance(event, FinalResultEvent):
+            output_messages.append(f'[Result] The model starting producing a final result (tool_name={event.tool_name})')
+
+
+async def main():
+    user_prompt = 'What will the weather be like in Paris on Tuesday?'
+
+    async with weather_agent.run_stream(user_prompt, event_stream_handler=event_stream_handler) as run:
+        async for output in run.stream_text():
+            output_messages.append(f'[Output] {output}')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
+    print(output_messages)
+    """
+    [
+        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
+        '[Request] Part 0 args delta: {"location":"Pa',
+        '[Request] Part 0 args delta: ris","forecast_',
+        '[Request] Part 0 args delta: date":"2030-01-',
+        '[Request] Part 0 args delta: 01"}',
+        '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
+        "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
+        "[Request] Starting part 0: TextPart(content='It will be ')",
+        '[Result] The model starting producing a final result (tool_name=None)',
+        '[Output] It will be ',
+        '[Output] It will be warm and sunny ',
+        '[Output] It will be warm and sunny in Paris on ',
+        '[Output] It will be warm and sunny in Paris on Tuesday.',
+    ]
+    """
+```
+
+### Streaming All Events
+
+Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_stream] takes an optional `event_stream_handler`
+argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
+Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
+
+!!! note
+    When used with an `event_stream_handler`, the `run()` method currently requires you to piece together the streamed text yourself from the `PartStartEvent` and subsequent `PartDeltaEvent`s instead of providing a `stream_text()` convenience method.
+
+    To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step.
+
+```python {title="run_events.py" requires="run_stream_events.py"}
+from run_stream_events import weather_agent, event_stream_handler, output_messages
+
+import asyncio
+
+
+async def main():
+    user_prompt = 'What will the weather be like in Paris on Tuesday?'
+
+    run = await weather_agent.run(user_prompt, event_stream_handler=event_stream_handler)
+
+    output_messages.append(f'[Final Output] {run.output}')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
+    print(output_messages)
+    """
+    [
+        "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
+        '[Request] Part 0 args delta: {"location":"Pa',
+        '[Request] Part 0 args delta: ris","forecast_',
+        '[Request] Part 0 args delta: date":"2030-01-',
+        '[Request] Part 0 args delta: 01"}',
+        '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
+        "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
+        "[Request] Starting part 0: TextPart(content='It will be ')",
+        '[Result] The model starting producing a final result (tool_name=None)',
+        "[Request] Part 0 text delta: 'warm and sunny '",
+        "[Request] Part 0 text delta: 'in Paris on '",
+        "[Request] Part 0 text delta: 'Tuesday.'",
+        '[Final Output] It will be warm and sunny in Paris on Tuesday.',
+    ]
+    """
+```
+
+_(This example is complete, it can be run "as is")_
+
 ### Iterating Over an Agent's Graph
 
 Under the hood, each `Agent` in Pydantic AI uses **pydantic-graph** to manage its execution flow. **pydantic-graph** is a generic, type-centric library for building and running finite state machines in Python. It doesn't actually depend on Pydantic AI — you can use it standalone for workflows that have nothing to do with GenAI — but Pydantic AI makes use of it to orchestrate the handling of model requests and model responses in an agent's run.
 
-In many scenarios, you don't need to worry about pydantic-graph at all; calling `agent.run(...)` simply traverses the underlying graph from start to finish. However, if you need deeper insight or control — for example to capture each tool invocation, or to inject your own logic at specific stages — Pydantic AI exposes the lower-level iteration process via [`Agent.iter`][pydantic_ai.Agent.iter]. This method returns an [`AgentRun`][pydantic_ai.agent.AgentRun], which you can async-iterate over, or manually drive node-by-node via the [`next`][pydantic_ai.agent.AgentRun.next] method. Once the agent's graph returns an [`End`][pydantic_graph.nodes.End], you have the final result along with a detailed history of all steps.
+In many scenarios, you don't need to worry about pydantic-graph at all; calling `agent.run(...)` simply traverses the underlying graph from start to finish. However, if you need deeper insight or control — for example to inject your own logic at specific stages — Pydantic AI exposes the lower-level iteration process via [`Agent.iter`][pydantic_ai.Agent.iter]. This method returns an [`AgentRun`][pydantic_ai.agent.AgentRun], which you can async-iterate over, or manually drive node-by-node via the [`next`][pydantic_ai.agent.AgentRun.next] method. Once the agent's graph returns an [`End`][pydantic_graph.nodes.End], you have the final result along with a detailed history of all steps.
 
 #### `async for` iteration
 
@@ -140,20 +301,22 @@ async def main():
         ),
         CallToolsNode(
             model_response=ModelResponse(
-                parts=[TextPart(content='Paris')],
+                parts=[TextPart(content='The capital of France is Paris.')],
                 usage=Usage(
-                    requests=1, request_tokens=56, response_tokens=1, total_tokens=57
+                    requests=1, request_tokens=56, response_tokens=7, total_tokens=63
                 ),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             )
         ),
-        End(data=FinalResult(output='Paris')),
+        End(data=FinalResult(output='The capital of France is Paris.')),
     ]
     """
     print(agent_run.result.output)
-    #> Paris
+    #> The capital of France is Paris.
 ```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 - The `AgentRun` is an async iterator that yields each node (`BaseNode` or `End`) in the flow.
 - The run ends when an `End` node is returned.
@@ -203,18 +366,18 @@ async def main():
             ),
             CallToolsNode(
                 model_response=ModelResponse(
-                    parts=[TextPart(content='Paris')],
+                    parts=[TextPart(content='The capital of France is Paris.')],
                     usage=Usage(
                         requests=1,
                         request_tokens=56,
-                        response_tokens=1,
-                        total_tokens=57,
+                        response_tokens=7,
+                        total_tokens=63,
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
             ),
-            End(data=FinalResult(output='Paris')),
+            End(data=FinalResult(output='The capital of France is Paris.')),
         ]
         """
 ```
@@ -224,19 +387,19 @@ async def main():
 3. When you call `await agent_run.next(node)`, it executes that node in the agent's graph, updates the run's history, and returns the _next_ node to run.
 4. You could also inspect or mutate the new `node` here as needed.
 
-#### Accessing usage and the final output
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+#### Accessing usage and final output
 
 You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`Usage`][pydantic_ai.usage.Usage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
----
-
-### Streaming
+#### Streaming All Events and Output
 
 Here is an example of streaming an agent run in combination with `async for` iteration:
 
-```python {title="streaming.py"}
+```python {title="streaming_iter.py"}
 import asyncio
 from dataclasses import dataclass
 from datetime import date
@@ -249,6 +412,7 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     TextPartDelta,
+    ThinkingPartDelta,
     ToolCallPartDelta,
 )
 from pydantic_ai.tools import RunContext
@@ -262,9 +426,7 @@ class WeatherService:
 
     async def get_historic_weather(self, location: str, forecast_date: date) -> str:
         # In real code: call a historical weather API or DB
-        return (
-            f'The weather in {location} on {forecast_date} was 18°C and partly cloudy.'
-        )
+        return f'The weather in {location} on {forecast_date} was 18°C and partly cloudy.'
 
 
 weather_agent = Agent[WeatherService, str](
@@ -301,33 +463,40 @@ async def main():
                 output_messages.append(f'=== UserPromptNode: {node.user_prompt} ===')
             elif Agent.is_model_request_node(node):
                 # A model request node => We can stream tokens from the model's request
-                output_messages.append(
-                    '=== ModelRequestNode: streaming partial request tokens ==='
-                )
+                output_messages.append('=== ModelRequestNode: streaming partial request tokens ===')
                 async with node.stream(run.ctx) as request_stream:
+                    final_result_found = False
                     async for event in request_stream:
                         if isinstance(event, PartStartEvent):
-                            output_messages.append(
-                                f'[Request] Starting part {event.index}: {event.part!r}'
-                            )
+                            output_messages.append(f'[Request] Starting part {event.index}: {event.part!r}')
                         elif isinstance(event, PartDeltaEvent):
                             if isinstance(event.delta, TextPartDelta):
                                 output_messages.append(
                                     f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}'
                                 )
+                            elif isinstance(event.delta, ThinkingPartDelta):
+                                output_messages.append(
+                                    f'[Request] Part {event.index} thinking delta: {event.delta.content_delta!r}'
+                                )
                             elif isinstance(event.delta, ToolCallPartDelta):
                                 output_messages.append(
-                                    f'[Request] Part {event.index} args_delta={event.delta.args_delta}'
+                                    f'[Request] Part {event.index} args delta: {event.delta.args_delta}'
                                 )
                         elif isinstance(event, FinalResultEvent):
                             output_messages.append(
-                                f'[Result] The model produced a final output (tool_name={event.tool_name})'
+                                f'[Result] The model started producing a final result (tool_name={event.tool_name})'
                             )
+                            final_result_found = True
+                            break
+
+                    if final_result_found:
+                        # Once the final result is found, we can call `AgentStream.stream_text()` to stream the text.
+                        # A similar `AgentStream.stream_output()` method is available to stream structured output.
+                        async for output in request_stream.stream_text():
+                            output_messages.append(f'[Output] {output}')
             elif Agent.is_call_tools_node(node):
                 # A handle-response node => The model returned some data, potentially calls a tool
-                output_messages.append(
-                    '=== CallToolsNode: streaming partial response & tool usage ==='
-                )
+                output_messages.append('=== CallToolsNode: streaming partial response & tool usage ===')
                 async with node.stream(run.ctx) as handle_stream:
                     async for event in handle_stream:
                         if isinstance(event, FunctionToolCallEvent):
@@ -339,11 +508,10 @@ async def main():
                                 f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
                             )
             elif Agent.is_end_node(node):
-                assert run.result.output == node.data.output
                 # Once an End node is reached, the agent run is complete
-                output_messages.append(
-                    f'=== Final Agent Output: {run.result.output} ==='
-                )
+                assert run.result is not None
+                assert run.result.output == node.data.output
+                output_messages.append(f'=== Final Agent Output: {run.result.output} ===')
 
 
 if __name__ == '__main__':
@@ -355,26 +523,27 @@ if __name__ == '__main__':
         '=== UserPromptNode: What will the weather be like in Paris on Tuesday? ===',
         '=== ModelRequestNode: streaming partial request tokens ===',
         "[Request] Starting part 0: ToolCallPart(tool_name='weather_forecast', tool_call_id='0001')",
-        '[Request] Part 0 args_delta={"location":"Pa',
-        '[Request] Part 0 args_delta=ris","forecast_',
-        '[Request] Part 0 args_delta=date":"2030-01-',
-        '[Request] Part 0 args_delta=01"}',
+        '[Request] Part 0 args delta: {"location":"Pa',
+        '[Request] Part 0 args delta: ris","forecast_',
+        '[Request] Part 0 args delta: date":"2030-01-',
+        '[Request] Part 0 args delta: 01"}',
         '=== CallToolsNode: streaming partial response & tool usage ===',
         '[Tools] The LLM calls tool=\'weather_forecast\' with args={"location":"Paris","forecast_date":"2030-01-01"} (tool_call_id=\'0001\')',
         "[Tools] Tool call '0001' returned => The forecast in Paris on 2030-01-01 is 24°C and sunny.",
         '=== ModelRequestNode: streaming partial request tokens ===',
         "[Request] Starting part 0: TextPart(content='It will be ')",
-        '[Result] The model produced a final output (tool_name=None)',
-        "[Request] Part 0 text delta: 'warm and sunny '",
-        "[Request] Part 0 text delta: 'in Paris on '",
-        "[Request] Part 0 text delta: 'Tuesday.'",
+        '[Result] The model started producing a final result (tool_name=None)',
+        '[Output] It will be ',
+        '[Output] It will be warm and sunny ',
+        '[Output] It will be warm and sunny in Paris on ',
+        '[Output] It will be warm and sunny in Paris on Tuesday.',
         '=== CallToolsNode: streaming partial response & tool usage ===',
         '=== Final Agent Output: It will be warm and sunny in Paris on Tuesday. ===',
     ]
     """
 ```
 
----
+_(This example is complete, it can be run "as is")_
 
 ### Additional Configuration
 
@@ -494,7 +663,7 @@ result_sync = agent.run_sync(
     model_settings=ModelSettings(temperature=0.0)  # Final temperature: 0.0
 )
 print(result_sync.output)
-#> Rome
+#> The capital of Italy is Rome.
 ```
 
 The final request uses `temperature=0.0` (run-time), `max_tokens=500` (from model), demonstrating how settings merge with run-time taking precedence.
@@ -891,4 +1060,4 @@ with capture_run_messages() as messages:  # (2)!
 _(This example is complete, it can be run "as is")_
 
 !!! note
-    If you call [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.
+    If you call [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] more than once within a single `capture_run_messages` context, `messages` will represent the messages exchanged during the first call only.

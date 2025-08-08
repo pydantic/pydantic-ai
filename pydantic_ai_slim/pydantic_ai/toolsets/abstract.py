@@ -70,9 +70,23 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
     """
 
     @property
-    def name(self) -> str:
+    @abstractmethod
+    def id(self) -> str | None:
+        """An ID for the toolset that is unique among all toolsets registered with the same agent.
+
+        If you're implementing a concrete implementation that users can instantiate more than once, you should let them optionally pass a custom ID to the constructor and return that here.
+
+        A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+        """
+        raise NotImplementedError()
+
+    @property
+    def label(self) -> str:
         """The name of the toolset for use in error messages."""
-        return self.__class__.__name__.replace('Toolset', ' toolset')
+        label = self.__class__.__name__
+        if self.id:  # pragma: no branch
+            label += f' {self.id!r}'
+        return label
 
     @property
     def tool_name_conflict_hint(self) -> str:
@@ -113,8 +127,14 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         raise NotImplementedError()
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        """Run a visitor function on all concrete toolsets that are not wrappers (i.e. they implement their own tool listing and calling)."""
+        """Run a visitor function on all "leaf" toolsets (i.e. those that implement their own tool listing and calling)."""
         visitor(self)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
+    ) -> AbstractToolset[AgentDepsT]:
+        """Run a visitor function on all "leaf" toolsets (i.e. those that implement their own tool listing and calling) and replace them in the hierarchy with the result of the function."""
+        return visitor(self)
 
     def filtered(
         self, filter_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool]
