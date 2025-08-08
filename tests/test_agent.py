@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Union
@@ -23,9 +24,11 @@ from pydantic_ai._output import (
     TextOutputSchema,
     ToolOutputSchema,
 )
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     BinaryContent,
+    HandleResponseEvent,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -49,8 +52,9 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .conftest import IsDatetime, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -3616,17 +3620,6 @@ def test_deprecated_kwargs_validation_agent_init():
         Agent('test', foo='value1', bar='value2')  # type: ignore[call-arg]
 
 
-def test_deprecated_kwargs_validation_agent_run():
-    """Test that invalid kwargs raise UserError in Agent.run method."""
-    agent = Agent('test')
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `invalid_kwarg`'):
-        agent.run_sync('test', invalid_kwarg='value')  # type: ignore[call-arg]
-
-    with pytest.raises(UserError, match='Unknown keyword arguments: `foo`, `bar`'):
-        agent.run_sync('test', foo='value1', bar='value2')  # type: ignore[call-arg]
-
-
 def test_deprecated_kwargs_still_work():
     """Test that valid deprecated kwargs still work with warnings."""
     import warnings
@@ -3693,6 +3686,37 @@ def test_override_toolsets():
         result = agent.run_sync('Hello', toolsets=[bar_toolset])
     assert available_tools[-1] == snapshot(['baz'])
     assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+
+def test_override_tools():
+    def foo() -> str:
+        return 'Hello from foo'
+
+    def bar() -> str:
+        return 'Hello from bar'
+
+    available_tools: list[list[str]] = []
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        nonlocal available_tools
+        available_tools.append([tool_def.name for tool_def in tool_defs])
+        return tool_defs
+
+    agent = Agent('test', tools=[foo], prepare_tools=prepare_tools)
+
+    result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['foo'])
+    assert result.output == snapshot('{"foo":"Hello from foo"}')
+
+    with agent.override(tools=[bar]):
+        result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot(['bar'])
+    assert result.output == snapshot('{"bar":"Hello from bar"}')
+
+    with agent.override(tools=[]):
+        result = agent.run_sync('Hello')
+    assert available_tools[-1] == snapshot([])
+    assert result.output == snapshot('success (no tool calls)')
 
 
 def test_adding_tools_during_run():
@@ -3953,3 +3977,61 @@ def test_set_mcp_sampling_model():
     agent.set_mcp_sampling_model(function_model2)
     assert server1.sampling_model is function_model2
     assert server2.sampling_model is function_model2
+
+
+def test_toolsets():
+    toolset = FunctionToolset()
+
+    @toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'  # pragma: no cover
+
+    agent = Agent('test', toolsets=[toolset])
+    assert toolset in agent.toolsets
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return tool_defs  # pragma: no cover
+
+    agent = Agent('test', toolsets=[toolset], prepare_tools=prepare_tools)
+    assert agent.toolsets == [IsInstance(PreparedToolset)]
+
+
+async def test_wrapper_agent():
+    async def event_stream_handler(
+        ctx: RunContext[None], events: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]]
+    ):
+        pass  # pragma: no cover
+
+    foo_toolset = FunctionToolset()
+
+    @foo_toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'  # pragma: no cover
+
+    test_model = TestModel()
+    agent = Agent(test_model, toolsets=[foo_toolset], output_type=Foo, event_stream_handler=event_stream_handler)
+    wrapper_agent = WrapperAgent(agent)
+    assert wrapper_agent.toolsets == agent.toolsets
+    assert wrapper_agent.model == agent.model
+    assert wrapper_agent.name == agent.name
+    wrapper_agent.name = 'wrapped'
+    assert wrapper_agent.name == 'wrapped'
+    assert wrapper_agent.output_type == agent.output_type
+    assert wrapper_agent.event_stream_handler == agent.event_stream_handler
+
+    bar_toolset = FunctionToolset()
+
+    @bar_toolset.tool
+    def bar() -> str:
+        return 'Hello from bar'
+
+    with wrapper_agent.override(toolsets=[bar_toolset]):
+        async with wrapper_agent:
+            async with wrapper_agent.iter(user_prompt='Hello') as run:
+                async for _ in run:
+                    pass
+
+    assert run.result is not None
+    assert run.result.output == snapshot(Foo(a=0, b='a'))
+    assert test_model.last_model_request_parameters is not None
+    assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])

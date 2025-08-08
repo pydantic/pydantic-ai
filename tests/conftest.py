@@ -422,7 +422,7 @@ async def vertex_provider():  # pragma: lax no cover
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from google import genai
+        from google.genai import Client
 
         from pydantic_ai.providers.google import GoogleProvider
     except ImportError:  # pragma: lax no cover
@@ -430,7 +430,7 @@ async def vertex_provider():  # pragma: lax no cover
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'us-central1')
-    client = genai.Client(vertexai=True, project=project, location=location)
+    client = Client(vertexai=True, project=project, location=location)
 
     try:
         yield GoogleProvider(client=client)
