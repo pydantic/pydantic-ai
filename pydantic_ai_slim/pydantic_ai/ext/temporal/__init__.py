@@ -16,12 +16,12 @@ from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext, TemporalRunContextWithDeps
 
 __all__ = [
-    'TemporalRunContext',
-    'TemporalRunContextWithDeps',
+    'TemporalAgent',
     'PydanticAIPlugin',
     'LogfirePlugin',
     'AgentPlugin',
-    'TemporalAgent',
+    'TemporalRunContext',
+    'TemporalRunContextWithDeps',
 ]
 
 
