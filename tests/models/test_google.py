@@ -1719,7 +1719,7 @@ async def test_google_model_usage_limit_exceeded_with_event_check_failed(
 
     assert event_parts == [], 'No events should be emitted if the error occurs before the request'
 
-
+@pytest.mark.vcr()
 async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-flash', provider='google-vertex')
 
