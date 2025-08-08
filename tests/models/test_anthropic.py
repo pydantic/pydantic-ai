@@ -38,7 +38,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.result import Usage
 from pydantic_ai.settings import ModelSettings
 
@@ -2163,3 +2163,80 @@ Clashes between Druze militias and Sunni Bedouin clans in Syria's Sweida provinc
 
 Additional notable stories include Vietnam's plan to ban fossil-fuel motorcycles in the heart of Hanoi starting July 2026, aiming to cut air pollution and move toward cleaner transport, and ongoing restoration efforts for Copenhagen's Old Stock Exchange, which is taking shape 15 months after a fire destroyed more than half of the 400-year-old building.\
 """)
+
+
+async def test_anthropic_extended_thinking_with_tool_use(allow_model_requests: None, anthropic_api_key: str):
+    """Test anthropic extended thinking with tool use using pydantic.BaseModel, ToolOutput, StructuredDict
+
+    This test resolves the issue: https://github.com/pydantic/pydantic-ai/issues/2425
+    """
+
+    model_settings = AnthropicModelSettings(
+        anthropic_thinking={'type': 'enabled', 'budget_tokens': 10000},
+        timeout=300,
+        max_tokens=50000,
+    )
+    model = AnthropicModel(model_name='claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    # Normal pydantic.BaseModel output test
+    class User(BaseModel):
+        name: str
+        email: str
+        age: int
+
+    agent = Agent(
+        model=model,
+        output_type=User,
+        model_settings=model_settings,
+    )
+    agent_output = await agent.run('Generate a random user for me.')
+
+    assert isinstance(agent_output.output, User)
+    assert agent_output.output.name == 'Sarah Chen'
+    assert agent_output.output.email == 'sarah.chen.92@gmail.com'
+    assert agent_output.output.age == 31
+
+    # Code from : ./docs/output.md#tool-output
+    class Fruit(BaseModel):
+        name: str
+        color: str
+
+    class Vehicle(BaseModel):
+        name: str
+        wheels: int
+
+    agent = Agent(
+        model=model,
+        model_settings=model_settings,
+        output_type=[
+            ToolOutput(Fruit, name='return_fruit'),
+            ToolOutput(Vehicle, name='return_vehicle'),
+        ],
+    )
+    agent_output = await agent.run('What is a banana?')
+
+    assert isinstance(agent_output.output, Fruit)
+    assert agent_output.output.name == 'banana'
+    assert agent_output.output.color == 'yellow'
+
+    # Code from : ./docs/output.md#Custom JSON schema {#structured-dict}
+    HumanDict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'required': ['name', 'age'],
+        },
+        name='Human',
+        description='A human with a name and age',
+    )
+
+    agent = Agent(
+        model=AnthropicModel(model_name='claude-sonnet-4-0'),
+        model_settings=model_settings,
+        output_type=HumanDict,
+    )
+    agent_output = await agent.run('Create a person')
+
+    assert isinstance(agent_output.output, dict)
+    assert agent_output.output['name'] == 'John Doe'
+    assert agent_output.output['age'] == 30

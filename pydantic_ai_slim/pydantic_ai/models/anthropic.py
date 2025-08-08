@@ -247,12 +247,29 @@ class AnthropicModel(Model):
         tools = self._get_tools(model_request_parameters)
         tools += self._get_builtin_tools(model_request_parameters)
         tool_choice: BetaToolChoiceParam | None
+        thinking = model_settings.get('anthropic_thinking', NOT_GIVEN)
+        temperature = model_settings.get('temperature', NOT_GIVEN)
+        top_p = model_settings.get('top_p', NOT_GIVEN)
 
         if not tools:
             tool_choice = None
         else:
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
+                if thinking and thinking.get('type') == 'enabled':
+                    tool_choice = {'type': 'auto'}
+                    if temperature and temperature != 1:
+                        warnings.warn(
+                            'Anthropic only allows temperature set to 1 or not given, if thinking enabled using 1 for now',
+                            UserWarning,
+                        )
+                        temperature = 1
+                    if top_p and top_p < 0.95:
+                        warnings.warn(
+                            'Anthropic only allows top_p greater than or equal to 0.95 or not given, if thinking enabled using 0.95 for now',
+                            UserWarning,
+                        )
+                        top_p = 0.95
             else:
                 tool_choice = {'type': 'auto'}
 
@@ -273,10 +290,10 @@ class AnthropicModel(Model):
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', NOT_GIVEN),
+                thinking=thinking,
                 stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
+                temperature=temperature,
+                top_p=top_p,
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
                 extra_headers=extra_headers,
