@@ -165,7 +165,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
 
-        This method builds an internal agent graph (using system prompts, tools and result schemas) and then
+        This method builds an internal agent graph (using system prompts, tools and output schemas) and then
         runs the graph to completion. The result of the run is returned.
 
         Example:
@@ -300,7 +300,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
-            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools
+            event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
 
         Returns:
             The result of the run.
@@ -374,7 +374,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AsyncIterator[result.StreamedRunResult[AgentDepsT, Any]]:
-        """Run the agent with a user prompt in async mode, returning a streamed response.
+        """Run the agent with a user prompt in async streaming mode.
+
+        This method builds an internal agent graph (using system prompts, tools and output schemas) and then
+        runs the graph until the model produces output matching the `output_type`, for example text or structured data.
+        At this point, a streaming run result object is yielded from which you can stream the output as it comes in,
+        and -- once this output has completed streaming -- get the complete output, message history, and usage.
+
+        As this method will consider the first output matching the `output_type` to be the final output,
+        it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+        If you want to always run the agent graph to completion and stream events and output at the same time,
+        use [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with an `event_stream_handler` or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] instead.
 
         Example:
         ```python
@@ -402,7 +412,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
-                Note, it does _not_ receive any events after the final result is found.
+                Note that it does _not_ receive any events after the final result is found.
 
         Returns:
             The result of the run.
