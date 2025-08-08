@@ -65,19 +65,19 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             ),
             CallToolsNode(
                 model_response=ModelResponse(
-                    parts=[TextPart(content='Paris')],
+                    parts=[TextPart(content='The capital of France is Paris.')],
                     usage=Usage(
-                        requests=1, request_tokens=56, response_tokens=1, total_tokens=57
+                        requests=1, request_tokens=56, response_tokens=7, total_tokens=63
                     ),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
             ),
-            End(data=FinalResult(output='Paris')),
+            End(data=FinalResult(output='The capital of France is Paris.')),
         ]
         '''
         print(agent_run.result.output)
-        #> Paris
+        #> The capital of France is Paris.
     ```
 
     You can also manually drive the iteration using the [`next`][pydantic_ai.agent.AgentRun.next] method for
@@ -202,22 +202,22 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     ),
                     CallToolsNode(
                         model_response=ModelResponse(
-                            parts=[TextPart(content='Paris')],
+                            parts=[TextPart(content='The capital of France is Paris.')],
                             usage=Usage(
                                 requests=1,
                                 request_tokens=56,
-                                response_tokens=1,
-                                total_tokens=57,
+                                response_tokens=7,
+                                total_tokens=63,
                             ),
                             model_name='gpt-4o',
                             timestamp=datetime.datetime(...),
                         )
                     ),
-                    End(data=FinalResult(output='Paris')),
+                    End(data=FinalResult(output='The capital of France is Paris.')),
                 ]
                 '''
                 print('Final result:', agent_run.result.output)
-                #> Final result: Paris
+                #> Final result: The capital of France is Paris.
         ```
 
         Args:

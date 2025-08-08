@@ -177,7 +177,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         async def main():
             agent_run = await agent.run('What is the capital of France?')
             print(agent_run.output)
-            #> Paris
+            #> The capital of France is Paris.
         ```
 
         Args:
@@ -285,7 +285,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         result_sync = agent.run_sync('What is the capital of Italy?')
         print(result_sync.output)
-        #> Rome
+        #> The capital of Italy is Rome.
         ```
 
         Args:
@@ -395,7 +395,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         async def main():
             async with agent.run_stream('What is the capital of the UK?') as response:
                 print(await response.get_output())
-                #> London
+                #> The capital of the UK is London.
         ```
 
         Args:
@@ -611,19 +611,19 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
-                        parts=[TextPart(content='Paris')],
+                        parts=[TextPart(content='The capital of France is Paris.')],
                         usage=Usage(
-                            requests=1, request_tokens=56, response_tokens=1, total_tokens=57
+                            requests=1, request_tokens=56, response_tokens=7, total_tokens=63
                         ),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                     )
                 ),
-                End(data=FinalResult(output='Paris')),
+                End(data=FinalResult(output='The capital of France is Paris.')),
             ]
             '''
             print(agent_run.result.output)
-            #> Paris
+            #> The capital of France is Paris.
         ```
 
         Args:
