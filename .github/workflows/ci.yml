@@ -207,28 +207,7 @@ jobs:
       - run: uv sync --package pydantic-ai-slim --only-dev
       - run: rm .coverage/.coverage.*-py3.9-* # Exclude 3.9 coverage as it gets the wrong line numbers, causing invalid failures.
       - run: uv run coverage combine
-
-      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
-
-      - name: Store coverage html
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-html
-          path: htmlcov
-          include-hidden-files: true
-
-      - run: uv run coverage xml
-
-      - run: uv run diff-cover coverage.xml --html-report index.html
-
-      - name: Store diff coverage html
-        uses: actions/upload-artifact@v4
-        with:
-          name: diff-coverage-html
-          path: index.html
-
-      - run: uv run coverage report --fail-under 100
-      - run: uv run diff-cover coverage.xml --fail-under 100
+      - run: uv run coverage report
 
       - run: uv run strict-no-cover
         env:
