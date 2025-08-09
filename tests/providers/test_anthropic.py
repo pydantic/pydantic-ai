@@ -41,12 +41,31 @@ def test_anthropic_provider_pass_http_client() -> None:
     assert isinstance(provider.client, AsyncAnthropic)
     # Verify the http_client is being used by the AsyncAnthropic client
     assert provider.client._client == http_client  # type: ignore[reportPrivateUsage]
+    bedrock_provider = AnthropicProvider(
+        aws_secret_key='aws-secret-key',
+        aws_access_key='aws-access_key',
+        aws_region='us-west-2',
+        aws_profile='default',
+        aws_session_token='aws-session-token',
+        http_client=http_client,
+    )
+    assert isinstance(bedrock_provider.client, AsyncAnthropicBedrock)
+    assert bedrock_provider.client._client == http_client  # type: ignore[reportPrivateUsage]
 
 
 def test_anthropic_provider_pass_anthropic_client() -> None:
     anthropic_client = AsyncAnthropic(api_key='api-key')
     provider = AnthropicProvider(anthropic_client=anthropic_client)
     assert provider.client == anthropic_client
+    bedrock_client = AsyncAnthropicBedrock(
+        aws_secret_key='aws-secret-key',
+        aws_access_key='aws-access-key',
+        aws_region='us-west-2',
+        aws_profile='default',
+        aws_session_token='aws-session-token',
+    )
+    provider = AnthropicProvider(anthropic_client=bedrock_client)
+    assert provider.client == bedrock_client
 
 
 def test_anthropic_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,3 +74,16 @@ def test_anthropic_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setenv('ANTHROPIC_BASE_URL', custom_base_url)
     provider = AnthropicProvider(api_key='api-key')
     assert provider.base_url.rstrip('/') == custom_base_url.rstrip('/')
+
+
+def test_bedrock_anthropic_provider_with_envs(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Test with environment variables for AWS credentials
+    monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'aws-secret-access-key')
+    monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'aws-access-key-id')
+    monkeypatch.setenv('AWS_SESSION_TOKEN', 'aws-session-token')
+    monkeypatch.setenv('AWS_PROFILE', 'default')
+    monkeypatch.setenv('AWS_REGION', 'us-west-2')
+    bedrock_provider = AnthropicProvider()
+    assert bedrock_provider.name == 'anthropic'
+    assert bedrock_provider.base_url == 'https://bedrock-runtime.us-west-2.amazonaws.com'
+    assert isinstance(bedrock_provider.client, AsyncAnthropicBedrock)
