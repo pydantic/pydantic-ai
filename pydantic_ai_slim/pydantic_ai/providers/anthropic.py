@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 import sys
-from typing import overload
+from typing import Union, overload
 
 import httpx
 
@@ -25,7 +25,7 @@ else:
     from typing_extensions import TypeAlias
 
 
-ASYNC_ANTHROPIC_CLIENT: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock
+ASYNC_ANTHROPIC_CLIENT: TypeAlias = Union[AsyncAnthropic, AsyncAnthropicBedrock]
 
 
 class AnthropicProvider(Provider[ASYNC_ANTHROPIC_CLIENT]):
