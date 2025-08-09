@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import TypeAlias, overload
+from typing import overload
 
 import httpx
 
@@ -19,7 +19,7 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 
-ASYNC_ANTHROPIC_CLIENT: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock
+type ASYNC_ANTHROPIC_CLIENT = AsyncAnthropic | AsyncAnthropicBedrock
 
 
 class AnthropicProvider(Provider[ASYNC_ANTHROPIC_CLIENT]):
