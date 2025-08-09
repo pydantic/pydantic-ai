@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import ssl
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
@@ -44,9 +45,7 @@ from .conftest import ClientWithHandler, TestEnv, try_import
 
 try:
     from pydantic_ai.providers.google import GoogleProvider
-    from pydantic_ai.providers.google_vertex import GoogleVertexProvider
 except ImportError:  # pragma: lax no cover
-    GoogleVertexProvider = None
     GoogleProvider = None
 
 
@@ -62,10 +61,7 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
-    pytest.mark.skipif(
-        GoogleVertexProvider is None or logfire is None or GoogleProvider is None,
-        reason='google-auth or logfire or google-provider not installed',
-    ),
+    pytest.mark.skipif(logfire is None or GoogleProvider is None, reason='logfire or google-provider not installed'),
 ]
 code_examples: dict[str, CodeExample] = {}
 
@@ -129,6 +125,10 @@ def test_docs_examples(  # noqa: C901
     mocker.patch('random.randint', return_value=4)
     mocker.patch('rich.prompt.Prompt.ask', side_effect=rich_prompt_ask)
 
+    # Avoid filesystem access when examples call ssl.create_default_context(cafile=...) with non-existent paths
+    mocker.patch('ssl.create_default_context', return_value=ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
+    mocker.patch('ssl.SSLContext.load_cert_chain', return_value=None)
+
     class CustomEvaluationReport(EvaluationReport):
         def print(self, *args: Any, **kwargs: Any) -> None:
             if 'width' in kwargs:  # pragma: lax no cover
@@ -156,6 +156,7 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_ACCESS_KEY_ID', 'testing')
     env.set('AWS_SECRET_ACCESS_KEY', 'testing')
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
+    env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -263,6 +264,10 @@ def rich_prompt_ask(prompt: str, *_args: Any, **_kwargs: Any) -> str:
 
 
 class MockMCPServer(AbstractToolset[Any]):
+    @property
+    def id(self) -> str | None:
+        return None  # pragma: no cover
+
     async def __aenter__(self) -> MockMCPServer:
         return self
 
@@ -279,6 +284,9 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart] = {
+    'Calculate the factorial of 15 and show your work': 'The factorial of 15 is **1,307,674,368,000**.',
+    'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
+    'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
@@ -290,9 +298,9 @@ text_responses: dict[str, str | ToolCallPart] = {
     'Tell me a different joke.': 'No.',
     'Explain?': 'This is an excellent joke invented by Samuel Colvin, it needs no explanation.',
     'What is the weather in Tokyo?': 'As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloudy with a temperature of 53°F (12°C).',
-    'What is the capital of France?': 'Paris',
-    'What is the capital of Italy?': 'Rome',
-    'What is the capital of the UK?': 'London',
+    'What is the capital of France?': 'The capital of France is Paris.',
+    'What is the capital of Italy?': 'The capital of Italy is Rome.',
+    'What is the capital of the UK?': 'The capital of the UK is London.',
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
@@ -502,7 +510,7 @@ async def model_logic(  # noqa: C901
             )
         elif m.content.startswith('Write a list of 5 very rude things that I might say'):
             raise UnexpectedModelBehavior('Safety settings triggered', body='<safety settings details>')
-        elif m.content.startswith('<examples>\n  <user>'):
+        elif m.content.startswith('<user>\n  <name>John Doe</name>'):
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result_EmailOk', args={}, tool_call_id='pyd_ai_tool_call_id')]
             )

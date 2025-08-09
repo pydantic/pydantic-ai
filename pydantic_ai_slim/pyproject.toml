@@ -63,34 +63,36 @@ dependencies = [
 logfire = ["logfire>=3.11.0"]
 # Models
 openai = ["openai>=1.92.0"]
-cohere = ["cohere>=5.13.11; platform_system != 'Emscripten'"]
+cohere = ["cohere>=5.16.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
-google = ["google-genai>=1.24.0"]
-anthropic = ["anthropic>=0.52.0"]
-groq = ["groq>=0.19.0"]
-mistral = ["mistralai>=1.2.5"]
-bedrock = ["boto3>=1.37.24"]
-huggingface = ["huggingface-hub[inference]>=0.33.2"]
+google = ["google-genai>=1.28.0"]
+anthropic = ["anthropic>=0.61.0"]
+groq = ["groq>=0.25.0"]
+mistral = ["mistralai>=1.9.2"]
+bedrock = ["boto3>=1.39.0"]
+huggingface = ["huggingface-hub[inference]>=0.33.5"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 # MCP
-mcp = ["mcp>=1.9.4; python_version >= '3.10'"]
+mcp = ["mcp>=1.10.0; python_version >= '3.10'"]
 # Evals
 evals = ["pydantic-evals=={{ version }}"]
 # A2A
 a2a = ["fasta2a>=0.4.1"]
 # AG-UI
 ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
+# Retries
+retries = ["tenacity>=8.2.3"]
 
 [dependency-groups]
 dev = [
     "anyio>=4.5.0",
     "asgi-lifespan>=2.1.0",
     "devtools>=0.12.2",
-    "coverage[toml]>=7.6.2",
+    "coverage[toml]>=7.10.2",
     "dirty-equals>=0.9.0",
     "duckduckgo-search>=7.0.0",
     "inline-snapshot>=0.19.3",
@@ -101,8 +103,9 @@ dev = [
     "pytest-recording>=0.13.2",
     "diff-cover>=9.2.0",
     "boto3-stubs[bedrock-runtime]",
-    "strict-no-cover>=0.1.1",
+    "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
+    "coverage-enable-subprocess>=0.1.0",
 ]
 
 [tool.hatch.metadata]

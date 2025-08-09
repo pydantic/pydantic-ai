@@ -7,10 +7,13 @@ from typing import Literal, Union, cast
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.exceptions import UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,15 +41,15 @@ try:
         AssistantChatMessageV2,
         AsyncClientV2,
         ChatMessageV2,
-        ChatResponse,
         SystemChatMessageV2,
-        TextAssistantMessageContentItem,
+        TextAssistantMessageV2ContentItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
         ToolV2,
         ToolV2Function,
         UserChatMessageV2,
+        V2ChatResponse,
     )
     from cohere.core.api_error import ApiError
     from cohere.v2.client import OMIT
@@ -164,8 +167,12 @@ class CohereModel(Model):
         messages: list[ModelMessage],
         model_settings: CohereModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> ChatResponse:
+    ) -> V2ChatResponse:
         tools = self._get_tools(model_request_parameters)
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Cohere does not support built-in tools')
+
         cohere_messages = self._map_messages(messages)
         try:
             return await self.client.chat(
@@ -183,16 +190,16 @@ class CohereModel(Model):
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
-    def _process_response(self, response: ChatResponse) -> ModelResponse:
+    def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
         if response.message.content is not None and len(response.message.content) > 0:
             # While Cohere's API returns a list, it only does that for future proofing
             # and currently only one item is being returned.
             choice = response.message.content[0]
-            parts.extend(split_content_into_text_and_thinking(choice.text))
+            parts.extend(split_content_into_text_and_thinking(choice.text, self.profile.thinking_tags))
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
@@ -223,11 +230,14 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from cohere
+                        pass
                     else:
                         assert_never(item)
                 message_param = AssistantChatMessageV2(role='assistant')
                 if texts:
-                    message_param.content = [TextAssistantMessageContentItem(text='\n\n'.join(texts))]
+                    message_param.content = [TextAssistantMessageV2ContentItem(text='\n\n'.join(texts))]
                 if tool_calls:
                     message_param.tool_calls = tool_calls
                 cohere_messages.append(message_param)
@@ -238,10 +248,7 @@ class CohereModel(Model):
         return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
@@ -294,7 +301,7 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: ChatResponse) -> usage.Usage:
+def _map_usage(response: V2ChatResponse) -> usage.Usage:
     u = response.usage
     if u is None:
         return usage.Usage()

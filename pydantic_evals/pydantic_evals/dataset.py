@@ -38,12 +38,12 @@ from pydantic_evals._utils import get_event_loop
 from ._utils import get_unwrapped_function_name, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._run_evaluator import run_evaluator
-from .evaluators._spec import EvaluatorSpec
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
+from .evaluators.spec import EvaluatorSpec
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
-from .reporting import EvaluationReport, ReportCase
+from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
@@ -81,6 +81,10 @@ DEFAULT_DATASET_PATH = './test_cases.yaml'
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the dataset filename stem."""
 _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
+
+
+_REPORT_CASES_ADAPTER = TypeAdapter(list[ReportCase])
+_REPORT_CASE_AGGREGATE_ADAPTER = TypeAdapter(ReportCaseAggregate)
 
 
 class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
@@ -303,9 +307,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 ),
             )
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
-            eval_span.set_attribute('cases', report.cases)
+            eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            eval_span.set_attribute('averages', report.averages())
+            eval_span.set_attribute('averages', _REPORT_CASE_AGGREGATE_ADAPTER.dump_python(report.averages()))
         return report
 
     def evaluate_sync(
@@ -1034,7 +1038,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
     """
     try:
         return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
-    except (AttributeError, TypeError):  # pragma: no cover
+    except (AttributeError, TypeError):  # pragma: lax no cover
         return fallback
 
 

@@ -8,18 +8,21 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
+from pydantic import ValidationError
 from typing_extensions import assert_never
-
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-from pydantic_ai.profiles.openai import OpenAIModelProfile
-from pydantic_ai.providers import Provider, infer_provider
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._run_context import RunContext
+from .._thinking_part import split_content_into_text_and_thinking
+from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
+from ..builtin_tools import CodeExecutionTool, WebSearchTool
+from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -36,17 +39,12 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles.openai import OpenAIModelProfile
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI, AsyncStream, NotGiven
@@ -62,6 +60,11 @@ try:
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
+    from openai.types.chat.completion_create_params import (
+        WebSearchOptions,
+        WebSearchOptionsUserLocation,
+        WebSearchOptionsUserLocationApproximate,
+    )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.shared import ReasoningEffort
@@ -119,10 +122,10 @@ class OpenAIModelSettings(ModelSettings, total=False):
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
-    openai_service_tier: Literal['auto', 'default', 'flex']
+    openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
     """The service tier to use for the model request.
 
-    Currently supported values are `auto`, `default`, and `flex`.
+    Currently supported values are `auto`, `default`, `flex`, and `priority`.
     For more information, see [OpenAI's service tiers documentation](https://platform.openai.com/docs/api-reference/chat/object#chat/object-service_tier).
     """
 
@@ -190,7 +193,17 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku', 'github'
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'moonshotai',
+            'vercel',
+            'grok',
+            'fireworks',
+            'together',
+            'heroku',
+            'github',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -243,13 +256,14 @@ class OpenAIModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response)
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -287,9 +301,14 @@ class OpenAIModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
+        web_search_options = self._get_web_search_options(model_request_parameters)
+
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        elif (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+        ):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -330,6 +349,7 @@ class OpenAIModel(Model):
                 seed=model_settings.get('seed', NOT_GIVEN),
                 reasoning_effort=model_settings.get('openai_reasoning_effort', NOT_GIVEN),
                 user=model_settings.get('openai_user', NOT_GIVEN),
+                web_search_options=web_search_options or NOT_GIVEN,
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
                 prediction=model_settings.get('openai_prediction', NOT_GIVEN),
                 temperature=sampling_settings.get('temperature', NOT_GIVEN),
@@ -345,11 +365,28 @@ class OpenAIModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
-    def _process_response(self, response: chat.ChatCompletion) -> ModelResponse:
+    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
-        timestamp = number_to_datetime(response.created)
+        # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
+        # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
+        # * if the endpoint returns plain text, the return type is a string
+        # Thus we validate it fully here.
+        if not isinstance(response, chat.ChatCompletion):
+            raise UnexpectedModelBehavior('Invalid response from OpenAI chat completions endpoint, expected JSON data')
+
+        if response.created:
+            timestamp = number_to_datetime(response.created)
+        else:
+            timestamp = _now_utc()
+            response.created = int(timestamp.timestamp())
+
+        try:
+            response = chat.ChatCompletion.model_validate(response.model_dump())
+        except ValidationError as e:
+            raise UnexpectedModelBehavior(f'Invalid response from OpenAI chat completions endpoint: {e}') from e
+
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
         # The `reasoning_content` is only present in DeepSeek models.
@@ -376,7 +413,7 @@ class OpenAIModel(Model):
             }
 
         if choice.message.content is not None:
-            items.extend(split_content_into_text_and_thinking(choice.message.content))
+            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
@@ -391,7 +428,9 @@ class OpenAIModel(Model):
             vendor_id=response.id,
         )
 
-    async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
+    ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
@@ -401,16 +440,30 @@ class OpenAIModel(Model):
             )
 
         return OpenAIStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
+            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):  # pragma: no branch
+                if tool.user_location:
+                    return WebSearchOptions(
+                        search_context_size=tool.search_context_size,
+                        user_location=WebSearchOptionsUserLocation(
+                            type='approximate',
+                            approximate=WebSearchOptionsUserLocationApproximate(**tool.user_location),
+                        ),
+                    )
+                return WebSearchOptions(search_context_size=tool.search_context_size)
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                raise UserError('`CodeExecutionTool` is not supported by OpenAI')
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
@@ -432,6 +485,9 @@ class OpenAIModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    # OpenAI doesn't return built-in tool calls
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        pass
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -647,13 +703,14 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._responses_create(
             messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response)
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -680,7 +737,9 @@ class OpenAIResponsesModel(Model):
         )
 
     async def _process_streamed_response(
-        self, response: AsyncStream[responses.ResponseStreamEvent]
+        self,
+        response: AsyncStream[responses.ResponseStreamEvent],
+        model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -690,6 +749,7 @@ class OpenAIResponsesModel(Model):
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
         return OpenAIResponsesStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.response.created_at),
@@ -721,7 +781,7 @@ class OpenAIResponsesModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
         tools = self._get_tools(model_request_parameters)
-        tools = list(model_settings.get('openai_builtin_tools', [])) + tools
+        tools = self._get_builtin_tools(model_request_parameters) + tools
 
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
@@ -772,6 +832,7 @@ class OpenAIResponsesModel(Model):
                 top_p=sampling_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
+                service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
@@ -781,7 +842,7 @@ class OpenAIResponsesModel(Model):
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
     def _get_reasoning(self, model_settings: OpenAIResponsesModelSettings) -> Reasoning | NotGiven:
         reasoning_effort = model_settings.get('openai_reasoning_effort', None)
@@ -803,9 +864,22 @@ class OpenAIResponsesModel(Model):
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
+        tools: list[responses.ToolParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                web_search_tool = responses.WebSearchToolParam(
+                    type='web_search_preview', search_context_size=tool.search_context_size
+                )
+                if tool.user_location:
+                    web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
+                        type='approximate', **tool.user_location
+                    )
+                tools.append(web_search_tool)
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
@@ -862,6 +936,9 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
+                    # OpenAI doesn't return built-in tool calls
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                        pass
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
                         # please open an issue. The below code is the code to send thinking to the provider.
@@ -977,6 +1054,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for OpenAI models."""
 
     _model_name: OpenAIModelName
+    _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
 
@@ -991,8 +1069,14 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content is not None:
-                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+            if content:
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             # Handle reasoning part of the response, present in DeepSeek models
             if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
@@ -1031,6 +1115,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
+            # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
@@ -1082,6 +1167,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
+                elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
+                    pass
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1108,10 +1195,30 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     signature=chunk.item_id,
                 )
 
+            # TODO(Marcelo): We should support annotations in the future.
+            elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
+                pass  # there's nothing we need to do here
+
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                yield self._parts_manager.handle_text_delta(vendor_part_id=chunk.content_index, content=chunk.delta)
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id=chunk.content_index, content=chunk.delta
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             elif isinstance(chunk, responses.ResponseTextDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseWebSearchCallInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseWebSearchCallSearchingEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseWebSearchCallCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseAudioDeltaEvent):  # pragma: lax no cover
                 pass  # there's nothing we need to do here
 
             else:  # pragma: no cover

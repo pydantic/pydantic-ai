@@ -1,4 +1,5 @@
 # pyright: reportPrivateUsage=false
+# pyright: reportDeprecated=false
 from __future__ import annotations as _annotations
 
 import datetime
@@ -60,7 +61,11 @@ from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import ClientWithHandler, IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`GoogleGLAProvider` is deprecated.:DeprecationWarning'),
+]
 
 
 async def test_model_simple(allow_model_requests: None):
@@ -194,7 +199,7 @@ async def test_require_response_tool(allow_model_requests: None):
 
 async def test_json_def_replaced(allow_model_requests: None):
     class Axis(BaseModel):
-        label: str
+        label: str = Field(default='<unlabeled axis>', description='The label of the axis')
 
     class Chart(BaseModel):
         x_axis: Axis
@@ -213,8 +218,14 @@ async def test_json_def_replaced(allow_model_requests: None):
         {
             '$defs': {
                 'Axis': {
-                    'properties': {'label': {'title': 'Label', 'type': 'string'}},
-                    'required': ['label'],
+                    'properties': {
+                        'label': {
+                            'default': '<unlabeled axis>',
+                            'description': 'The label of the axis',
+                            'title': 'Label',
+                            'type': 'string',
+                        }
+                    },
                     'title': 'Axis',
                     'type': 'object',
                 },
@@ -268,17 +279,27 @@ async def test_json_def_replaced(allow_model_requests: None):
                                 'items': {
                                     'properties': {
                                         'lat': {'type': 'number'},
-                                        'lng': {'type': 'number'},
+                                        'lng': {'default': 1.1, 'type': 'number'},
                                         'chart': {
                                             'properties': {
                                                 'x_axis': {
-                                                    'properties': {'label': {'type': 'string'}},
-                                                    'required': ['label'],
+                                                    'properties': {
+                                                        'label': {
+                                                            'default': '<unlabeled axis>',
+                                                            'description': 'The label of the axis',
+                                                            'type': 'string',
+                                                        }
+                                                    },
                                                     'type': 'object',
                                                 },
                                                 'y_axis': {
-                                                    'properties': {'label': {'type': 'string'}},
-                                                    'required': ['label'],
+                                                    'properties': {
+                                                        'label': {
+                                                            'default': '<unlabeled axis>',
+                                                            'description': 'The label of the axis',
+                                                            'type': 'string',
+                                                        }
+                                                    },
                                                     'type': 'object',
                                                 },
                                             },
@@ -344,24 +365,25 @@ async def test_json_def_enum(allow_model_requests: None):
 
     # This tests that the enum values are properly converted to strings for Gemini
     assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
                         'properties': {
                             'progress': {
                                 'items': {'enum': ['100', '80', '60', '40', '20'], 'type': 'string'},
                                 'type': 'array',
                                 'nullable': True,
+                                'default': None,
                             }
                         },
                         'type': 'object',
                     },
-                )
+                }
             ]
-        )
+        }
     )
 
 
@@ -390,12 +412,12 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
     )
     mrp = m.customize_request_parameters(mrp)
     assert m._get_tools(mrp) == snapshot(
-        _GeminiTools(
-            function_declarations=[
-                _GeminiFunction(
-                    name='result',
-                    description='This is the tool for the final Result',
-                    parameters={
+        {
+            'function_declarations': [
+                {
+                    'name': 'result',
+                    'description': 'This is the tool for the final Result',
+                    'parameters': {
                         'properties': {
                             'op_location': {
                                 'properties': {
@@ -405,13 +427,14 @@ async def test_json_def_replaced_any_of(allow_model_requests: None):
                                 'required': ['lat', 'lng'],
                                 'nullable': True,
                                 'type': 'object',
+                                'default': None,
                             }
                         },
                         'type': 'object',
                     },
-                )
+                }
             ]
-        )
+        }
     )
 
 

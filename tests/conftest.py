@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
 else:
     from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
@@ -58,6 +59,44 @@ else:
         if 'delta' not in kwargs:  # pragma: no branch
             kwargs['delta'] = 10
         return _IsNow(*args, **kwargs)
+
+    class IsSameStr(IsStr):
+        """
+        Checks if the value is a string, and that subsequent uses have the same value as the first one.
+
+        Example:
+        ```python {test="skip"}
+        assert events == [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '(no tool calls)',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+        ```
+        """
+
+        _first_other: str | None = None
+
+        def equals(self, other: Any) -> bool:
+            if self._first_other is None:
+                self._first_other = other
+                return super().equals(other)
+            else:
+                return other == self._first_other
 
 
 class TestEnv:
@@ -212,7 +251,7 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 def mock_vcr_aiohttp_content(mocker: MockerFixture):
     try:
         from vcr.stubs import aiohttp_stubs
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         return
 
     # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
@@ -377,13 +416,13 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider():
+async def vertex_provider():  # pragma: lax no cover
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):  # pragma: lax no cover
+    if not os.getenv('CI', False):
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from google import genai
+        from google.genai import Client
 
         from pydantic_ai.providers.google import GoogleProvider
     except ImportError:  # pragma: lax no cover
@@ -391,7 +430,7 @@ async def vertex_provider():
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'us-central1')
-    client = genai.Client(vertexai=True, project=project, location=location)
+    client = Client(vertexai=True, project=project, location=location)
 
     try:
         yield GoogleProvider(client=client)
@@ -413,7 +452,11 @@ def model(
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
-        if request.param == 'openai':
+        if request.param == 'test':
+            from pydantic_ai.models.test import TestModel
+
+            return TestModel()
+        elif request.param == 'openai':
             from pydantic_ai.models.openai import OpenAIModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -439,10 +482,10 @@ def model(
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
         elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider
+            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
+            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
 
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider

@@ -11,12 +11,15 @@ import pydantic_core
 from httpx import Timeout
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .._run_context import RunContext
+from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -52,6 +55,7 @@ try:
         CompletionChunk as MistralCompletionChunk,
         Content as MistralContent,
         ContentChunk as MistralContentChunk,
+        DocumentURLChunk as MistralDocumentURLChunk,
         FunctionCall as MistralFunctionCall,
         ImageURL as MistralImageURL,
         ImageURLChunk as MistralImageURLChunk,
@@ -172,6 +176,7 @@ class MistralModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
@@ -179,7 +184,7 @@ class MistralModel(Model):
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(model_request_parameters.output_tools, response)
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     @property
     def model_name(self) -> MistralModelName:
@@ -198,6 +203,11 @@ class MistralModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
         """Make a non-streaming request to the model."""
+        # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
+        # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
+        if model_request_parameters.builtin_tools:
+            raise UserError('Mistral does not support built-in tools')
+
         try:
             response = await self.client.chat.complete_async(
                 model=str(self._model_name),
@@ -217,7 +227,7 @@ class MistralModel(Model):
         except SDKError as e:
             if (status_code := e.status_code) >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
         assert response, 'A unexpected empty response from Mistral.'
         return response
@@ -232,11 +242,12 @@ class MistralModel(Model):
         response: MistralEventStreamAsync[MistralCompletionEvent] | None
         mistral_messages = self._map_messages(messages)
 
-        if (
-            model_request_parameters.output_tools
-            and model_request_parameters.function_tools
-            or model_request_parameters.function_tools
-        ):
+        # TODO(Marcelo): We need to replace the current MistralAI client to use the beta client.
+        # See https://docs.mistral.ai/agents/connectors/websearch/ to support web search.
+        if model_request_parameters.builtin_tools:
+            raise UserError('Mistral does not support built-in tools')
+
+        if model_request_parameters.function_tools:
             # Function Calling
             response = await self.client.chat.stream_async(
                 model=str(self._model_name),
@@ -304,16 +315,13 @@ class MistralModel(Model):
 
         Returns None if both function_tools and output_tools are empty.
         """
-        all_tools: list[ToolDefinition] = (
-            model_request_parameters.function_tools + model_request_parameters.output_tools
-        )
         tools = [
             MistralTool(
                 function=MistralFunction(
                     name=r.name, parameters=r.parameters_json_schema, description=r.description or ''
                 )
             )
-            for r in all_tools
+            for r in model_request_parameters.tool_defs.values()
         ]
         return tools if tools else None
 
@@ -332,7 +340,7 @@ class MistralModel(Model):
 
         parts: list[ModelResponsePart] = []
         if text := _map_content(content):
-            parts.extend(split_content_into_text_and_thinking(text))
+            parts.extend(split_content_into_text_and_thinking(text, self.profile.thinking_tags))
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
@@ -345,8 +353,8 @@ class MistralModel(Model):
 
     async def _process_streamed_response(
         self,
-        output_tools: list[ToolDefinition],
         response: MistralEventStreamAsync[MistralCompletionEvent],
+        model_request_parameters: ModelRequestParameters,
     ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -362,10 +370,10 @@ class MistralModel(Model):
             timestamp = _now_utc()
 
         return MistralStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _response=peekable_response,
             _model_name=self._model_name,
             _timestamp=timestamp,
-            _output_tools={c.name: c for c in output_tools},
         )
 
     @staticmethod
@@ -501,6 +509,9 @@ class MistralModel(Model):
                         pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
+                    elif isinstance(part, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from mistral
+                        pass
                     else:
                         assert_never(part)
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
@@ -539,10 +550,19 @@ class MistralModel(Model):
                     if item.is_image:
                         image_url = MistralImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
                         content.append(MistralImageURLChunk(image_url=image_url, type='image_url'))
+                    elif item.media_type == 'application/pdf':
+                        content.append(
+                            MistralDocumentURLChunk(
+                                document_url=f'data:application/pdf;base64,{base64_encoded}', type='document_url'
+                            )
+                        )
                     else:
-                        raise RuntimeError('Only image binary content is supported for Mistral.')
+                        raise RuntimeError('BinaryContent other than image or PDF is not supported in Mistral.')
                 elif isinstance(item, DocumentUrl):
-                    raise RuntimeError('DocumentUrl is not supported in Mistral.')  # pragma: no cover
+                    if item.media_type == 'application/pdf':
+                        content.append(MistralDocumentURLChunk(document_url=item.url, type='document_url'))
+                    else:
+                        raise RuntimeError('DocumentUrl other than PDF is not supported in Mistral.')
                 elif isinstance(item, VideoUrl):
                     raise RuntimeError('VideoUrl is not supported in Mistral.')
                 else:  # pragma: no cover
@@ -560,7 +580,6 @@ class MistralStreamedResponse(StreamedResponse):
     _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
-    _output_tools: dict[str, ToolDefinition]
 
     _delta_content: str = field(default='', init=False)
 
@@ -579,10 +598,11 @@ class MistralStreamedResponse(StreamedResponse):
             text = _map_content(content)
             if text:
                 # Attempt to produce an output tool call from the received text
-                if self._output_tools:
+                output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
+                if output_tools:
                     self._delta_content += text
                     # TODO: Port to native "manual JSON" mode
-                    maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, self._output_tools)
+                    maybe_tool_call_part = self._try_get_output_tool_from_text(self._delta_content, output_tools)
                     if maybe_tool_call_part:
                         yield self._parts_manager.handle_tool_call_part(
                             vendor_part_id='output',
@@ -591,7 +611,9 @@ class MistralStreamedResponse(StreamedResponse):
                             tool_call_id=maybe_tool_call_part.tool_call_id,
                         )
                 else:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=text)
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
             # Handle the explicit tool calls
             for index, dtc in enumerate(choice.delta.tool_calls or []):

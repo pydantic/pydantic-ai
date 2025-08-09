@@ -4,6 +4,8 @@
     options:
         members:
             - Agent
+            - AbstractAgent
+            - WrapperAgent
             - AgentRun
             - AgentRunResult
             - EndStrategy

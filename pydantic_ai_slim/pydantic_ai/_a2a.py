@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 
-from .agent import Agent, AgentDepsT, OutputDataT
+from .agent import AbstractAgent, AgentDepsT, OutputDataT
 
 # AgentWorker output type needs to be invariant for use in both parameter and return positions
 WorkerOutputT = TypeVar('WorkerOutputT')
@@ -59,18 +59,20 @@ except ImportError as _import_error:
 
 
 @asynccontextmanager
-async def worker_lifespan(app: FastA2A, worker: Worker) -> AsyncIterator[None]:
+async def worker_lifespan(
+    app: FastA2A, worker: Worker, agent: AbstractAgent[AgentDepsT, OutputDataT]
+) -> AsyncIterator[None]:
     """Custom lifespan that runs the worker during application startup.
 
     This ensures the worker is started and ready to process tasks as soon as the application starts.
     """
-    async with app.task_manager:
+    async with app.task_manager, agent:
         async with worker.run():
             yield
 
 
 def agent_to_a2a(
-    agent: Agent[AgentDepsT, OutputDataT],
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
     *,
     storage: Storage | None = None,
     broker: Broker | None = None,
@@ -93,7 +95,7 @@ def agent_to_a2a(
     broker = broker or InMemoryBroker()
     worker = AgentWorker(agent=agent, broker=broker, storage=storage)
 
-    lifespan = lifespan or partial(worker_lifespan, worker=worker)
+    lifespan = lifespan or partial(worker_lifespan, worker=worker, agent=agent)
 
     return FastA2A(
         storage=storage,
@@ -116,7 +118,7 @@ def agent_to_a2a(
 class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]):
     """A worker that uses an agent to execute tasks."""
 
-    agent: Agent[AgentDepsT, WorkerOutputT]
+    agent: AbstractAgent[AgentDepsT, WorkerOutputT]
 
     async def run_task(self, params: TaskSendParams) -> None:
         task = await self.storage.load_task(params['id'])

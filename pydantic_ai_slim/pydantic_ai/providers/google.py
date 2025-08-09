@@ -3,6 +3,8 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, overload
 
+import httpx
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import get_user_agent
 from pydantic_ai.profiles import ModelProfile
@@ -10,8 +12,9 @@ from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 
 try:
-    from google import genai
     from google.auth.credentials import Credentials
+    from google.genai import Client
+    from google.genai.types import HttpOptionsDict
 except ImportError as _import_error:
     raise ImportError(
         'Please install the `google-genai` package to use the Google provider, '
@@ -19,7 +22,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-class GoogleProvider(Provider[genai.Client]):
+class GoogleProvider(Provider[Client]):
     """Provider for Google."""
 
     @property
@@ -31,7 +34,7 @@ class GoogleProvider(Provider[genai.Client]):
         return str(self._client._api_client._http_options.base_url)  # type: ignore[reportPrivateUsage]
 
     @property
-    def client(self) -> genai.Client:
+    def client(self) -> Client:
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
@@ -50,7 +53,7 @@ class GoogleProvider(Provider[genai.Client]):
     ) -> None: ...
 
     @overload
-    def __init__(self, *, client: genai.Client) -> None: ...
+    def __init__(self, *, client: Client) -> None: ...
 
     @overload
     def __init__(self, *, vertexai: bool = False) -> None: ...
@@ -62,7 +65,7 @@ class GoogleProvider(Provider[genai.Client]):
         credentials: Credentials | None = None,
         project: str | None = None,
         location: VertexAILocation | Literal['global'] | None = None,
-        client: genai.Client | None = None,
+        client: Client | None = None,
         vertexai: bool | None = None,
     ) -> None:
         """Create a new Google provider.
@@ -89,19 +92,19 @@ class GoogleProvider(Provider[genai.Client]):
             if vertexai is None:
                 vertexai = bool(location or project or credentials)
 
+            http_options: HttpOptionsDict = {
+                'headers': {'User-Agent': get_user_agent()},
+                'async_client_args': {'transport': httpx.AsyncHTTPTransport()},
+            }
             if not vertexai:
                 if api_key is None:
                     raise UserError(  # pragma: no cover
                         'Set the `GOOGLE_API_KEY` environment variable or pass it via `GoogleProvider(api_key=...)`'
                         'to use the Google Generative Language API.'
                     )
-                self._client = genai.Client(
-                    vertexai=vertexai,
-                    api_key=api_key,
-                    http_options={'headers': {'User-Agent': get_user_agent()}},
-                )
+                self._client = Client(vertexai=vertexai, api_key=api_key, http_options=http_options)
             else:
-                self._client = genai.Client(
+                self._client = Client(
                     vertexai=vertexai,
                     project=project or os.environ.get('GOOGLE_CLOUD_PROJECT'),
                     # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
@@ -111,7 +114,7 @@ class GoogleProvider(Provider[genai.Client]):
                     # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
                     location=location or os.environ.get('GOOGLE_CLOUD_LOCATION') or 'us-central1',
                     credentials=credentials,
-                    http_options={'headers': {'User-Agent': get_user_agent()}},
+                    http_options=http_options,
                 )
         else:
             self._client = client

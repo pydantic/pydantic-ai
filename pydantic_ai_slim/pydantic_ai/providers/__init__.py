@@ -62,18 +62,22 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .openrouter import OpenRouterProvider
 
         return OpenRouterProvider
+    elif provider == 'vercel':
+        from .vercel import VercelProvider
+
+        return VercelProvider
     elif provider == 'azure':
         from .azure import AzureProvider
 
         return AzureProvider
     elif provider == 'google-vertex':
-        from .google_vertex import GoogleVertexProvider
+        from .google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]
 
-        return GoogleVertexProvider
+        return GoogleVertexProvider  # type: ignore[reportDeprecated]
     elif provider == 'google-gla':
-        from .google_gla import GoogleGLAProvider
+        from .google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
 
-        return GoogleGLAProvider
+        return GoogleGLAProvider  # type: ignore[reportDeprecated]
     # NOTE: We don't test because there are many ways the `boto3.client` can retrieve the credentials.
     elif provider == 'bedrock':
         from .bedrock import BedrockProvider
@@ -99,6 +103,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .grok import GrokProvider
 
         return GrokProvider
+    elif provider == 'moonshotai':
+        from .moonshotai import MoonshotAIProvider
+
+        return MoonshotAIProvider
     elif provider == 'fireworks':
         from .fireworks import FireworksProvider
 

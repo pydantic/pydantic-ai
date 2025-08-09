@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import functools
+import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import field, replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -37,7 +39,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 # after mcp imports so any import error maps to this file, not _mcp.py
-from . import _mcp, exceptions, messages, models
+from . import _mcp, _utils, exceptions, messages, models
 
 __all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
@@ -54,16 +56,17 @@ class MCPServer(AbstractToolset[Any], ABC):
     See <https://modelcontextprotocol.io> for more information.
     """
 
-    # these fields should be re-defined by dataclass subclasses so they appear as fields {
-    tool_prefix: str | None = None
-    log_level: mcp_types.LoggingLevel | None = None
-    log_handler: LoggingFnT | None = None
-    timeout: float = 5
-    process_tool_call: ProcessToolCallback | None = None
-    allow_sampling: bool = True
-    max_retries: int = 1
-    sampling_model: models.Model | None = None
-    # } end of "abstract fields"
+    tool_prefix: str | None
+    log_level: mcp_types.LoggingLevel | None
+    log_handler: LoggingFnT | None
+    timeout: float
+    read_timeout: float
+    process_tool_call: ProcessToolCallback | None
+    allow_sampling: bool
+    sampling_model: models.Model | None
+    max_retries: int
+
+    _id: str | None
 
     _enter_lock: Lock = field(compare=False)
     _running_count: int
@@ -72,6 +75,34 @@ class MCPServer(AbstractToolset[Any], ABC):
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
+
+    def __init__(
+        self,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        read_timeout: float = 5 * 60,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        sampling_model: models.Model | None = None,
+        max_retries: int = 1,
+        *,
+        id: str | None = None,
+    ):
+        self.tool_prefix = tool_prefix
+        self.log_level = log_level
+        self.log_handler = log_handler
+        self.timeout = timeout
+        self.read_timeout = read_timeout
+        self.process_tool_call = process_tool_call
+        self.allow_sampling = allow_sampling
+        self.sampling_model = sampling_model
+        self.max_retries = max_retries
+
+        self._id = id or tool_prefix
+
+        self.__post_init__()
 
     def __post_init__(self):
         self._enter_lock = Lock()
@@ -93,12 +124,19 @@ class MCPServer(AbstractToolset[Any], ABC):
         yield
 
     @property
-    def name(self) -> str:
-        return repr(self)
+    def id(self) -> str | None:
+        return self._id
+
+    @property
+    def label(self) -> str:
+        if self.id:
+            return super().label  # pragma: no cover
+        else:
+            return repr(self)
 
     @property
     def tool_name_conflict_hint(self) -> str:
-        return 'Consider setting `tool_prefix` to avoid name conflicts.'
+        return 'Set the `tool_prefix` attribute to avoid name conflicts.'
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Retrieve tools that are currently active on the server.
@@ -148,7 +186,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        content = [self._map_tool_result_part(part) for part in result.content]
+        content = [await self._map_tool_result_part(part) for part in result.content]
 
         if result.isError:
             text = '\n'.join(str(part) for part in content)
@@ -174,19 +212,24 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     async def get_tools(self, ctx: RunContext[Any]) -> dict[str, ToolsetTool[Any]]:
         return {
-            name: ToolsetTool(
-                toolset=self,
-                tool_def=ToolDefinition(
+            name: self.tool_for_tool_def(
+                ToolDefinition(
                     name=name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
                 ),
-                max_retries=self.max_retries,
-                args_validator=TOOL_SCHEMA_VALIDATOR,
             )
             for mcp_tool in await self.list_tools()
             if (name := f'{self.tool_prefix}_{mcp_tool.name}' if self.tool_prefix else mcp_tool.name)
         }
+
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[Any]:
+        return ToolsetTool(
+            toolset=self,
+            tool_def=tool_def,
+            max_retries=self.max_retries,
+            args_validator=TOOL_SCHEMA_VALIDATOR,
+        )
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
@@ -198,24 +241,24 @@ class MCPServer(AbstractToolset[Any], ABC):
         """
         async with self._enter_lock:
             if self._running_count == 0:
-                self._exit_stack = AsyncExitStack()
+                async with AsyncExitStack() as exit_stack:
+                    self._read_stream, self._write_stream = await exit_stack.enter_async_context(self.client_streams())
+                    client = ClientSession(
+                        read_stream=self._read_stream,
+                        write_stream=self._write_stream,
+                        sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                        logging_callback=self.log_handler,
+                        read_timeout_seconds=timedelta(seconds=self.read_timeout),
+                    )
+                    self._client = await exit_stack.enter_async_context(client)
 
-                self._read_stream, self._write_stream = await self._exit_stack.enter_async_context(
-                    self.client_streams()
-                )
-                client = ClientSession(
-                    read_stream=self._read_stream,
-                    write_stream=self._write_stream,
-                    sampling_callback=self._sampling_callback if self.allow_sampling else None,
-                    logging_callback=self.log_handler,
-                )
-                self._client = await self._exit_stack.enter_async_context(client)
+                    with anyio.fail_after(self.timeout):
+                        await self._client.initialize()
 
-                with anyio.fail_after(self.timeout):
-                    await self._client.initialize()
+                        if log_level := self.log_level:
+                            await self._client.set_logging_level(log_level)
 
-                    if log_level := self.log_level:
-                        await self._client.set_logging_level(log_level)
+                    self._exit_stack = exit_stack.pop_all()
             self._running_count += 1
         return self
 
@@ -258,8 +301,8 @@ class MCPServer(AbstractToolset[Any], ABC):
             model=self.sampling_model.model_name,
         )
 
-    def _map_tool_result_part(
-        self, part: mcp_types.Content
+    async def _map_tool_result_part(
+        self, part: mcp_types.ContentBlock
     ) -> str | messages.BinaryContent | dict[str, Any] | list[Any]:
         # See https://github.com/jlowin/fastmcp/blob/main/docs/servers/tools.mdx#return-values
 
@@ -281,20 +324,30 @@ class MCPServer(AbstractToolset[Any], ABC):
             )  # pragma: no cover
         elif isinstance(part, mcp_types.EmbeddedResource):
             resource = part.resource
-            if isinstance(resource, mcp_types.TextResourceContents):
-                return resource.text
-            elif isinstance(resource, mcp_types.BlobResourceContents):
-                return messages.BinaryContent(
-                    data=base64.b64decode(resource.blob),
-                    media_type=resource.mimeType or 'application/octet-stream',
-                )
-            else:
-                assert_never(resource)
+            return self._get_content(resource)
+        elif isinstance(part, mcp_types.ResourceLink):
+            resource_result: mcp_types.ReadResourceResult = await self._client.read_resource(part.uri)
+            return (
+                self._get_content(resource_result.contents[0])
+                if len(resource_result.contents) == 1
+                else [self._get_content(resource) for resource in resource_result.contents]
+            )
         else:
             assert_never(part)
 
+    def _get_content(
+        self, resource: mcp_types.TextResourceContents | mcp_types.BlobResourceContents
+    ) -> str | messages.BinaryContent:
+        if isinstance(resource, mcp_types.TextResourceContents):
+            return resource.text
+        elif isinstance(resource, mcp_types.BlobResourceContents):
+            return messages.BinaryContent(
+                data=base64.b64decode(resource.blob), media_type=resource.mimeType or 'application/octet-stream'
+            )
+        else:
+            assert_never(resource)
 
-@dataclass
+
 class MCPServerStdio(MCPServer):
     """Runs an MCP server in a subprocess and communicates with it over stdin/stdout.
 
@@ -339,18 +392,18 @@ class MCPServerStdio(MCPServer):
     args: Sequence[str]
     """The arguments to pass to the command."""
 
-    env: dict[str, str] | None = None
+    env: dict[str, str] | None
     """The environment variables the CLI server will have access to.
 
     By default the subprocess will not inherit any environment variables from the parent process.
     If you want to inherit the environment variables from the parent process, use `env=os.environ`.
     """
 
-    cwd: str | Path | None = None
+    cwd: str | Path | None
     """The working directory to use when spawning the process."""
 
     # last fields are re-defined from the parent class so they appear as fields
-    tool_prefix: str | None = None
+    tool_prefix: str | None
     """A prefix to add to all tools that are registered with the server.
 
     If not empty, will include a trailing underscore(`_`).
@@ -358,7 +411,7 @@ class MCPServerStdio(MCPServer):
     e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
-    log_level: mcp_types.LoggingLevel | None = None
+    log_level: mcp_types.LoggingLevel | None
     """The log level to set when connecting to the server, if any.
 
     See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
@@ -366,23 +419,85 @@ class MCPServerStdio(MCPServer):
     If `None`, no log level will be set.
     """
 
-    log_handler: LoggingFnT | None = None
+    log_handler: LoggingFnT | None
     """A handler for logging messages from the server."""
 
-    timeout: float = 5
+    timeout: float
     """The timeout in seconds to wait for the client to initialize."""
 
-    process_tool_call: ProcessToolCallback | None = None
+    read_timeout: float
+    """Maximum time in seconds to wait for new messages before timing out.
+
+    This timeout applies to the long-lived connection after it's established.
+    If no new messages are received within this time, the connection will be considered stale
+    and may be closed. Defaults to 5 minutes (300 seconds).
+    """
+
+    process_tool_call: ProcessToolCallback | None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
-    allow_sampling: bool = True
+    allow_sampling: bool
     """Whether to allow MCP sampling through this client."""
 
-    max_retries: int = 1
+    sampling_model: models.Model | None
+    """The model to use for sampling."""
+
+    max_retries: int
     """The maximum number of times to retry a tool call."""
 
-    sampling_model: models.Model | None = None
-    """The model to use for sampling."""
+    def __init__(
+        self,
+        command: str,
+        args: Sequence[str],
+        env: dict[str, str] | None = None,
+        cwd: str | Path | None = None,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        read_timeout: float = 5 * 60,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        sampling_model: models.Model | None = None,
+        max_retries: int = 1,
+        *,
+        id: str | None = None,
+    ):
+        """Build a new MCP server.
+
+        Args:
+            command: The command to run.
+            args: The arguments to pass to the command.
+            env: The environment variables to set in the subprocess.
+            cwd: The working directory to use when spawning the process.
+            tool_prefix: A prefix to add to all tools that are registered with the server.
+            log_level: The log level to set when connecting to the server, if any.
+            log_handler: A handler for logging messages from the server.
+            timeout: The timeout in seconds to wait for the client to initialize.
+            read_timeout: Maximum time in seconds to wait for new messages before timing out.
+            process_tool_call: Hook to customize tool calling and optionally pass extra metadata.
+            allow_sampling: Whether to allow MCP sampling through this client.
+            sampling_model: The model to use for sampling.
+            max_retries: The maximum number of times to retry a tool call.
+            id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
+        """
+        self.command = command
+        self.args = args
+        self.env = env
+        self.cwd = cwd
+
+        super().__init__(
+            tool_prefix,
+            log_level,
+            log_handler,
+            timeout,
+            read_timeout,
+            process_tool_call,
+            allow_sampling,
+            sampling_model,
+            max_retries,
+            id=id,
+        )
 
     @asynccontextmanager
     async def client_streams(
@@ -398,15 +513,20 @@ class MCPServerStdio(MCPServer):
             yield read_stream, write_stream
 
     def __repr__(self) -> str:
-        return f'MCPServerStdio(command={self.command!r}, args={self.args!r}, tool_prefix={self.tool_prefix!r})'
+        repr_args = [
+            f'command={self.command!r}',
+            f'args={self.args!r}',
+        ]
+        if self.id:
+            repr_args.append(f'id={self.id!r}')  # pragma: no cover
+        return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
 
-@dataclass
 class _MCPServerHTTP(MCPServer):
     url: str
     """The URL of the endpoint on the MCP server."""
 
-    headers: dict[str, Any] | None = None
+    headers: dict[str, Any] | None
     """Optional HTTP headers to be sent with each request to the endpoint.
 
     These headers will be passed directly to the underlying `httpx.AsyncClient`.
@@ -418,7 +538,7 @@ class _MCPServerHTTP(MCPServer):
         See [`MCPServerHTTP.http_client`][pydantic_ai.mcp.MCPServerHTTP.http_client] for more information.
     """
 
-    http_client: httpx.AsyncClient | None = None
+    http_client: httpx.AsyncClient | None
     """An `httpx.AsyncClient` to use with the endpoint.
 
     This client may be configured to use customized connection parameters like self-signed certificates.
@@ -438,16 +558,8 @@ class _MCPServerHTTP(MCPServer):
         ```
     """
 
-    sse_read_timeout: float = 5 * 60
-    """Maximum time in seconds to wait for new SSE messages before timing out.
-
-    This timeout applies to the long-lived SSE connection after it's established.
-    If no new messages are received within this time, the connection will be considered stale
-    and may be closed. Defaults to 5 minutes (300 seconds).
-    """
-
     # last fields are re-defined from the parent class so they appear as fields
-    tool_prefix: str | None = None
+    tool_prefix: str | None
     """A prefix to add to all tools that are registered with the server.
 
     If not empty, will include a trailing underscore (`_`).
@@ -455,7 +567,7 @@ class _MCPServerHTTP(MCPServer):
     For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
     """
 
-    log_level: mcp_types.LoggingLevel | None = None
+    log_level: mcp_types.LoggingLevel | None
     """The log level to set when connecting to the server, if any.
 
     See <https://modelcontextprotocol.io/introduction#logging> for more details.
@@ -463,27 +575,101 @@ class _MCPServerHTTP(MCPServer):
     If `None`, no log level will be set.
     """
 
-    log_handler: LoggingFnT | None = None
+    log_handler: LoggingFnT | None
     """A handler for logging messages from the server."""
 
-    timeout: float = 5
+    timeout: float
     """Initial connection timeout in seconds for establishing the connection.
 
     This timeout applies to the initial connection setup and handshake.
     If the connection cannot be established within this time, the operation will fail.
     """
 
-    process_tool_call: ProcessToolCallback | None = None
+    read_timeout: float
+    """Maximum time in seconds to wait for new messages before timing out.
+
+    This timeout applies to the long-lived connection after it's established.
+    If no new messages are received within this time, the connection will be considered stale
+    and may be closed. Defaults to 5 minutes (300 seconds).
+    """
+
+    process_tool_call: ProcessToolCallback | None
     """Hook to customize tool calling and optionally pass extra metadata."""
 
-    allow_sampling: bool = True
+    allow_sampling: bool
     """Whether to allow MCP sampling through this client."""
 
-    max_retries: int = 1
+    sampling_model: models.Model | None
+    """The model to use for sampling."""
+
+    max_retries: int
     """The maximum number of times to retry a tool call."""
 
-    sampling_model: models.Model | None = None
-    """The model to use for sampling."""
+    def __init__(
+        self,
+        *,
+        url: str,
+        headers: dict[str, str] | None = None,
+        http_client: httpx.AsyncClient | None = None,
+        id: str | None = None,
+        tool_prefix: str | None = None,
+        log_level: mcp_types.LoggingLevel | None = None,
+        log_handler: LoggingFnT | None = None,
+        timeout: float = 5,
+        read_timeout: float | None = None,
+        process_tool_call: ProcessToolCallback | None = None,
+        allow_sampling: bool = True,
+        sampling_model: models.Model | None = None,
+        max_retries: int = 1,
+        **_deprecated_kwargs: Any,
+    ):
+        """Build a new MCP server.
+
+        Args:
+            url: The URL of the endpoint on the MCP server.
+            headers: Optional HTTP headers to be sent with each request to the endpoint.
+            http_client: An `httpx.AsyncClient` to use with the endpoint.
+            id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
+            tool_prefix: A prefix to add to all tools that are registered with the server.
+            log_level: The log level to set when connecting to the server, if any.
+            log_handler: A handler for logging messages from the server.
+            timeout: The timeout in seconds to wait for the client to initialize.
+            read_timeout: Maximum time in seconds to wait for new messages before timing out.
+            process_tool_call: Hook to customize tool calling and optionally pass extra metadata.
+            allow_sampling: Whether to allow MCP sampling through this client.
+            sampling_model: The model to use for sampling.
+            max_retries: The maximum number of times to retry a tool call.
+        """
+        if 'sse_read_timeout' in _deprecated_kwargs:
+            if read_timeout is not None:
+                raise TypeError("'read_timeout' and 'sse_read_timeout' cannot be set at the same time.")
+
+            warnings.warn(
+                "'sse_read_timeout' is deprecated, use 'read_timeout' instead.", DeprecationWarning, stacklevel=2
+            )
+            read_timeout = _deprecated_kwargs.pop('sse_read_timeout')
+
+        _utils.validate_empty_kwargs(_deprecated_kwargs)
+
+        if read_timeout is None:
+            read_timeout = 5 * 60
+
+        self.url = url
+        self.headers = headers
+        self.http_client = http_client
+
+        super().__init__(
+            tool_prefix,
+            log_level,
+            log_handler,
+            timeout,
+            read_timeout,
+            process_tool_call,
+            allow_sampling,
+            sampling_model,
+            max_retries,
+            id=id,
+        )
 
     @property
     @abstractmethod
@@ -522,7 +708,7 @@ class _MCPServerHTTP(MCPServer):
             self._transport_client,
             url=self.url,
             timeout=self.timeout,
-            sse_read_timeout=self.sse_read_timeout,
+            sse_read_timeout=self.read_timeout,
         )
 
         if self.http_client is not None:
@@ -546,10 +732,14 @@ class _MCPServerHTTP(MCPServer):
                 yield read_stream, write_stream
 
     def __repr__(self) -> str:  # pragma: no cover
-        return f'{self.__class__.__name__}(url={self.url!r}, tool_prefix={self.tool_prefix!r})'
+        repr_args = [
+            f'url={self.url!r}',
+        ]
+        if self.id:
+            repr_args.append(f'id={self.id!r}')
+        return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
 
-@dataclass
 class MCPServerSSE(_MCPServerHTTP):
     """An MCP server that connects over streamable HTTP connections.
 
@@ -583,7 +773,6 @@ class MCPServerSSE(_MCPServerHTTP):
 
 
 @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
-@dataclass
 class MCPServerHTTP(MCPServerSSE):
     """An MCP server that connects over HTTP using the old SSE transport.
 
@@ -612,7 +801,6 @@ class MCPServerHTTP(MCPServerSSE):
     """
 
 
-@dataclass
 class MCPServerStreamableHTTP(_MCPServerHTTP):
     """An MCP server that connects over HTTP using the Streamable HTTP transport.
 
