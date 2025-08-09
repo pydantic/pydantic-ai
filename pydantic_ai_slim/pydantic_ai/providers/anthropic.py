@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+import sys
 from typing import overload
 
 import httpx
@@ -18,8 +19,13 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
+if sys.version_info >= (3, 10):
+    from typing import TypeAlias
+else:
+    from typing_extensions import TypeAlias
 
-type ASYNC_ANTHROPIC_CLIENT = AsyncAnthropic | AsyncAnthropicBedrock
+
+ASYNC_ANTHROPIC_CLIENT: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock
 
 
 class AnthropicProvider(Provider[ASYNC_ANTHROPIC_CLIENT]):
