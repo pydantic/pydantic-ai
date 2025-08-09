@@ -3,12 +3,10 @@ from __future__ import annotations as _annotations
 import httpx
 import pytest
 
-from pydantic_ai.exceptions import UserError
-
-from ..conftest import TestEnv, try_import
+from ..conftest import try_import
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropic
+    from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
 
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
@@ -24,10 +22,17 @@ def test_anthropic_provider():
     assert provider.client.api_key == 'api-key'
 
 
-def test_anthropic_provider_need_api_key(env: TestEnv) -> None:
-    env.remove('ANTHROPIC_API_KEY')
-    with pytest.raises(UserError, match=r'.*ANTHROPIC_API_KEY.*'):
-        AnthropicProvider()
+def test_anthropic_provider_with_aws_credentials() -> None:
+    provider = AnthropicProvider(
+        aws_secret_key='aws-secret-key',
+        aws_access_key='aws-access-key',
+        aws_region='us-west-2',
+        aws_profile='default',
+        aws_session_token='aws-session-token',
+    )
+    assert provider.name == 'anthropic'
+    assert provider.base_url == 'https://bedrock-runtime.us-west-2.amazonaws.com'
+    assert isinstance(provider.client, AsyncAnthropicBedrock)
 
 
 def test_anthropic_provider_pass_http_client() -> None:

@@ -42,7 +42,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_e
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncAnthropicBedrock
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
         BetaContentBlock,
@@ -85,10 +85,15 @@ T = TypeVar('T')
 
 def test_init():
     m = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key='foobar'))
+    assert isinstance(m.client, AsyncAnthropic)
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'claude-3-5-haiku-latest'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
+    bedrock = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider())
+    assert isinstance(bedrock.client, AsyncAnthropicBedrock)
+    assert m.model_name == 'claude-3-5-haiku-latest'
+    assert m.system == 'anthropic'
 
 
 @dataclass
