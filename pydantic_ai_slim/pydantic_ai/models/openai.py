@@ -172,6 +172,14 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
         middle of the conversation.
     """
 
+    openai_text_verbosity: Literal['low', 'medium', 'high']
+    """Constrains the verbosity of the model's text response.
+
+    Lower values will result in more concise responses, while higher values will
+    result in more verbose responses. Currently supported values are `low`,
+    `medium`, and `high`.
+    """
+
 
 @dataclass(init=False)
 class OpenAIModel(Model):
@@ -802,6 +810,12 @@ class OpenAIResponsesModel(Model):
             model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             text = {'format': {'type': 'json_object'}}
+        
+        # Add verbosity setting to text config if specified
+        if verbosity := model_settings.get('openai_text_verbosity'):
+            if text is None:
+                text = {}
+            text['verbosity'] = verbosity
 
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.

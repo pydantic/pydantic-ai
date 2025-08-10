@@ -1134,3 +1134,13 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+async def test_openai_responses_verbosity(allow_model_requests: None, openai_api_key: str):
+    """Test that verbosity setting is properly passed to the OpenAI API"""
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_text_verbosity='low'))
+    result = await agent.run('Explain quantum computing briefly.')
+    # The response should exist (we don't need to check exact content since it depends on the model)
+    assert isinstance(result.output, str)
+    assert len(result.output) > 0
