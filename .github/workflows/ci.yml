@@ -154,7 +154,8 @@ jobs:
         with:
           deno-version: v2.x
 
-      - run: |
+      - name: choose install command
+        run: |
           if [ "${{ matrix.install }}" = "slim" ]; then
             echo "install-command=--package pydantic-ai-slim" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.install }}" = "standard" ]; then
