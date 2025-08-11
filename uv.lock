@@ -1766,11 +1766,11 @@ sqlite3 = [
 
 [[package]]
 name = "logfire-api"
-version = "3.6.1"
+version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9d/e7/2e1c4c19e5e044cdf527e474349de662beb770ec9b4e22850a7310511833/logfire_api-3.6.1.tar.gz", hash = "sha256:37fd40bf3b26f9740345cc7a56870f8a20f9c18cd185b713d3b61c2f07662e8d", size = 45238, upload-time = "2025-02-19T17:34:26.034Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/df/8a423db09c58edf9aa448d7698c254976dde71c466489fd9c221b0263eb7/logfire_api-4.2.0.tar.gz", hash = "sha256:ad167c718e2b26886542737abc1e7c8c231cd58af34bef57c9c71a60b4962ffa", size = 52489, upload-time = "2025-08-06T11:54:00.872Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/39/60/ab7908b47e8722d7dfd554eee81fb05f4e1b28288592e9054aece40e28b0/logfire_api-3.6.1-py3-none-any.whl", hash = "sha256:b729981a28415de71c574536c6c53e6e801a7108f5d9f6615f152762ac66f684", size = 74998, upload-time = "2025-02-19T17:34:21.991Z" },
+    { url = "https://files.pythonhosted.org/packages/3e/e2/09a38123f47e34eaa9d252eec9dbd3c4e98f8b280c443d0ad6e06fae7ee5/logfire_api-4.2.0-py3-none-any.whl", hash = "sha256:3abbacf9a8cad13449d887e3f059f1d5968af2674a27218548fd7523e3b31c1d", size = 87813, upload-time = "2025-08-06T11:53:57.604Z" },
 ]
 
 [[package]]
@@ -3336,7 +3336,7 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.0" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "mcp", "mistral", "openai", "retries", "vertexai"], editable = "pydantic_ai_slim" },
 ]
@@ -3410,7 +3410,7 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.3.2" },
     { name = "fastapi", specifier = ">=0.115.4" },
     { name = "gradio", marker = "python_full_version >= '3.10'", specifier = ">=5.9.0" },
-    { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=2.6" },
+    { name = "logfire", extras = ["asyncpg", "fastapi", "httpx", "sqlite3"], specifier = ">=3.14.0" },
     { name = "mcp", extras = ["cli"], marker = "python_full_version >= '3.10'", specifier = ">=1.4.1" },
     { name = "modal", specifier = ">=1.0.4" },
     { name = "pandas", specifier = ">=2.2.3" },
@@ -3512,7 +3512,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.11.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.0" },
     { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.10.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.92.0" },
@@ -3645,7 +3645,7 @@ source = { editable = "pydantic_evals" }
 dependencies = [
     { name = "anyio" },
     { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
-    { name = "logfire-api" },
+    { name = "logfire" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim" },
     { name = "pyyaml" },
@@ -3661,8 +3661,8 @@ logfire = [
 requires-dist = [
     { name = "anyio", specifier = ">=0" },
     { name = "eval-type-backport", marker = "python_full_version < '3.11'", specifier = ">=0" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=2.3" },
-    { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "logfire", specifier = ">=3.14.0" },
+    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -3683,7 +3683,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "logfire-api", specifier = ">=1.2.0" },
+    { name = "logfire-api", specifier = ">=3.14.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
