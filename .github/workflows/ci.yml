@@ -176,7 +176,7 @@ jobs:
           include-hidden-files: true
 
   test-lowest-versions:
-    name: test lowest versions on ${{ matrix.python-version }}
+    name: test ${{ matrix.python-version }} (lowest-versions)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
