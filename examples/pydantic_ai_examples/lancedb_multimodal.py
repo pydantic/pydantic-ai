@@ -46,7 +46,7 @@ except ImportError:
         """Missing dependencies. To run this example, please install the required packages by running:
 pip install lancedb sentence-transformers torch httpx pandas Pillow logfire[httpx]"""
     )
-    sys.exit(1)
+    sys.exit(0)
 
 
 # ruff: noqa
