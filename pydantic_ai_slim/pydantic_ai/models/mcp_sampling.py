@@ -3,9 +3,10 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .. import _mcp, exceptions, usage
+from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -76,6 +77,7 @@ class MCPSamplingModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         raise NotImplementedError('MCP Sampling does not support streaming')
         yield

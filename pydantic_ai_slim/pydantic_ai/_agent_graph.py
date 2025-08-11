@@ -16,6 +16,7 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -112,6 +113,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
+    builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
@@ -269,6 +271,7 @@ async def _prepare_request_parameters(
 
     return models.ModelRequestParameters(
         function_tools=function_tools,
+        builtin_tools=ctx.deps.builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_object,
@@ -303,10 +306,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
-        async with self._stream(ctx) as streamed_response:
+        assert not self._did_stream, 'stream() should only be called once per node'
+
+        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        async with ctx.deps.model.request_stream(
+            message_history, model_settings, model_request_parameters, run_context
+        ) as streamed_response:
+            self._did_stream = True
+            ctx.state.usage.requests += 1
             agent_stream = result.AgentStream[DepsT, T](
                 streamed_response,
                 ctx.deps.output_schema,
+                model_request_parameters,
                 ctx.deps.output_validators,
                 build_run_context(ctx),
                 ctx.deps.usage_limits,
@@ -318,26 +329,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             async for _ in agent_stream:
                 pass
 
-    @asynccontextmanager
-    async def _stream(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
-    ) -> AsyncIterator[models.StreamedResponse]:
-        assert not self._did_stream, 'stream() should only be called once per node'
-
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, build_run_context(ctx))
-        async with ctx.deps.model.request_stream(
-            message_history, model_settings, model_request_parameters
-        ) as streamed_response:
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            yield streamed_response
-            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-            # otherwise usage won't be properly counted:
-            async for _ in streamed_response:
-                pass
         model_response = streamed_response.get()
 
         self._finish_handling(ctx, model_response)
@@ -349,9 +340,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, build_run_context(ctx))
+        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -359,7 +348,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> tuple[ModelSettings | None, models.ModelRequestParameters]:
+    ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         ctx.state.message_history.append(self.request)
 
         # Check usage
@@ -369,9 +358,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Increment run_step
         ctx.state.run_step += 1
 
+        run_context = build_run_context(ctx)
+
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
+
         model_request_parameters = await _prepare_request_parameters(ctx)
-        return model_settings, model_request_parameters
+        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
+
+        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, run_context)
+
+        return model_settings, model_request_parameters, message_history, run_context
 
     def _finish_handling(
         self,
@@ -439,6 +435,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             texts.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        yield _messages.BuiltinToolCallEvent(part)
+                    elif isinstance(part, _messages.BuiltinToolReturnPart):
+                        yield _messages.BuiltinToolResultEvent(part)
                     elif isinstance(part, _messages.ThinkingPart):
                         # We don't need to do anything with thinking parts in this tool-calling node.
                         # We need to handle text parts in case there are no tool calls and/or the desired output comes
@@ -616,7 +616,7 @@ async def process_function_tools(  # noqa: C901
                 result_data = await tool_manager.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
-                raise e  # pragma: no cover
+                raise e  # pragma: lax no cover
             except ToolRetryError as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 yield _messages.FunctionToolCallEvent(call)
@@ -655,11 +655,11 @@ async def process_function_tools(  # noqa: C901
     for call in calls_to_run:
         yield _messages.FunctionToolCallEvent(call)
 
-    user_parts: list[_messages.UserPromptPart] = []
+    user_parts_by_index: dict[int, list[_messages.UserPromptPart]] = defaultdict(list)
 
     if calls_to_run:
         # Run all tool tasks in parallel
-        parts_by_index: dict[int, list[_messages.ModelRequestPart]] = {}
+        tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
         with ctx.deps.tracer.start_as_current_span(
             'running tools',
             attributes={
@@ -677,15 +677,16 @@ async def process_function_tools(  # noqa: C901
                 done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     index = tasks.index(task)
-                    tool_result_part, extra_parts = task.result()
-                    yield _messages.FunctionToolResultEvent(tool_result_part)
+                    tool_part, tool_user_parts = task.result()
+                    yield _messages.FunctionToolResultEvent(tool_part)
 
-                    parts_by_index[index] = [tool_result_part, *extra_parts]
+                    tool_parts_by_index[index] = tool_part
+                    user_parts_by_index[index] = tool_user_parts
 
         # We append the results at the end, rather than as they are received, to retain a consistent ordering
         # This is mostly just to simplify testing
-        for k in sorted(parts_by_index):
-            output_parts.extend(parts_by_index[k])
+        for k in sorted(tool_parts_by_index):
+            output_parts.append(tool_parts_by_index[k])
 
     # Finally, we handle deferred tool calls
     for call in tool_calls_by_kind['deferred']:
@@ -700,7 +701,8 @@ async def process_function_tools(  # noqa: C901
         else:
             yield _messages.FunctionToolCallEvent(call)
 
-    output_parts.extend(user_parts)
+    for k in sorted(user_parts_by_index):
+        output_parts.extend(user_parts_by_index[k])
 
     if final_result:
         output_final_result.append(final_result)
@@ -709,18 +711,18 @@ async def process_function_tools(  # noqa: C901
 async def _call_function_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
-) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, list[_messages.ModelRequestPart]]:
+) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, list[_messages.UserPromptPart]]:
     try:
         tool_result = await tool_manager.handle_call(tool_call)
     except ToolRetryError as e:
         return (e.tool_retry, [])
 
-    part = _messages.ToolReturnPart(
+    tool_part = _messages.ToolReturnPart(
         tool_name=tool_call.tool_name,
         content=tool_result,
         tool_call_id=tool_call.tool_call_id,
     )
-    extra_parts: list[_messages.ModelRequestPart] = []
+    user_parts: list[_messages.UserPromptPart] = []
 
     if isinstance(tool_result, _messages.ToolReturn):
         if (
@@ -736,12 +738,12 @@ async def _call_function_tool(
                 f'Please use `content` instead.'
             )
 
-        part.content = tool_result.return_value  # type: ignore
-        part.metadata = tool_result.metadata
+        tool_part.content = tool_result.return_value  # type: ignore
+        tool_part.metadata = tool_result.metadata
         if tool_result.content:
-            extra_parts.append(
+            user_parts.append(
                 _messages.UserPromptPart(
-                    content=list(tool_result.content),
+                    content=tool_result.content,
                     part_kind='user-prompt',
                 )
             )
@@ -759,7 +761,7 @@ async def _call_function_tool(
                 else:
                     identifier = multi_modal_content_identifier(content.url)
 
-                extra_parts.append(
+                user_parts.append(
                     _messages.UserPromptPart(
                         content=[f'This is file {identifier}:', content],
                         part_kind='user-prompt',
@@ -771,11 +773,11 @@ async def _call_function_tool(
 
         if isinstance(tool_result, list):
             contents = cast(list[Any], tool_result)
-            part.content = [process_content(content) for content in contents]
+            tool_part.content = [process_content(content) for content in contents]
         else:
-            part.content = process_content(tool_result)
+            tool_part.content = process_content(tool_result)
 
-    return (part, extra_parts)
+    return (tool_part, user_parts)
 
 
 @dataclasses.dataclass
@@ -789,7 +791,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 
 @contextmanager
 def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
-    """Context manager to access the messages used in a [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] call.
+    """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
     Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
 

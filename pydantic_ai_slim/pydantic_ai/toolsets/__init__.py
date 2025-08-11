@@ -1,3 +1,4 @@
+from ._dynamic import ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
 from .combined import CombinedToolset
 from .deferred import DeferredToolset
@@ -10,6 +11,7 @@ from .wrapper import WrapperToolset
 
 __all__ = (
     'AbstractToolset',
+    'ToolsetFunc',
     'ToolsetTool',
     'CombinedToolset',
     'DeferredToolset',
