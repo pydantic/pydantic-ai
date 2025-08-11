@@ -11,7 +11,7 @@ What this does:
 - Creates logfire tracing dashboard if api key is set
 
 Install dependencies:
-    pip install lancedb sentence-transformers torch httpx pandas Pillow logfire
+    pip install lancedb sentence-transformers torch httpx pandas Pillow logfire[httpx]
 
 Set your Google API key (for the agent's text generation):
     export GOOGLE_API_KEY=your_api_key_here
