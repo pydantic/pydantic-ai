@@ -1052,7 +1052,7 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideModel:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> None:
         with simple_temporal_agent.override(model=model):
             pass
 
@@ -1081,7 +1081,7 @@ async def test_temporal_agent_override_model_in_workflow(allow_model_requests: N
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideToolsets:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> None:
         with simple_temporal_agent.override(toolsets=[FunctionToolset()]):
             pass
 
@@ -1110,7 +1110,7 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
 @workflow.defn
 class SimpleAgentWorkflowWithOverrideTools:
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str) -> None:
         with simple_temporal_agent.override(tools=[get_weather]):
             pass
 
