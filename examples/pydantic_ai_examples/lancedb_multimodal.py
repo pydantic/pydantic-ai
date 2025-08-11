@@ -20,7 +20,7 @@ Usage:
     # First, build the product database from the live API
     python lancedb_multimodal.py build
 
-    # Then, ask for a recommendation (this will use hybrid search):
+    # Then, ask for a recommendation:
     python lancedb_multimodal.py search "a cool t-shirt in men's clothing under 20 dollars"
 """
 
@@ -180,19 +180,19 @@ async def build_product_database():
     logfire.info('Building product database from Fake Store API...')
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 1. Fetch product data from the API
+    # Fetch product data from the API
     with logfire.span('fetch product catalog', url='https://fakestoreapi.com/products'):
         async with httpx.AsyncClient() as client:
             response = await client.get('https://fakestoreapi.com/products', timeout=30)
             response.raise_for_status()
             products_data = response.json()
 
-    # 2. Initialize LanceDB and Embedding Model
+    # Initialize LanceDB and Embedding Model
     with logfire.span('initialize db and model'):
         db = lancedb.connect(DATA_DIR)
         embedding_model = SentenceTransformer('clip-ViT-B-32')
 
-    # 3. Create embeddings for product descriptions and fetch image bytes
+    # Create embeddings for product descriptions and fetch image bytes
     logfire.info(
         'Creating embeddings and fetching images for {n} products...',
         n=len(products_data),
@@ -221,7 +221,7 @@ async def build_product_database():
                         'Skipping product due to image download error: {e}', e=str(e)
                     )
 
-    # 4. Create a LanceDB table and add the data
+    # Create a LanceDB table and add the data
     with logfire.span(
         'create lancedb table and add rows', num_rows=len(product_vectors)
     ):
