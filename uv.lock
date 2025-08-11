@@ -3645,7 +3645,7 @@ source = { editable = "pydantic_evals" }
 dependencies = [
     { name = "anyio" },
     { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
-    { name = "logfire" },
+    { name = "logfire-api" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim" },
     { name = "pyyaml" },
@@ -3661,8 +3661,8 @@ logfire = [
 requires-dist = [
     { name = "anyio", specifier = ">=0" },
     { name = "eval-type-backport", marker = "python_full_version < '3.11'", specifier = ">=0" },
-    { name = "logfire", specifier = ">=3.14.0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.0" },
+    { name = "logfire-api", specifier = ">=3.14.0" },
     { name = "pydantic", specifier = ">=2.10" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
     { name = "pyyaml", specifier = ">=6.0.2" },
