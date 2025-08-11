@@ -74,12 +74,7 @@ huggingface = ["huggingface-hub[inference]>=0.33.5"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
-lancedb = [
-    "lancedb>=0.6.1",
-    "pydantic-lancedb>=0.3.0",
-    "Pillow>=10.5.0",
-    "sentence-transformers>=3.0.1",
-]
+lancedb = ["lancedb>=0.6.1"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 # MCP
