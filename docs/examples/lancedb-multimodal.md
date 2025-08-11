@@ -48,7 +48,7 @@ uv run -m pydantic_ai_examples.lancedb_multimodal search "An external SSD with 1
 
 ### Data Schema (Pydantic model)
 
-```python
+```python {test="skip"}
 from lancedb.pydantic import LanceModel, Vector
 
 
