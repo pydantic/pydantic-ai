@@ -114,6 +114,16 @@ def test_docs_examples(  # noqa: C901
     env: TestEnv,
     tmp_path_cwd: Path,
 ):
+    try:
+        import importlib.util as _importlib_util
+
+        needs_lancedb = ('import lancedb' in example.source) or (
+            'from lancedb' in example.source
+        )
+        if needs_lancedb and _importlib_util.find_spec('lancedb') is None:
+            pytest.skip('lancedb not installed in this environment')
+    except Exception:
+        pass
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
