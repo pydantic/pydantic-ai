@@ -776,7 +776,6 @@ async def test_image_url_input(allow_model_requests: None):
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o-audio-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -787,7 +786,6 @@ async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key
     )
 
 
-@pytest.mark.vcr()
 async def test_document_url_input(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
@@ -879,7 +877,6 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_tool_response(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -960,7 +957,6 @@ async def test_image_as_binary_content_tool_response(
     )
 
 
-@pytest.mark.vcr()
 async def test_image_as_binary_content_input(
     allow_model_requests: None, image_content: BinaryContent, openai_api_key: str
 ):
@@ -981,7 +977,6 @@ async def test_audio_as_binary_content_input(
     assert result.output == snapshot('The name mentioned in the audio is Marcelo.')
 
 
-@pytest.mark.vcr()
 async def test_document_as_binary_content_input(
     allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
 ):
@@ -1045,7 +1040,6 @@ async def test_multiple_agent_tool_calls(allow_model_requests: None, gemini_api_
     assert result.output == snapshot('The capital of England is London.')
 
 
-@pytest.mark.vcr()
 async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `extra_headers` don't cause errors, including type.
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
@@ -1053,7 +1047,6 @@ async def test_extra_headers(allow_model_requests: None, openai_api_key: str):
     await agent.run('hello')
 
 
-@pytest.mark.vcr()
 async def test_user_id(allow_model_requests: None, openai_api_key: str):
     # This test doesn't do anything, it's just here to ensure that calls with `user` don't cause errors, including type.
     # Since we use VCR, creating tests with an `httpx.Transport` is not possible.
@@ -1924,7 +1917,6 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
     m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
@@ -2009,7 +2001,6 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_model_thinking_part(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
@@ -2098,7 +2089,6 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_model_thinking_part_iter(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
@@ -2127,7 +2117,6 @@ async def test_openai_model_thinking_part_iter(allow_model_requests: None, opena
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_instructions_with_logprobs(allow_model_requests: None):
     # Create a mock response with logprobs
     c = completion_message(
@@ -2164,7 +2153,6 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
     ]
 
 
-@pytest.mark.vcr()
 async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
@@ -2175,7 +2163,6 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         await agent.run('What day is today?')
 
 
-@pytest.mark.vcr()
 async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
@@ -2186,7 +2173,6 @@ async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key
     assert result.output == snapshot('May 14, 2025, 8:51:29 AM ')
 
 
-@pytest.mark.vcr()
 async def test_openai_web_search_tool_with_user_location(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
@@ -2214,7 +2200,6 @@ Dagvoorspelling:
 """)
 
 
-@pytest.mark.vcr()
 async def test_reasoning_model_with_temperature(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, model_settings=OpenAIModelSettings(temperature=0.5))
@@ -2319,7 +2304,6 @@ def test_model_profile_strict_not_supported():
     )
 
 
-@pytest.mark.vcr
 async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: None, gemini_api_key: str):
     provider = OpenAIProvider(
         openai_client=AsyncOpenAI(
@@ -2358,7 +2342,6 @@ def test_openai_response_timestamp_milliseconds(allow_model_requests: None):
     assert response.timestamp == snapshot(datetime(2025, 6, 1, 3, 7, 48, tzinfo=timezone.utc))
 
 
-@pytest.mark.vcr()
 async def test_openai_tool_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -2453,7 +2436,6 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_text_output_function(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -2533,7 +2515,6 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_native_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -2616,7 +2597,6 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_native_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -2705,7 +2685,6 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_prompted_output(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -2800,7 +2779,6 @@ Don't include any text or Markdown fencing before or after.\
     )
 
 
-@pytest.mark.vcr()
 async def test_openai_prompted_output_multiple(allow_model_requests: None, openai_api_key: str):
     m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
@@ -2959,7 +2937,6 @@ async def test_process_response_no_created_timestamp(allow_model_requests: None)
     assert response_message.timestamp == IsNow(tz=timezone.utc)
 
 
-@pytest.mark.anyio()
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(openai_model_profile('stub'))
 
@@ -2976,3 +2953,11 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     )
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
+
+
+async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
+    assert result.output == snapshot('Paris.')
