@@ -1,28 +1,4 @@
-"""Multimodal RAG with LanceDB.
-
-What this does:
-- Fetches a product catalog from a live API (fakestoreapi.com).
-- Embeds product descriptions using a CLIP model (clip-ViT-B-32) and stores them in LanceDB.
-- Implements a RAG agent with a `find_products` tool that can:
-    1. Perform semantic search (e.g., "something for the cold weather").
-    2. Perform metadata filtering (e.g., "show me all electronics").
-       (e.g., "a cool t-shirt" from the "men's clothing" category under $20).
-- Generates and displays an image collage of the results for instant visual feedback.
-- Creates logfire tracing dashboard if api key is set
-
-Install dependencies:
-    pip install lancedb sentence-transformers torch httpx pandas Pillow logfire[httpx]
-
-Set your Google API key (for the agent's text generation):
-    export GOOGLE_API_KEY=your_api_key_here
-
-Usage:
-    # First, build the product database from the live API
-    python lancedb_multimodal.py build
-
-    # Then, ask for a recommendation:
-    python lancedb_multimodal.py search "a cool t-shirt in men's clothing under 20 dollars"
-"""
+from __future__ import annotations
 
 import asyncio
 import io
@@ -30,32 +6,33 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, cast
-from pydantic_ai import Agent, RunContext
+from typing import TYPE_CHECKING, cast
 
 import httpx
+
+from pydantic_ai import Agent, RunContext
 
 try:
     import lancedb
     import logfire
-    from lancedb.pydantic import LanceModel, Vector
+    from lancedb.pydantic import (
+        LanceModel,
+        Vector,  # pyright: ignore[reportUnknownVariableType]
+    )
     from PIL import Image
     from sentence_transformers import SentenceTransformer
-except ImportError:
-    print(
+except ImportError as e:
+    raise ImportError(
         """Missing dependencies. To run this example, please install the required packages by running:
-pip install lancedb sentence-transformers torch httpx pandas Pillow logfire[httpx]"""
-    )
-    sys.exit(0)
+pip install lancedb sentence-transformers torch httpx pandas Pillow logfire[httpx] pyarrow"""
+    ) from e
 
+if TYPE_CHECKING:
+    import pandas as pd
+    from lancedb.db import DBConnection
+    from lancedb.table import Table
+    from torch import Tensor
 
-# ruff: noqa
-# pyright: reportMissingImports=false
-# pyright: reportInvalidTypeForm=false
-# pyright: reportUnknownVariableType=false
-# pyright: reportUnknownMemberType=false
-# pyright: reportUnknownArgumentType=false
-# pyright: reportUntypedBaseClass=false
 
 # 'if-token-present' means nothing will be sent if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -73,12 +50,13 @@ class ProductVector(LanceModel):
     description: str
     category: str
     image: bytes
-    embedding: Vector(512)  # CLIP 'clip-ViT-B-32' model produces 512-dim vectors
+    # This dynamic Vector(n) syntax is specific to LanceDB and confuses static type checkers.
+    embedding: Vector(512)  # pyright: ignore[reportInvalidTypeForm]
 
 
 @dataclass
 class Deps:
-    db: lancedb.DBConnection
+    db: DBConnection
     embedding_model: SentenceTransformer
 
 
@@ -122,31 +100,30 @@ async def _generate_image_collage(image_bytes_list: list[bytes], title: str):
         collage.show(title=title)
 
 
+# pyright: reportUnknownMemberType=false
 @agent.tool
 async def find_products(
     context: RunContext[Deps],
-    query: Optional[str] = None,
-    category: Optional[str] = None,
-    min_price: Optional[float] = None,
-    max_price: Optional[float] = None,
+    query: str | None = None,
+    category: str | None = None,
+    min_price: float | None = None,
+    max_price: float | None = None,
     top_k: int = 4,
 ) -> str:
-    """Finds products using semantic search, metadata filtering, or both (hybrid search)."""
-    table = context.deps.db.open_table('products')
+    table: Table = context.deps.db.open_table('products')
 
-    query_embedding = None
+    query_embedding: Tensor | None = None
     if query and query.strip():
         with logfire.span('encode semantic query', query=query):
             query_embedding = context.deps.embedding_model.encode(
                 query, convert_to_tensor=False
             )
 
-    # Use vector search when a semantic query is provided, otherwise fall back to metadata-only search
     searcher = (
         table.search(query_embedding) if query_embedding is not None else table.search()
     )
 
-    conditions = []
+    conditions: list[str] = []
     if category:
         safe_category = category.replace("'", "''")
         conditions.append(f"category = '{safe_category}'")
@@ -160,7 +137,7 @@ async def find_products(
         searcher = searcher.where(where_clause)
 
     with logfire.span('search products', top_k=top_k, conditions=conditions):
-        results_df = searcher.limit(top_k).to_pandas()
+        results_df: pd.DataFrame = searcher.limit(top_k).to_pandas()
 
     if results_df.empty:
         return 'No products found matching your criteria.'
@@ -171,8 +148,9 @@ async def find_products(
     )
 
     # Don't return image byte string in the text response
-    results_df_no_image = results_df.drop(columns=['image'])
-    results_json = results_df_no_image.to_json(orient='records')
+    results_df_no_image: pd.DataFrame = results_df.drop(columns=['image'])
+
+    results_json: str | None = results_df_no_image.to_json(orient='records')
     return f'Found {len(results_df)} products.\n Product details: {results_json}'
 
 
@@ -189,7 +167,7 @@ async def build_product_database():
 
     # Initialize LanceDB and Embedding Model
     with logfire.span('initialize db and model'):
-        db = lancedb.connect(DATA_DIR)
+        db: DBConnection = lancedb.connect(DATA_DIR)
         embedding_model = SentenceTransformer('clip-ViT-B-32')
 
     # Create embeddings for product descriptions and fetch image bytes
@@ -225,7 +203,9 @@ async def build_product_database():
     with logfire.span(
         'create lancedb table and add rows', num_rows=len(product_vectors)
     ):
-        table = db.create_table('products', schema=ProductVector, mode='overwrite')
+        table: Table = db.create_table(
+            'products', schema=ProductVector, mode='overwrite'
+        )
         table.add(product_vectors)
 
     logfire.info(
@@ -234,7 +214,7 @@ async def build_product_database():
 
 
 async def run_search(query: str):
-    db = lancedb.connect(DATA_DIR)
+    db: DBConnection = lancedb.connect(DATA_DIR)
     embedding_model = SentenceTransformer('clip-ViT-B-32')
     deps = Deps(db=db, embedding_model=embedding_model)
 

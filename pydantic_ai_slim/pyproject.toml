@@ -74,7 +74,6 @@ huggingface = ["huggingface-hub[inference]>=0.33.5"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
-lancedb = ["lancedb>=0.6.1"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
 # MCP
@@ -107,6 +106,8 @@ dev = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     "coverage-enable-subprocess>=0.1.0",
+    "lancedb>=0.24.2",
+    "sentence-transformers>=5.1.0"
 ]
 
 [tool.hatch.metadata]
