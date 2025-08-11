@@ -42,8 +42,9 @@ try:
     from PIL import Image
     from sentence_transformers import SentenceTransformer
 except ImportError:
-    print(f"missing dependencies. Install dependencies listed in lancedb_multimodal.py to run this")
-
+    print(
+        f'missing dependencies. Install dependencies listed in lancedb_multimodal.py to run this'
+    )
 
 
 # ruff: noqa
