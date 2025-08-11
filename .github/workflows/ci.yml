@@ -202,10 +202,9 @@ jobs:
 
       - run: uv sync --group dev
 
-      - name: test lowest versions
-        run: |
-          unset UV_FROZEN
-          uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
+      - run: unset UV_FROZEN
+
+      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
