@@ -34,10 +34,10 @@ from typing import Optional
 
 import httpx
 import lancedb
+import logfire
 from lancedb.pydantic import LanceModel, Vector
 from PIL import Image
 from sentence_transformers import SentenceTransformer
-import logfire
 
 from pydantic_ai import Agent, RunContext
 
@@ -111,7 +111,7 @@ async def find_products(
     max_price: Optional[float] = None,
     top_k: int = 4,
 ) -> str:
-    """Finds products using semantic search, metadata filtering, or both (hybrid search)"""
+    """Finds products using semantic search, metadata filtering, or both (hybrid search)."""
     table = context.deps.db.open_table('products')
 
     query_embedding = None
