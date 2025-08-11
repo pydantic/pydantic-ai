@@ -238,7 +238,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test, test-lowest-versions]
     steps:
       - uses: actions/checkout@v4
         with:
