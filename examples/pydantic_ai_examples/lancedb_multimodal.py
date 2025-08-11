@@ -8,9 +8,10 @@ What this does:
     2. Perform metadata filtering (e.g., "show me all electronics").
        (e.g., "a cool t-shirt" from the "men's clothing" category under $20).
 - Generates and displays an image collage of the results for instant visual feedback.
+- Creates logfire tracing dashboard if api key is set
 
 Install dependencies:
-    pip install lancedb sentence-transformers torch httpx pandas Pillow
+    pip install lancedb sentence-transformers torch httpx pandas Pillow logfire
 
 Set your Google API key (for the agent's text generation):
     export GOOGLE_API_KEY=your_api_key_here
@@ -36,8 +37,14 @@ import lancedb
 from lancedb.pydantic import LanceModel, Vector
 from PIL import Image
 from sentence_transformers import SentenceTransformer
+import logfire
 
 from pydantic_ai import Agent, RunContext
+
+# 'if-token-present' means nothing will be sent if you don't have logfire configured
+logfire.configure(send_to_logfire='if-token-present')
+logfire.instrument_pydantic_ai()
+logfire.instrument_httpx(capture_all=True)
 
 DATA_DIR = Path('./lancedb_data/products')
 
@@ -60,7 +67,7 @@ class Deps:
 
 
 agent = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-2.5-flash',
     deps_type=Deps,
     system_prompt=(
         'You are a helpful AI Shopping Assistant. Your goal is to help users find the perfect product '
@@ -76,22 +83,23 @@ async def _generate_image_collage(image_bytes_list: list[bytes], title: str):
     if not image_bytes_list:
         return
 
-    images = [Image.open(io.BytesIO(image_bytes)) for image_bytes in image_bytes_list]
+    with logfire.span('generate image collage', num_images=len(image_bytes_list), title=title):
+        images = [Image.open(io.BytesIO(image_bytes)) for image_bytes in image_bytes_list]
 
-    if not images:
-        print('Could not create any images from bytes to create a collage.')
-        return
+        if not images:
+            print('Could not create any images from bytes to create a collage.')
+            return
 
-    widths, heights = zip(*(i.size for i in images))
-    total_width = sum(widths)
-    max_height = max(heights)
-    collage = Image.new('RGB', (total_width, max_height))
-    x_offset = 0
-    for img in images:
-        collage.paste(img, (x_offset, 0))
-        x_offset += img.width
+        widths, heights = zip(*(i.size for i in images))
+        total_width = sum(widths)
+        max_height = max(heights)
+        collage = Image.new('RGB', (total_width, max_height))
+        x_offset = 0
+        for img in images:
+            collage.paste(img, (x_offset, 0))
+            x_offset += img.width
 
-    collage.show(title=title)
+        collage.show(title=title)
 
 
 @agent.tool
@@ -103,23 +111,15 @@ async def find_products(
     max_price: Optional[float] = None,
     top_k: int = 4,
 ) -> str:
-    """Finds products using semantic search, metadata filtering, or both (hybrid search).
-
-    Args:
-        context: The context of the agent.
-        query: The semantic search query (e.g., "a stylish backpack").
-        category: The category to filter by (e.g., "electronics").
-        min_price: The minimum price to filter by.
-        max_price: The maximum price to filter by.
-        top_k: The number of results to return.
-    """
+    """Finds products using semantic search, metadata filtering, or both (hybrid search)"""
     table = context.deps.db.open_table('products')
 
     query_embedding = None
     if query and query.strip():
-        query_embedding = context.deps.embedding_model.encode(
-            query, convert_to_tensor=False
-        )
+        with logfire.span('encode semantic query', query=query):
+            query_embedding = context.deps.embedding_model.encode(
+                query, convert_to_tensor=False
+            )
 
     # Use vector search when a semantic query is provided, otherwise fall back to metadata-only search
     searcher = table.search(query_embedding) if query_embedding is not None else table.search()
@@ -137,12 +137,13 @@ async def find_products(
         where_clause = ' AND '.join(conditions)
         searcher = searcher.where(where_clause)
 
-    results_df = searcher.limit(top_k).to_pandas()
+    with logfire.span('search products', top_k=top_k, conditions=conditions):
+        results_df = searcher.limit(top_k).to_pandas()
 
     if results_df.empty:
         return 'No products found matching your criteria.'
 
-    print('Displaying collage of results...')
+    logfire.info('Displaying collage of results ({n})', n=len(results_df))
     await _generate_image_collage(results_df['image'].tolist(), title='Product Results')
 
     # Don't return image byte string in the text response
@@ -152,48 +153,47 @@ async def find_products(
 
 
 async def build_product_database():
-    print('Building product database from Fake Store API...')
+    logfire.info('Building product database from Fake Store API...')
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     # 1. Fetch product data from the API
-    async with httpx.AsyncClient() as client:
-        response = await client.get('https://fakestoreapi.com/products', timeout=30)
-        response.raise_for_status()
-        products_data = response.json()
+    with logfire.span('fetch product catalog', url='https://fakestoreapi.com/products'):
+        async with httpx.AsyncClient() as client:
+            response = await client.get('https://fakestoreapi.com/products', timeout=30)
+            response.raise_for_status()
+            products_data = response.json()
 
     # 2. Initialize LanceDB and Embedding Model
-    db = lancedb.connect(DATA_DIR)
-    embedding_model = SentenceTransformer('clip-ViT-B-32')
+    with logfire.span('initialize db and model'):
+        db = lancedb.connect(DATA_DIR)
+        embedding_model = SentenceTransformer('clip-ViT-B-32')
 
     # 3. Create embeddings for product descriptions and fetch image bytes
-    print(
-        f'Creating embeddings and fetching images for {len(products_data)} products...'
-    )
+    logfire.info('Creating embeddings and fetching images for {n} products...', n=len(products_data))
     product_vectors: list[ProductVector] = []
     async with httpx.AsyncClient() as client:
         for p_data in products_data:
-            content_to_embed = f'Product Name: {p_data["title"]}\nCategory: {p_data["category"]}\nDescription: {p_data["description"]}'
-            embedding = embedding_model.encode(
-                content_to_embed, convert_to_tensor=False
-            )
-
-            try:
-                image_response = await client.get(p_data['image'], timeout=30)
-                image_response.raise_for_status()
-                image_bytes = image_response.content
-                p_data['image'] = image_bytes
-                product_vectors.append(ProductVector(**p_data, embedding=embedding))
-            except httpx.HTTPStatusError as e:
-                print(
-                    f'Skipping product {p_data["id"]} due to image download error: {e}'
+            with logfire.span('embed + download image', product_id=p_data.get('id'), category=p_data.get('category')):
+                content_to_embed = f'Product Name: {p_data["title"]}\nCategory: {p_data["category"]}\nDescription: {p_data["description"]}'
+                embedding = embedding_model.encode(
+                    content_to_embed, convert_to_tensor=False
                 )
 
-    # 4. Create a LanceDB table and add the data
-    print('Creating LanceDB table...')
-    table = db.create_table('products', schema=ProductVector, mode='overwrite')
-    table.add(product_vectors)
+                try:
+                    image_response = await client.get(p_data['image'], timeout=30)
+                    image_response.raise_for_status()
+                    image_bytes = image_response.content
+                    p_data['image'] = image_bytes
+                    product_vectors.append(ProductVector(**p_data, embedding=embedding))
+                except httpx.HTTPStatusError as e:
+                    logfire.warning('Skipping product due to image download error: {e}', e=str(e))
 
-    print(f'Successfully indexed {len(product_vectors)} products into LanceDB.')
+    # 4. Create a LanceDB table and add the data
+    with logfire.span('create lancedb table and add rows', num_rows=len(product_vectors)):
+        table = db.create_table('products', schema=ProductVector, mode='overwrite')
+        table.add(product_vectors)
+
+    logfire.info('Successfully indexed {n} products into LanceDB.', n=len(product_vectors))
 
 
 async def run_search(query: str):
@@ -201,8 +201,7 @@ async def run_search(query: str):
     embedding_model = SentenceTransformer('clip-ViT-B-32')
     deps = Deps(db=db, embedding_model=embedding_model)
 
-    print(f"\nUser Query: '{query}'")
-    print('---------------------------------')
+    logfire.info('User Query: {query}', query=query)
     result = await agent.run(query, deps=deps)
     print(result.output)
 
