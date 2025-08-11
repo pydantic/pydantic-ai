@@ -206,6 +206,8 @@ jobs:
         run: |
           unset UV_FROZEN
           uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
+        env:
+          COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
