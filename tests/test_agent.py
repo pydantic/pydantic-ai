@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+from collections import defaultdict
 from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import timezone
@@ -49,6 +50,7 @@ from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -3717,6 +3719,62 @@ def test_override_tools():
         result = agent.run_sync('Hello')
     assert available_tools[-1] == snapshot([])
     assert result.output == snapshot('success (no tool calls)')
+
+
+def test_toolset_factory():
+    toolset = FunctionToolset()
+
+    @toolset.tool
+    def foo() -> str:
+        return 'Hello from foo'
+
+    available_tools: list[str] = []
+
+    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        nonlocal available_tools
+        available_tools = [tool_def.name for tool_def in tool_defs]
+        return tool_defs
+
+    toolset_creation_counts: dict[str, int] = defaultdict(int)
+
+    def via_toolsets_arg(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal toolset_creation_counts
+        toolset_creation_counts['via_toolsets_arg'] += 1
+        return toolset.prefixed('via_toolsets_arg')
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('via_toolsets_arg_foo')])
+        elif len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('via_toolset_decorator_foo')])
+        else:
+            return ModelResponse(parts=[TextPart('Done')])
+
+    agent = Agent(FunctionModel(respond), toolsets=[via_toolsets_arg], prepare_tools=prepare_tools)
+
+    @agent.toolset
+    def via_toolset_decorator(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal toolset_creation_counts
+        toolset_creation_counts['via_toolset_decorator'] += 1
+        return toolset.prefixed('via_toolset_decorator')
+
+    @agent.toolset(per_run_step=False)
+    async def via_toolset_decorator_for_entire_run(ctx: RunContext[None]) -> AbstractToolset[None]:
+        nonlocal toolset_creation_counts
+        toolset_creation_counts['via_toolset_decorator_for_entire_run'] += 1
+        return toolset.prefixed('via_toolset_decorator_for_entire_run')
+
+    run_result = agent.run_sync('Hello')
+
+    assert run_result._state.run_step == 3  # pyright: ignore[reportPrivateUsage]
+    assert len(available_tools) == 3
+    assert toolset_creation_counts == snapshot(
+        {
+            'via_toolsets_arg': 4,
+            'via_toolset_decorator': 4,
+            'via_toolset_decorator_for_entire_run': 1,
+        }
+    )
 
 
 def test_adding_tools_during_run():
