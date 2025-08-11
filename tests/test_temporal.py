@@ -28,7 +28,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import cached_async_http_client
-from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import DeferredToolset, FunctionToolset
 
 try:
     from temporalio import workflow
@@ -52,7 +53,7 @@ try:
     from pydantic_ai.ext.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.ext.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.ext.temporal._model import TemporalModel
-except ImportError:
+except ImportError:  # pragma: lax no cover
     import pytest
 
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -63,14 +64,14 @@ try:
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
     from opentelemetry.trace import ProxyTracer
-except ImportError:
+except ImportError:  # pragma: lax no cover
     import pytest
 
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.mcp import MCPServerStdio
-except ImportError:
+except ImportError:  # pragma: lax no cover
     import pytest
 
     pytest.skip('mcp not installed', allow_module_level=True)
@@ -78,7 +79,7 @@ except ImportError:
 try:
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
-except ImportError:
+except ImportError:  # pragma: lax no cover
     import pytest
 
     pytest.skip('openai not installed', allow_module_level=True)
@@ -245,6 +246,7 @@ complex_agent = Agent(
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
         MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
+        DeferredToolset(tool_defs=[ToolDefinition(name='deferred')], id='deferred'),
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
@@ -264,6 +266,7 @@ complex_temporal_agent = TemporalAgent(
     },
     tool_activity_config={
         'country': {
+            'unknown_tool': ActivityConfig(start_to_close_timeout=timedelta(seconds=150)),
             'get_country': False,
         },
         '<agent>': {
@@ -771,7 +774,7 @@ async def test_temporal_agent():
     assert complex_temporal_agent.model.wrapped == complex_agent.model
 
     toolsets = complex_temporal_agent.toolsets
-    assert len(toolsets) == 4
+    assert len(toolsets) == 5
 
     # Empty function toolset for the agent's own tools
     assert isinstance(toolsets[0], FunctionToolset)
@@ -795,6 +798,11 @@ async def test_temporal_agent():
     assert isinstance(toolsets[3], TemporalMCPServer)
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
+
+    # Unwrapped 'deferred' toolset
+    assert isinstance(toolsets[4], DeferredToolset)
+    assert toolsets[4].id == 'deferred'
+    assert toolsets[4] == complex_agent.toolsets[3]
 
     assert [
         ActivityDefinition.must_from_callable(activity).name  # pyright: ignore[reportUnknownMemberType]
@@ -864,7 +872,7 @@ class SimpleAgentWorkflowWithRunSync:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = simple_temporal_agent.run_sync(prompt)
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, client: Client):
@@ -892,7 +900,7 @@ class SimpleAgentWorkflowWithRunStream:
     async def run(self, prompt: str) -> str:
         async with simple_temporal_agent.run_stream(prompt) as result:
             pass
-        return await result.get_output()
+        return await result.get_output()  # pragma: no cover
 
 
 async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None, client: Client):
@@ -923,7 +931,7 @@ class SimpleAgentWorkflowWithIter:
         async with simple_temporal_agent.iter(prompt) as run:
             async for _ in run:
                 pass
-        return 'done'
+        return 'done'  # pragma: no cover
 
 
 async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, client: Client):
@@ -959,7 +967,7 @@ class SimpleAgentWorkflowWithEventStreamHandler:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, event_stream_handler=simple_event_stream_handler)
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_model_requests: None, client: Client):
@@ -988,7 +996,7 @@ class SimpleAgentWorkflowWithRunModel:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, model=model)
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: None, client: Client):
@@ -1017,7 +1025,7 @@ class SimpleAgentWorkflowWithRunToolsets:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await simple_temporal_agent.run(prompt, toolsets=[FunctionToolset()])
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests: None, client: Client):
@@ -1046,8 +1054,7 @@ class SimpleAgentWorkflowWithOverrideModel:
     @workflow.run
     async def run(self, prompt: str) -> str:
         with simple_temporal_agent.override(model=model):
-            result = await simple_temporal_agent.run(prompt)
-            return result.output
+            pass
 
 
 async def test_temporal_agent_override_model_in_workflow(allow_model_requests: None, client: Client):
@@ -1076,8 +1083,7 @@ class SimpleAgentWorkflowWithOverrideToolsets:
     @workflow.run
     async def run(self, prompt: str) -> str:
         with simple_temporal_agent.override(toolsets=[FunctionToolset()]):
-            result = await simple_temporal_agent.run(prompt)
-            return result.output
+            pass
 
 
 async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests: None, client: Client):
@@ -1106,8 +1112,7 @@ class SimpleAgentWorkflowWithOverrideTools:
     @workflow.run
     async def run(self, prompt: str) -> str:
         with simple_temporal_agent.override(tools=[get_weather]):
-            result = await simple_temporal_agent.run(prompt)
-            return result.output
+            pass
 
 
 async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: None, client: Client):
@@ -1131,6 +1136,31 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
             )
 
 
+@workflow.defn
+class SimpleAgentWorkflowWithOverrideDeps:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        with simple_temporal_agent.override(deps=None):
+            result = await simple_temporal_agent.run(prompt)
+            return result.output
+
+
+async def test_temporal_agent_override_deps_in_workflow(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SimpleAgentWorkflowWithOverrideDeps],
+        plugins=[AgentPlugin(simple_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            SimpleAgentWorkflowWithOverrideDeps.run,
+            args=['What is the capital of Mexico?'],
+            id=SimpleAgentWorkflowWithOverrideDeps.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
 agent_with_sync_tool = Agent(model, name='agent_with_sync_tool', tools=[get_weather])
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
@@ -1149,7 +1179,7 @@ class AgentWorkflowWithSyncToolActivityDisabled:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await temporal_agent_with_sync_tool_activity_disabled.run(prompt)
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: None, client: Client):
@@ -1199,7 +1229,7 @@ class DirectStreamWorkflow:
         async with model_request_stream(complex_temporal_agent.model, messages) as stream:
             async for _ in stream:
                 pass
-        return 'done'
+        return 'done'  # pragma: no cover
 
 
 async def test_temporal_model_stream_direct(client: Client):
@@ -1248,7 +1278,7 @@ class AgentWorkflowWithDataclassDeps:
     @workflow.run
     async def run(self, prompt: str, deps: DataclassDeps) -> str:
         result = await temporal_agent_with_dataclass_deps.run(prompt, deps=deps)
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_temporal_agent_with_non_dict_deps(allow_model_requests: None, client: Client):
@@ -1336,11 +1366,11 @@ async def test_logfire_plugin(client: Client):
     interceptor = new_client.config()['interceptors'][0]
     assert isinstance(interceptor, TracingInterceptor)
     if isinstance(interceptor.tracer, ProxyTracer):
-        assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage]
+        assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage] # pragma: lax no cover
     elif isinstance(interceptor.tracer, _ProxyTracer):
-        assert interceptor.tracer.instrumenting_module_name == 'temporalio'
+        assert interceptor.tracer.instrumenting_module_name == 'temporalio'  # pragma: lax no cover
     else:
-        assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'
+        assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'  # pragma: no cover
 
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     # We can't check if the metrics URL was actually set correctly because it's on a `temporalio.bridge.runtime.Runtime` that we can't read from.

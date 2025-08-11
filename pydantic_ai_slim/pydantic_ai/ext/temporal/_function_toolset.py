@@ -45,8 +45,8 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
             ctx = self.run_context_type.deserialize_run_context(params.serialized_run_context)
             try:
                 tool = (await toolset.get_tools(ctx))[name]
-            except KeyError as e:
-                raise UserError(  # pragma: no cover
+            except KeyError as e:  # pragma: no cover
+                raise UserError(
                     f'Tool {name!r} not found in toolset {self.id!r}. '
                     'Removing or renaming tools during an agent run is not supported with Temporal.'
                 ) from e
@@ -54,11 +54,6 @@ class TemporalFunctionToolset(TemporalWrapperToolset):
             return await self.wrapped.call_tool(name, params.tool_args, ctx, tool)
 
         self.call_tool_activity = call_tool_activity
-
-    @property
-    def wrapped_function_toolset(self) -> FunctionToolset:
-        assert isinstance(self.wrapped, FunctionToolset)
-        return self.wrapped
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:

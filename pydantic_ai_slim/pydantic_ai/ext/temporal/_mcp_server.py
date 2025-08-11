@@ -74,15 +74,14 @@ class TemporalMCPServer(TemporalWrapperToolset):
                 params.name,
                 params.tool_args,
                 run_context,
-                self.wrapped_server.tool_for_tool_def(params.tool_def),
+                self.tool_for_tool_def(params.tool_def),
             )
 
         self.call_tool_activity = call_tool_activity
 
-    @property
-    def wrapped_server(self) -> MCPServer:
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool:
         assert isinstance(self.wrapped, MCPServer)
-        return self.wrapped
+        return self.wrapped.tool_for_tool_def(tool_def)
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
@@ -106,7 +105,7 @@ class TemporalMCPServer(TemporalWrapperToolset):
             arg=_GetToolsParams(serialized_run_context=serialized_run_context),
             **self.activity_config,
         )
-        return {name: self.wrapped_server.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
+        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def call_tool(
         self,

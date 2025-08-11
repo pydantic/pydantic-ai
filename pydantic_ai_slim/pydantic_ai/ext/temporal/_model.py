@@ -49,15 +49,15 @@ class TemporalStreamedResponse(StreamedResponse):
         return self.response
 
     def usage(self) -> Usage:
-        return self.response.usage
+        return self.response.usage  # pragma: no cover
 
     @property
     def model_name(self) -> str:
-        return self.response.model_name or ''
+        return self.response.model_name or ''  # pragma: no cover
 
     @property
     def timestamp(self) -> datetime:
-        return self.response.timestamp
+        return self.response.timestamp  # pragma: no cover
 
 
 class TemporalModel(WrapperModel):
@@ -137,15 +137,14 @@ class TemporalModel(WrapperModel):
                 yield streamed_response
                 return
 
-        if self.event_stream_handler is None:
-            raise UserError(
-                'Streaming inside a Temporal workflow requires `Agent` to have an `event_stream_handler` set.'
-            )
-
         if run_context is None:
             raise UserError(
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
             )
+
+        # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
+        # and that only calls `request_stream` if `event_stream_handler` is set.
+        assert self.event_stream_handler is not None
 
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         response = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
