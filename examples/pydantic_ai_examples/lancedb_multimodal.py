@@ -83,8 +83,12 @@ async def _generate_image_collage(image_bytes_list: list[bytes], title: str):
     if not image_bytes_list:
         return
 
-    with logfire.span('generate image collage', num_images=len(image_bytes_list), title=title):
-        images = [Image.open(io.BytesIO(image_bytes)) for image_bytes in image_bytes_list]
+    with logfire.span(
+        'generate image collage', num_images=len(image_bytes_list), title=title
+    ):
+        images = [
+            Image.open(io.BytesIO(image_bytes)) for image_bytes in image_bytes_list
+        ]
 
         if not images:
             print('Could not create any images from bytes to create a collage.')
@@ -122,7 +126,9 @@ async def find_products(
             )
 
     # Use vector search when a semantic query is provided, otherwise fall back to metadata-only search
-    searcher = table.search(query_embedding) if query_embedding is not None else table.search()
+    searcher = (
+        table.search(query_embedding) if query_embedding is not None else table.search()
+    )
 
     conditions = []
     if category:
@@ -169,11 +175,18 @@ async def build_product_database():
         embedding_model = SentenceTransformer('clip-ViT-B-32')
 
     # 3. Create embeddings for product descriptions and fetch image bytes
-    logfire.info('Creating embeddings and fetching images for {n} products...', n=len(products_data))
+    logfire.info(
+        'Creating embeddings and fetching images for {n} products...',
+        n=len(products_data),
+    )
     product_vectors: list[ProductVector] = []
     async with httpx.AsyncClient() as client:
         for p_data in products_data:
-            with logfire.span('embed + download image', product_id=p_data.get('id'), category=p_data.get('category')):
+            with logfire.span(
+                'embed + download image',
+                product_id=p_data.get('id'),
+                category=p_data.get('category'),
+            ):
                 content_to_embed = f'Product Name: {p_data["title"]}\nCategory: {p_data["category"]}\nDescription: {p_data["description"]}'
                 embedding = embedding_model.encode(
                     content_to_embed, convert_to_tensor=False
@@ -186,14 +199,20 @@ async def build_product_database():
                     p_data['image'] = image_bytes
                     product_vectors.append(ProductVector(**p_data, embedding=embedding))
                 except httpx.HTTPStatusError as e:
-                    logfire.warning('Skipping product due to image download error: {e}', e=str(e))
+                    logfire.warning(
+                        'Skipping product due to image download error: {e}', e=str(e)
+                    )
 
     # 4. Create a LanceDB table and add the data
-    with logfire.span('create lancedb table and add rows', num_rows=len(product_vectors)):
+    with logfire.span(
+        'create lancedb table and add rows', num_rows=len(product_vectors)
+    ):
         table = db.create_table('products', schema=ProductVector, mode='overwrite')
         table.add(product_vectors)
 
-    logfire.info('Successfully indexed {n} products into LanceDB.', n=len(product_vectors))
+    logfire.info(
+        'Successfully indexed {n} products into LanceDB.', n=len(product_vectors)
+    )
 
 
 async def run_search(query: str):

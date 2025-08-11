@@ -61,5 +61,3 @@ class ProductVector(LanceModel):
     image: bytes
     embedding: Vector(512)  # CLIP 'clip-ViT-B-32' embedding size
 ```
-
-
