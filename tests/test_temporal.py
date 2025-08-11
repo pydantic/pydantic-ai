@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -103,6 +103,15 @@ async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
         yield
     finally:
         await http_client.aclose()
+
+
+# `LogfirePlugin` calls `logfire.instrument_pydantic_ai()`, so we need to make sure this doesn't bleed into other tests.
+@pytest.fixture(autouse=True, scope='module')
+def uninstrument_pydantic_ai() -> Iterator[None]:
+    try:
+        yield
+    finally:
+        Agent.instrument_all(False)
 
 
 TEMPORAL_PORT = 7243
