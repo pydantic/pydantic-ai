@@ -29,6 +29,7 @@ class TemporalRunContext(RunContext[Any]):
 
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
+        """Serialize the run context to a `dict[str, Any]`."""
         return {
             'retries': ctx.retries,
             'tool_call_id': ctx.tool_call_id,
@@ -38,7 +39,8 @@ class TemporalRunContext(RunContext[Any]):
         }
 
     @classmethod
-    def deserialize_run_context(cls, ctx: dict[str, Any]) -> RunContext[Any]:
+    def deserialize_run_context(cls, ctx: dict[str, Any]) -> TemporalRunContext:
+        """Deserialize the run context from a `dict[str, Any]`."""
         return cls(**ctx)
 
 
@@ -47,7 +49,7 @@ class TemporalRunContextWithDeps(TemporalRunContext):
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         if not isinstance(ctx.deps, dict):
             raise UserError(
-                'The `deps` object must be a JSON-serializable dictionary in order to be used with Temporal. '
-                'To use a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
+                '`TemporalRunContextWithDeps` requires the `deps` object to be a JSON-serializable dictionary. '
+                'To support `deps` of a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
             )
         return {**super().serialize_run_context(ctx), 'deps': ctx.deps}  # pyright: ignore[reportUnknownMemberType]

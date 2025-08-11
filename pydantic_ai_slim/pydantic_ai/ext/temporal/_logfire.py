@@ -27,7 +27,7 @@ class LogfirePlugin(ClientPlugin):
 
     def configure_client(self, config: ClientConfig) -> ClientConfig:
         interceptors = config.get('interceptors', [])
-        config['interceptors'] = [*interceptors, TracingInterceptor(get_tracer('temporal'))]
+        config['interceptors'] = [*interceptors, TracingInterceptor(get_tracer('temporalio'))]
         return super().configure_client(config)
 
     async def connect_service_client(self, config: ConnectConfig) -> ServiceClient:
@@ -36,7 +36,7 @@ class LogfirePlugin(ClientPlugin):
         if self.metrics:
             logfire_config = logfire.config
             token = logfire_config.token
-            if token is not None:
+            if logfire_config.send_to_logfire and token is not None and logfire_config.metrics is not False:
                 base_url = logfire_config.advanced.generate_base_url(token)
                 metrics_url = base_url + '/v1/metrics'
                 headers = {'Authorization': f'Bearer {token}'}

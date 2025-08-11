@@ -15,6 +15,7 @@ from ...exceptions import UserError
 from ._agent import TemporalAgent
 from ._logfire import LogfirePlugin
 from ._run_context import TemporalRunContext, TemporalRunContextWithDeps
+from ._toolset import TemporalWrapperToolset
 
 __all__ = [
     'TemporalAgent',
@@ -23,6 +24,7 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalRunContextWithDeps',
+    'TemporalWrapperToolset',
 ]
 
 

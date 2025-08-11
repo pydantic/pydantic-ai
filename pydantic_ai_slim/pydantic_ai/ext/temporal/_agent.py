@@ -56,16 +56,23 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             AbstractToolset[Any],
         ] = temporalize_toolset,
     ):
-        """Wrap an agent to make it compatible with Temporal.
+        """Wrap an agent to allow it to be used inside a Temporal workflow, by automatically moving model requests and tool calls to Temporal activities.
 
         Args:
             wrapped: The agent to wrap.
-            activity_config: The Temporal activity config to use.
-            model_activity_config: The Temporal activity config to use for model requests.
-            toolset_activity_config: The Temporal activity config to use for specific toolsets identified by ID.
-            tool_activity_config: The Temporal activity config to use for specific tools identified by toolset ID and tool name.
-            run_context_type: The type of run context to use to serialize and deserialize the run context.
-            temporalize_toolset_func: The function to use to prepare the toolsets for Temporal.
+            activity_config: The base Temporal activity config to use for all activities.
+            model_activity_config: The Temporal activity config to use for model request activities. This is merged with the base activity config.
+            toolset_activity_config: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
+            tool_activity_config: The Temporal activity config to use for specific tool call activities identified by toolset ID and tool name.
+                This is merged with the base and toolset-specific activity configs. Use `False` to disable using an activity for a specific tool.
+            run_context_type: The `TemporalRunContext` subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
+                By default, only the `retries`, `tool_call_id`, `tool_name`, `retry` and `run_step` attributes will be available.
+                To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
+                If `deps` is a JSON-serializable dictionary, you can use `TemporalRunContextWithDeps` to make the `deps` attribute available as well.
+                If `deps` is of a different type, create a `TemporalRunContext` subclass with custom `serialize_run_context` and `deserialize_run_context` class methods.
+            temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
+                If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Temporal.
+                The function takes the toolset, the activity name prefix, the toolset-specific activity config, the tool-specific activity configs and the run context type.
         """
         super().__init__(wrapped)
 

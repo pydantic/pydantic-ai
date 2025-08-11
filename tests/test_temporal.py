@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
 from datetime import timedelta
+from typing import Any, Literal
 
-from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext
@@ -33,6 +34,7 @@ try:
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
+    from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
@@ -43,6 +45,7 @@ try:
         LogfirePlugin,
         PydanticAIPlugin,
         TemporalAgent,
+        TemporalRunContext,
         TemporalRunContextWithDeps,
     )
     from pydantic_ai.ext.temporal._function_toolset import TemporalFunctionToolset
@@ -55,7 +58,10 @@ except ImportError:
 
 try:
     import logfire
+    from logfire import Logfire
+    from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
+    from opentelemetry.trace import ProxyTracer
 except ImportError:
     import pytest
 
@@ -84,6 +90,7 @@ with workflow.unsafe.imports_passed_through():
 
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
     import pytest
+    from inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from .conftest import IsDatetime, IsStr
@@ -115,6 +122,16 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
         yield
     finally:
         Agent.instrument_all(False)
+
+
+@contextmanager
+def temporal_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
+    """Helper for asserting that a Temporal workflow fails with the expected error."""
+    with pytest.raises(WorkflowFailureError) as exc_info:
+        yield
+    assert isinstance(exc_info.value.__cause__, ApplicationError)
+    assert exc_info.value.__cause__.type == exc_type.__name__
+    assert exc_info.value.__cause__.message == exc_message
 
 
 TEMPORAL_PORT = 7243
@@ -844,18 +861,16 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
         workflows=[SimpleAgentWorkflowWithRunSync],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot('`agent.run_sync()` cannot be used inside a Temporal workflow. Use `agent.run()` instead.'),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunSync.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunSync.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            '`agent.run_sync()` cannot be used inside a Temporal workflow. Use `agent.run()` instead.'
-        )
 
 
 @workflow.defn
@@ -874,18 +889,18 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
         workflows=[SimpleAgentWorkflowWithRunStream],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunStream.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunStream.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
-        )
 
 
 @workflow.defn
@@ -905,18 +920,18 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
         workflows=[SimpleAgentWorkflowWithIter],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithIter.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithIter.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
-        )
 
 
 async def simple_event_stream_handler(
@@ -941,18 +956,18 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
         workflows=[SimpleAgentWorkflowWithEventStreamHandler],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithEventStreamHandler.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithEventStreamHandler.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-        )
 
 
 @workflow.defn
@@ -970,18 +985,18 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         workflows=[SimpleAgentWorkflowWithRunModel],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunModel.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunModel.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-        )
 
 
 @workflow.defn
@@ -999,18 +1014,18 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
         workflows=[SimpleAgentWorkflowWithRunToolsets],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunToolsets.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithRunToolsets.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-        )
 
 
 @workflow.defn
@@ -1029,18 +1044,18 @@ async def test_temporal_agent_override_model_in_workflow(allow_model_requests: N
         workflows=[SimpleAgentWorkflowWithOverrideModel],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithOverrideModel.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideModel.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
-        )
 
 
 @workflow.defn
@@ -1059,18 +1074,18 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
         workflows=[SimpleAgentWorkflowWithOverrideToolsets],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithOverrideToolsets.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideToolsets.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
-        )
 
 
 @workflow.defn
@@ -1089,18 +1104,18 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
         workflows=[SimpleAgentWorkflowWithOverrideTools],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithOverrideTools.run,
                 args=['What is the capital of Mexico?'],
                 id=SimpleAgentWorkflowWithOverrideTools.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
-        )
 
 
 agent_with_sync_tool = Agent(model, name='agent_with_sync_tool', tools=[get_weather])
@@ -1131,18 +1146,16 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
         workflows=[AgentWorkflowWithSyncToolActivityDisabled],
         plugins=[AgentPlugin(temporal_agent_with_sync_tool_activity_disabled)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.",
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 AgentWorkflowWithSyncToolActivityDisabled.run,
                 args=['What is the weather in Mexico City?'],
                 id=AgentWorkflowWithSyncToolActivityDisabled.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
-        )
 
 
 async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
@@ -1181,28 +1194,151 @@ async def test_temporal_model_stream_direct(client: Client):
         workflows=[DirectStreamWorkflow],
         plugins=[AgentPlugin(complex_temporal_agent)],
     ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
+        with temporal_raises(
+            UserError,
+            snapshot(
+                'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            ),
+        ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 DirectStreamWorkflow.run,
                 args=['What is the capital of Mexico?'],
                 id=DirectStreamWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
-        assert isinstance(exc_info.value.__cause__, ApplicationError)
-        assert exc_info.value.__cause__.type == UserError.__name__
-        assert exc_info.value.__cause__.message == snapshot(
-            'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+
+
+@dataclass
+class DataclassDeps:
+    country: str
+
+
+agent_with_dataclass_deps = Agent(model, name='agent_with_dataclass_deps', deps_type=DataclassDeps)
+
+
+@agent_with_dataclass_deps.tool
+async def get_country_from_deps(ctx: RunContext[DataclassDeps]) -> str:
+    return ctx.deps.country
+
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+temporal_agent_with_dataclass_deps = TemporalAgent(
+    agent_with_dataclass_deps,
+    run_context_type=TemporalRunContextWithDeps,
+)
+
+
+@workflow.defn
+class AgentWorkflowWithDataclassDeps:
+    @workflow.run
+    async def run(self, prompt: str, deps: DataclassDeps) -> str:
+        result = await temporal_agent_with_dataclass_deps.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_temporal_agent_with_non_dict_deps(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWorkflowWithDataclassDeps],
+        plugins=[AgentPlugin(temporal_agent_with_dataclass_deps)],
+    ):
+        with temporal_raises(
+            UserError,
+            snapshot(
+                '`TemporalRunContextWithDeps` requires the `deps` object to be a JSON-serializable dictionary. To support `deps` of a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
+            ),
+        ):
+            await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+                AgentWorkflowWithDataclassDeps.run,
+                args=[
+                    'What is the capital of the country?',
+                    DataclassDeps(country='Mexico'),
+                ],
+                id=AgentWorkflowWithDataclassDeps.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+class TemporalRunContextWithDataclassDeps(TemporalRunContext):
+    @classmethod
+    def serialize_run_context(cls, ctx: RunContext[DataclassDeps]) -> dict[str, Any]:
+        return {**super().serialize_run_context(ctx), 'deps': asdict(ctx.deps)}
+
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any]) -> TemporalRunContext:
+        deps = DataclassDeps(**ctx.pop('deps', {}))
+        return cls(**ctx, deps=deps)
+
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+temporal_agent_with_dataclass_deps_as_dict = TemporalAgent(
+    agent_with_dataclass_deps,
+    run_context_type=TemporalRunContextWithDataclassDeps,
+)
+
+
+@workflow.defn
+class AgentWorkflowWithDataclassDepsAsDict:
+    @workflow.run
+    async def run(self, prompt: str, deps: DataclassDeps) -> str:
+        result = await temporal_agent_with_dataclass_deps_as_dict.run(prompt, deps=deps)
+        return result.output
+
+
+async def test_temporal_agent_with_dataclass_deps_as_dict(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[AgentWorkflowWithDataclassDepsAsDict],
+        plugins=[AgentPlugin(temporal_agent_with_dataclass_deps_as_dict)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            AgentWorkflowWithDataclassDepsAsDict.run,
+            args=[
+                'What is the capital of the country?',
+                DataclassDeps(country='Mexico'),
+            ],
+            id=AgentWorkflowWithDataclassDepsAsDict.__name__,
+            task_queue=TASK_QUEUE,
         )
+        assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-# TODO: 'The `deps` object must be a JSON-serializable dictionary in order to be used with Temporal. '
-# 'To use a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
+async def test_logfire_plugin(client: Client):
+    def setup_logfire(send_to_logfire: bool = True, metrics: Literal[False] | None = None) -> Logfire:
+        instance = logfire.configure(local=True, metrics=metrics)
+        instance.config.token = 'test'
+        instance.config.send_to_logfire = send_to_logfire
+        return instance
 
-# TODO: Custom run_context_type
+    plugin = LogfirePlugin(setup_logfire)
 
-# TODO: tool_activity_config
+    config = client.config()
+    config['plugins'] = [plugin]
+    new_client = Client(**config)
 
-# TODO: Custom temporalize_toolset_func
+    interceptor = new_client.config()['interceptors'][0]
+    assert isinstance(interceptor, TracingInterceptor)
+    if isinstance(interceptor.tracer, ProxyTracer):
+        assert interceptor.tracer._instrumenting_module_name == 'temporalio'  # pyright: ignore[reportPrivateUsage]
+    elif isinstance(interceptor.tracer, _ProxyTracer):
+        assert interceptor.tracer.instrumenting_module_name == 'temporalio'
+    else:
+        assert False, f'Unexpected tracer type: {type(interceptor.tracer)}'
 
-# TODO: LogfirePlugin(setup_logfire=<custom>)
-# TODO: LogfirePlugin(metrics=False)
+    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    # We can't check if the metrics URL was actually set correctly because it's on a `temporalio.bridge.runtime.Runtime` that we can't read from.
+    assert new_client.service_client.config.runtime is not None
+
+    plugin = LogfirePlugin(setup_logfire, metrics=False)
+    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    assert new_client.service_client.config.runtime is None
+
+    plugin = LogfirePlugin(lambda: setup_logfire(send_to_logfire=False))
+    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    assert new_client.service_client.config.runtime is None
+
+    plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
+    new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
+    assert new_client.service_client.config.runtime is None
