@@ -7,10 +7,13 @@ from typing import Literal, Union, cast
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.exceptions import UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -166,6 +169,10 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> V2ChatResponse:
         tools = self._get_tools(model_request_parameters)
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Cohere does not support built-in tools')
+
         cohere_messages = self._map_messages(messages)
         try:
             return await self.client.chat(
@@ -223,6 +230,9 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from cohere
+                        pass
                     else:
                         assert_never(item)
                 message_param = AssistantChatMessageV2(role='assistant')
@@ -238,10 +248,7 @@ class CohereModel(Model):
         return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:

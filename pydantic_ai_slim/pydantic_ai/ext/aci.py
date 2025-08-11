@@ -1,16 +1,15 @@
-# Checking whether aci-sdk is installed
-try:
-    from aci import ACI
-except ImportError as _import_error:
-    raise ImportError('Please install `aci-sdk` to use ACI.dev tools') from _import_error
+from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
 
-from aci import ACI
-
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets.function import FunctionToolset
+
+try:
+    from aci import ACI
+except ImportError as _import_error:
+    raise ImportError('Please install `aci-sdk` to use ACI.dev tools') from _import_error
 
 
 def _clean_schema(schema):
@@ -71,5 +70,7 @@ def tool_from_aci(aci_function: str, linked_account_owner_id: str) -> Tool:
 class ACIToolset(FunctionToolset):
     """A toolset that wraps ACI.dev tools."""
 
-    def __init__(self, aci_functions: Sequence[str], linked_account_owner_id: str):
-        super().__init__([tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions])
+    def __init__(self, aci_functions: Sequence[str], linked_account_owner_id: str, *, id: str | None = None):
+        super().__init__(
+            [tool_from_aci(aci_function, linked_account_owner_id) for aci_function in aci_functions], id=id
+        )

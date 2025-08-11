@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
+from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfile
 from ..settings import ModelSettings
@@ -35,8 +36,11 @@ class WrapperModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        async with self.wrapped.request_stream(messages, model_settings, model_request_parameters) as response_stream:
+        async with self.wrapped.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as response_stream:
             yield response_stream
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:

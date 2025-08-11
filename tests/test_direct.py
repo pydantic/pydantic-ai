@@ -17,6 +17,7 @@ from pydantic_ai.direct import (
     model_request_sync,
 )
 from pydantic_ai.messages import (
+    FinalResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -86,6 +87,7 @@ def test_model_request_stream_sync():
         assert chunks == snapshot(
             [
                 PartStartEvent(index=0, part=TextPart(content='')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='success ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
@@ -104,6 +106,7 @@ async def test_model_request_stream():
     assert chunks == snapshot(
         [
             PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='success ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),

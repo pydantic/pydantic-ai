@@ -482,6 +482,13 @@ There two main challenges with streamed results:
 1. Validating structured responses before they're complete, this is achieved by "partial validation" which was recently added to Pydantic in [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748).
 2. When receiving a response, we don't know if it's the final response without starting to stream it and peeking at the content. Pydantic AI streams just enough of the response to sniff out if it's a tool call or an output, then streams the whole thing and calls tools, or returns the stream as a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult].
 
+!!! note
+    As the `run_stream()` method will consider the first output matching the `output_type` to be the final output,
+    it will stop running the agent graph and will not execute any tool calls made by the model after this "final" output.
+
+    If you want to always run the agent graph to completion and stream all events from the model's streaming response and the agent's execution of tools,
+    use [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] with an `event_stream_handler` ([docs](agents.md#streaming-all-events)) or [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] ([docs](agents.md#streaming-all-events-and-output)) instead.
+
 ### Streaming Text
 
 Example of streamed text output:
@@ -505,7 +512,7 @@ async def main():
 ```
 
 1. Streaming works with the standard [`Agent`][pydantic_ai.Agent] class, and doesn't require any special setup, just a model that supports streaming (currently all models support streaming).
-2. The [`Agent.run_stream()`][pydantic_ai.Agent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
+2. The [`Agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] method is used to start a streamed run, this method returns a context manager so the connection can be closed when the stream completes.
 3. Each item yield by [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text] is the complete text response, extended as new data is received.
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
@@ -540,22 +547,20 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### Streaming Structured Output
 
-Not all types are supported with partial validation in Pydantic, see [pydantic/pydantic#10748](https://github.com/pydantic/pydantic/pull/10748), generally for model-like structures it's currently best to use `TypeDict`.
-
-Here's an example of streaming a use profile as it's built:
+Here's an example of streaming a user profile as it's built:
 
 ```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
 
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, NotRequired
 
 from pydantic_ai import Agent
 
 
-class UserProfile(TypedDict, total=False):
+class UserProfile(TypedDict):
     name: str
-    dob: date
-    bio: str
+    dob: NotRequired[date]
+    bio: NotRequired[str]
 
 
 agent = Agent(
@@ -581,7 +586,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-If you want fine-grained control of validation, particularly catching validation errors, you can use the following pattern:
+If you want fine-grained control of validation, you can use the following pattern to get the entire partial [`ModelResponse`][pydantic_ai.messages.ModelResponse]:
 
 ```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
