@@ -11,13 +11,13 @@ from typing import Any, Literal, Union, cast, overload
 from pydantic import ValidationError
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import UserError
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
+from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import CodeExecutionTool, WebSearchTool
+from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -256,13 +256,14 @@ class OpenAIModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response)
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     @property
     def model_name(self) -> OpenAIModelName:
@@ -427,7 +428,9 @@ class OpenAIModel(Model):
             vendor_id=response.id,
         )
 
-    async def _process_streamed_response(self, response: AsyncStream[ChatCompletionChunk]) -> OpenAIStreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncStream[ChatCompletionChunk], model_request_parameters: ModelRequestParameters
+    ) -> OpenAIStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
@@ -437,6 +440,7 @@ class OpenAIModel(Model):
             )
 
         return OpenAIStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _model_profile=self.profile,
             _response=peekable_response,
@@ -444,10 +448,7 @@ class OpenAIModel(Model):
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
@@ -702,13 +703,14 @@ class OpenAIResponsesModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._responses_create(
             messages, True, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response)
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     def _process_response(self, response: responses.Response) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -735,7 +737,9 @@ class OpenAIResponsesModel(Model):
         )
 
     async def _process_streamed_response(
-        self, response: AsyncStream[responses.ResponseStreamEvent]
+        self,
+        response: AsyncStream[responses.ResponseStreamEvent],
+        model_request_parameters: ModelRequestParameters,
     ) -> OpenAIResponsesStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
@@ -745,6 +749,7 @@ class OpenAIResponsesModel(Model):
 
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
         return OpenAIResponsesStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.response.created_at),
@@ -859,10 +864,7 @@ class OpenAIResponsesModel(Model):
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []

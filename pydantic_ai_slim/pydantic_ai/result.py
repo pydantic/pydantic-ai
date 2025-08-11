@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -22,7 +22,7 @@ from ._output import (
     ToolOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from .messages import AgentStreamEvent, FinalResultEvent
+from .messages import AgentStreamEvent
 from .output import (
     OutputDataT,
     ToolOutput,
@@ -45,13 +45,13 @@ T = TypeVar('T')
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
     _output_schema: OutputSchema[OutputDataT]
+    _model_request_parameters: models.ModelRequestParameters
     _output_validators: list[OutputValidator[AgentDepsT, OutputDataT]]
     _run_ctx: RunContext[AgentDepsT]
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
 
     _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
-    _final_result_event: FinalResultEvent | None = field(default=None, init=False)
     _initial_run_ctx_usage: Usage = field(init=False)
 
     def __post_init__(self):
@@ -60,12 +60,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
         async for response in self.stream_responses(debounce_by=debounce_by):
-            if self._final_result_event is not None:
+            if self._raw_stream_response.final_result_event is not None:
                 try:
                     yield await self._validate_response(response, allow_partial=True)
                 except ValidationError:
                     pass
-        if self._final_result_event is not None:  # pragma: no branch
+        if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
             yield await self._validate_response(self._raw_stream_response.get())
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
@@ -131,10 +131,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def _validate_response(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
         """Validate a structured result message."""
-        if self._final_result_event is None:
+        final_result_event = self._raw_stream_response.final_result_event
+        if final_result_event is None:
             raise exceptions.UnexpectedModelBehavior('Invalid response, unable to find output')  # pragma: no cover
 
-        output_tool_name = self._final_result_event.tool_name
+        output_tool_name = final_result_event.tool_name
 
         if isinstance(self._output_schema, ToolOutputSchema) and output_tool_name is not None:
             tool_call = next(
@@ -221,52 +222,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield ''.join(deltas)
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
-        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
-
-        This proxies the _raw_stream_response and sends all events to the agent stream, while also checking for matches
-        on the result schema and emitting a [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] if/when the
-        first match is found.
-        """
-        if self._agent_stream_iterator is not None:
-            return self._agent_stream_iterator
-
-        async def aiter():
-            output_schema = self._output_schema
-
-            def _get_final_result_event(e: _messages.ModelResponseStreamEvent) -> _messages.FinalResultEvent | None:
-                """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
-                if isinstance(e, _messages.PartStartEvent):
-                    new_part = e.part
-                    if isinstance(new_part, _messages.TextPart) and isinstance(
-                        output_schema, TextOutputSchema
-                    ):  # pragma: no branch
-                        return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
-                    elif isinstance(new_part, _messages.ToolCallPart) and (
-                        tool_def := self._tool_manager.get_tool_def(new_part.tool_name)
-                    ):
-                        if tool_def.kind == 'output':
-                            return _messages.FinalResultEvent(
-                                tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id
-                            )
-                        elif tool_def.kind == 'deferred':
-                            return _messages.FinalResultEvent(tool_name=None, tool_call_id=None)
-
-            usage_checking_stream = _get_usage_checking_stream_response(
+        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s."""
+        if self._agent_stream_iterator is None:
+            self._agent_stream_iterator = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
             )
-            async for event in usage_checking_stream:
-                yield event
-                if (final_result_event := _get_final_result_event(event)) is not None:
-                    self._final_result_event = final_result_event
-                    yield final_result_event
-                    break
 
-            # If we broke out of the above loop, we need to yield the rest of the events
-            # If we didn't, this will just be a no-op
-            async for event in usage_checking_stream:
-                yield event
-
-        self._agent_stream_iterator = aiter()
         return self._agent_stream_iterator
 
 
@@ -462,10 +423,10 @@ class FinalResult(Generic[OutputDataT]):
 
 
 def _get_usage_checking_stream_response(
-    stream_response: AsyncIterable[_messages.ModelResponseStreamEvent],
+    stream_response: models.StreamedResponse,
     limits: UsageLimits | None,
     get_usage: Callable[[], Usage],
-) -> AsyncIterable[_messages.ModelResponseStreamEvent]:
+) -> AsyncIterator[AgentStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():
@@ -475,4 +436,9 @@ def _get_usage_checking_stream_response(
 
         return _usage_checking_iterator()
     else:
-        return stream_response
+        # TODO: Use `return aiter(stream_response)` once we drop support for Python 3.9
+        async def _iterator():
+            async for item in stream_response:
+                yield item
+
+        return _iterator()

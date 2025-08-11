@@ -21,6 +21,7 @@ from typing_extensions import assert_never
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
     BinaryContent,
@@ -196,13 +197,14 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._messages_create(
             messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response)
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     @property
     def model_name(self) -> AnthropicModelName:
@@ -329,7 +331,9 @@ class AnthropicModel(Model):
 
         return ModelResponse(items, usage=_map_usage(response), model_name=response.model, vendor_id=response.id)
 
-    async def _process_streamed_response(self, response: AsyncStream[BetaRawMessageStreamEvent]) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
+    ) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -338,14 +342,14 @@ class AnthropicModel(Model):
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(
-            _model_name=self._model_name, _response=peekable_response, _timestamp=timestamp
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=timestamp,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolUnionParam]:
         tools: list[BetaToolUnionParam] = []
