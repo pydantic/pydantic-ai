@@ -216,7 +216,7 @@ async def event_stream_handler(
 ):
     logfire.info(f'{ctx.run_step=}')
     async for event in stream:
-        logfire.info(f'{event=}')
+        logfire.info('event', event=event)
 
 
 async def get_country(ctx: RunContext[Deps]) -> str:
