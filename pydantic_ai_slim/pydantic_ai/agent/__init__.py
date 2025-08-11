@@ -1380,7 +1380,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def id(self) -> str:
-        return '<agent>'  # pragma: no cover
+        return '<agent>'
 
     @property
     def label(self) -> str:
