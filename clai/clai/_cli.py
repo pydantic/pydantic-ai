@@ -58,7 +58,7 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(  # noqa: C901
+def cli(
     args_list: Sequence[str] | None = None,
     *,
     prog_name: str = 'pai',
@@ -77,9 +77,7 @@ Special prompts:
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument(
-        'prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode'
-    )
+    parser.add_argument('prompt', nargs='?', help='AI Prompt, if omitted fall into interactive mode')
     arg = parser.add_argument(
         '-m',
         '--model',
@@ -148,11 +146,7 @@ Special prompts:
             console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
             return 1
 
-    model_name = (
-        agent.model
-        if isinstance(agent.model, str)
-        else f'{agent.model.system}:{agent.model.model_name}'
-    )
+    model_name = agent.model if isinstance(agent.model, str) else f'{agent.model.system}:{agent.model.model_name}'
     title = name_version = f'{prog_name} - Pydantic AI CLI v{__version__}'
     if args.agent and model_arg_set:
         title = f'{name_version} using custom agent **{args.agent}** with `{model_name}`'
@@ -165,8 +159,6 @@ Special prompts:
 
     from clai.tui import CLAIApp
 
-    app = CLAIApp(
-        agent, PYDANTIC_AI_HOME / PROMPT_HISTORY_FILENAME, prompt=args.prompt, title=title
-    )
+    app = CLAIApp(agent, PYDANTIC_AI_HOME / PROMPT_HISTORY_FILENAME, prompt=args.prompt, title=title)
     app.run()
     return 0

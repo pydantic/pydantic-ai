@@ -176,11 +176,7 @@ class Prompt(containers.HorizontalGroup, can_focus=False):
         if action == 'history':
             if parameters[0] == +1 and self.history_position == 0:
                 return None
-            if (
-                parameters[0] == -1
-                and self.history_strings
-                and self.history_position == -len(self.history_strings)
-            ):
+            if parameters[0] == -1 and self.history_strings and self.history_position == -len(self.history_strings):
                 return None
         if action in ('submit', 'escape'):
             return self.multiline
@@ -337,9 +333,7 @@ class MainScreen(Screen[None]):
                     async for node in agent_run:
                         if Agent.is_model_request_node(node):
                             async with node.stream(agent_run.ctx) as handle_stream:
-                                async for fragment in handle_stream.stream_text(
-                                    delta=True, debounce_by=None
-                                ):
+                                async for fragment in handle_stream.stream_text(delta=True, debounce_by=None):
                                     await markdown_stream.write(fragment)
                                     response.display = True
                     self.messages[:] = agent_run.result.all_messages()
