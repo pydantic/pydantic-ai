@@ -34,6 +34,7 @@ try:
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
+    from temporalio.common import RetryPolicy
     from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.exceptions import ApplicationError
     from temporalio.testing import WorkflowEnvironment
@@ -172,7 +173,13 @@ model = OpenAIModel(
 simple_agent = Agent(model, name='simple_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-simple_temporal_agent = TemporalAgent(simple_agent)
+simple_temporal_agent = TemporalAgent(
+    simple_agent,
+    activity_config=ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=60),
+        retry_policy=RetryPolicy(maximum_attempts=1),
+    ),
+)
 
 
 @workflow.defn
@@ -247,7 +254,10 @@ complex_agent = Agent(
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 complex_temporal_agent = TemporalAgent(
     complex_agent,
-    activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
+    activity_config=ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=60),
+        retry_policy=RetryPolicy(maximum_attempts=1),
+    ),
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
     toolset_activity_config={
         'country': ActivityConfig(start_to_close_timeout=timedelta(seconds=120)),
@@ -255,6 +265,9 @@ complex_temporal_agent = TemporalAgent(
     tool_activity_config={
         'country': {
             'get_country': False,
+        },
+        '<agent>': {
+            'get_weather': ActivityConfig(start_to_close_timeout=timedelta(seconds=180)),
         },
     },
     run_context_type=TemporalRunContextWithDeps,
@@ -1148,7 +1161,9 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
     ):
         with temporal_raises(
             UserError,
-            "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead.",
+            snapshot(
+                "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
+            ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 AgentWorkflowWithSyncToolActivityDisabled.run,
