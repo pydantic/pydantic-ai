@@ -42,7 +42,7 @@ try:
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.ext.temporal import (
+    from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         LogfirePlugin,
         PydanticAIPlugin,
@@ -50,9 +50,9 @@ try:
         TemporalRunContext,
         TemporalRunContextWithDeps,
     )
-    from pydantic_ai.ext.temporal._function_toolset import TemporalFunctionToolset
-    from pydantic_ai.ext.temporal._mcp_server import TemporalMCPServer
-    from pydantic_ai.ext.temporal._model import TemporalModel
+    from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
+    from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
+    from pydantic_ai.durable_exec.temporal._model import TemporalModel
 except ImportError:  # pragma: lax no cover
     import pytest
 

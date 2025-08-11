@@ -19,8 +19,8 @@ from pydantic_ai import (
 )
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
+from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.ext.temporal._run_context import TemporalRunContext
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult

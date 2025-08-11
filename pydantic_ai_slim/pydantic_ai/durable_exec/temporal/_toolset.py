@@ -6,11 +6,12 @@ from typing import Any, Callable, Literal
 from temporalio.workflow import ActivityConfig
 
 from pydantic_ai._run_context import AgentDepsT
-from pydantic_ai.ext.temporal._run_context import TemporalRunContext
 from pydantic_ai.mcp import MCPServer
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
+
+from ._run_context import TemporalRunContext
 
 
 class TemporalWrapperToolset(WrapperToolset[Any], ABC):
