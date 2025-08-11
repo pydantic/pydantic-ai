@@ -59,6 +59,10 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_function_tool_call_param import (
+        ChatCompletionMessageFunctionToolCallParam,
+    )
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
@@ -416,6 +420,7 @@ class OpenAIModel(Model):
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
+                c = cast(ChatCompletionMessageFunctionToolCall, c)
                 part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
@@ -474,7 +479,7 @@ class OpenAIModel(Model):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
-                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
@@ -505,8 +510,8 @@ class OpenAIModel(Model):
         return openai_messages
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-        return chat.ChatCompletionMessageToolCallParam(
+    def _map_tool_call(t: ToolCallPart) -> ChatCompletionMessageFunctionToolCallParam:
+        return ChatCompletionMessageFunctionToolCallParam(
             id=_guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
