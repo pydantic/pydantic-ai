@@ -266,8 +266,10 @@ complex_temporal_agent = TemporalAgent(
     },
     tool_activity_config={
         'country': {
-            'unknown_tool': ActivityConfig(start_to_close_timeout=timedelta(seconds=150)),
             'get_country': False,
+        },
+        'mcp': {
+            'get_product_name': ActivityConfig(start_to_close_timeout=timedelta(seconds=150)),
         },
         '<agent>': {
             'get_weather': ActivityConfig(start_to_close_timeout=timedelta(seconds=180)),
@@ -442,11 +444,12 @@ async def test_complex_agent_run(allow_model_requests: None):
         async for event in stream:
             events.append(event)
 
-    result = await complex_temporal_agent.run(
-        'Tell me: the capital of the country; the weather there; the product name',
-        deps=Deps(country='Mexico'),
-        event_stream_handler=event_stream_handler,
-    )
+    with complex_temporal_agent.override(deps=Deps(country='Mexico')):
+        result = await complex_temporal_agent.run(
+            'Tell me: the capital of the country; the weather there; the product name',
+            deps=Deps(country='The Netherlands'),
+            event_stream_handler=event_stream_handler,
+        )
     assert result.output == snapshot(
         Response(
             answers=[
