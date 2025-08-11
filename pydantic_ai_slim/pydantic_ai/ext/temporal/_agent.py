@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
+from contextvars import ContextVar
 from datetime import timedelta
 from typing import Any, Callable, Literal, overload
 
@@ -128,6 +129,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._toolsets = temporal_toolsets
         self._temporal_activities = activities
 
+        self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
+
     @property
     def model(self) -> Model:
         return self._model
@@ -145,7 +148,11 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def _temporal_overrides(self) -> Iterator[None]:
         # We reset tools here as the temporalized function toolset is already in self._toolsets.
         with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
-            yield
+            token = self._temporal_overrides_active.set(True)
+            try:
+                yield
+            finally:
+                self._temporal_overrides_active.reset(token)
 
     @overload
     async def run(
@@ -231,22 +238,26 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        _check_no_run_event_stream_handler_in_workflow(event_stream_handler)
+        if workflow.in_workflow() and event_stream_handler is not None:
+            raise UserError(
+                'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+            )
 
-        return await super().run(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            event_stream_handler=event_stream_handler,
-            **_deprecated_kwargs,
-        )
+        with self._temporal_overrides():
+            return await super().run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                **_deprecated_kwargs,
+            )
 
     @overload
     def run_sync(
@@ -331,7 +342,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        _check_no_run_event_stream_handler_in_workflow(event_stream_handler)
+        if workflow.in_workflow():
+            raise UserError('`agent.run_sync()` cannot be used inside a Temporal workflow. Use `agent.run()` instead.')
 
         return super().run_sync(
             user_prompt,
@@ -430,7 +442,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        _check_no_run_event_stream_handler_in_workflow(event_stream_handler)
+        if workflow.in_workflow():
+            raise UserError(
+                '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+            )
 
         async with super().run_stream(
             user_prompt,
@@ -575,45 +590,35 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if not workflow.in_workflow():
-            async with super().iter(
-                user_prompt=user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                **_deprecated_kwargs,
-            ) as run:
-                yield run
-            return
+        if workflow.in_workflow():
+            if not self._temporal_overrides_active.get():
+                raise UserError(
+                    '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                )
 
-        if model is not None:
-            raise UserError(
-                'Model cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
-            )
-        if toolsets is not None:
-            raise UserError(
-                'Toolsets cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
-            )
+            if model is not None:
+                raise UserError(
+                    'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                )
+            if toolsets is not None:
+                raise UserError(
+                    'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+                )
 
-        with self._temporal_overrides():
-            async with super().iter(
-                user_prompt=user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                **_deprecated_kwargs,
-            ) as run:
-                yield run
+        async with super().iter(
+            user_prompt=user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            **_deprecated_kwargs,
+        ) as run:
+            yield run
 
     @contextmanager
     def override(
@@ -638,23 +643,16 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if workflow.in_workflow():
             if _utils.is_set(model):
                 raise UserError(
-                    'Model cannot be contextually overridden when using Temporal, it must be set at agent creation time.'
+                    'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
                 )
             if _utils.is_set(toolsets):
                 raise UserError(
-                    'Toolsets cannot be contextually overridden when using Temporal, they must be set at agent creation time.'
+                    'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
             if _utils.is_set(tools):
                 raise UserError(
-                    'Tools cannot be contextually overridden when using Temporal, they must be set at agent creation time.'
+                    'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
                 )
 
         with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
             yield
-
-
-def _check_no_run_event_stream_handler_in_workflow(event_stream_handler: EventStreamHandler[AgentDepsT] | None) -> None:
-    if workflow.in_workflow() and event_stream_handler is not None:
-        raise UserError(
-            'Event stream handler cannot be set at agent run time when using Temporal, it must be set at agent creation time.'
-        )
