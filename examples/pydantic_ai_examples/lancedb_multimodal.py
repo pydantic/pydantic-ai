@@ -1,0 +1,241 @@
+"""Multimodal RAG with LanceDB.
+
+What this does:
+- Fetches a product catalog from a live API (fakestoreapi.com).
+- Embeds product descriptions using a CLIP model (clip-ViT-B-32) and stores them in LanceDB.
+- Implements a RAG agent with a `find_products` tool that can:
+    1. Perform semantic search (e.g., "something for the cold weather").
+    2. Perform metadata filtering (e.g., "show me all electronics").
+       (e.g., "a cool t-shirt" from the "men's clothing" category under $20).
+- Generates and displays an image collage of the results for instant visual feedback.
+
+Install dependencies:
+    pip install lancedb sentence-transformers torch httpx pandas Pillow
+
+Set your Google API key (for the agent's text generation):
+    export GOOGLE_API_KEY=your_api_key_here
+
+Usage:
+    # First, build the product database from the live API
+    python lancedb_multimodal.py build
+
+    # Then, ask for a recommendation (this will use hybrid search):
+    python lancedb_multimodal.py search "a cool t-shirt in men's clothing under 20 dollars"
+"""
+
+import asyncio
+import io
+import os
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import httpx
+import lancedb
+from lancedb.pydantic import LanceModel, Vector
+from PIL import Image
+from sentence_transformers import SentenceTransformer
+
+from pydantic_ai import Agent, RunContext
+
+DATA_DIR = Path('./lancedb_data/products')
+
+
+# LanceDB schema
+class ProductVector(LanceModel):
+    id: int
+    title: str
+    price: float
+    description: str
+    category: str
+    image: bytes
+    embedding: Vector(512)  # CLIP 'clip-ViT-B-32' model produces 512-dim vectors
+
+
+@dataclass
+class Deps:
+    db: lancedb.DBConnection
+    embedding_model: SentenceTransformer
+
+
+agent = Agent(
+    'gemini-1.5-flash',
+    deps_type=Deps,
+    system_prompt=(
+        'You are a helpful AI Shopping Assistant. Your goal is to help users find the perfect product '
+        'by using the `find_products` tool. You can search by a text query, filter by category and '
+        'price, or combine all three for a powerful search. '
+        'After getting the results, present them clearly to the user and mention that you are '
+        'displaying a collage of the findings.'
+    ),
+)
+
+
+async def _generate_image_collage(image_bytes_list: list[bytes], title: str):
+    if not image_bytes_list:
+        return
+
+    images = [Image.open(io.BytesIO(image_bytes)) for image_bytes in image_bytes_list]
+
+    if not images:
+        print('Could not create any images from bytes to create a collage.')
+        return
+
+    widths, heights = zip(*(i.size for i in images))
+    total_width = sum(widths)
+    max_height = max(heights)
+    collage = Image.new('RGB', (total_width, max_height))
+    x_offset = 0
+    for img in images:
+        collage.paste(img, (x_offset, 0))
+        x_offset += img.width
+
+    collage.show(title=title)
+
+
+@agent.tool
+async def find_products(
+    context: RunContext[Deps],
+    query: Optional[str] = None,
+    category: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    top_k: int = 4,
+) -> str:
+    """Finds products using semantic search, metadata filtering, or both (hybrid search).
+
+    Args:
+        context: The context of the agent.
+        query: The semantic search query (e.g., "a stylish backpack").
+        category: The category to filter by (e.g., "electronics").
+        min_price: The minimum price to filter by.
+        max_price: The maximum price to filter by.
+        top_k: The number of results to return.
+    """
+    table = context.deps.db.open_table('products')
+
+    query_embedding = None
+    if query and query.strip():
+        query_embedding = context.deps.embedding_model.encode(
+            query, convert_to_tensor=False
+        )
+
+    # Use vector search when a semantic query is provided, otherwise fall back to metadata-only search
+    searcher = table.search(query_embedding) if query_embedding is not None else table.search()
+
+    conditions = []
+    if category:
+        safe_category = category.replace("'", "''")
+        conditions.append(f"category = '{safe_category}'")
+    if min_price is not None:
+        conditions.append(f'price >= {min_price}')
+    if max_price is not None:
+        conditions.append(f'price <= {max_price}')
+
+    if conditions:
+        where_clause = ' AND '.join(conditions)
+        searcher = searcher.where(where_clause)
+
+    results_df = searcher.limit(top_k).to_pandas()
+
+    if results_df.empty:
+        return 'No products found matching your criteria.'
+
+    print('Displaying collage of results...')
+    await _generate_image_collage(results_df['image'].tolist(), title='Product Results')
+
+    # Don't return image byte string in the text response
+    results_df_no_image = results_df.drop(columns=['image'])
+    results_json = results_df_no_image.to_json(orient='records')
+    return f'Found {len(results_df)} products.\n Product details: {results_json}'
+
+
+async def build_product_database():
+    print('Building product database from Fake Store API...')
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 1. Fetch product data from the API
+    async with httpx.AsyncClient() as client:
+        response = await client.get('https://fakestoreapi.com/products', timeout=30)
+        response.raise_for_status()
+        products_data = response.json()
+
+    # 2. Initialize LanceDB and Embedding Model
+    db = lancedb.connect(DATA_DIR)
+    embedding_model = SentenceTransformer('clip-ViT-B-32')
+
+    # 3. Create embeddings for product descriptions and fetch image bytes
+    print(
+        f'Creating embeddings and fetching images for {len(products_data)} products...'
+    )
+    product_vectors: list[ProductVector] = []
+    async with httpx.AsyncClient() as client:
+        for p_data in products_data:
+            content_to_embed = f'Product Name: {p_data["title"]}\nCategory: {p_data["category"]}\nDescription: {p_data["description"]}'
+            embedding = embedding_model.encode(
+                content_to_embed, convert_to_tensor=False
+            )
+
+            try:
+                image_response = await client.get(p_data['image'], timeout=30)
+                image_response.raise_for_status()
+                image_bytes = image_response.content
+                p_data['image'] = image_bytes
+                product_vectors.append(ProductVector(**p_data, embedding=embedding))
+            except httpx.HTTPStatusError as e:
+                print(
+                    f'Skipping product {p_data["id"]} due to image download error: {e}'
+                )
+
+    # 4. Create a LanceDB table and add the data
+    print('Creating LanceDB table...')
+    table = db.create_table('products', schema=ProductVector, mode='overwrite')
+    table.add(product_vectors)
+
+    print(f'Successfully indexed {len(product_vectors)} products into LanceDB.')
+
+
+async def run_search(query: str):
+    db = lancedb.connect(DATA_DIR)
+    embedding_model = SentenceTransformer('clip-ViT-B-32')
+    deps = Deps(db=db, embedding_model=embedding_model)
+
+    print(f"\nUser Query: '{query}'")
+    print('---------------------------------')
+    result = await agent.run(query, deps=deps)
+    print(result.output)
+
+
+def main():
+    if 'search' in sys.argv and not os.getenv('GOOGLE_API_KEY'):
+        raise ValueError(
+            "GOOGLE_API_KEY environment variable is required for the 'search' action."
+        )
+
+    if len(sys.argv) < 2:
+        print(
+            'Usage:\n'
+            '  python lancedb_multimodal.py build\n'
+            '  python lancedb_multimodal.py search <query>',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    action = sys.argv[1]
+    if action == 'build':
+        asyncio.run(build_product_database())
+    elif action == 'search':
+        search_query = (
+            ' '.join(sys.argv[2:])
+            if len(sys.argv) > 2
+            else 'An external SSD with 1TB or more storage'
+        )
+        asyncio.run(run_search(search_query))
+    else:
+        print(f'Unknown action: {action}', file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()
