@@ -78,9 +78,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
     )
 
 
-async def test_history_processor_run_replaces_message_history(
-    function_model: FunctionModel,
-):
+async def test_history_processor_run_replaces_message_history(function_model: FunctionModel):
     """Test that the history processor replaces the message history in the state."""
 
     def process_previous_answers(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -111,9 +109,7 @@ async def test_history_processor_run_replaces_message_history(
     )
 
 
-async def test_history_processor_streaming_replaces_message_history(
-    function_model: FunctionModel,
-):
+async def test_history_processor_streaming_replaces_message_history(function_model: FunctionModel):
     """Test that the history processor replaces the message history in the state."""
 
     def process_previous_answers(messages: list[ModelMessage]) -> list[ModelMessage]:
