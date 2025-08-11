@@ -106,6 +106,8 @@ dev = [
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
     "coverage-enable-subprocess>=0.1.0",
+    "lancedb",
+    "sentence-transformers"
 ]
 
 [tool.hatch.metadata]
