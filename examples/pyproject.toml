@@ -63,6 +63,10 @@ dependencies = [
     "duckdb>=1.3.2",
     "datasets>=4.0.0",
     "pandas>=2.2.3",
+    "lancedb>=0.14.0",
+    "sentence-transformers>=3.0.0",
+    "torch>=2.3.0",
+    "Pillow>=10.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]

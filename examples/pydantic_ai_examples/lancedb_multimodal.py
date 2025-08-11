@@ -41,10 +41,12 @@ from sentence_transformers import SentenceTransformer
 
 from pydantic_ai import Agent, RunContext
 
+# ruff: noqa
 # pyright: reportMissingImports=false
 # pyright: reportInvalidTypeForm=false
 # pyright: reportUnknownVariableType=false
 # pyright: reportUnknownMemberType=false
+# pyright: reportUnknownArgumentType=false
 # pyright: reportUntypedBaseClass=false
 
 # 'if-token-present' means nothing will be sent if you don't have logfire configured
