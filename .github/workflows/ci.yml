@@ -292,7 +292,7 @@ jobs:
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, mypy, docs, test-live, test, coverage, test-mcp-run-python]
+    needs: [lint, mypy, docs, test-live, test, test-lowest-versions, test-examples, coverage, test-mcp-run-python]
     runs-on: ubuntu-latest
 
     steps:
