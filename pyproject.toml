@@ -102,7 +102,6 @@ dev = [
     "boto3-stubs[bedrock-runtime]",
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
-    "coverage-enable-subprocess>=1.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
@@ -237,7 +236,7 @@ filterwarnings = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
-parallel = true
+patch = ["subprocess"]
 concurrency = ["multiprocessing", "thread"]
 # We use a subdirectory for coverage data to avoid noisy coverage data files.
 data_file = ".coverage/.coverage"

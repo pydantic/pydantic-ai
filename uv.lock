@@ -852,18 +852,6 @@ toml = [
 ]
 
 [[package]]
-name = "coverage-enable-subprocess"
-version = "1.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "coverage" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/31/f4/57693bcf041ba641501b7a2fafc9d3d2de647355d78c6a2e07fb53648eaa/coverage_enable_subprocess-1.0.tar.gz", hash = "sha256:fdbd3dc9532007cd87ef84f38e16024c5b0ccb4ab2d1755225a7edf937acc011", size = 2695, upload-time = "2016-05-11T18:49:48.048Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/58/d8dd7edbf5e120942b6395b4c034506c68e56f656074522c83b59d9a4991/coverage_enable_subprocess-1.0-py2.py3-none-any.whl", hash = "sha256:27982522339ec77662965e0d859da5662162962c874d54d2250426506818cbdc", size = 4033, upload-time = "2016-05-11T18:48:49.701Z" },
-]
-
-[[package]]
 name = "cssselect2"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3311,7 +3299,6 @@ dev = [
     { name = "asgi-lifespan" },
     { name = "boto3-stubs", extra = ["bedrock-runtime"] },
     { name = "coverage", extra = ["toml"] },
-    { name = "coverage-enable-subprocess" },
     { name = "devtools" },
     { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
     { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
@@ -3361,7 +3348,6 @@ dev = [
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "boto3-stubs", extras = ["bedrock-runtime"] },
     { name = "coverage", extras = ["toml"], specifier = ">=7.10.3" },
-    { name = "coverage-enable-subprocess", specifier = ">=1.0" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "diff-cover", specifier = ">=9.2.0" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
