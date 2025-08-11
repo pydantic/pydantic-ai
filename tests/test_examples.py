@@ -117,9 +117,7 @@ def test_docs_examples(  # noqa: C901
     try:
         import importlib.util as _importlib_util
 
-        needs_lancedb = ('import lancedb' in example.source) or (
-            'from lancedb' in example.source
-        )
+        needs_lancedb = ('import lancedb' in example.source) or ('from lancedb' in example.source)
         if needs_lancedb and _importlib_util.find_spec('lancedb') is None:
             pytest.skip('lancedb not installed in this environment')
     except Exception:
