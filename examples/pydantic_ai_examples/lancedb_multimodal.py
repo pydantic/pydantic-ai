@@ -31,15 +31,20 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from pydantic_ai import Agent, RunContext
 
 import httpx
-import lancedb
-import logfire
-from lancedb.pydantic import LanceModel, Vector
-from PIL import Image
-from sentence_transformers import SentenceTransformer
 
-from pydantic_ai import Agent, RunContext
+try:
+    import lancedb
+    import logfire
+    from lancedb.pydantic import LanceModel, Vector
+    from PIL import Image
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    print(f"missing dependencies. Install dependencies listed in lancedb_multimodal.py to run this")
+
+
 
 # ruff: noqa
 # pyright: reportMissingImports=false
