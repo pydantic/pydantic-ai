@@ -30,7 +30,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 from pydantic_ai import Agent, RunContext
 
 import httpx
@@ -43,8 +43,10 @@ try:
     from sentence_transformers import SentenceTransformer
 except ImportError:
     print(
-        f'missing dependencies. Install dependencies listed in lancedb_multimodal.py to run this'
+        """Missing dependencies. To run this example, please install the required packages by running:
+pip install lancedb sentence-transformers torch httpx pandas Pillow logfire[httpx]"""
     )
+    sys.exit(1)
 
 
 # ruff: noqa
@@ -164,7 +166,9 @@ async def find_products(
         return 'No products found matching your criteria.'
 
     logfire.info('Displaying collage of results ({n})', n=len(results_df))
-    await _generate_image_collage(results_df['image'].tolist(), title='Product Results')
+    await _generate_image_collage(
+        cast(list[bytes], results_df['image'].tolist()), title='Product Results'
+    )
 
     # Don't return image byte string in the text response
     results_df_no_image = results_df.drop(columns=['image'])
