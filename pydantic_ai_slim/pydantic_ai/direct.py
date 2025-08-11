@@ -56,8 +56,8 @@ async def model_request(
         print(model_response)
         '''
         ModelResponse(
-            parts=[TextPart(content='Paris')],
-            usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
+            parts=[TextPart(content='The capital of France is Paris.')],
+            usage=Usage(requests=1, request_tokens=56, response_tokens=7, total_tokens=63),
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
         )
@@ -109,8 +109,8 @@ def model_request_sync(
     print(model_response)
     '''
     ModelResponse(
-        parts=[TextPart(content='Paris')],
-        usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
+        parts=[TextPart(content='The capital of France is Paris.')],
+        usage=Usage(requests=1, request_tokens=56, response_tokens=7, total_tokens=63),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
     )
@@ -167,6 +167,7 @@ def model_request_stream(
             '''
             [
                 PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(
                     index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
                 ),
@@ -223,6 +224,7 @@ def model_request_stream_sync(
         '''
         [
             PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
             ),
@@ -273,9 +275,7 @@ class StreamedResponseSync:
     """
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
-    _queue: queue.Queue[messages.ModelResponseStreamEvent | Exception | None] = field(
-        default_factory=queue.Queue, init=False
-    )
+    _queue: queue.Queue[messages.AgentStreamEvent | Exception | None] = field(default_factory=queue.Queue, init=False)
     _thread: threading.Thread | None = field(default=None, init=False)
     _stream_response: StreamedResponse | None = field(default=None, init=False)
     _exception: Exception | None = field(default=None, init=False)
@@ -295,8 +295,8 @@ class StreamedResponseSync:
     ) -> None:
         self._cleanup()
 
-    def __iter__(self) -> Iterator[messages.ModelResponseStreamEvent]:
-        """Stream the response as an iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
+    def __iter__(self) -> Iterator[messages.AgentStreamEvent]:
+        """Stream the response as an iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s."""
         self._check_context_manager_usage()
 
         while True:

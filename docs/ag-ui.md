@@ -35,7 +35,7 @@ There are three ways to run a Pydantic AI agent based on AG-UI run input with st
 
 1. [`run_ag_ui()`][pydantic_ai.ag_ui.run_ag_ui] takes an agent and an AG-UI [`RunAgentInput`](https://docs.ag-ui.com/sdk/python/core/types#runagentinput) object, and returns a stream of AG-UI events encoded as strings. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`. Use this if you're using a web framework not based on Starlette (e.g. Django or Flask) or want to modify the input or output some way.
 2. [`handle_ag_ui_request()`][pydantic_ai.ag_ui.handle_ag_ui_request] takes an agent and a Starlette request (e.g. from FastAPI) coming from an AG-UI frontend, and returns a streaming Starlette response of AG-UI events that you can return directly from your endpoint. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, that you can vary for each request (e.g. based on the authenticated user).
-3. [`Agent.to_ag_ui()`][pydantic_ai.Agent.to_ag_ui] returns an ASGI application that handles every AG-UI request by running the agent. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, but these will be the same for each request, with the exception of the AG-UI state that's injected as described under [state management](#state-management). This ASGI app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a given path in an existing FastAPI app.
+3. [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] returns an ASGI application that handles every AG-UI request by running the agent. It also takes optional [`Agent.iter()`][pydantic_ai.Agent.iter] arguments including `deps`, but these will be the same for each request, with the exception of the AG-UI state that's injected as described under [state management](#state-management). This ASGI app can be [mounted](https://fastapi.tiangolo.com/advanced/sub-applications/) at a given path in an existing FastAPI app.
 
 ### Handle run input and output directly
 
@@ -117,7 +117,7 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 ### Stand-alone ASGI app
 
-This example uses [`Agent.to_ag_ui()`][pydantic_ai.Agent.to_ag_ui] to turn the agent into a stand-alone ASGI application:
+This example uses [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] to turn the agent into a stand-alone ASGI application:
 
 ```py {title="agent_to_ag_ui.py" py="3.10" hl_lines="4"}
 from pydantic_ai import Agent
@@ -265,7 +265,7 @@ uvicorn ag_ui_tool_events:app --host 0.0.0.0 --port 9000
 
 ## Examples
 
-For more examples of how to use [`to_ag_ui()`][pydantic_ai.Agent.to_ag_ui] see
+For more examples of how to use [`to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] see
 [`pydantic_ai_examples.ag_ui`](https://github.com/pydantic/pydantic-ai/tree/main/examples/pydantic_ai_examples/ag_ui),
 which includes a server for use with the
 [AG-UI Dojo](https://docs.ag-ui.com/tutorials/debugging#the-ag-ui-dojo).

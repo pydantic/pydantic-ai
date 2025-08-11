@@ -16,6 +16,7 @@ from typing_extensions import TypeGuard, TypeVar, assert_never
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
 
@@ -112,6 +113,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     history_processors: Sequence[HistoryProcessor[DepsT]]
 
+    builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
 
     tracer: Tracer
@@ -269,6 +271,7 @@ async def _prepare_request_parameters(
 
     return models.ModelRequestParameters(
         function_tools=function_tools,
+        builtin_tools=ctx.deps.builtin_tools,
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_object,
@@ -303,10 +306,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
     ) -> AsyncIterator[result.AgentStream[DepsT, T]]:
-        async with self._stream(ctx) as streamed_response:
+        assert not self._did_stream, 'stream() should only be called once per node'
+
+        model_settings, model_request_parameters, message_history, run_context = await self._prepare_request(ctx)
+        async with ctx.deps.model.request_stream(
+            message_history, model_settings, model_request_parameters, run_context
+        ) as streamed_response:
+            self._did_stream = True
+            ctx.state.usage.requests += 1
             agent_stream = result.AgentStream[DepsT, T](
                 streamed_response,
                 ctx.deps.output_schema,
+                model_request_parameters,
                 ctx.deps.output_validators,
                 build_run_context(ctx),
                 ctx.deps.usage_limits,
@@ -318,28 +329,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             async for _ in agent_stream:
                 pass
 
-    @asynccontextmanager
-    async def _stream(
-        self,
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, T]],
-    ) -> AsyncIterator[models.StreamedResponse]:
-        assert not self._did_stream, 'stream() should only be called once per node'
-
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
-        async with ctx.deps.model.request_stream(
-            message_history, model_settings, model_request_parameters
-        ) as streamed_response:
-            self._did_stream = True
-            ctx.state.usage.requests += 1
-            yield streamed_response
-            # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
-            # otherwise usage won't be properly counted:
-            async for _ in streamed_response:
-                pass
         model_response = streamed_response.get()
 
         self._finish_handling(ctx, model_response)
@@ -351,11 +340,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if self._result is not None:
             return self._result  # pragma: no cover
 
-        model_settings, model_request_parameters = await self._prepare_request(ctx)
-        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, build_run_context(ctx)
-        )
+        model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.incr(_usage.Usage())
 
@@ -363,7 +348,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def _prepare_request(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> tuple[ModelSettings | None, models.ModelRequestParameters]:
+    ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         ctx.state.message_history.append(self.request)
 
         # Check usage
@@ -373,9 +358,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Increment run_step
         ctx.state.run_step += 1
 
+        run_context = build_run_context(ctx)
+
         model_settings = merge_model_settings(ctx.deps.model_settings, None)
+
         model_request_parameters = await _prepare_request_parameters(ctx)
-        return model_settings, model_request_parameters
+        model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
+
+        message_history = await _process_message_history(
+            ctx.state.message_history, ctx.deps.history_processors, run_context
+        )
+
+        return model_settings, model_request_parameters, message_history, run_context
 
     def _finish_handling(
         self,
@@ -443,6 +437,10 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             texts.append(part.content)
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                        yield _messages.BuiltinToolCallEvent(part)
+                    elif isinstance(part, _messages.BuiltinToolReturnPart):
+                        yield _messages.BuiltinToolResultEvent(part)
                     elif isinstance(part, _messages.ThinkingPart):
                         # We don't need to do anything with thinking parts in this tool-calling node.
                         # We need to handle text parts in case there are no tool calls and/or the desired output comes
@@ -795,7 +793,7 @@ _messages_ctx_var: ContextVar[_RunMessages] = ContextVar('var')
 
 @contextmanager
 def capture_run_messages() -> Iterator[list[_messages.ModelMessage]]:
-    """Context manager to access the messages used in a [`run`][pydantic_ai.Agent.run], [`run_sync`][pydantic_ai.Agent.run_sync], or [`run_stream`][pydantic_ai.Agent.run_stream] call.
+    """Context manager to access the messages used in a [`run`][pydantic_ai.agent.AbstractAgent.run], [`run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], or [`run_stream`][pydantic_ai.agent.AbstractAgent.run_stream] call.
 
     Useful when a run may raise an exception, see [model errors](../agents.md#model-errors) for more information.
 

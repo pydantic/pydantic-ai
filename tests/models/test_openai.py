@@ -16,6 +16,7 @@ from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -2145,10 +2146,7 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
         'gpt-4o',
         provider=OpenAIProvider(openai_client=mock_client),
     )
-    agent = Agent(
-        m,
-        instructions='You are a helpful assistant.',
-    )
+    agent = Agent(m, instructions='You are a helpful assistant.')
     result = await agent.run(
         'What is the capital of Minas Gerais?',
         model_settings=OpenAIModelSettings(openai_logprobs=True),
@@ -2164,6 +2162,56 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
             'top_logprobs': [],
         }
     ]
+
+
+@pytest.mark.vcr()
+async def test_openai_web_search_tool_model_not_supported(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+    )
+
+    with pytest.raises(ModelHTTPError, match='.*Web search options not supported with this model.*'):
+        await agent.run('What day is today?')
+
+
+@pytest.mark.vcr()
+async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
+    )
+
+    result = await agent.run('What day is today?')
+    assert result.output == snapshot('May 14, 2025, 8:51:29 AM ')
+
+
+@pytest.mark.vcr()
+async def test_openai_web_search_tool_with_user_location(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIModel('gpt-4o-search-preview', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        m,
+        instructions='You are a helpful assistant.',
+        builtin_tools=[WebSearchTool(user_location={'city': 'Utrecht', 'country': 'NL'})],
+    )
+
+    result = await agent.run('What is the current temperature?')
+    assert result.output == snapshot("""\
+Het is momenteel zonnig in Utrecht met een temperatuur van 22°C.
+
+## Weer voor Utrecht, Nederland:
+Huidige omstandigheden: Zonnig, 72°F (22°C)
+
+Dagvoorspelling:
+* woensdag, mei 14: minimum: 48°F (9°C), maximum: 71°F (22°C), beschrijving: Afnemende bewolking
+* donderdag, mei 15: minimum: 43°F (6°C), maximum: 67°F (20°C), beschrijving: Na een bewolkt begin keert de zon terug
+* vrijdag, mei 16: minimum: 45°F (7°C), maximum: 64°F (18°C), beschrijving: Overwegend zonnig
+* zaterdag, mei 17: minimum: 47°F (9°C), maximum: 68°F (20°C), beschrijving: Overwegend zonnig
+* zondag, mei 18: minimum: 47°F (8°C), maximum: 68°F (20°C), beschrijving: Deels zonnig
+* maandag, mei 19: minimum: 49°F (9°C), maximum: 70°F (21°C), beschrijving: Deels zonnig
+* dinsdag, mei 20: minimum: 49°F (10°C), maximum: 72°F (22°C), beschrijving: Zonnig tot gedeeltelijk bewolkt
+ \
+""")
 
 
 @pytest.mark.vcr()
