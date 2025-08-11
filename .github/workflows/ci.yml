@@ -150,13 +150,18 @@ jobs:
         with:
           enable-cache: true
 
-      - run: |
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: choose install command
+        run: |
           if [ "${{ matrix.install }}" = "slim" ]; then
-            echo "--package pydantic-ai-slim"
+            echo "install-command=--package pydantic-ai-slim" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.install }}" = "standard" ]; then
-            echo ""
+            echo "install-command=" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.install }}" = "all-extras" ]; then
-            echo "--all-extras"
+            echo "install-command=--all-extras" >> $GITHUB_OUTPUT
           fi
         id: install-command
 
