@@ -152,11 +152,11 @@ jobs:
 
       - run: |
           if [ "${{ matrix.install }}" = "slim" ]; then
-            echo "--package pydantic-ai-slim"
+            echo "--package pydantic-ai-slim" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.install }}" = "standard" ]; then
-            echo ""
+            echo "" >> $GITHUB_OUTPUT
           elif [ "${{ matrix.install }}" = "all-extras" ]; then
-            echo "--all-extras"
+            echo "--all-extras" >> $GITHUB_OUTPUT
           fi
         id: install-command
 
