@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import date
 from typing import Any
 from xml.etree import ElementTree
@@ -85,7 +85,7 @@ class _ToXml:
     # a map of Pydantic Field paths to their metadata: a field unique string representation and its class
     _attributes: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] | None = None
     # keep track of fields we have extracted attributes from
-    _parsed_fields: set[str] | None = None
+    _parsed_fields: set[str] = field(default_factory=set)
     # keep track of class names for dataclasses and Pydantic models, that occur in lists
     _element_names: dict[str, str] | None = None
     _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
@@ -133,19 +133,16 @@ class _ToXml:
         element = ElementTree.Element(tag)
         if self._attributes and path in self._attributes:
             field_repr, field_info = self._attributes[path]
-            if self.repeat_field_info or (self._parsed_fields is not None and field_repr not in self._parsed_fields):
+            if self.repeat_field_info or field_repr not in self._parsed_fields:
                 field_attributes = self._extract_attributes(field_info)
                 for k, v in field_attributes.items():
                     element.set(k, v)
-                if self._parsed_fields is not None:
-                    self._parsed_fields.add(field_repr)
+                self._parsed_fields.add(field_repr)
         return element
 
     def _init_attributes(self):
         if self.include_field_info and self._attributes is None:
             self._attributes = {}
-            if self._parsed_fields is None:
-                self._parsed_fields = set()
             self._parse_data_structures(self.data, attributes=self._attributes)
 
     def _init_element_names(self):
