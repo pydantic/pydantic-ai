@@ -133,11 +133,11 @@ class _ToXml:
         element = ElementTree.Element(tag)
         if self._attributes and path in self._attributes:
             field_repr, field_info = self._attributes[path]
-            if self.repeat_field_info or (self._parsed_fields and field_repr not in self._parsed_fields):
+            if self.repeat_field_info or (self._parsed_fields is not None and field_repr not in self._parsed_fields):
                 field_attributes = self._extract_attributes(field_info)
                 for k, v in field_attributes.items():
                     element.set(k, v)
-                if self._parsed_fields:
+                if self._parsed_fields is not None:
                     self._parsed_fields.add(field_repr)
         return element
 
