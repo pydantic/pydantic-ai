@@ -1254,7 +1254,7 @@ unserializable_deps_agent = Agent(model, name='unserializable_deps_agent', deps_
 
 @unserializable_deps_agent.tool
 async def get_model_name(ctx: RunContext[Model]) -> str:
-    return ctx.deps.model_name
+    return ctx.deps.model_name  # pragma: no cover
 
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
@@ -1266,7 +1266,7 @@ class UnserializableDepsAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await unserializable_deps_temporal_agent.run(prompt, deps=unserializable_deps_temporal_agent.model)
-        return result.output
+        return result.output  # pragma: no cover
 
 
 async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests: None, client: Client):

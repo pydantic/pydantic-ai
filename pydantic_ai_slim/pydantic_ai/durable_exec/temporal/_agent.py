@@ -109,8 +109,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         activity_name_prefix = f'agent__{self.name}'
 
-        deps_type = wrapped.deps_type
-
         activities: list[Callable[..., Any]] = []
         if not isinstance(wrapped.model, Model):
             raise UserError(
@@ -121,7 +119,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             wrapped.model,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config | model_activity_config,
-            deps_type=deps_type,
+            deps_type=self.deps_type,
             run_context_type=run_context_type,
             event_stream_handler=event_stream_handler or wrapped.event_stream_handler,
         )
@@ -139,7 +137,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 activity_name_prefix,
                 activity_config | toolset_activity_config.get(id, {}),
                 tool_activity_config.get(id, {}),
-                deps_type,
+                self.deps_type,
                 run_context_type,
             )
             if isinstance(toolset, TemporalWrapperToolset):
