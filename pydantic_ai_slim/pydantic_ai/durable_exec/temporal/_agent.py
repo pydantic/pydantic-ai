@@ -150,8 +150,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         return self._name
 
     @name.setter
-    def name(self, value: str | None) -> None:
-        self._name = value
+    def name(self, value: str | None) -> None:  # pragma: no cover
+        raise UserError(
+            'The agent name cannot be changed after creation. If you need to change the name, create a new agent.'
+        )
 
     @property
     def model(self) -> Model:
