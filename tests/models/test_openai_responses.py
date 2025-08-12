@@ -428,23 +428,23 @@ async def test_openai_responses_model_builtin_tools(allow_model_requests: None, 
                 parts=[
                     TextPart(
                         content="""\
-In the past 24 hours, OpenAI announced plans to release its first open-weight language model with reasoning capabilities since GPT-2. This model will allow developers to fine-tune it for specific applications without needing the original training data. To gather feedback and refine the model, OpenAI will host developer events starting in San Francisco and expanding to Europe and Asia-Pacific regions. ([reuters.com](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai))
+OpenAI's recent launch of GPT-5 has faced mixed reactions. Despite strong benchmark performance and early praise, users have reported issues like errors in basic math and geography. CEO Sam Altman has acknowledged these concerns and assured that improvements are underway. ([axios.com](https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai))
 
 
-## OpenAI to Release Open-Weight Language Model:
-- [OpenAI plans to release open-weight language model in coming months](https://www.reuters.com/technology/artificial-intelligence/openai-plans-release-open-weight-language-model-coming-months-2025-03-31/?utm_source=openai) \
+## OpenAI's GPT-5 Launch Faces Mixed Reactions:
+- [OpenAI's big GPT-5 launch gets bumpy](https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai) \
 """
                     )
                 ],
                 usage=Usage(
                     request_tokens=320,
-                    response_tokens=200,
-                    total_tokens=520,
+                    response_tokens=159,
+                    total_tokens=479,
                     details={'reasoning_tokens': 0, 'cached_tokens': 0},
                 ),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_67ebcbb93728819197f923ff16e98bce04f5055a2a33abc3',
+                vendor_id='resp_689b7c90010c8196ac0efd68b021490f07450cfc2d48b975',
             ),
         ]
     )
