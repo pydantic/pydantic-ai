@@ -163,19 +163,19 @@ def test_root_tag(input_obj: Any, output: str):
 <age title="Age" description="Years">42</age>
 <children alias="child">
   <ExamplePydanticFields>
-    <name description="The person's name">Liam</name>
-    <age title="Age" description="Years">18</age>
-    <children alias="child">null</children>
+    <name>Liam</name>
+    <age>18</age>
+    <children>null</children>
     <location title="Location">null</location>
   </ExamplePydanticFields>
   <ExamplePydanticFields>
-    <name description="The person's name">Alice</name>
-    <age title="Age" description="Years">18</age>
-    <children alias="child">null</children>
-    <location title="Location">null</location>
+    <name>Alice</name>
+    <age>18</age>
+    <children>null</children>
+    <location>null</location>
   </ExamplePydanticFields>
 </children>
-<location title="Location">Australia</location>\
+<location>Australia</location>\
 """),
             id='pydantic model with fields',
         ),
@@ -198,19 +198,19 @@ def test_root_tag(input_obj: Any, output: str):
   <age title="Age" description="Years">42</age>
   <children alias="child">
     <ExamplePydanticFields>
-      <name description="The person's name">Liam</name>
-      <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
+      <name>Liam</name>
+      <age>18</age>
+      <children>null</children>
       <location title="Location">null</location>
     </ExamplePydanticFields>
     <ExamplePydanticFields>
-      <name description="The person's name">Alice</name>
-      <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
-      <location title="Location">null</location>
+      <name>Alice</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
     </ExamplePydanticFields>
   </children>
-  <location title="Location">Australia</location>
+  <location>Australia</location>
 </ExamplePydanticFields>\
 """),
             id='list[pydantic model with fields]',
@@ -251,6 +251,132 @@ def test_root_tag(input_obj: Any, output: str):
 )
 def test_fields(input_obj: Any, use_fields: bool, output: str):
     assert format_as_xml(input_obj, include_field_info=use_fields) == output
+
+
+def test_repeated_field_attributes():
+    class DataItem(BaseModel):
+        user1: ExamplePydanticFields
+        user2: ExamplePydanticFields
+
+    data = ExamplePydanticFields(
+        name='John',
+        age=42,
+        height=160.0,
+        child=[
+            ExamplePydanticFields(name='Liam', height=150),
+            ExamplePydanticFields(name='Alice', height=160),
+        ],
+    )
+    assert (
+        format_as_xml(data, include_field_info=True, repeat_field_info=True)
+        == """\
+<name description="The person's name">John</name>
+<age title="Age" description="Years">42</age>
+<children alias="child">
+  <ExamplePydanticFields>
+    <name description="The person's name">Liam</name>
+    <age title="Age" description="Years">18</age>
+    <children alias="child">null</children>
+    <location title="Location">null</location>
+  </ExamplePydanticFields>
+  <ExamplePydanticFields>
+    <name description="The person's name">Alice</name>
+    <age title="Age" description="Years">18</age>
+    <children alias="child">null</children>
+    <location title="Location">null</location>
+  </ExamplePydanticFields>
+</children>
+<location title="Location">Australia</location>\
+"""
+    )
+
+    assert (
+        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info=True, repeat_field_info=True)
+        == """\
+<user1>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children alias="child">
+    <ExamplePydanticFields>
+      <name description="The person's name">Liam</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name description="The person's name">Alice</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location title="Location">Australia</location>
+</user1>
+<user2>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children alias="child">
+    <ExamplePydanticFields>
+      <name description="The person's name">Liam</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name description="The person's name">Alice</name>
+      <age title="Age" description="Years">18</age>
+      <children alias="child">null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location title="Location">Australia</location>
+</user2>\
+"""
+    )
+
+    assert (
+        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info=True, repeat_field_info=False)
+        == """\
+<user1>
+  <name description="The person's name">John</name>
+  <age title="Age" description="Years">42</age>
+  <children alias="child">
+    <ExamplePydanticFields>
+      <name>Liam</name>
+      <age>18</age>
+      <children>null</children>
+      <location title="Location">null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name>Alice</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location>Australia</location>
+</user1>
+<user2>
+  <name>John</name>
+  <age>42</age>
+  <children>
+    <ExamplePydanticFields>
+      <name>Liam</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticFields>
+    <ExamplePydanticFields>
+      <name>Alice</name>
+      <age>18</age>
+      <children>null</children>
+      <location>null</location>
+    </ExamplePydanticFields>
+  </children>
+  <location>Australia</location>
+</user2>\
+"""
+    )
 
 
 def test_nested_data():
@@ -305,18 +431,18 @@ def test_nested_data():
     </model>
     <others>
       <ModelItem1>
-        <name description="Name">Liam</name>
+        <name>Liam</name>
         <value>3</value>
-        <items description="Items" />
+        <items />
       </ModelItem1>
     </others>
     <count>10</count>
   </DataItem2>
   <DataItem2>
     <model>
-      <name description="Name">Bob</name>
+      <name>Bob</name>
       <value>7</value>
-      <items description="Items">
+      <items>
         <DataItem1>
           <id>a</id>
         </DataItem1>

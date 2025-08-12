@@ -20,6 +20,7 @@ def format_as_xml(
     none_str: str = 'null',
     indent: str | None = '  ',
     include_field_info: bool = False,
+    repeat_field_info: bool = False,
 ) -> str:
     """Format a Python object as XML.
 
@@ -38,6 +39,8 @@ def format_as_xml(
         indent: Indentation string to use for pretty printing.
         include_field_info: Whether to include attributes like Pydantic Field attributes (title, description, alias)
             as XML attributes.
+        repeat_field_info: Whether to include XML attributes extracted from a field info for each occurrence of an XML
+            element relative to the same field.
 
     Returns:
         XML representation of the object.
@@ -56,7 +59,13 @@ def format_as_xml(
     '''
     ```
     """
-    el = _ToXml(data=obj, item_tag=item_tag, none_str=none_str, include_field_info=include_field_info).to_xml(root_tag)
+    el = _ToXml(
+        data=obj,
+        item_tag=item_tag,
+        none_str=none_str,
+        include_field_info=include_field_info,
+        repeat_field_info=repeat_field_info,
+    ).to_xml(root_tag)
     if root_tag is None and el.text is None:
         join = '' if indent is None else '\n'
         return join.join(_rootless_xml_elements(el, indent))
@@ -72,8 +81,12 @@ class _ToXml:
     item_tag: str
     none_str: str
     include_field_info: bool
-    _attributes: dict[str, dict[str, str]] | None = None
-    # keep track of class names for dataclasses and Pydantic models in lists
+    repeat_field_info: bool
+    # a map of Pydantic Field paths to their metadata: a field unique string representation and its class
+    _attributes: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] | None = None
+    # keep track of fields we have extracted attributes from
+    _parsed_fields: set[str] | None = None
+    # keep track of class names for dataclasses and Pydantic models, that occur in lists
     _element_names: dict[str, str] | None = None
     _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
 
@@ -110,22 +123,29 @@ class _ToXml:
                 element = self._create_element(value.__class__.__name__, path)
             self._mapping_to_xml(element, value.model_dump(mode='python'), path)
         elif isinstance(value, Iterable):
-            for item in value:  # pyright: ignore[reportUnknownVariableType]
-                element.append(self._to_xml(item, None, f'{path}.[]' if path else '[]'))
+            for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+                element.append(self._to_xml(item, None, f'{path}.[{n}]' if path else f'[{n}]'))
         else:
             raise TypeError(f'Unsupported type for XML formatting: {type(value)}')
         return element
 
     def _create_element(self, tag: str, path: str) -> ElementTree.Element:
         element = ElementTree.Element(tag)
-        if self._attributes:
-            for k, v in self._attributes.get(path, {}).items():
-                element.set(k, v)
+        if self._attributes and path in self._attributes:
+            field_repr, field_info = self._attributes[path]
+            if self.repeat_field_info or (self._parsed_fields and field_repr not in self._parsed_fields):
+                field_attributes = self._extract_attributes(field_info)
+                for k, v in field_attributes.items():
+                    element.set(k, v)
+                if self._parsed_fields:
+                    self._parsed_fields.add(field_repr)
         return element
 
     def _init_attributes(self):
         if self.include_field_info and self._attributes is None:
             self._attributes = {}
+            if self._parsed_fields is None:
+                self._parsed_fields = set()
             self._parse_data_structures(self.data, attributes=self._attributes)
 
     def _init_element_names(self):
@@ -151,7 +171,7 @@ class _ToXml:
         cls,
         value: Any,
         element_names: dict[str, str] | None = None,
-        attributes: dict[str, dict[str, str]] | None = None,
+        attributes: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] | None = None,
         path: str = '',
     ):
         """Parse data structures as dataclasses or Pydantic models to extract element names and attributes."""
@@ -171,12 +191,13 @@ class _ToXml:
             for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
                 for field, info in model_fields.items():
                     new_path = f'{path}.{field}' if path else field
+                    field_repr = f'{value.__class__.__name__}.{field}'
                     if (attributes is not None) and (isinstance(info, ComputedFieldInfo) or not info.exclude):
-                        attributes[new_path] = cls._extract_attributes(info)
+                        attributes[new_path] = (field_repr, info)
                     cls._parse_data_structures(getattr(value, field), element_names, attributes, new_path)
         elif isinstance(value, Iterable):
-            new_path = f'{path}.[]' if path else '[]'
-            for item in value:  # pyright: ignore[reportUnknownVariableType]
+            for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
+                new_path = f'{path}.[{n}]' if path else f'[{n}]'
                 cls._parse_data_structures(item, element_names, attributes, new_path)
 
     @classmethod
