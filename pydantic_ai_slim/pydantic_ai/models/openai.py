@@ -462,7 +462,7 @@ class OpenAIModel(Model):
                         ),
                     )
                 return WebSearchOptions(search_context_size=tool.search_context_size)
-            else:  # pragma: no branch
+            else:
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIModel`. If it should be, please file an issue.'
                 )
@@ -878,7 +878,7 @@ class OpenAIResponsesModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
             else:
-                raise UserError(
+                raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
                 )
         return tools

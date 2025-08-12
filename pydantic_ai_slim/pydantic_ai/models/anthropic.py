@@ -368,7 +368,7 @@ class AnthropicModel(Model):
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
-            else:  # pragma: no branch
+            else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
