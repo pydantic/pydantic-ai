@@ -73,7 +73,9 @@ class DynamicToolset(AbstractToolset[AgentDepsT]):
         return await self._toolset.call_tool(name, tool_args, ctx, tool)
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
-        if self._toolset is not None:
+        if self._toolset is None:
+            super().apply(visitor)
+        else:
             self._toolset.apply(visitor)
 
     def visit_and_replace(

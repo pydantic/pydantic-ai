@@ -86,6 +86,8 @@ a2a = ["fasta2a>=0.4.1"]
 ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Retries
 retries = ["tenacity>=8.2.3"]
+# Temporal
+temporal = ["temporalio>=1.15.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
