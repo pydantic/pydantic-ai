@@ -40,6 +40,8 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self,
         wrapped: AbstractAgent[AgentDepsT, OutputDataT],
         *,
+        name: str | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         activity_config: ActivityConfig | None = None,
         model_activity_config: ActivityConfig | None = None,
         toolset_activity_config: dict[str, ActivityConfig] | None = None,
@@ -56,19 +58,25 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             AbstractToolset[Any],
         ] = temporalize_toolset,
     ):
-        """Wrap an agent to allow it to be used inside a Temporal workflow, by automatically moving model requests and tool calls to Temporal activities.
+        """Wrap an agent to enable it to be used inside a Temporal workflow, by automatically offloading model requests, tool calls, and MCP server communication to Temporal activities.
+
+        After wrapping, the original agent can still be used as normal outside of the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
 
         Args:
             wrapped: The agent to wrap.
-            activity_config: The base Temporal activity config to use for all activities.
+            name: Optional unique agent name to use in the Temporal activities' names. If not provided, the agent's `name` will be used.
+            event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
+            activity_config: The base Temporal activity config to use for all activities. If no config is provided, a `start_to_close_timeout` of 60 seconds is used.
             model_activity_config: The Temporal activity config to use for model request activities. This is merged with the base activity config.
             toolset_activity_config: The Temporal activity config to use for get-tools and call-tool activities for specific toolsets identified by ID. This is merged with the base activity config.
             tool_activity_config: The Temporal activity config to use for specific tool call activities identified by toolset ID and tool name.
-                This is merged with the base and toolset-specific activity configs. Use `False` to disable using an activity for a specific tool.
+                This is merged with the base and toolset-specific activity configs.
+                If a tool does not use IO, you can specify `False` to disable using an activity.
+                Note that the tool is required to be defined as an `async` function as non-async tools are run in threads which are non-deterministic and thus not supported outside of activities.
             run_context_type: The `TemporalRunContext` subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
                 By default, only the `retries`, `tool_call_id`, `tool_name`, `retry` and `run_step` attributes will be available.
                 To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute.
-                If `deps` is a JSON-serializable dictionary, you can use `TemporalRunContextWithDeps` to make the `deps` attribute available as well.
+                If `deps` is a JSON-serializable dictionary, like a `TypedDict`, you can use `TemporalRunContextWithDeps` to make the `deps` attribute available as well.
                 If `deps` is of a different type, create a `TemporalRunContext` subclass with custom `serialize_run_context` and `deserialize_run_context` class methods.
             temporalize_toolset_func: Optional function to use to prepare "leaf" toolsets (i.e. those that implement their own tool listing and calling) for Temporal by wrapping them in a `TemporalWrapperToolset` that moves methods that require IO to Temporal activities.
                 If not provided, only `FunctionToolset` and `MCPServer` will be prepared for Temporal.
@@ -88,27 +96,26 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         toolset_activity_config = toolset_activity_config or {}
         tool_activity_config = tool_activity_config or {}
 
-        agent = wrapped
-
-        if agent.name is None:
+        self._name = name or wrapped.name
+        if self._name is None:
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
             )
 
-        activity_name_prefix = f'agent__{agent.name}'
+        activity_name_prefix = f'agent__{self._name}'
 
         activities: list[Callable[..., Any]] = []
-        if not isinstance(agent.model, Model):
+        if not isinstance(wrapped.model, Model):
             raise UserError(
                 'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
             )
 
         temporal_model = TemporalModel(
-            agent.model,
+            wrapped.model,
             activity_name_prefix=activity_name_prefix,
             activity_config=activity_config | model_activity_config,
             run_context_type=run_context_type,
-            event_stream_handler=agent.event_stream_handler,
+            event_stream_handler=event_stream_handler or wrapped.event_stream_handler,
         )
         activities.extend(temporal_model.temporal_activities)
 
@@ -130,7 +137,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 activities.extend(toolset.temporal_activities)
             return toolset
 
-        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in agent.toolsets]
+        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
 
         self._model = temporal_model
         self._toolsets = temporal_toolsets
@@ -350,7 +357,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             The result of the run.
         """
         if workflow.in_workflow():
-            raise UserError('`agent.run_sync()` cannot be used inside a Temporal workflow. Use `agent.run()` instead.')
+            raise UserError(
+                '`agent.run_sync()` cannot be used inside a Temporal workflow. Use `await agent.run()` instead.'
+            )
 
         return super().run_sync(
             user_prompt,
@@ -451,7 +460,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         """
         if workflow.in_workflow():
             raise UserError(
-                '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                '`agent.run_stream()` cannot currently be used inside a Temporal workflow. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
+                'Please file an issue if this is not sufficient for your use case.'
             )
 
         async with super().run_stream(
@@ -600,7 +611,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         if workflow.in_workflow():
             if not self._temporal_overrides_active.get():
                 raise UserError(
-                    '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                    '`agent.iter()` cannot currently be used inside a Temporal workflow. '
+                    'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
+                    'Please file an issue if this is not sufficient for your use case.'
                 )
 
             if model is not None:

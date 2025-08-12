@@ -82,6 +82,7 @@ __all__ = (
     'InstrumentationSettings',
     'WrapperAgent',
     'AbstractAgent',
+    'EventStreamHandler',
 )
 
 

@@ -127,7 +127,7 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
 
 
 @contextmanager
-def temporal_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
+def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
     """Helper for asserting that a Temporal workflow fails with the expected error."""
     with pytest.raises(WorkflowFailureError) as exc_info:
         yield
@@ -885,9 +885,9 @@ async def test_temporal_agent_run_sync_in_workflow(allow_model_requests: None, c
         workflows=[SimpleAgentWorkflowWithRunSync],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
-            snapshot('`agent.run_sync()` cannot be used inside a Temporal workflow. Use `agent.run()` instead.'),
+            snapshot('`agent.run_sync()` cannot be used inside a Temporal workflow. Use `await agent.run()` instead.'),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
                 SimpleAgentWorkflowWithRunSync.run,
@@ -913,10 +913,10 @@ async def test_temporal_agent_run_stream_in_workflow(allow_model_requests: None,
         workflows=[SimpleAgentWorkflowWithRunStream],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
-                '`agent.run_stream()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                '`agent.run_stream()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
@@ -944,10 +944,10 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
         workflows=[SimpleAgentWorkflowWithIter],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
-                '`agent.iter()` cannot be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                '`agent.iter()` cannot currently be used inside a Temporal workflow. Set an `event_stream_handler` on the agent and use `agent.run()` instead. Please file an issue if this is not sufficient for your use case.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
@@ -980,7 +980,7 @@ async def test_temporal_agent_run_in_workflow_with_event_stream_handler(allow_mo
         workflows=[SimpleAgentWorkflowWithEventStreamHandler],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
@@ -1009,7 +1009,7 @@ async def test_temporal_agent_run_in_workflow_with_model(allow_model_requests: N
         workflows=[SimpleAgentWorkflowWithRunModel],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 'Model cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
@@ -1038,7 +1038,7 @@ async def test_temporal_agent_run_in_workflow_with_toolsets(allow_model_requests
         workflows=[SimpleAgentWorkflowWithRunToolsets],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 'Toolsets cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
@@ -1067,7 +1067,7 @@ async def test_temporal_agent_override_model_in_workflow(allow_model_requests: N
         workflows=[SimpleAgentWorkflowWithOverrideModel],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 'Model cannot be contextually overridden inside a Temporal workflow, it must be set at agent creation time.'
@@ -1096,7 +1096,7 @@ async def test_temporal_agent_override_toolsets_in_workflow(allow_model_requests
         workflows=[SimpleAgentWorkflowWithOverrideToolsets],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 'Toolsets cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
@@ -1125,7 +1125,7 @@ async def test_temporal_agent_override_tools_in_workflow(allow_model_requests: N
         workflows=[SimpleAgentWorkflowWithOverrideTools],
         plugins=[AgentPlugin(simple_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 'Tools cannot be contextually overridden inside a Temporal workflow, they must be set at agent creation time.'
@@ -1192,7 +1192,7 @@ async def test_temporal_agent_sync_tool_activity_disabled(allow_model_requests: 
         workflows=[AgentWorkflowWithSyncToolActivityDisabled],
         plugins=[AgentPlugin(temporal_agent_with_sync_tool_activity_disabled)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 "Temporal activity config for tool 'get_weather' has been explicitly set to `False` (activity disabled), but non-async tools are run in threads which are not supported outside of an activity. Make the tool function async instead."
@@ -1242,7 +1242,7 @@ async def test_temporal_model_stream_direct(client: Client):
         workflows=[DirectStreamWorkflow],
         plugins=[AgentPlugin(complex_temporal_agent)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
                 'A Temporal model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
@@ -1291,10 +1291,10 @@ async def test_temporal_agent_with_non_dict_deps(allow_model_requests: None, cli
         workflows=[AgentWorkflowWithDataclassDeps],
         plugins=[AgentPlugin(temporal_agent_with_dataclass_deps)],
     ):
-        with temporal_raises(
+        with workflow_raises(
             UserError,
             snapshot(
-                '`TemporalRunContextWithDeps` requires the `deps` object to be a JSON-serializable dictionary. To support `deps` of a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
+                '`TemporalRunContextWithDeps` requires the `deps` object to be a JSON-serializable dictionary, like a `TypedDict`. To support `deps` of a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]

@@ -7,6 +7,15 @@ from pydantic_ai.exceptions import UserError
 
 
 class TemporalRunContext(RunContext[Any]):
+    """The [`RunContext`][pydantic_ai.tools.RunContext] subclass to use to serialize and deserialize the run context for use inside a Temporal activity.
+
+    By default, only the `retries`, `tool_call_id`, `tool_name`, `retry` and `run_step` attributes will be available.
+    To make another attribute available, create a `TemporalRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent].
+
+    If `deps` is a JSON-serializable dictionary, like a `TypedDict`, you can use [`TemporalRunContextWithDeps`][pydantic_ai.durable_exec.temporal.TemporalRunContextWithDeps] to make the `deps` attribute available as well.
+    If `deps` is of a different type, create a `TemporalRunContext` subclass with custom `serialize_run_context` and `deserialize_run_context` class methods.
+    """
+
     def __init__(self, **kwargs: Any):
         self.__dict__ = kwargs
         setattr(
@@ -45,11 +54,13 @@ class TemporalRunContext(RunContext[Any]):
 
 
 class TemporalRunContextWithDeps(TemporalRunContext):
+    """[`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass that includes JSON-serializable dictionary `deps`, like a `TypedDict`."""
+
     @classmethod
     def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
         if not isinstance(ctx.deps, dict):
             raise UserError(
-                '`TemporalRunContextWithDeps` requires the `deps` object to be a JSON-serializable dictionary. '
+                '`TemporalRunContextWithDeps` requires the `deps` object to be a JSON-serializable dictionary, like a `TypedDict`. '
                 'To support `deps` of a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
             )
         return {**super().serialize_run_context(ctx), 'deps': ctx.deps}  # pyright: ignore[reportUnknownMemberType]
