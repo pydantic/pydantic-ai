@@ -140,8 +140,8 @@ class ExamplePydanticFields(BaseModel):
     ],
 )
 def test_root_tag(input_obj: Any, output: str):
-    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', add_attributes=False) == output
-    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', add_attributes=True) == output
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info=False) == output
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info=True) == output
 
 
 @pytest.mark.parametrize(
@@ -250,7 +250,7 @@ def test_root_tag(input_obj: Any, output: str):
     ],
 )
 def test_fields(input_obj: Any, use_fields: bool, output: str):
-    assert format_as_xml(input_obj, add_attributes=use_fields) == output
+    assert format_as_xml(input_obj, include_field_info=use_fields) == output
 
 
 def test_nested_data():
@@ -290,7 +290,7 @@ def test_nested_data():
     }
 
     assert (
-        format_as_xml(data, add_attributes=True)
+        format_as_xml(data, include_field_info=True)
         == """
 <values>
   <DataItem2>
@@ -333,7 +333,7 @@ def test_nested_data():
     )
 
     assert (
-        format_as_xml(data, add_attributes=False)
+        format_as_xml(data, include_field_info=False)
         == """
 <values>
   <DataItem2>
@@ -449,7 +449,7 @@ def test_parse_invalid_value():
         bad: Any = object()
 
     with pytest.raises(TypeError, match='Unsupported type'):
-        format_as_xml(Invalid(), add_attributes=True)
+        format_as_xml(Invalid(), include_field_info=True)
 
 
 def test_set():

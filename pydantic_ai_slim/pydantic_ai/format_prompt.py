@@ -19,7 +19,7 @@ def format_as_xml(
     item_tag: str = 'item',
     none_str: str = 'null',
     indent: str | None = '  ',
-    add_attributes: bool = False,
+    include_field_info: bool = False,
 ) -> str:
     """Format a Python object as XML.
 
@@ -36,7 +36,7 @@ def format_as_xml(
             for dataclasses and Pydantic models.
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
-        add_attributes: Whether to include attributes like Pydantic Field attributes (title, description, alias)
+        include_field_info: Whether to include attributes like Pydantic Field attributes (title, description, alias)
             as XML attributes.
 
     Returns:
@@ -56,7 +56,7 @@ def format_as_xml(
     '''
     ```
     """
-    el = _ToXml(data=obj, item_tag=item_tag, none_str=none_str, add_attributes=add_attributes).to_xml(root_tag)
+    el = _ToXml(data=obj, item_tag=item_tag, none_str=none_str, include_field_info=include_field_info).to_xml(root_tag)
     if root_tag is None and el.text is None:
         join = '' if indent is None else '\n'
         return join.join(_rootless_xml_elements(el, indent))
@@ -71,7 +71,7 @@ class _ToXml:
     data: Any
     item_tag: str
     none_str: str
-    add_attributes: bool
+    include_field_info: bool
     _attributes: dict[str, dict[str, str]] | None = None
     # keep track of class names for dataclasses and Pydantic models in lists
     _element_names: dict[str, str] | None = None
@@ -124,7 +124,7 @@ class _ToXml:
         return element
 
     def _init_attributes(self):
-        if self.add_attributes and self._attributes is None:
+        if self.include_field_info and self._attributes is None:
             self._attributes = {}
             self._parse_data_structures(self.data, attributes=self._attributes)
 
@@ -172,7 +172,7 @@ class _ToXml:
                 for field, info in model_fields.items():
                     new_path = f'{path}.{field}' if path else field
                     if (attributes is not None) and (isinstance(info, ComputedFieldInfo) or not info.exclude):
-                        attributes.update(cls._extract_attributes(info, new_path))
+                        attributes[new_path] = cls._extract_attributes(info)
                     cls._parse_data_structures(getattr(value, field), element_names, attributes, new_path)
         elif isinstance(value, Iterable):
             new_path = f'{path}.[]' if path else '[]'
@@ -180,16 +180,13 @@ class _ToXml:
                 cls._parse_data_structures(item, element_names, attributes, new_path)
 
     @classmethod
-    def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo, path: str) -> dict[str, dict[str, str]]:
-        ret: dict[str, dict[str, str]] = {}
-        attributes = {}
+    def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo) -> dict[str, str]:
+        attributes: dict[str, str] = {}
         for attr in cls._FIELD_ATTRIBUTES:
             attr_value = getattr(info, attr, None)
             if attr_value is not None:
                 attributes[attr] = str(attr_value)
-        if attributes:
-            ret[path] = attributes
-        return ret
+        return attributes
 
 
 def _rootless_xml_elements(root: ElementTree.Element, indent: str | None) -> Iterator[str]:
