@@ -810,12 +810,6 @@ class OpenAIResponsesModel(Model):
             model_request_parameters.output_mode == 'prompted' and self.profile.supports_json_object_output
         ):  # pragma: no branch
             text = {'format': {'type': 'json_object'}}
-        
-        # Add verbosity setting to text config if specified
-        if verbosity := model_settings.get('openai_text_verbosity'):
-            if text is None:
-                text = {}
-            text['verbosity'] = verbosity
 
             # Without this trick, we'd hit this error:
             # > Response input messages must contain the word 'json' in some form to use 'text.format' of type 'json_object'.
@@ -823,6 +817,8 @@ class OpenAIResponsesModel(Model):
             assert isinstance(instructions, str)
             openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
             instructions = NOT_GIVEN
+        elif verbosity := model_settings.get('openai_text_verbosity'):
+            text = {'verbosity': verbosity}
 
         sampling_settings = (
             model_settings
