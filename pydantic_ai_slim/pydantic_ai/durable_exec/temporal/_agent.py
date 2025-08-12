@@ -102,7 +102,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 "An agent needs to have a unique `name` in order to be used with Temporal. The name will be used to identify the agent's activities within the workflow."
             )
 
-        activity_name_prefix = f'agent__{self._name}'
+        activity_name_prefix = f'agent__{self.name}'
 
         activities: list[Callable[..., Any]] = []
         if not isinstance(wrapped.model, Model):
@@ -144,6 +144,14 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self._temporal_activities = activities
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
+
+    @property
+    def name(self) -> str | None:
+        return self._name
+
+    @name.setter
+    def name(self, value: str | None) -> None:
+        self._name = value
 
     @property
     def model(self) -> Model:
