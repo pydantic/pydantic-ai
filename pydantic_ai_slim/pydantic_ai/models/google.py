@@ -221,6 +221,10 @@ class GoogleModel(Model):
                 tools.append(ToolDict(google_search=GoogleSearchDict()))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
+            else:  # pragma: no cover
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `GoogleModel`. If it should be, please file an issue.'
+                )
         return tools or None
 
     def _get_tool_config(
@@ -603,7 +607,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
         if key.endswith('_details') and metadata_details:
             suffix = key.removesuffix('_details')
             for detail in metadata_details:
-                details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
+                details[f'{detail["modality"].lower()}_{suffix}'] = detail.get('token_count', 0)
 
     return usage.Usage(
         request_tokens=metadata.get('prompt_token_count', 0),

@@ -558,10 +558,7 @@ def test_instrument_all():
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
-    try:
-        from logfire.experimental.annotations import record_feedback
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('Requires recent version of logfire')
+    from logfire.experimental.annotations import record_feedback
 
     my_agent = Agent(model=TestModel(), instrument=True)
 

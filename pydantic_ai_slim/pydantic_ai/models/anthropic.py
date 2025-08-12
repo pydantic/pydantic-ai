@@ -23,6 +23,7 @@ from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
@@ -367,6 +368,10 @@ class AnthropicModel(Model):
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
+            else:  # pragma: no cover
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
+                )
         return tools
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901

@@ -82,6 +82,7 @@ __all__ = (
     'InstrumentationSettings',
     'WrapperAgent',
     'AbstractAgent',
+    'EventStreamHandler',
 )
 
 
@@ -402,6 +403,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = value
 
     @property
+    def deps_type(self) -> type:
+        """The type of dependencies used by the agent."""
+        return self._deps_type
+
+    @property
     def output_type(self) -> OutputSpec[OutputDataT]:
         """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         return self._output_type
@@ -593,12 +599,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_step=state.run_step,
         )
 
-        toolset = self._get_toolset(additional=toolsets)
-
-        if output_toolset is not None:
-            if self._prepare_output_tools:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
-            toolset = CombinedToolset([output_toolset, toolset])
+        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
 
         async with toolset:
             # This will raise errors for any name conflicts
@@ -1240,32 +1241,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return deps
 
     def _get_toolset(
-        self, additional: Sequence[AbstractToolset[AgentDepsT]] | None = None
+        self,
+        output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
-        """Get the combined toolset containing function tools registered directly to the agent and user-provided toolsets including MCP servers.
+        """Get the complete toolset.
 
         Args:
-            additional: Additional toolsets to add.
+            output_toolset: The output toolset to use instead of the one built at agent construction time.
+            additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
         """
-        if some_tools := self._override_tools.get():
-            function_toolset = _AgentFunctionToolset(some_tools.value, max_retries=self._max_tool_retries)
-        else:
-            function_toolset = self._function_toolset
+        toolsets = self.toolsets
+        # Don't add additional toolsets if the toolsets have been overridden
+        if additional_toolsets and self._override_toolsets.get() is None:
+            toolsets = [*toolsets, *additional_toolsets]
 
-        if some_user_toolsets := self._override_toolsets.get():
-            user_toolsets = some_user_toolsets.value
-        else:
-            # Copy the dynamic toolsets to ensure each run has its own instances
-            dynamic_toolsets = [dataclasses.replace(toolset) for toolset in self._dynamic_toolsets]
-            user_toolsets = [*self._user_toolsets, *dynamic_toolsets, *(additional or [])]
+        toolset = CombinedToolset(toolsets)
 
-        if user_toolsets:
-            toolset = CombinedToolset([function_toolset, *user_toolsets])
-        else:
-            toolset = function_toolset
+        # Copy the dynamic toolsets to ensure each run has its own instances
+        def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            if isinstance(toolset, DynamicToolset):
+                return dataclasses.replace(toolset)
+            else:
+                return toolset
+
+        toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
+        if output_toolset is not None:
+            if self._prepare_output_tools:
+                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
 
@@ -1273,15 +1282,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         """All toolsets registered on the agent, including a function toolset holding tools that were registered on the agent directly.
 
-        If a `prepare_tools` function was configured on the agent, this will contain just a `PreparedToolset` wrapping the original toolsets.
-
         Output tools are not included.
         """
-        toolset = self._get_toolset()
-        if isinstance(toolset, CombinedToolset):
-            return toolset.toolsets
+        toolsets: list[AbstractToolset[AgentDepsT]] = []
+
+        if some_tools := self._override_tools.get():
+            function_toolset = _AgentFunctionToolset(some_tools.value, max_retries=self._max_tool_retries)
         else:
-            return [toolset]
+            function_toolset = self._function_toolset
+        toolsets.append(function_toolset)
+
+        if some_user_toolsets := self._override_toolsets.get():
+            user_toolsets = some_user_toolsets.value
+        else:
+            user_toolsets = [*self._user_toolsets, *self._dynamic_toolsets]
+        toolsets.extend(user_toolsets)
+
+        return toolsets
 
     def _prepare_output_schema(
         self, output_type: OutputSpec[RunOutputDataT] | None, model_profile: ModelProfile
@@ -1369,7 +1386,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def id(self) -> str:
-        return '<agent>'  # pragma: no cover
+        return '<agent>'
 
     @property
     def label(self) -> str:
