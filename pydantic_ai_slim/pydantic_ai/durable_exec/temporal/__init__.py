@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any, Callable
 
+from pydantic.errors import PydanticUserError
 from temporalio.client import ClientConfig, Plugin as ClientPlugin
 from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
 from temporalio.converter import DefaultPayloadConverter
@@ -14,7 +15,7 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 from ...exceptions import UserError
 from ._agent import TemporalAgent
 from ._logfire import LogfirePlugin
-from ._run_context import TemporalRunContext, TemporalRunContextWithDeps
+from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 
 __all__ = [
@@ -23,7 +24,6 @@ __all__ = [
     'LogfirePlugin',
     'AgentPlugin',
     'TemporalRunContext',
-    'TemporalRunContextWithDeps',
     'TemporalWrapperToolset',
 ]
 
@@ -61,8 +61,11 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
                 ),
             )
 
-        # pydantic_ai.exceptions.UserError is not retryable
-        config['workflow_failure_exception_types'] = [*config.get('workflow_failure_exception_types', []), UserError]  # pyright: ignore[reportUnknownMemberType]
+        config['workflow_failure_exception_types'] = [
+            *config.get('workflow_failure_exception_types', []),  # pyright: ignore[reportUnknownMemberType]
+            UserError,
+            PydanticUserError,
+        ]
 
         return super().configure_worker(config)
 

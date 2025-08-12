@@ -4,11 +4,11 @@ import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Literal
 
-from typing_extensions import TypedDict
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.direct import model_request_stream
@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
-from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import DeferredToolset, FunctionToolset
 
@@ -47,8 +47,6 @@ try:
         LogfirePlugin,
         PydanticAIPlugin,
         TemporalAgent,
-        TemporalRunContext,
-        TemporalRunContextWithDeps,
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
@@ -138,6 +136,10 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
 
 TEMPORAL_PORT = 7243
 TASK_QUEUE = 'pydantic-ai-agent-task-queue'
+BASE_ACTIVITY_CONFIG = ActivityConfig(
+    start_to_close_timeout=timedelta(seconds=60),
+    retry_policy=RetryPolicy(maximum_attempts=1),
+)
 
 
 @pytest.fixture(scope='module')
@@ -174,13 +176,7 @@ model = OpenAIModel(
 simple_agent = Agent(model, name='simple_agent')
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-simple_temporal_agent = TemporalAgent(
-    simple_agent,
-    activity_config=ActivityConfig(
-        start_to_close_timeout=timedelta(seconds=60),
-        retry_policy=RetryPolicy(maximum_attempts=1),
-    ),
-)
+simple_temporal_agent = TemporalAgent(simple_agent, activity_config=BASE_ACTIVITY_CONFIG)
 
 
 @workflow.defn
@@ -207,7 +203,7 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, client: 
         assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-class Deps(TypedDict):
+class Deps(BaseModel):
     country: str
 
 
@@ -221,7 +217,7 @@ async def event_stream_handler(
 
 
 async def get_country(ctx: RunContext[Deps]) -> str:
-    return ctx.deps['country']
+    return ctx.deps.country
 
 
 def get_weather(city: str) -> str:
@@ -256,10 +252,7 @@ complex_agent = Agent(
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 complex_temporal_agent = TemporalAgent(
     complex_agent,
-    activity_config=ActivityConfig(
-        start_to_close_timeout=timedelta(seconds=60),
-        retry_policy=RetryPolicy(maximum_attempts=1),
-    ),
+    activity_config=BASE_ACTIVITY_CONFIG,
     model_activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=90)),
     toolset_activity_config={
         'country': ActivityConfig(start_to_close_timeout=timedelta(seconds=120)),
@@ -275,7 +268,6 @@ complex_temporal_agent = TemporalAgent(
             'get_weather': ActivityConfig(start_to_close_timeout=timedelta(seconds=180)),
         },
     },
-    run_context_type=TemporalRunContextWithDeps,
 )
 
 
@@ -1169,6 +1161,7 @@ agent_with_sync_tool = Agent(model, name='agent_with_sync_tool', tools=[get_weat
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
 temporal_agent_with_sync_tool_activity_disabled = TemporalAgent(
     agent_with_sync_tool,
+    activity_config=BASE_ACTIVITY_CONFIG,
     tool_activity_config={
         '<agent>': {
             'get_weather': False,
@@ -1256,101 +1249,45 @@ async def test_temporal_model_stream_direct(client: Client):
             )
 
 
-@dataclass
-class DataclassDeps:
-    country: str
+unserializable_deps_agent = Agent(model, name='unserializable_deps_agent', deps_type=Model)
 
 
-agent_with_dataclass_deps = Agent(model, name='agent_with_dataclass_deps', deps_type=DataclassDeps)
-
-
-@agent_with_dataclass_deps.tool
-async def get_country_from_deps(ctx: RunContext[DataclassDeps]) -> str:
-    return ctx.deps.country
+@unserializable_deps_agent.tool
+async def get_model_name(ctx: RunContext[Model]) -> str:
+    return ctx.deps.model_name
 
 
 # This needs to be done before the `TemporalAgent` is bound to the workflow.
-temporal_agent_with_dataclass_deps = TemporalAgent(
-    agent_with_dataclass_deps,
-    run_context_type=TemporalRunContextWithDeps,
-)
+unserializable_deps_temporal_agent = TemporalAgent(unserializable_deps_agent, activity_config=BASE_ACTIVITY_CONFIG)
 
 
 @workflow.defn
-class AgentWorkflowWithDataclassDeps:
+class UnserializableDepsAgentWorkflow:
     @workflow.run
-    async def run(self, prompt: str, deps: DataclassDeps) -> str:
-        result = await temporal_agent_with_dataclass_deps.run(prompt, deps=deps)
-        return result.output  # pragma: no cover
+    async def run(self, prompt: str) -> str:
+        result = await unserializable_deps_temporal_agent.run(prompt, deps=unserializable_deps_temporal_agent.model)
+        return result.output
 
 
-async def test_temporal_agent_with_non_dict_deps(allow_model_requests: None, client: Client):
+async def test_temporal_agent_with_unserializable_deps_type(allow_model_requests: None, client: Client):
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[AgentWorkflowWithDataclassDeps],
-        plugins=[AgentPlugin(temporal_agent_with_dataclass_deps)],
+        workflows=[UnserializableDepsAgentWorkflow],
+        plugins=[AgentPlugin(unserializable_deps_temporal_agent)],
     ):
         with workflow_raises(
             UserError,
             snapshot(
-                '`TemporalRunContextWithDeps` requires the `deps` object to be a JSON-serializable dictionary, like a `TypedDict`. To support `deps` of a different type, pass a `TemporalRunContext` subclass to `TemporalAgent` with custom `serialize_run_context` and `deserialize_run_context` class methods.'
+                "The `deps` object failed to be serialized. Temporal requires all objects that are passed to activities to be serializable using Pydantic's `TypeAdapter`."
             ),
         ):
             await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
-                AgentWorkflowWithDataclassDeps.run,
-                args=[
-                    'What is the capital of the country?',
-                    DataclassDeps(country='Mexico'),
-                ],
-                id=AgentWorkflowWithDataclassDeps.__name__,
+                UnserializableDepsAgentWorkflow.run,
+                args=['What is the model name?'],
+                id=UnserializableDepsAgentWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
-
-
-class TemporalRunContextWithDataclassDeps(TemporalRunContext):
-    @classmethod
-    def serialize_run_context(cls, ctx: RunContext[DataclassDeps]) -> dict[str, Any]:
-        return {**super().serialize_run_context(ctx), 'deps': asdict(ctx.deps)}
-
-    @classmethod
-    def deserialize_run_context(cls, ctx: dict[str, Any]) -> TemporalRunContext:
-        deps = DataclassDeps(**ctx.pop('deps', {}))
-        return cls(**ctx, deps=deps)
-
-
-# This needs to be done before the `TemporalAgent` is bound to the workflow.
-temporal_agent_with_dataclass_deps_as_dict = TemporalAgent(
-    agent_with_dataclass_deps,
-    run_context_type=TemporalRunContextWithDataclassDeps,
-)
-
-
-@workflow.defn
-class AgentWorkflowWithDataclassDepsAsDict:
-    @workflow.run
-    async def run(self, prompt: str, deps: DataclassDeps) -> str:
-        result = await temporal_agent_with_dataclass_deps_as_dict.run(prompt, deps=deps)
-        return result.output
-
-
-async def test_temporal_agent_with_dataclass_deps_as_dict(allow_model_requests: None, client: Client):
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[AgentWorkflowWithDataclassDepsAsDict],
-        plugins=[AgentPlugin(temporal_agent_with_dataclass_deps_as_dict)],
-    ):
-        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
-            AgentWorkflowWithDataclassDepsAsDict.run,
-            args=[
-                'What is the capital of the country?',
-                DataclassDeps(country='Mexico'),
-            ],
-            id=AgentWorkflowWithDataclassDepsAsDict.__name__,
-            task_queue=TASK_QUEUE,
-        )
-        assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
 async def test_logfire_plugin(client: Client):

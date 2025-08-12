@@ -10,7 +10,6 @@ from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -21,6 +20,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import Usage
 
 from ._run_context import TemporalRunContext
@@ -67,7 +67,8 @@ class TemporalModel(WrapperModel):
         *,
         activity_name_prefix: str,
         activity_config: ActivityConfig,
-        run_context_type: type[TemporalRunContext] = TemporalRunContext,
+        deps_type: type[AgentDepsT],
+        run_context_type: type[TemporalRunContext[AgentDepsT]] = TemporalRunContext[AgentDepsT],
         event_stream_handler: EventStreamHandler[Any] | None = None,
     ):
         super().__init__(model)
@@ -81,12 +82,11 @@ class TemporalModel(WrapperModel):
 
         self.request_activity = request_activity
 
-        @activity.defn(name=f'{activity_name_prefix}__model_request_stream')
-        async def request_stream_activity(params: _RequestParams) -> ModelResponse:
+        async def request_stream_activity(params: _RequestParams, deps: AgentDepsT) -> ModelResponse:
             # An error is raised in `request_stream` if no `event_stream_handler` is set.
             assert self.event_stream_handler is not None
 
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context)
+            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             async with self.wrapped.request_stream(
                 params.messages, params.model_settings, params.model_request_parameters, run_context
             ) as streamed_response:
@@ -96,7 +96,12 @@ class TemporalModel(WrapperModel):
                     pass
             return streamed_response.get()
 
-        self.request_stream_activity = request_stream_activity
+        # Set type hint explicitly so that Temporal can take care of serialization and deserialization
+        request_stream_activity.__annotations__['deps'] = deps_type
+
+        self.request_stream_activity = activity.defn(name=f'{activity_name_prefix}__model_request_stream')(
+            request_stream_activity
+        )
 
     @property
     def temporal_activities(self) -> list[Callable[..., Any]]:
@@ -149,12 +154,15 @@ class TemporalModel(WrapperModel):
         serialized_run_context = self.run_context_type.serialize_run_context(run_context)
         response = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
             activity=self.request_stream_activity,
-            arg=_RequestParams(
-                messages=messages,
-                model_settings=model_settings,
-                model_request_parameters=model_request_parameters,
-                serialized_run_context=serialized_run_context,
-            ),
+            args=[
+                _RequestParams(
+                    messages=messages,
+                    model_settings=model_settings,
+                    model_request_parameters=model_request_parameters,
+                    serialized_run_context=serialized_run_context,
+                ),
+                run_context.deps,
+            ],
             **self.activity_config,
         )
         yield TemporalStreamedResponse(model_request_parameters, response)

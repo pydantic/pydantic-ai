@@ -403,6 +403,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = value
 
     @property
+    def deps_type(self) -> type:
+        """The type of dependencies used by the agent."""
+        return self._deps_type
+
+    @property
     def output_type(self) -> OutputSpec[OutputDataT]:
         """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         return self._output_type

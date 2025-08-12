@@ -148,14 +148,14 @@ When `TemporalAgent` dynamically creates activities for the wrapped agent's mode
 
 Other than that, any agent and toolset will just work!
 
-## Agent Run Dependencies
+## Agent Run Context and Dependencies
 
-By default, a [dependencies](dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] will not be available on the [`RunContext`][pydantic_ai.tools.RunContext] that's passed to tool functions and the [event stream handler](#streaming), as it's not guaranteed to be serializable.
+As workflows and activities run in separate processes, any values passed between them need to be serializable. As these payloads are stored in the workflow execution event history, Temporal limits their size to 2MB.
 
-You can use the `run_context_type` parameter on the `TemporalAgent` constructor to specify a different run context type that will be used to serialize and deserialize the run context for use inside a Temporal activity:
+To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
 
-- If the `Agent`'s `deps_type` is a JSON-serializable dictionary, like a `TypedDict`, you can use [`TemporalRunContextWithDeps`][pydantic_ai.durable_exec.temporal.TemporalRunContextWithDeps].
-- If not, create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods.
+Specifically, only the `deps`, `retries`, `tool_call_id`, `tool_name`, `retry`, and `run_step` fields are available by default, and trying to access `model`, `usage`, `prompt`, `messages`, or `tracer` will raise an error.
+If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
 
 ## Streaming
 
@@ -166,7 +166,7 @@ The event stream handler function will receive the agent [run context][pydantic_
 
 As the streaming model request activity, workflow, and workflow execution call all take place in separate processes, passing data between them requires some care:
 
-- To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-dependencies).
+- To get data from the workflow call site or workflow to the event stream handler, you can use a [dependencies object](#agent-run-context-and-dependencies).
 - To get data from the event stream handler to the workflow, workflow call site, or a frontend, you need to use an external system that the event stream handler can write to and the event consumer can read from, like a message queue. You can use the dependency object to make sure the same connection string or other unique ID is available in all the places that need it.
 
 ## Activity Configuration
