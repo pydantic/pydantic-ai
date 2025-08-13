@@ -27,7 +27,7 @@ class DeferredToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return self._id  # pragma: no cover
+        return self._id
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return {

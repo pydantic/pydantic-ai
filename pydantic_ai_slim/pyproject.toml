@@ -60,7 +60,7 @@ dependencies = [
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
-logfire = ["logfire>=3.11.0"]
+logfire = ["logfire>=3.14.1"]
 # Models
 openai = ["openai>=1.92.0"]
 cohere = ["cohere>=5.16.0; platform_system != 'Emscripten'"]
@@ -86,27 +86,8 @@ a2a = ["fasta2a>=0.4.1"]
 ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Retries
 retries = ["tenacity>=8.2.3"]
-
-[dependency-groups]
-dev = [
-    "anyio>=4.5.0",
-    "asgi-lifespan>=2.1.0",
-    "devtools>=0.12.2",
-    "coverage[toml]>=7.10.2",
-    "dirty-equals>=0.9.0",
-    "duckduckgo-search>=7.0.0",
-    "inline-snapshot>=0.19.3",
-    "pytest>=8.3.3",
-    "pytest-examples>=0.0.14",
-    "pytest-mock>=3.14.0",
-    "pytest-pretty>=1.3.0",
-    "pytest-recording>=0.13.2",
-    "diff-cover>=9.2.0",
-    "boto3-stubs[bedrock-runtime]",
-    "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
-    "pytest-xdist>=3.6.1",
-    "coverage-enable-subprocess>=0.1.0",
-]
+# Temporal
+temporal = ["temporalio>=1.15.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

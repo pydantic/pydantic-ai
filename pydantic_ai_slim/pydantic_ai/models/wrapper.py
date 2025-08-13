@@ -64,4 +64,4 @@ class WrapperModel(Model):
         return self.wrapped.settings
 
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)  # pragma: no cover
+        return getattr(self.wrapped, item)
