@@ -1288,6 +1288,20 @@ http = [
 ]
 
 [[package]]
+name = "genai-prices"
+version = "0.0.22"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/81/c5/0aa155ac23a17eb6de36f0611d8595fc49861bdb0a5f302133b7b4f68f5b/genai_prices-0.0.22.tar.gz", hash = "sha256:5e743424d40176ea04de7b74d1ad3a41801390439f4404d4593b82218f2c0c04", size = 44125, upload-time = "2025-08-12T12:04:52.265Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/1c/313541ea19144a7e5b0ac32dec3dd026de719c5b15147b043d52006dbef7/genai_prices-0.0.22-py3-none-any.whl", hash = "sha256:1ae496bdf517047bc489421c1eff653872e5d456d5eb86d113dfb49d2977a041", size = 46445, upload-time = "2025-08-12T12:04:50.884Z" },
+]
+
+[[package]]
 name = "ghp-import"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3026,6 +3040,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pip"
+version = "25.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/16/650289cd3f43d5a2fadfd98c68bd1e1e7f2550a1a5326768cddfbcedb2c5/pip-25.2.tar.gz", hash = "sha256:578283f006390f85bb6282dffb876454593d637f5d1be494b5202ce4877e71f2", size = 1840021, upload-time = "2025-07-30T21:50:15.401Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/3f/945ef7ab14dc4f9d7f40288d2df998d1837ee0888ec3659c813487572faa/pip-25.2-py3-none-any.whl", hash = "sha256:6d67a2b4e7f14d8b31b8b52648866fa717f45a1eb70e83002f4331d07e953717", size = 1752557, upload-time = "2025-07-30T21:50:13.323Z" },
+]
+
+[[package]]
 name = "platformdirs"
 version = "4.3.6"
 source = { registry = "https://pypi.org/simple" }
@@ -3316,7 +3339,9 @@ dev = [
     { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
     { name = "dirty-equals" },
     { name = "duckduckgo-search" },
+    { name = "genai-prices" },
     { name = "inline-snapshot" },
+    { name = "pip" },
     { name = "pytest" },
     { name = "pytest-examples" },
     { name = "pytest-mock" },
@@ -3364,7 +3389,9 @@ dev = [
     { name = "diff-cover", specifier = ">=9.2.0" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
+    { name = "genai-prices", specifier = ">=0.0.22" },
     { name = "inline-snapshot", specifier = ">=0.19.3" },
+    { name = "pip", specifier = ">=25.2" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-examples", specifier = ">=0.0.18" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
@@ -3540,8 +3567,8 @@ requires-dist = [
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.45.3" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
-    { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.15.0" },
+    { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "temporal", "vertexai"]
