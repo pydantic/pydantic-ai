@@ -49,6 +49,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
@@ -2557,29 +2558,31 @@ async def test_fallback_model_settings_merge():
     def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
 
-    base_model = FunctionModel(return_settings, settings={'temperature': 0.1, 'base_setting': 'base_value'})
+    base_model = FunctionModel(return_settings, settings=ModelSettings(temperature=0.1, max_tokens=1024))
     fallback_model = FallbackModel(base_model)
 
     # Test that base model settings are preserved when no additional settings are provided
     agent = Agent(fallback_model)
     result = await agent.run('Hello')
-    assert result.output == IsJson({'base_setting': 'base_value', 'temperature': 0.1})
+    assert result.output == IsJson({'max_tokens': 1024, 'temperature': 0.1})
 
     # Test that runtime model_settings are merged with base settings
-    agent_with_settings = Agent(fallback_model, model_settings={'temperature': 0.5, 'new_setting': 'new_value'})
+    agent_with_settings = Agent(fallback_model, model_settings=ModelSettings(temperature=0.5, parallel_tool_calls=True))
     result = await agent_with_settings.run('Hello')
-    expected = {'base_setting': 'base_value', 'temperature': 0.5, 'new_setting': 'new_value'}
+    expected = {'max_tokens': 1024, 'temperature': 0.5, 'parallel_tool_calls': True}
     assert result.output == IsJson(expected)
 
     # Test that run-time model_settings override both base and agent settings
     result = await agent_with_settings.run(
-        'Hello', model_settings={'temperature': 0.9, 'runtime_setting': 'runtime_value'}
+        'Hello', model_settings=ModelSettings(temperature=0.9, extra_headers={'runtime_setting': 'runtime_value'})
     )
     expected = {
-        'base_setting': 'base_value',
+        'max_tokens': 1024,
         'temperature': 0.9,
-        'new_setting': 'new_value',
-        'runtime_setting': 'runtime_value',
+        'parallel_tool_calls': True,
+        'extra_headers': {
+            'runtime_setting': 'runtime_value',
+        }
     }
     assert result.output == IsJson(expected)
 
@@ -2598,7 +2601,7 @@ async def test_fallback_model_settings_merge_streaming():
     base_model = FunctionModel(
         return_settings,
         stream_function=return_settings_stream,
-        settings={'base_setting': 'base_value', 'temperature': 0.1},
+        settings=ModelSettings(temperature=0.1, extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
     )
     fallback_model = FallbackModel(base_model)
 
@@ -2607,14 +2610,24 @@ async def test_fallback_model_settings_merge_streaming():
     async with agent.run_stream('Hello') as result:
         output = await result.get_output()
 
-    assert json.loads(output) == {'base_setting': 'base_value', 'temperature': 0.1}
+    assert json.loads(output) == {
+        'extra_headers': {
+            'anthropic-beta': 'context-1m-2025-08-07'
+        },
+        'temperature': 0.1
+    }
 
     # Test that runtime model_settings are merged with base settings in streaming mode
-    agent_with_settings = Agent(fallback_model, model_settings={'temperature': 0.5, 'new_setting': 'new_value'})
+    agent_with_settings = Agent(fallback_model, model_settings=ModelSettings(temperature=0.5))
     async with agent_with_settings.run_stream('Hello') as result:
         output = await result.get_output()
 
-    expected = {'base_setting': 'base_value', 'temperature': 0.5, 'new_setting': 'new_value'}
+    expected = {
+        'extra_headers': {
+            'anthropic-beta': 'context-1m-2025-08-07'
+        },
+        'temperature': 0.5
+    }
     assert json.loads(output) == expected
 
 
