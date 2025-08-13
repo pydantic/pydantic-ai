@@ -25,6 +25,7 @@ __all__ = (
     'EvaluationResult',
     'EvaluationScalar',
     'Evaluator',
+    'EvaluatorFailure',
     'EvaluatorOutput',
     'EvaluatorSpec',
 )
@@ -98,6 +99,16 @@ class EvaluationResult(Generic[EvaluationScalarT]):
                     continue
                 return cast(EvaluationResult[T], self)
         return None
+
+
+@dataclass
+class EvaluatorFailure:
+    """Represents a failure raised during the execution of an evaluator."""
+
+    name: str
+    error_message: str
+    error_stacktrace: str
+    source: EvaluatorSpec
 
 
 # Evaluators are contravariant in all of its parameters.
