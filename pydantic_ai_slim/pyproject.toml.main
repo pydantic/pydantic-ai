@@ -1,0 +1,121 @@
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning>=0.7.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+vcs = "git"
+style = "pep440"
+bump = true
+
+[project]
+name = "pydantic-ai-slim"
+dynamic = ["version", "dependencies", "optional-dependencies"]
+description = "Agent Framework / shim to use Pydantic with LLMs, slim package"
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+]
+license = "MIT"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Unix",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet",
+]
+requires-python = ">=3.9"
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning]
+dependencies = [
+    "eval-type-backport>=0.2.0",
+    "griffe>=1.3.2",
+    "httpx>=0.27",
+    "pydantic>=2.10",
+    "pydantic-graph=={{ version }}",
+    "exceptiongroup; python_version < '3.11'",
+    "opentelemetry-api>=1.28.0",
+    "typing-inspection>=0.4.0",
+]
+
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+# WARNING if you add optional groups, please update docs/install.md
+logfire = ["logfire>=3.11.0"]
+# Models
+openai = ["openai>=1.92.0"]
+cohere = ["cohere>=5.16.0; platform_system != 'Emscripten'"]
+vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
+google = ["google-genai>=1.28.0"]
+anthropic = ["anthropic>=0.61.0"]
+groq = ["groq>=0.25.0"]
+mistral = ["mistralai>=1.9.2"]
+bedrock = ["boto3>=1.39.0"]
+huggingface = ["huggingface-hub[inference]>=0.33.5"]
+# Tools
+duckduckgo = ["ddgs>=9.0.0"]
+tavily = ["tavily-python>=0.5.0"]
+# CLI
+cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
+# MCP
+mcp = ["mcp>=1.10.0; python_version >= '3.10'"]
+# Evals
+evals = ["pydantic-evals=={{ version }}"]
+# A2A
+a2a = ["fasta2a>=0.4.1"]
+# AG-UI
+ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
+# Retries
+retries = ["tenacity>=8.2.3"]
+
+[dependency-groups]
+dev = [
+    "anyio>=4.5.0",
+    "asgi-lifespan>=2.1.0",
+    "devtools>=0.12.2",
+    "coverage[toml]>=7.10.2",
+    "dirty-equals>=0.9.0",
+    "duckduckgo-search>=7.0.0",
+    "inline-snapshot>=0.19.3",
+    "pytest>=8.3.3",
+    "pytest-examples>=0.0.14",
+    "pytest-mock>=3.14.0",
+    "pytest-pretty>=1.3.0",
+    "pytest-recording>=0.13.2",
+    "diff-cover>=9.2.0",
+    "boto3-stubs[bedrock-runtime]",
+    "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
+    "pytest-xdist>=3.6.1",
+    "coverage-enable-subprocess>=0.1.0",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project.scripts]
+pai = "pydantic_ai._cli:cli_exit"  # TODO remove this when clai has been out for a while
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_ai"]
+
+[tool.uv.sources]
+pydantic-graph = { workspace = true }
