@@ -16,6 +16,8 @@ interactions:
     headers:
       cache-control:
       - no-cache, no-store, must-revalidate
+      connection:
+      - keep-alive
       content-length:
       - '760'
       content-security-policy:
