@@ -423,10 +423,10 @@ class OpenAIModel(Model):
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
                     part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
-                elif isinstance(c, ChatCompletionMessageCustomToolCall):
+                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
                     # NOTE: Custom tool calls are not supported.
                     # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
-                    raise RuntimeError('Custom tool calls are not supported')  # pragma: no cover
+                    raise RuntimeError('Custom tool calls are not supported')
                 else:
                     assert_never(c)
                 part.tool_call_id = _guard_tool_call_id(part)
