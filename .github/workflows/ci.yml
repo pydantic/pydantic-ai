@@ -163,7 +163,7 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-      - run: uv run ${{ matrix.install.command }} coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -204,7 +204,7 @@ jobs:
 
       - run: unset UV_FROZEN
 
-      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv run --all-extras --resolution lowest-direct coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
