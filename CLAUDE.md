@@ -147,6 +147,8 @@ def test_old_class_is_deprecated():
         OldClass()
 ```
 
+In the documentation, you should not have references to the old class, only the new class.
+
 ### Writing documentation
 
 Always reference Python objects with the "`" (backticks) around them, and link to the API reference, for example:
