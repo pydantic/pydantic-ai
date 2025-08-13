@@ -46,7 +46,7 @@ class ToolManager(Generic[AgentDepsT]):
         return self.__class__(
             toolset=self.toolset,
             ctx=ctx,
-            tools=await self.toolset.get_tools(ctx) if ctx else None,
+            tools=await self.toolset.get_tools(ctx),
         )
 
     @property
