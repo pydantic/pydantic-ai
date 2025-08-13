@@ -15,7 +15,7 @@ from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, i
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponse
-    from ..settings import ModelSettings
+    from ..settings import ModelSettings, merge_model_settings
 
 
 @dataclass(init=False)
