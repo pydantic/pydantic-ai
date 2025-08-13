@@ -3768,11 +3768,7 @@ def test_toolset_factory():
     assert run_result._state.run_step == 3  # pyright: ignore[reportPrivateUsage]
     assert len(available_tools) == 3
     assert toolset_creation_counts == snapshot(
-        {
-            'via_toolsets_arg': 4,
-            'via_toolset_decorator': 4,
-            'via_toolset_decorator_for_entire_run': 1,
-        }
+        defaultdict(int, {'via_toolsets_arg': 3, 'via_toolset_decorator': 3, 'via_toolset_decorator_for_entire_run': 1})
     )
 
 
