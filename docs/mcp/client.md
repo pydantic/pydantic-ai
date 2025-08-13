@@ -12,7 +12,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
 !!! note
-MCP integration requires Python 3.10 or higher.
+    MCP integration requires Python 3.10 or higher.
 
 ## Usage
 
@@ -34,7 +34,7 @@ You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manag
 [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport to a server.
 
 !!! note
-[`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
+    [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
@@ -451,6 +451,8 @@ async def book_table(ctx: Context) -> str:
 if __name__ == '__main__':
     mcp.run(transport='stdio')
 ```
+
+This server demonstrates elicitation by requesting structured booking details from the client when the `book_table` tool is called. Here's how to create a client that handles these elicitation requests:
 
 ```python {title="client_example.py" py="3.10" requires="restaurant_server.py" test="skip"}
 import asyncio

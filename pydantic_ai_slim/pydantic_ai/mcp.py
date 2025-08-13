@@ -40,13 +40,7 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = (
-    'MCPServer',
-    'MCPServerStdio',
-    'MCPServerHTTP',
-    'MCPServerSSE',
-    'MCPServerStreamableHTTP',
-)
+__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
