@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import Usage, UsageLimits
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
@@ -1693,7 +1694,9 @@ async def test_google_model_usage_limit_exceeded(allow_model_requests: None, goo
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model)
 
-    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=12\\)'):
+    with pytest.raises(
+        UsageLimitExceeded, match='The next request would exceed the request_tokens_limit of 9 \\(request_tokens=12\\)'
+    ):
         await agent.run(
             'The quick brown fox jumps over the lazydog.',
             usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
@@ -1706,7 +1709,9 @@ async def test_google_model_usage_limit_exceeded_with_event_check_failed(
     model = GoogleModel('gemini-2.5-flash', provider=google_provider)
     agent = Agent(model=model)
     event_parts: list[Any] = []
-    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=12\\)'):
+    with pytest.raises(
+        UsageLimitExceeded, match='The next request would exceed the request_tokens_limit of 9 \\(request_tokens=12\\)'
+    ):
         async with agent.iter(
             user_prompt='The quick brown fox jumps over the lazydog.',
             usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
@@ -1721,7 +1726,7 @@ async def test_google_model_usage_limit_exceeded_with_event_check_failed(
 
 
 async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: None, vertex_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
+    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
 
     agent = Agent(model, system_prompt='You are a chatbot.')
 
@@ -1729,7 +1734,9 @@ async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: 
     async def get_user_country() -> str:
         return 'Mexico'
 
-    with pytest.raises(UsageLimitExceeded, match='Exceeded the request_tokens_limit of 9 \\(request_tokens=36\\)'):
+    with pytest.raises(
+        UsageLimitExceeded, match='The next request would exceed the request_tokens_limit of 9 \\(request_tokens=36\\)'
+    ):
         await agent.run(
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
             usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),

@@ -406,7 +406,7 @@ class Model(ABC):
         model_request_parameters: ModelRequestParameters,
     ) -> Usage:
         """Make a request to the model for counting tokens."""
-        # This method is not required, but you need to implement it if you want to support token counting before making a request
+        # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request``
         raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
 
     @asynccontextmanager
