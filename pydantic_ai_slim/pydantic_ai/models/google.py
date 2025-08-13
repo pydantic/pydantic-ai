@@ -235,8 +235,13 @@ class GoogleModel(Model):
             config=config,
         )
         if response.total_tokens is None:
-            raise UnexpectedModelBehavior('Total tokens missing from Gemini response', str(response))
-        return usage.Usage(request_tokens=response.total_tokens)
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Total tokens missing from Gemini response', str(response)
+            )
+        return usage.Usage(
+            request_tokens=response.total_tokens,
+            total_tokens=response.total_tokens,
+        )
 
     @asynccontextmanager
     async def request_stream(

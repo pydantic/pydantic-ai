@@ -1731,12 +1731,12 @@ async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: 
 
     @agent.tool_plain
     async def get_user_country() -> str:
-        return 'Mexico'
+        return 'Mexico'  # pragma: no cover
 
     with pytest.raises(
-        UsageLimitExceeded, match='The next request would exceed the request_tokens_limit of 9 \\(request_tokens=36\\)'
+        UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9 \\(total_tokens=36\\)'
     ):
         await agent.run(
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
-            usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
+            usage_limits=UsageLimits(total_tokens_limit=9, count_tokens_before_request=True),
         )

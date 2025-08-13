@@ -126,12 +126,6 @@ class UsageLimits:
                 f'The next request would exceed the request_tokens_limit of {self.request_tokens_limit} ({request_tokens=})'
             )
 
-        response_tokens = usage.response_tokens or 0
-        if self.response_tokens_limit is not None and response_tokens > self.response_tokens_limit:
-            raise UsageLimitExceeded(
-                f'The next request would exceed the response_tokens_limit of {self.response_tokens_limit} ({response_tokens=})'
-            )
-
         total_tokens = usage.total_tokens or 0
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(
