@@ -860,7 +860,7 @@ class OpenAIResponsesModel(Model):
             return NOT_GIVEN
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam | responses.CustomToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
@@ -883,16 +883,29 @@ class OpenAIResponsesModel(Model):
                 )
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam | responses.CustomToolParam:
+        model_profile = OpenAIModelProfile.from_profile(self.profile)
+        if f.only_takes_string_argument and model_profile.openai_supports_freeform_function_calling:
+            tool_param: responses.CustomToolParam = {
+                'name': f.name,
+                'type': 'custom',
+                'description': f.description or '',
+                'format': {
+                    'type': 'text',
+                },
+            }
+            return tool_param
+
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
             'strict': bool(
-                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
+                f.strict and model_profile.openai_supports_strict_tool_definition
             ),
         }
+
 
     async def _map_messages(
         self, messages: list[ModelMessage]

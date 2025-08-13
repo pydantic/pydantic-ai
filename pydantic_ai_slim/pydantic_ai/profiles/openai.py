@@ -29,10 +29,16 @@ class OpenAIModelProfile(ModelProfile):
     """Whether the provider accepts the value ``tool_choice='required'`` in the
     request payload."""
 
+    # GPT-5 introduced support for directly calling a function with a string.
+    openai_supports_freeform_function_calling: bool = False
+    """Whether the provider accepts the value ``type='custom'`` for tools in the
+    request payload."""
+
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     is_reasoning_model = model_name.startswith('o') or model_name.startswith('gpt-5')
+    is_freeform_function_calling_model = model_name.startswith('gpt-5')
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
     # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
     # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
@@ -41,6 +47,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         openai_supports_sampling_settings=not is_reasoning_model,
+        openai_supports_freeform_function_calling=is_freeform_function_calling_model,
     )
 
 

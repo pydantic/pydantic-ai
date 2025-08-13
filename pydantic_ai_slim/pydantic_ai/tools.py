@@ -378,4 +378,22 @@ class ToolDefinition:
         When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
     """
 
+    @property
+    def only_takes_string_argument(self) -> bool:
+        # true if the parameters_json_schema looks like:
+        # {"additionalProperties": False, "properties": {NAME: {"type": "string"}}, "required": ["NAME"], "type": "object"}
+        schema = self.parameters_json_schema
+        if len(schema['required']) != 1:
+            return False
+        if len(schema['properties']) != 1:
+            return False
+        property_name: str = schema['required'][0]
+        expected_schema = {
+            'additionalProperties': False,
+            'properties': {property_name: {'type': 'string'}},
+            'required': [property_name],
+            'type': 'object',
+        }
+        return schema == expected_schema
+
     __repr__ = _utils.dataclasses_no_defaults_repr
