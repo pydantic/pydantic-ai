@@ -1288,6 +1288,20 @@ http = [
 ]
 
 [[package]]
+name = "genai-prices"
+version = "0.0.22"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
+    { name = "httpx" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/81/c5/0aa155ac23a17eb6de36f0611d8595fc49861bdb0a5f302133b7b4f68f5b/genai_prices-0.0.22.tar.gz", hash = "sha256:5e743424d40176ea04de7b74d1ad3a41801390439f4404d4593b82218f2c0c04", size = 44125, upload-time = "2025-08-12T12:04:52.265Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8d/1c/313541ea19144a7e5b0ac32dec3dd026de719c5b15147b043d52006dbef7/genai_prices-0.0.22-py3-none-any.whl", hash = "sha256:1ae496bdf517047bc489421c1eff653872e5d456d5eb86d113dfb49d2977a041", size = 46445, upload-time = "2025-08-12T12:04:50.884Z" },
+]
+
+[[package]]
 name = "ghp-import"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3325,6 +3339,7 @@ dev = [
     { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
     { name = "dirty-equals" },
     { name = "duckduckgo-search" },
+    { name = "genai-prices" },
     { name = "inline-snapshot" },
     { name = "pip" },
     { name = "pytest" },
@@ -3374,6 +3389,7 @@ dev = [
     { name = "diff-cover", specifier = ">=9.2.0" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
+    { name = "genai-prices", specifier = ">=0.0.22" },
     { name = "inline-snapshot", specifier = ">=0.19.3" },
     { name = "pip", specifier = ">=25.2" },
     { name = "pytest", specifier = ">=8.3.3" },
