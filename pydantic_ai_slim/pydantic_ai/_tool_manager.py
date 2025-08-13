@@ -53,14 +53,14 @@ class ToolManager(Generic[AgentDepsT]):
     def tool_defs(self) -> list[ToolDefinition]:
         """The tool definitions for the tools in this tool manager."""
         if self.tools is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         return [tool.tool_def for tool in self.tools.values()]
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
         if self.tools is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         try:
             return self.tools[name].tool_def
@@ -78,7 +78,7 @@ class ToolManager(Generic[AgentDepsT]):
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
         """
         if self.tools is None or self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
             # Output tool calls are not traced
@@ -94,7 +94,7 @@ class ToolManager(Generic[AgentDepsT]):
 
     async def _call_tool(self, call: ToolCallPart, allow_partial: bool, wrap_validation_errors: bool) -> Any:
         if self.tools is None or self.ctx is None:
-            raise ValueError('ToolManager has not been prepared for a run step yet')
+            raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         name = call.tool_name
         tool = self.tools.get(name)
