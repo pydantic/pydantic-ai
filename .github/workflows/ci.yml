@@ -131,14 +131,20 @@ jobs:
           CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
 
   test:
-    name: test on ${{ matrix.python-version }} (${{ matrix.install }})
+    name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-        install: ["slim", "standard", "all-extras"]
+        install:
+          - name: pydantic-ai-slim
+            command: "--package pydantic-ai-slim"
+          - name: standard
+            command: ""
+          - name: all-extras
+            command: "--all-extras"
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
@@ -154,29 +160,18 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: choose install command
-        run: |
-          if [ "${{ matrix.install }}" = "slim" ]; then
-            echo "install-command=--package pydantic-ai-slim" >> $GITHUB_OUTPUT
-          elif [ "${{ matrix.install }}" = "standard" ]; then
-            echo "install-command=" >> $GITHUB_OUTPUT
-          elif [ "${{ matrix.install }}" = "all-extras" ]; then
-            echo "install-command=--all-extras" >> $GITHUB_OUTPUT
-          fi
-        id: install-command
-
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-      - run: uv run ${{ steps.install-command.outputs.install-command }} coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest -n auto --dist=loadgroup
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install }}
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
         if: matrix.python-version != '3.9'
         with:
-          name: coverage-${{ matrix.python-version }}-${{ matrix.install }}
+          name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
           path: .coverage
           include-hidden-files: true
 
