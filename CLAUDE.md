@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Build docs**: `make docs` or `make docs-serve` (local development)
 
 ### Single Test Commands
+
 - **Run specific test**: `uv run pytest tests/test_agent.py::test_function_name -v`
 - **Run test file**: `uv run pytest tests/test_agent.py -v`
 - **Run with debug**: `uv run pytest tests/test_agent.py -v -s`
@@ -133,12 +134,27 @@ from typing_extensions import deprecated
 
 class NewClass: ...  # This class was renamed from OldClass.
 
-@deprecated("Use NewClass instead")
+@deprecated("Use `NewClass` instead")
 class OldClass(NewClass): ...
 ```
 
-In the test suite, you need to use the `NewClass` instead of the `OldClass`.
+In the test suite, you MUST use the `NewClass` instead of the `OldClass`, and create a new test to verify the
+deprecation warning:
+
+```python
+def test_old_class_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead"):
+        OldClass()
+```
 
 ### Writing documentation
 
-Always reference Python objects with the "`" (backticks) around them.
+Always reference Python objects with the "`" (backticks) around them, and link to the API reference, for example:
+
+```markdown
+The [`Agent`][pydantic_ai.agent.Agent] class is the main entry point for creating and running agents.
+```
+
+### Coverage
+
+Every pull request MUST have 100% coverage. You can check the coverage by running `make test`.
