@@ -131,7 +131,7 @@ jobs:
           CO_API_KEY: ${{ secrets.COHERE_API_KEY }}
 
   test:
-    name: test on ${{ matrix.python-version }} (${{ matrix.install }})
+    name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
