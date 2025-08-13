@@ -2,8 +2,10 @@ import functools
 import operator
 import re
 from datetime import timezone
+from decimal import Decimal
 
 import pytest
+from genai_prices import Usage as GenaiPricesUsage, calc_price
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
@@ -20,6 +22,11 @@ from pydantic_ai.usage import Usage, UsageLimits
 from .conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
+
+
+def test_genai_prices():
+    usage = GenaiPricesUsage(input_tokens=100, output_tokens=50)
+    assert calc_price(usage, model_ref='gpt-4o').total_price == snapshot(Decimal('0.00075'))
 
 
 def test_request_token_limit() -> None:
