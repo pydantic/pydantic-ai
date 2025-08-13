@@ -177,6 +177,14 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
         middle of the conversation.
     """
 
+    openai_text_verbosity: Literal['low', 'medium', 'high']
+    """Constrains the verbosity of the model's text response.
+
+    Lower values will result in more concise responses, while higher values will
+    result in more verbose responses. Currently supported values are `low`,
+    `medium`, and `high`.
+    """
+
 
 @dataclass(init=False)
 class OpenAIModel(Model):
@@ -818,6 +826,10 @@ class OpenAIResponsesModel(Model):
             assert isinstance(instructions, str)
             openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
             instructions = NOT_GIVEN
+
+        if verbosity := model_settings.get('openai_text_verbosity'):
+            text = text or {}
+            text['verbosity'] = verbosity
 
         sampling_settings = (
             model_settings
