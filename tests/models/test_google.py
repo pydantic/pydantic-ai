@@ -10,6 +10,7 @@ from inline_snapshot import Is, snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from pydantic_ai import UsageLimitExceeded
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
@@ -39,7 +40,8 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.result import Usage
+from pydantic_ai.result import Usage, UsageLimits
+from pydantic_ai.settings import ModelSettings
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
@@ -1686,3 +1688,55 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+async def test_google_model_usage_limit_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded, match='The next request would exceed the request_tokens_limit of 9 \\(request_tokens=12\\)'
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(request_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+async def test_google_model_usage_limit_not_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(request_tokens_limit=15, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot("""\
+That's a classic! It's famously known as a **pangram**, which means it's a sentence that contains every letter of the alphabet.
+
+It's often used for:
+*   **Typing practice:** To ensure all keys are hit.
+*   **Displaying font samples:** Because it showcases every character.
+
+Just a small note, it's typically written as "lazy dog" (two words) and usually ends with a period:
+
+**The quick brown fox jumps over the lazy dog.**\
+""")
+
+
+async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: None, vertex_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
+
+    agent = Agent(model, system_prompt='You are a chatbot.')
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(
+        UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9 \\(total_tokens=36\\)'
+    ):
+        await agent.run(
+            'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+            usage_limits=UsageLimits(total_tokens_limit=9, count_tokens_before_request=True),
+        )

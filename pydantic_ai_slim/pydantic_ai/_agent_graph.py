@@ -351,11 +351,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         ctx.state.message_history.append(self.request)
 
-        # Check usage
-        if ctx.deps.usage_limits:  # pragma: no branch
-            ctx.deps.usage_limits.check_before_request(ctx.state.usage)
-
-        # Increment run_step
         ctx.state.run_step += 1
 
         run_context = build_run_context(ctx)
@@ -366,6 +361,18 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
         message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, run_context)
+
+        usage = ctx.state.usage
+        if ctx.deps.usage_limits.count_tokens_before_request:
+            # Copy to avoid modifying the original usage object with the counted usage
+            usage = dataclasses.replace(usage)
+
+            counted_usage = await ctx.deps.model.count_tokens(
+                message_history, ctx.deps.model_settings, model_request_parameters
+            )
+            usage.incr(counted_usage)
+
+        ctx.deps.usage_limits.check_before_request(usage)
 
         return model_settings, model_request_parameters, message_history, run_context
 

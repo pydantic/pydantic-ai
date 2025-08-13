@@ -413,6 +413,16 @@ class Model(ABC):
         """Make a request to the model."""
         raise NotImplementedError()
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Usage:
+        """Make a request to the model for counting tokens."""
+        # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
+        raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
+
     @asynccontextmanager
     async def request_stream(
         self,
