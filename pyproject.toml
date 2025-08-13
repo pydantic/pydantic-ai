@@ -102,6 +102,9 @@ dev = [
     "boto3-stubs[bedrock-runtime]",
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
+    # Needed for PyCharm users
+    "pip>=25.2",
+    "genai-prices>=0.0.22",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [

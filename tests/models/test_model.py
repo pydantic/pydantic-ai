@@ -96,6 +96,14 @@ TEST_CASES = [
         'grok',
         'OpenAIModel',
     ),
+    (
+        'OPENAI_API_KEY',
+        'openai-responses:gpt-4o',
+        'gpt-4o',
+        'openai',
+        'openai',
+        'OpenAIResponsesModel',
+    ),
 ]
 
 
