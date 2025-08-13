@@ -814,8 +814,12 @@ class OpenAIResponsesModel(Model):
             assert isinstance(instructions, str)
             openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
             instructions = NOT_GIVEN
-        elif verbosity := model_settings.get('openai_text_verbosity'):
-            text = {'format': {'type': 'text'}, 'verbosity': verbosity}
+
+        if verbosity := model_settings.get('openai_text_verbosity'):
+            if text is None:
+                text = {'format': {'type': 'text'}, 'verbosity': verbosity}
+            else:
+                text['verbosity'] = verbosity
 
         sampling_settings = (
             model_settings
