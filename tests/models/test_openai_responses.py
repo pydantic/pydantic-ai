@@ -1146,5 +1146,5 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     )
     model = OpenAIResponsesModel('gpt-5', provider=provider)
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_text_verbosity='low'))
-    result = await agent.run('Explain quantum computing briefly.')
-    assert result.output == snapshot()
+    result = await agent.run('What is 2+2?')
+    assert result.output == snapshot('4')
