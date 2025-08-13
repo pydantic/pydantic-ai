@@ -96,7 +96,9 @@ class FallbackModel(Model):
             async with AsyncExitStack() as stack:
                 try:
                     response = await stack.enter_async_context(
-                        model.request_stream(messages, merged_settings, customized_model_request_parameters, run_context)
+                        model.request_stream(
+                            messages, merged_settings, customized_model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
                     if self._fallback_on(exc):
