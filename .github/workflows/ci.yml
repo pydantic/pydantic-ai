@@ -139,7 +139,7 @@ jobs:
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
         install:
-          - name: slim
+          - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
           - name: standard
             command: ""
@@ -165,13 +165,13 @@ jobs:
       - run: uv sync --only-dev
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest -n auto --dist=loadgroup
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install }}
+          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
         if: matrix.python-version != '3.9'
         with:
-          name: coverage-${{ matrix.python-version }}-${{ matrix.install }}
+          name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
           path: .coverage
           include-hidden-files: true
 
