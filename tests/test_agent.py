@@ -2582,7 +2582,7 @@ async def test_fallback_model_settings_merge():
         'parallel_tool_calls': True,
         'extra_headers': {
             'runtime_setting': 'runtime_value',
-        }
+        },
     }
     assert result.output == IsJson(expected)
 
@@ -2591,15 +2591,11 @@ async def test_fallback_model_settings_merge_streaming():
     """Test that FallbackModel properly merges model settings in streaming mode."""
     from pydantic_ai.models.fallback import FallbackModel
 
-    def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
-
     async def return_settings_stream(_: list[ModelMessage], info: AgentInfo):
         # Yield the merged settings as JSON to verify they were properly combined
         yield to_json(info.model_settings).decode()
 
     base_model = FunctionModel(
-        return_settings,
         stream_function=return_settings_stream,
         settings=ModelSettings(temperature=0.1, extra_headers={'anthropic-beta': 'context-1m-2025-08-07'}),
     )
@@ -2610,24 +2606,14 @@ async def test_fallback_model_settings_merge_streaming():
     async with agent.run_stream('Hello') as result:
         output = await result.get_output()
 
-    assert json.loads(output) == {
-        'extra_headers': {
-            'anthropic-beta': 'context-1m-2025-08-07'
-        },
-        'temperature': 0.1
-    }
+    assert json.loads(output) == {'extra_headers': {'anthropic-beta': 'context-1m-2025-08-07'}, 'temperature': 0.1}
 
     # Test that runtime model_settings are merged with base settings in streaming mode
     agent_with_settings = Agent(fallback_model, model_settings=ModelSettings(temperature=0.5))
     async with agent_with_settings.run_stream('Hello') as result:
         output = await result.get_output()
 
-    expected = {
-        'extra_headers': {
-            'anthropic-beta': 'context-1m-2025-08-07'
-        },
-        'temperature': 0.5
-    }
+    expected = {'extra_headers': {'anthropic-beta': 'context-1m-2025-08-07'}, 'temperature': 0.5}
     assert json.loads(output) == expected
 
 
