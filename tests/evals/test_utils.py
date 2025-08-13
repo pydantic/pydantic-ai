@@ -8,24 +8,15 @@ from typing import Any, Callable
 import pytest
 from dirty_equals import HasRepr
 
-from ..conftest import try_import
-
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 
-with try_import() as imports_successful:
-    from pydantic_evals._utils import (
-        UNSET,
-        Unset,
-        get_unwrapped_function_name,
-        is_set,
-        task_group_gather,
-    )
+from pydantic_evals._utils import UNSET, Unset, get_unwrapped_function_name, is_set, task_group_gather
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
 def test_unset():

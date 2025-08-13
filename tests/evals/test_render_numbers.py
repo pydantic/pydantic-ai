@@ -3,17 +3,14 @@ from __future__ import annotations as _annotations
 import pytest
 from inline_snapshot import snapshot
 
-from ..conftest import try_import
+from pydantic_evals.reporting.render_numbers import (
+    default_render_duration,
+    default_render_duration_diff,
+    default_render_number,
+    default_render_number_diff,
+)
 
-with try_import() as imports_successful:
-    from pydantic_evals.reporting.render_numbers import (
-        default_render_duration,
-        default_render_duration_diff,
-        default_render_number,
-        default_render_number_diff,
-    )
-
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
 @pytest.mark.parametrize(

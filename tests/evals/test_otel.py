@@ -1,23 +1,22 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
-from ..conftest import try_import
+from pydantic_evals.otel._context_subtree import context_subtree
+from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
-with try_import() as imports_successful:
+if TYPE_CHECKING:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals.otel._context_subtree import (
-        context_subtree,
-    )
-    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
+logfire = pytest.importorskip('logfire')
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
 @pytest.fixture(autouse=True)

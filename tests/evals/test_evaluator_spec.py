@@ -3,15 +3,12 @@ from __future__ import annotations as _annotations
 import pytest
 from pydantic import ValidationError
 
-from ..conftest import try_import
+from pydantic_evals.evaluators.spec import (
+    EvaluatorSpec,
+    _SerializedEvaluatorSpec,  # pyright: ignore[reportPrivateUsage]
+)
 
-with try_import() as imports_successful:
-    from pydantic_evals.evaluators.spec import (
-        EvaluatorSpec,
-        _SerializedEvaluatorSpec,  # pyright: ignore[reportPrivateUsage]
-    )
-
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
 def test_evaluator_spec_basic():

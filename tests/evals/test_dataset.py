@@ -4,37 +4,38 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from dirty_equals import HasRepr, IsNumber, IsPartialDict
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
-from ..conftest import try_import
+from pydantic_evals import Case, Dataset
+from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
+from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, EvaluatorSpec, LLMJudge, Python
+from pydantic_evals.evaluators.context import EvaluatorContext
+from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter
+
 from .utils import render_table
 
-with try_import() as imports_successful:
+if TYPE_CHECKING:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals import Case, Dataset
-    from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorOutput, EvaluatorSpec, LLMJudge, Python
-    from pydantic_evals.evaluators.context import EvaluatorContext
+logfire = pytest.importorskip('logfire')
 
-    @dataclass
-    class MockEvaluator(Evaluator[object, object, object]):
-        """This is just for testing purposes. It just returns the wrapped value."""
+pytestmark = [pytest.mark.anyio]
 
-        output: EvaluatorOutput
 
-        def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
-            return self.output
+@dataclass
+class MockEvaluator(Evaluator[object, object, object]):
+    """This is just for testing purposes. It just returns the wrapped value."""
 
-    from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter
+    output: EvaluatorOutput
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+        return self.output
 
 
 if sys.version_info < (3, 11):

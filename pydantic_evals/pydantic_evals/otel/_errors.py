@@ -3,5 +3,3 @@ class SpanTreeRecordingError(Exception):
 
     This will either be due to missing dependencies or because a tracer provider had not been set.
     """
-
-    pass

@@ -4,20 +4,19 @@ import pytest
 from inline_snapshot import snapshot
 from pytest_mock import MockerFixture
 
-from ..conftest import BinaryContent, try_import
+from pydantic_ai.settings import ModelSettings
+from pydantic_evals.evaluators.llm_as_a_judge import (
+    GradingOutput,
+    _stringify,  # pyright: ignore[reportPrivateUsage]
+    judge_input_output,
+    judge_input_output_expected,
+    judge_output,
+    judge_output_expected,
+)
 
-with try_import() as imports_successful:
-    from pydantic_ai.settings import ModelSettings
-    from pydantic_evals.evaluators.llm_as_a_judge import (
-        GradingOutput,
-        _stringify,  # pyright: ignore[reportPrivateUsage]
-        judge_input_output,
-        judge_input_output_expected,
-        judge_output,
-        judge_output_expected,
-    )
+from ..conftest import BinaryContent
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
 def test_grading_output():

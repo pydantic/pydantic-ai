@@ -6,21 +6,18 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from ..conftest import try_import
+from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
+from pydantic_evals.reporting import (
+    EvaluationReport,
+    EvaluationReportAdapter,
+    RenderNumberConfig,
+    RenderValueConfig,
+    ReportCase,
+    ReportCaseAdapter,
+    ReportCaseAggregate,
+)
 
-with try_import() as imports_successful:
-    from pydantic_evals.evaluators import EvaluationResult, Evaluator, EvaluatorContext
-    from pydantic_evals.reporting import (
-        EvaluationReport,
-        EvaluationReportAdapter,
-        RenderNumberConfig,
-        RenderValueConfig,
-        ReportCase,
-        ReportCaseAdapter,
-        ReportCaseAggregate,
-    )
-
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
 class TaskInput(BaseModel):

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -11,35 +11,30 @@ from pydantic_core import to_jsonable_python
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
+from pydantic_evals.evaluators._run_evaluator import run_evaluator
+from pydantic_evals.evaluators.common import (
+    Contains,
+    Equals,
+    EqualsExpected,
+    HasMatchingSpan,
+    IsInstance,
+    LLMJudge,
+    MaxDuration,
+    Python,
+)
+from pydantic_evals.evaluators.context import EvaluatorContext
+from pydantic_evals.evaluators.evaluator import EvaluationReason, Evaluator, EvaluatorOutput
+from pydantic_evals.evaluators.spec import EvaluatorSpec
+from pydantic_evals.otel._context_subtree import context_subtree
+from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
 
-from ..conftest import try_import
-
-with try_import() as imports_successful:
+if TYPE_CHECKING:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals.evaluators._run_evaluator import run_evaluator
-    from pydantic_evals.evaluators.common import (
-        Contains,
-        Equals,
-        EqualsExpected,
-        HasMatchingSpan,
-        IsInstance,
-        LLMJudge,
-        MaxDuration,
-        Python,
-    )
-    from pydantic_evals.evaluators.context import EvaluatorContext
-    from pydantic_evals.evaluators.evaluator import (
-        EvaluationReason,
-        Evaluator,
-        EvaluatorOutput,
-    )
-    from pydantic_evals.evaluators.spec import EvaluatorSpec
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
-    from pydantic_evals.otel.span_tree import SpanQuery, SpanTree
+logfire = pytest.importorskip('logfire')
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
 class TaskInput(BaseModel):

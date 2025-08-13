@@ -2,25 +2,45 @@ from __future__ import annotations as _annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import TypeAdapter
 
-from ..conftest import try_import
+from pydantic_evals.evaluators._run_evaluator import run_evaluator
+from pydantic_evals.evaluators.context import EvaluatorContext
+from pydantic_evals.evaluators.evaluator import EvaluationReason, EvaluationResult, Evaluator
+from pydantic_evals.otel._errors import SpanTreeRecordingError
 
-with try_import() as imports_successful:
-    from pydantic_evals.evaluators._run_evaluator import run_evaluator
-    from pydantic_evals.evaluators.context import EvaluatorContext
-    from pydantic_evals.evaluators.evaluator import (
-        EvaluationReason,
-        EvaluationResult,
-        Evaluator,
-    )
-    from pydantic_evals.otel._errors import SpanTreeRecordingError
+pytestmark = [pytest.mark.anyio]
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+
+@dataclass
+class SimpleEvaluator(Evaluator[Any, Any, Any]):
+    value: Any = True
+    reason: str | None = None
+
+    def evaluate(self, ctx: EvaluatorContext) -> bool | EvaluationReason:
+        if self.reason is not None:
+            return EvaluationReason(value=self.value, reason=self.reason)
+        return self.value
+
+
+@dataclass
+class AsyncEvaluator(Evaluator[Any, Any, Any]):
+    value: Any = True
+    delay: float = 0.1
+
+    async def evaluate(self, ctx: EvaluatorContext) -> bool:
+        await asyncio.sleep(self.delay)
+        return self.value
+
+
+@dataclass
+class MultiEvaluator(Evaluator[Any, Any, Any]):
+    def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool]:
+        return {'test1': True, 'test2': False}
 
 
 def test_evaluation_reason():
@@ -84,33 +104,6 @@ def test_strict_abc_meta():
 
     assert 'must implement all abstract methods' in str(exc_info.value)
     assert 'evaluate' in str(exc_info.value)
-
-
-if TYPE_CHECKING or imports_successful():  # pragma: no branch
-
-    @dataclass
-    class SimpleEvaluator(Evaluator[Any, Any, Any]):
-        value: Any = True
-        reason: str | None = None
-
-        def evaluate(self, ctx: EvaluatorContext) -> bool | EvaluationReason:
-            if self.reason is not None:
-                return EvaluationReason(value=self.value, reason=self.reason)
-            return self.value
-
-    @dataclass
-    class AsyncEvaluator(Evaluator[Any, Any, Any]):
-        value: Any = True
-        delay: float = 0.1
-
-        async def evaluate(self, ctx: EvaluatorContext) -> bool:
-            await asyncio.sleep(self.delay)
-            return self.value
-
-    @dataclass
-    class MultiEvaluator(Evaluator[Any, Any, Any]):
-        def evaluate(self, ctx: EvaluatorContext) -> dict[str, bool]:
-            return {'test1': True, 'test2': False}
 
 
 async def test_evaluator_sync():

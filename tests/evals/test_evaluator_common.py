@@ -9,43 +9,38 @@ from pydantic_core import to_jsonable_python
 from pytest_mock import MockerFixture
 
 from pydantic_ai.settings import ModelSettings
+from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
+from pydantic_evals.evaluators.common import (
+    DEFAULT_EVALUATORS,
+    Contains,
+    Equals,
+    EqualsExpected,
+    HasMatchingSpan,
+    IsInstance,
+    LLMJudge,
+    MaxDuration,
+    OutputConfig,
+    Python,
+)
+from pydantic_evals.otel._context_subtree import context_subtree
+from pydantic_evals.otel._errors import SpanTreeRecordingError
+from pydantic_evals.otel.span_tree import SpanQuery
 
-from ..conftest import try_import
-
-with try_import() as imports_successful:
+if TYPE_CHECKING:
     import logfire
     from logfire.testing import CaptureLogfire
 
-    from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
-    from pydantic_evals.evaluators.common import (
-        DEFAULT_EVALUATORS,
-        Contains,
-        Equals,
-        EqualsExpected,
-        HasMatchingSpan,
-        IsInstance,
-        LLMJudge,
-        MaxDuration,
-        OutputConfig,
-        Python,
-    )
-    from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
-    from pydantic_evals.otel._errors import SpanTreeRecordingError
-    from pydantic_evals.otel.span_tree import SpanQuery
+logfire = pytest.importorskip('logfire')
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.anyio]
 
 
-if TYPE_CHECKING or imports_successful():
-
-    class MockContext(EvaluatorContext[Any, Any, Any]):
-        def __init__(self, output: Any = None, expected_output: Any = None, inputs: Any = None, duration: float = 0.0):
-            self.output = output
-            self.expected_output = expected_output
-            self.inputs = inputs
-            self.duration = duration
-else:
-    MockContext = object  # pragma: lax no cover
+class MockContext(EvaluatorContext[Any, Any, Any]):
+    def __init__(self, output: Any = None, expected_output: Any = None, inputs: Any = None, duration: float = 0.0):
+        self.output = output
+        self.expected_output = expected_output
+        self.inputs = inputs
+        self.duration = duration
 
 
 async def test_equals():

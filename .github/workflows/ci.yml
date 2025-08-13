@@ -141,10 +141,16 @@ jobs:
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
+            pytest-args: "--ignore=tests/evals"
+          - name: pydantic-evals
+            command: "--package pydantic-evals"
+            pytest-args: "tests/evals"
           - name: standard
             command: ""
+            pytest-args: ""
           - name: all-extras
             command: "--all-extras"
+            pytest-args: ""
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
@@ -163,7 +169,7 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-      - run: uv run ${{ matrix.install.command }} coverage run -m pytest -n auto --dist=loadgroup
+      - run: uv run ${{ matrix.install.command }} coverage run -m pytest -n auto --dist=loadgroup ${{ matrix.install.pytest-args }}
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
