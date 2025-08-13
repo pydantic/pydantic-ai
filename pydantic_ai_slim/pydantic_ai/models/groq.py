@@ -13,7 +13,7 @@ from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, WebSearchTool
+from ..builtin_tools import WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -318,8 +318,10 @@ class GroqModel(Model):
             if isinstance(tool, WebSearchTool):
                 if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
                     raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
-            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                raise UserError('`CodeExecutionTool` is not supported by Groq')
+            else:
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
+                )
         return tools
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:

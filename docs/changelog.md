@@ -12,7 +12,7 @@ Pydantic AI is still pre-version 1, so breaking changes will occur, however:
 !!! note
     Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
-### v0.7.0 (2025-08-08)
+### v0.7.0 (2025-08-12)
 
 See [#2458](https://github.com/pydantic/pydantic-ai/pull/2458) - `pydantic_ai.models.StreamedResponse` now yields a `FinalResultEvent` along with the existing `PartStartEvent` and `PartDeltaEvent`. If you're using `pydantic_ai.direct.model_request_stream` or `pydantic_ai.direct.model_request_stream_sync`, you may need to update your code to account for this.
 

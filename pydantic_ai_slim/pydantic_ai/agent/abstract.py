@@ -95,6 +95,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @property
     @abstractmethod
+    def deps_type(self) -> type:
+        """The type of dependencies used by the agent."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
     def output_type(self) -> OutputSpec[OutputDataT]:
         """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         raise NotImplementedError
