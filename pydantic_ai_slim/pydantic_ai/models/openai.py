@@ -816,10 +816,8 @@ class OpenAIResponsesModel(Model):
             instructions = NOT_GIVEN
 
         if verbosity := model_settings.get('openai_text_verbosity'):
-            if text is None:
-                text = {'format': {'type': 'text'}, 'verbosity': verbosity}
-            else:
-                text['verbosity'] = verbosity
+            text = text or {}
+            text['verbosity'] = verbosity
 
         sampling_settings = (
             model_settings
