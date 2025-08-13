@@ -11,11 +11,12 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
+from ..settings import merge_model_settings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
     from ..messages import ModelMessage, ModelResponse
-    from ..settings import ModelSettings, merge_model_settings
+    from ..settings import ModelSettings
 
 
 @dataclass(init=False)
