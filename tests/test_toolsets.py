@@ -568,6 +568,7 @@ async def test_tool_manager_retry_logic():
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     # The new tool manager should have retry count for the failed tool
+    assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'failing_tool': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
@@ -591,6 +592,7 @@ async def test_tool_manager_retry_logic():
     another_tool_manager = await new_tool_manager.for_run_step(another_context)
 
     # Should now have retry count of 2 for failing_tool
+    assert another_tool_manager.ctx is not None
     assert another_tool_manager.ctx.retries == {'failing_tool': 2}
     assert another_tool_manager.failed_tools == set()
 
@@ -646,6 +648,7 @@ async def test_tool_manager_multiple_failed_tools():
     new_context = build_run_context(TestDeps(), run_step=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
+    assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
