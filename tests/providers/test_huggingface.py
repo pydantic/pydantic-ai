@@ -151,7 +151,7 @@ def test_huggingface_provider_base_url():
 
 def test_huggingface_provider_model_profile(mocker: MockerFixture):
     mock_client = Mock(spec=AsyncInferenceClient)
-    provider = HuggingFaceProvider(hf_client=mock_client)
+    provider = HuggingFaceProvider(hf_client=mock_client, api_key='test-api-key')
 
     ns = 'pydantic_ai.providers.huggingface'
     deepseek_model_profile_mock = mocker.patch(f'{ns}.deepseek_model_profile', wraps=deepseek_model_profile)
