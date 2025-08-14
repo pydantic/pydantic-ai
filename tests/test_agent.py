@@ -4118,6 +4118,40 @@ async def test_thinking_only_response_retry():
 
     result = await agent.run('Hello')
 
-    # Should have made exactly 2 calls and produced the expected result
-    assert call_count == 2
-    assert result.output == 'Final answer'
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=6, total_tokens=63),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Responses without text or tool calls are not permitted.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                usage=Usage(requests=1, request_tokens=75, response_tokens=8, total_tokens=83),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
