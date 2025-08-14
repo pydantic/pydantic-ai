@@ -61,7 +61,7 @@ async def test_function_toolset():
         return a + b
 
     no_prefix_context = build_run_context(PrefixDeps())
-    no_prefix_toolset = await ToolManager[PrefixDeps].build(toolset, no_prefix_context)
+    no_prefix_toolset = await ToolManager[PrefixDeps](toolset).for_run_step(no_prefix_context)
     assert no_prefix_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -79,7 +79,7 @@ async def test_function_toolset():
     assert await no_prefix_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
 
     foo_context = build_run_context(PrefixDeps(prefix='foo'))
-    foo_toolset = await ToolManager[PrefixDeps].build(toolset, foo_context)
+    foo_toolset = await ToolManager[PrefixDeps](toolset).for_run_step(foo_context)
     assert foo_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -102,7 +102,7 @@ async def test_function_toolset():
         return a - b  # pragma: lax no cover
 
     bar_context = build_run_context(PrefixDeps(prefix='bar'))
-    bar_toolset = await ToolManager[PrefixDeps].build(toolset, bar_context)
+    bar_toolset = await ToolManager[PrefixDeps](toolset).for_run_step(bar_context)
     assert bar_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -162,7 +162,7 @@ async def test_prepared_toolset_user_error_add_new_tools():
             'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
         ),
     ):
-        await ToolManager[None].build(prepared_toolset, context)
+        await ToolManager[None](prepared_toolset).for_run_step(context)
 
 
 async def test_prepared_toolset_user_error_change_tool_names():
@@ -198,7 +198,7 @@ async def test_prepared_toolset_user_error_change_tool_names():
             'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
         ),
     ):
-        await ToolManager[None].build(prepared_toolset, context)
+        await ToolManager[None](prepared_toolset).for_run_step(context)
 
 
 async def test_comprehensive_toolset_composition():
@@ -285,7 +285,7 @@ async def test_comprehensive_toolset_composition():
     # Test with regular user context
     regular_deps = TestDeps(user_role='user', enable_advanced=True)
     regular_context = build_run_context(regular_deps)
-    final_toolset = await ToolManager[TestDeps].build(prepared_toolset, regular_context)
+    final_toolset = await ToolManager[TestDeps](prepared_toolset).for_run_step(regular_context)
     # Tool definitions should have role annotation
     assert final_toolset.tool_defs == snapshot(
         [
@@ -338,7 +338,7 @@ async def test_comprehensive_toolset_composition():
     # Test with admin user context (should have string tools)
     admin_deps = TestDeps(user_role='admin', enable_advanced=True)
     admin_context = build_run_context(admin_deps)
-    admin_final_toolset = await ToolManager[TestDeps].build(prepared_toolset, admin_context)
+    admin_final_toolset = await ToolManager[TestDeps](prepared_toolset).for_run_step(admin_context)
     assert admin_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -421,7 +421,7 @@ async def test_comprehensive_toolset_composition():
     # Test with advanced features disabled
     basic_deps = TestDeps(user_role='user', enable_advanced=False)
     basic_context = build_run_context(basic_deps)
-    basic_final_toolset = await ToolManager[TestDeps].build(prepared_toolset, basic_context)
+    basic_final_toolset = await ToolManager[TestDeps](prepared_toolset).for_run_step(basic_context)
     assert basic_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -506,7 +506,7 @@ async def test_tool_manager_reuse_self():
 
     run_context = build_run_context(None, run_step=1)
 
-    tool_manager = ToolManager[None](run_context, FunctionToolset[None](), tools={})
+    tool_manager = await ToolManager[None](FunctionToolset()).for_run_step(run_context)
 
     same_tool_manager = await tool_manager.for_run_step(ctx=run_context)
 
@@ -544,7 +544,7 @@ async def test_tool_manager_retry_logic():
 
     # Create initial context and tool manager
     initial_context = build_run_context(TestDeps())
-    tool_manager = await ToolManager[TestDeps].build(toolset, initial_context)
+    tool_manager = await ToolManager[TestDeps](toolset).for_run_step(initial_context)
 
     # Initially no failed tools
     assert tool_manager.failed_tools == set()
@@ -568,6 +568,7 @@ async def test_tool_manager_retry_logic():
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     # The new tool manager should have retry count for the failed tool
+    assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'failing_tool': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
@@ -591,6 +592,7 @@ async def test_tool_manager_retry_logic():
     another_tool_manager = await new_tool_manager.for_run_step(another_context)
 
     # Should now have retry count of 2 for failing_tool
+    assert another_tool_manager.ctx is not None
     assert another_tool_manager.ctx.retries == {'failing_tool': 2}
     assert another_tool_manager.failed_tools == set()
 
@@ -625,7 +627,7 @@ async def test_tool_manager_multiple_failed_tools():
 
     # Create tool manager
     context = build_run_context(TestDeps())
-    tool_manager = await ToolManager[TestDeps].build(toolset, context)
+    tool_manager = await ToolManager[TestDeps](toolset).for_run_step(context)
 
     # Call tool_a - should fail and be added to failed_tools
     with pytest.raises(ToolRetryError):
@@ -646,6 +648,7 @@ async def test_tool_manager_multiple_failed_tools():
     new_context = build_run_context(TestDeps(), run_step=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
+    assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 

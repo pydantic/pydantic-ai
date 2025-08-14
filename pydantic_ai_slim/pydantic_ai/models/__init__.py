@@ -194,6 +194,13 @@ KnownModelName = TypeAliasType(
         'gpt-4o-mini-search-preview-2025-03-11',
         'gpt-4o-search-preview',
         'gpt-4o-search-preview-2025-03-11',
+        'gpt-5',
+        'gpt-5-2025-08-07',
+        'gpt-5-chat-latest',
+        'gpt-5-mini',
+        'gpt-5-mini-2025-08-07',
+        'gpt-5-nano',
+        'gpt-5-nano-2025-08-07',
         'grok:grok-4',
         'grok:grok-4-0709',
         'grok:grok-3',
@@ -313,11 +320,18 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-mini-search-preview-2025-03-11',
         'openai:gpt-4o-search-preview',
         'openai:gpt-4o-search-preview-2025-03-11',
+        'openai:gpt-5',
+        'openai:gpt-5-2025-08-07',
         'openai:o1',
+        'openai:gpt-5-chat-latest',
         'openai:o1-2024-12-17',
+        'openai:gpt-5-mini',
         'openai:o1-mini',
+        'openai:gpt-5-mini-2025-08-07',
         'openai:o1-mini-2024-09-12',
+        'openai:gpt-5-nano',
         'openai:o1-preview',
+        'openai:gpt-5-nano-2025-08-07',
         'openai:o1-preview-2024-09-12',
         'openai:o1-pro',
         'openai:o1-pro-2025-03-19',
@@ -398,6 +412,16 @@ class Model(ABC):
     ) -> ModelResponse:
         """Make a request to the model."""
         raise NotImplementedError()
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> Usage:
+        """Make a request to the model for counting tokens."""
+        # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
+        raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
 
     @asynccontextmanager
     async def request_stream(
@@ -679,6 +703,10 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)
+    elif provider == 'openai-responses':
+        from .openai import OpenAIResponsesModel
+
+        return OpenAIResponsesModel(model_name, provider='openai')
     elif provider in ('google-gla', 'google-vertex'):
         from .google import GoogleModel
 

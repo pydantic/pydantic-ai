@@ -5,22 +5,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ### Core Development Tasks
+
 - **Install dependencies**: `make install` (requires uv, pre-commit, and deno)
-- **Run all checks**: `make` (format, lint, typecheck, test with coverage)
-- **Format code**: `make format`
-- **Lint code**: `make lint`
-- **Type checking**: `make typecheck` (uses pyright) or `make typecheck-both` (pyright + mypy)
-- **Run tests**: `make test` (with coverage)
+- **Run all checks**: `pre-commit run --all-files`
+- **Run tests**: `make test`
 - **Build docs**: `make docs` or `make docs-serve` (local development)
 
 ### Single Test Commands
+
 - **Run specific test**: `uv run pytest tests/test_agent.py::test_function_name -v`
 - **Run test file**: `uv run pytest tests/test_agent.py -v`
 - **Run with debug**: `uv run pytest tests/test_agent.py -v -s`
-
-### Multi-Python Testing
-- **Install all Python versions**: `make install-all-python`
-- **Test all Python versions**: `make test-all-python`
 
 ## Project Architecture
 
@@ -125,3 +120,43 @@ This is a uv workspace with multiple packages:
 - **Lock file**: `uv.lock` (commit this file)
 - **Sync command**: `make sync` to update dependencies
 - **Optional extras**: Define groups in `pyproject.toml` optional-dependencies
+
+## Best Practices
+
+This is the list of best practices for working with the codebase.
+
+### Rename a class
+
+When asked to rename a class, you need to rename the class in the code and add a deprecation warning to the old class.
+
+```python
+from typing_extensions import deprecated
+
+class NewClass: ...  # This class was renamed from OldClass.
+
+@deprecated("Use `NewClass` instead")
+class OldClass(NewClass): ...
+```
+
+In the test suite, you MUST use the `NewClass` instead of the `OldClass`, and create a new test to verify the
+deprecation warning:
+
+```python
+def test_old_class_is_deprecated():
+    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead"):
+        OldClass()
+```
+
+In the documentation, you should not have references to the old class, only the new class.
+
+### Writing documentation
+
+Always reference Python objects with the "`" (backticks) around them, and link to the API reference, for example:
+
+```markdown
+The [`Agent`][pydantic_ai.agent.Agent] class is the main entry point for creating and running agents.
+```
+
+### Coverage
+
+Every pull request MUST have 100% coverage. You can check the coverage by running `make test`.

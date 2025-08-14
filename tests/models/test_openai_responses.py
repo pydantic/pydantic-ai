@@ -1134,3 +1134,17 @@ Don't include any text or Markdown fencing before or after.\
             ),
         ]
     )
+
+
+@pytest.mark.vcr()
+async def test_openai_responses_verbosity(allow_model_requests: None, openai_api_key: str):
+    """Test that verbosity setting is properly passed to the OpenAI API"""
+    # Following GPT-5 + verbosity documentation pattern
+    provider = OpenAIProvider(
+        api_key=openai_api_key,
+        base_url='https://api.openai.com/v1',  # Explicitly set base URL
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=provider)
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_text_verbosity='low'))
+    result = await agent.run('What is 2+2?')
+    assert result.output == snapshot('4')

@@ -52,6 +52,7 @@ try:
     from google.genai.types import (
         ContentDict,
         ContentUnionDict,
+        CountTokensConfigDict,
         ExecutableCodeDict,
         FunctionCallDict,
         FunctionCallingConfigDict,
@@ -59,6 +60,7 @@ try:
         FunctionDeclarationDict,
         GenerateContentConfigDict,
         GenerateContentResponse,
+        GenerationConfigDict,
         GoogleSearchDict,
         HttpOptionsDict,
         MediaResolution,
@@ -188,6 +190,59 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response)
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> usage.Usage:
+        check_allow_model_requests()
+        model_settings = cast(GoogleModelSettings, model_settings or {})
+        contents, generation_config = await self._build_content_and_config(
+            messages, model_settings, model_request_parameters
+        )
+
+        # Annoyingly, the type of `GenerateContentConfigDict.get` is "partially `Unknown`" because `response_schema` includes `typing._UnionGenericAlias`,
+        # so without this we'd need `pyright: ignore[reportUnknownMemberType]` on every line and wouldn't get type checking anyway.
+        generation_config = cast(dict[str, Any], generation_config)
+
+        config = CountTokensConfigDict(
+            http_options=generation_config.get('http_options'),
+        )
+        if self.system != 'google-gla':
+            # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
+            config.update(
+                system_instruction=generation_config.get('system_instruction'),
+                tools=cast(list[ToolDict], generation_config.get('tools')),
+                # Annoyingly, GenerationConfigDict has fewer fields than GenerateContentConfigDict, and no extra fields are allowed.
+                generation_config=GenerationConfigDict(
+                    temperature=generation_config.get('temperature'),
+                    top_p=generation_config.get('top_p'),
+                    max_output_tokens=generation_config.get('max_output_tokens'),
+                    stop_sequences=generation_config.get('stop_sequences'),
+                    presence_penalty=generation_config.get('presence_penalty'),
+                    frequency_penalty=generation_config.get('frequency_penalty'),
+                    thinking_config=generation_config.get('thinking_config'),
+                    media_resolution=generation_config.get('media_resolution'),
+                    response_mime_type=generation_config.get('response_mime_type'),
+                    response_schema=generation_config.get('response_schema'),
+                ),
+            )
+
+        response = await self.client.aio.models.count_tokens(
+            model=self._model_name,
+            contents=contents,
+            config=config,
+        )
+        if response.total_tokens is None:
+            raise UnexpectedModelBehavior(  # pragma: no cover
+                'Total tokens missing from Gemini response', str(response)
+            )
+        return usage.Usage(
+            request_tokens=response.total_tokens,
+            total_tokens=response.total_tokens,
+        )
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -265,16 +320,23 @@ class GoogleModel(Model):
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> GenerateContentResponse | Awaitable[AsyncIterator[GenerateContentResponse]]:
-        tools = self._get_tools(model_request_parameters)
+        contents, config = await self._build_content_and_config(messages, model_settings, model_request_parameters)
+        func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
+        return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
 
+    async def _build_content_and_config(
+        self,
+        messages: list[ModelMessage],
+        model_settings: GoogleModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
+        tools = self._get_tools(model_request_parameters)
         response_mime_type = None
         response_schema = None
         if model_request_parameters.output_mode == 'native':
             if tools:
                 raise UserError('Gemini does not support structured output and tools at the same time.')
-
             response_mime_type = 'application/json'
-
             output_object = model_request_parameters.output_object
             assert output_object is not None
             response_schema = self._map_response_schema(output_object)
@@ -311,9 +373,7 @@ class GoogleModel(Model):
             response_mime_type=response_mime_type,
             response_schema=response_schema,
         )
-
-        func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
-        return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+        return contents, config
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates or len(response.candidates) != 1:
