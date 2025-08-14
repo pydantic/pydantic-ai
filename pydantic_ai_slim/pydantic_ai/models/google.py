@@ -413,7 +413,7 @@ class GoogleModel(Model):
             _timestamp=first_chunk.create_time or _utils.now_utc(),
         )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:  # noqa: C901  # noqa: C901
+    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 
@@ -460,23 +460,6 @@ class GoogleModel(Model):
                 model_content = _content_model_response(m)
                 # Skip model responses with empty parts (e.g., thinking-only responses)
                 if model_content.get('parts'):
-                    # Check if the model response contains only function calls without text
-                    if parts := model_content.get('parts', []):
-                        has_function_calls = False
-                        has_text_parts = False
-                        for part in parts:
-                            if isinstance(part, dict):
-                                if 'function_call' in part:
-                                    has_function_calls = True
-                                if 'text' in part:
-                                    has_text_parts = True
-
-                        # If we only have function calls without text, add minimal text to satisfy Google API
-                        if has_function_calls and not has_text_parts:
-                            # Add a minimal text part to make the conversation valid for Google API
-                            parts.append({'text': 'I have completed the function calls above.'})
-                            model_content['parts'] = parts
-
                     contents.append(model_content)
             else:
                 assert_never(m)
@@ -583,12 +566,17 @@ class GeminiStreamedResponse(StreamedResponse):
 
 def _content_model_response(m: ModelResponse) -> ContentDict:
     parts: list[PartDict] = []
+    has_function_calls = False
+    has_text_parts = False
+
     for item in m.parts:
         if isinstance(item, ToolCallPart):
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             parts.append({'function_call': function_call})
+            has_function_calls = True
         elif isinstance(item, TextPart):
             parts.append({'text': item.content})
+            has_text_parts = True
         elif isinstance(item, ThinkingPart):  # pragma: no cover
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.
@@ -604,6 +592,11 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
                     parts.append({'code_execution_result': item.content})
         else:
             assert_never(item)
+
+    # If we only have function calls without text, add minimal text to satisfy Google API
+    if has_function_calls and not has_text_parts:
+        parts.append({'text': 'I have completed the function calls above.'})
+
     return ContentDict(role='model', parts=parts)
 
 

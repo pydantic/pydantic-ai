@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
-from typing import Any, Union
+from typing import Any
 
 import pytest
 from httpx import Timeout
@@ -50,7 +50,11 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai.types import CodeExecutionResult, HarmBlockThreshold, HarmCategory, Language, Outcome
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.models.google import (
+        GoogleModel,
+        GoogleModelSettings,
+        _content_model_response,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -1815,117 +1819,110 @@ async def test_google_model_response_part_handling(
     assert contents == expected_contents
 
 
-class FunctionCallDict(TypedDict):
-    name: str
-    args: dict[str, Any]
-    id: str
-
-
-class FunctionCallPartDict(TypedDict):
-    function_call: FunctionCallDict
-
-
-class TextPartDict(TypedDict):
-    text: str
-
-
-class OtherPartDict(TypedDict, total=False):
-    other_field: str
-
-
-# Union of all possible part types we're testing
-TestPartDict = Union[FunctionCallPartDict, TextPartDict, OtherPartDict, str]  # str for non-dict parts
-
-
-class MockContentResponse(TypedDict, total=False):
-    role: str
-    parts: list[TestPartDict]
-
-
-class ExpectedContent(TypedDict, total=False):
-    role: str
-    parts: list[TestPartDict]
-
-
 @pytest.mark.parametrize(
-    'mock_content_response,expected_contents',
+    'model_parts,expected_parts',
     [
         pytest.param(
-            MockContentResponse(
-                {
-                    'role': 'model',
-                    'parts': [
-                        'not_a_dict',  # Non-dict part to test isinstance check
-                        {'function_call': {'name': 'test', 'args': {}, 'id': '123'}},
-                    ],
-                }
-            ),
+            [ToolCallPart(tool_name='test_tool', args={'param': 'value'}, tool_call_id='call_123')],
             [
-                ExpectedContent(
-                    {
-                        'role': 'model',
-                        'parts': [
-                            'not_a_dict',
-                            {'function_call': {'name': 'test', 'args': {}, 'id': '123'}},
-                            {'text': 'I have completed the function calls above.'},
-                        ],
-                    }
-                )
-            ],
-            id='non_dict_parts_with_function_call',
-        ),
-        pytest.param(
-            MockContentResponse(
                 {
-                    'role': 'model',
-                    'parts': [
-                        {'other_field': 'value'},  # Dict without function_call or text
-                        {'function_call': {'name': 'test', 'args': {}, 'id': '123'}},
-                    ],
-                }
-            ),
-            [
-                ExpectedContent(
-                    {
-                        'role': 'model',
-                        'parts': [
-                            {'other_field': 'value'},
-                            {'function_call': {'name': 'test', 'args': {}, 'id': '123'}},
-                            {'text': 'I have completed the function calls above.'},
-                        ],
+                    'function_call': {
+                        'args': {'param': 'value'},
+                        'id': 'call_123',
+                        'name': 'test_tool',
                     }
-                )
+                },
+                {'text': 'I have completed the function calls above.'},
             ],
-            id='dict_parts_without_function_call_or_text',
+            id='function_call_only_adds_text',
         ),
         pytest.param(
-            MockContentResponse({'role': 'model'}),  # No 'parts' key
-            [],
-            id='no_parts_key',
+            [
+                ToolCallPart(tool_name='test_tool', args={'param': 'value'}, tool_call_id='call_123'),
+                TextPart(content='Here is the result:'),
+            ],
+            [
+                {
+                    'function_call': {
+                        'args': {'param': 'value'},
+                        'id': 'call_123',
+                        'name': 'test_tool',
+                    }
+                },
+                {'text': 'Here is the result:'},
+            ],
+            id='function_call_with_text_no_addition',
         ),
         pytest.param(
-            MockContentResponse({'role': 'model', 'parts': []}),  # Empty parts
+            [TextPart(content='Just text response')],
+            [{'text': 'Just text response'}],
+            id='text_only_no_addition',
+        ),
+        pytest.param(
+            [
+                ToolCallPart(tool_name='tool1', args={'a': 1}, tool_call_id='call_1'),
+                ToolCallPart(tool_name='tool2', args={'b': 2}, tool_call_id='call_2'),
+            ],
+            [
+                {
+                    'function_call': {
+                        'args': {'a': 1},
+                        'id': 'call_1',
+                        'name': 'tool1',
+                    }
+                },
+                {
+                    'function_call': {
+                        'args': {'b': 2},
+                        'id': 'call_2',
+                        'name': 'tool2',
+                    }
+                },
+                {'text': 'I have completed the function calls above.'},
+            ],
+            id='multiple_function_calls_only',
+        ),
+        pytest.param(
+            [ThinkingPart(content='Let me think...')],
             [],
-            id='empty_parts_list',
+            id='thinking_only_empty_parts',
+        ),
+        pytest.param(
+            [
+                ThinkingPart(content='Let me think...'),
+                ToolCallPart(tool_name='test_tool', args={'param': 'value'}, tool_call_id='call_123'),
+            ],
+            [
+                {
+                    'function_call': {
+                        'args': {'param': 'value'},
+                        'id': 'call_123',
+                        'name': 'test_tool',
+                    }
+                },
+                {'text': 'I have completed the function calls above.'},
+            ],
+            id='thinking_and_function_call',
+        ),
+        pytest.param(
+            [],
+            [],
+            id='empty_parts',
         ),
     ],
 )
-async def test_google_model_response_edge_cases(
-    google_provider: GoogleProvider,
-    mock_content_response: MockContentResponse,
-    expected_contents: list[ExpectedContent],
+def test_content_model_response_function_call_handling(
+    model_parts: list[ModelResponsePart], expected_parts: list[dict[str, Any]]
 ):
-    """Test Google model's _map_messages method with various edge cases for function call handling."""
-    from unittest.mock import patch
+    """Test _content_model_response function's handling of function calls without text."""
 
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
     model_response = ModelResponse(
-        parts=[ToolCallPart(tool_name='test_tool', args={'param': 'value'}, tool_call_id='call_123')],
+        parts=model_parts,
         usage=Usage(requests=1, request_tokens=10, response_tokens=5, total_tokens=15),
         model_name='gemini-2.0-flash',
     )
 
-    with patch('pydantic_ai.models.google._content_model_response') as mock_content:
-        mock_content.return_value = mock_content_response
-        _, contents = await model._map_messages([model_response])  # pyright: ignore[reportPrivateUsage]
-        assert contents == expected_contents
+    result = _content_model_response(model_response)
+
+    expected_result = {'role': 'model', 'parts': expected_parts}
+    assert result == expected_result
