@@ -251,6 +251,8 @@ async def _prepare_request_parameters(
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     run_context = build_run_context(ctx)
+
+    # This will raise errors for any tool name conflicts
     ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
     output_schema = ctx.deps.output_schema
