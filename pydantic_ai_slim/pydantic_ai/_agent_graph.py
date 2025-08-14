@@ -434,9 +434,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if self._events_iterator is None:
             # Ensure that the stream is only run once
 
-            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
+            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 texts: list[str] = []
                 tool_calls: list[_messages.ToolCallPart] = []
+                thinking_parts: list[_messages.ThinkingPart] = []
+
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         # ignore empty content for text parts, see #437
@@ -449,11 +451,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
                         yield _messages.BuiltinToolResultEvent(part)
                     elif isinstance(part, _messages.ThinkingPart):
-                        # We don't need to do anything with thinking parts in this tool-calling node.
-                        # We need to handle text parts in case there are no tool calls and/or the desired output comes
-                        # from the text, but thinking parts should not directly influence the execution of tools or
-                        # determination of the next node of graph execution here.
-                        pass
+                        thinking_parts.append(part)
                     else:
                         assert_never(part)
 
@@ -467,8 +465,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 elif texts:
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
+                elif thinking_parts:
+                    # handle thinking-only responses (responses that contain only ThinkingPart instances)
+                    # this can happen with models that support thinking mode when they don't provide
+                    # actionable output alongside their thinking content.
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(
+                            parts=[_messages.RetryPromptPart('Responses without text or tool calls are not permitted.')]
+                        )
+                    )
                 else:
-                    # we've got an empty response, this sometimes happens with anthropic (and perhaps other models)
+                    # we got an empty response with no tool calls, text, or thinking
+                    # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
                     # in this scenario, if text responses are allowed, we return text from the most recent model
                     # response, if any

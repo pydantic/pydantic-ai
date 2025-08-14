@@ -4087,3 +4087,71 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+async def test_thinking_only_response_retry():
+    """Test that thinking-only responses trigger a retry mechanism."""
+    from pydantic_ai.messages import ThinkingPart
+    from pydantic_ai.models.function import FunctionModel
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: return thinking-only response
+            return ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                model_name='thinking-test-model',
+            )
+        else:
+            # Second call: return proper response
+            return ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                model_name='thinking-test-model',
+            )
+
+    model = FunctionModel(model_function)
+    agent = Agent(model, system_prompt='You are a helpful assistant.')
+
+    result = await agent.run('Hello')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=6, total_tokens=63),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Responses without text or tool calls are not permitted.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                usage=Usage(requests=1, request_tokens=75, response_tokens=8, total_tokens=83),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
