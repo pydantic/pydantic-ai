@@ -203,6 +203,16 @@ class UsageLimits:
     to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
     (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
 
+    @property
+    @deprecated('`request_tokens_limit` is deprecated, use `input_tokens_limit` instead')
+    def request_tokens_limit(self) -> int | None:
+        return self.input_tokens_limit
+
+    @property
+    @deprecated('`response_tokens_limit` is deprecated, use `output_tokens_limit` instead')
+    def response_tokens_limit(self) -> int | None:
+        return self.output_tokens_limit
+
     @overload
     def __init__(
         self,

@@ -7,6 +7,7 @@ from decimal import Decimal
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
 from inline_snapshot import snapshot
+from inline_snapshot.extra import warns
 
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
 from pydantic_ai.messages import (
@@ -233,3 +234,15 @@ def test_add_usages():
     )
     assert usage + RunUsage() == usage
     assert RunUsage() + RunUsage() == RunUsage()
+
+
+def test_deprecated_usage_limits():
+    with warns(
+        snapshot(['DeprecationWarning: `request_tokens_limit` is deprecated, use `input_tokens_limit` instead'])
+    ):
+        assert UsageLimits(input_tokens_limit=100).request_tokens_limit == 100  # type: ignore
+
+    with warns(
+        snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
+    ):
+        assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
