@@ -4282,7 +4282,7 @@ async def test_hitl_tool_approval():
 
     @dataclass
     class ApprovableToolsDeps:
-        tool_call_results: dict[str, bool | str] = field(default_factory=dict)
+        tool_call_results: dict[str, Union[bool, str]] = field(default_factory=dict)
 
     agent = Agent(model, output_type=[str, DeferredToolCalls], deps_type=ApprovableToolsDeps)
 
