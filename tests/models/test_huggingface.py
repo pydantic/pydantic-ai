@@ -1041,6 +1041,6 @@ async def test_hf_model_thinking_part_iter(allow_model_requests: None, huggingfa
                 420: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' attent')),
                 421: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='iveness')),
             },
-            length=1059,
+            length=1062,
         )
     )
