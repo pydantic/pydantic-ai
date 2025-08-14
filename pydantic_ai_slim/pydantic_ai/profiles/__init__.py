@@ -45,10 +45,15 @@ class ModelProfile:
 
     thinking_tags: tuple[str, str] = ('<think>', '</think>')
     """The tags used to indicate thinking parts in the model's output. Defaults to ('<think>', '</think>')."""
-    # This is a workaround for models that emit `<think>\n</think>\n\n` ahead of tool calls (e.g. Ollama + Qwen3),
-    # which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
-    ignore_whitespace_after_thinking: bool = False
-    """Whether to ignore leading whitespace after thinking tags in the model's streaming response."""
+
+    ignore_streamed_leading_whitespace: bool = False
+    """Whether to ignore leading whitespace when streaming a response.
+
+    This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
+    which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
+
+    This is currently only used by `OpenAIModel`, `HuggingFaceModel`, and `GroqModel`.
+    """
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:

@@ -96,7 +96,8 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
 
     deepseek_profile = provider.model_profile('deepseek-r1-distill-llama-70b')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1-distill-llama-70b')
-    assert deepseek_profile is None
+    assert deepseek_profile is not None
+    assert deepseek_profile.ignore_streamed_leading_whitespace is True
 
     mistral_profile = provider.model_profile('mistral-saba-24b')
     mistral_model_profile_mock.assert_called_with('mistral-saba-24b')
@@ -115,7 +116,8 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
 
     moonshotai_profile = provider.model_profile('moonshotai/kimi-k2-instruct')
     moonshotai_model_profile_mock.assert_called_with('kimi-k2-instruct')
-    assert moonshotai_profile is None
+    assert moonshotai_profile is not None
+    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is None

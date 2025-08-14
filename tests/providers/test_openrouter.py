@@ -154,7 +154,7 @@ def test_openrouter_provider_model_profile(mocker: MockerFixture):
     moonshotai_profile = provider.model_profile('moonshotai/kimi-k2')
     moonshotai_model_profile_mock.assert_called_with('kimi-k2')
     assert moonshotai_profile is not None
-    assert moonshotai_profile.ignore_whitespace_after_thinking is True
+    assert moonshotai_profile.ignore_streamed_leading_whitespace is True
     assert moonshotai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
     unknown_profile = provider.model_profile('unknown/model')

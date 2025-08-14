@@ -55,7 +55,7 @@ def test_ollama_provider_pass_http_client() -> None:
 
 
 def test_ollama_provider_pass_openai_client() -> None:
-    openai_client = openai.AsyncOpenAI(base_url='http://localhost:11434/v1/')
+    openai_client = openai.AsyncOpenAI(base_url='http://localhost:11434/v1/', api_key='test')
     provider = OllamaProvider(openai_client=openai_client)
     assert provider.client == openai_client
 
@@ -102,13 +102,13 @@ def test_ollama_provider_model_profile(mocker: MockerFixture):
     qwen_model_profile_mock.assert_called_with('qwen3')
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert qwen_profile.ignore_whitespace_after_thinking is True
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
 
     qwen_profile = provider.model_profile('qwq')
     qwen_model_profile_mock.assert_called_with('qwq')
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
-    assert qwen_profile.ignore_whitespace_after_thinking is True
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
 
     cohere_profile = provider.model_profile('command-r')
     cohere_model_profile_mock.assert_called_with('command-r')

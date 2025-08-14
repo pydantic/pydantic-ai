@@ -7,5 +7,5 @@ def qwen_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Qwen model."""
     return ModelProfile(
         json_schema_transformer=InlineDefsJsonSchemaTransformer,
-        ignore_whitespace_after_thinking=True,
+        ignore_streamed_leading_whitespace=True,
     )

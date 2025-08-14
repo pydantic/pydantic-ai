@@ -1100,7 +1100,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
-                    ignore_whitespace_after_thinking=self._model_profile.ignore_whitespace_after_thinking,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

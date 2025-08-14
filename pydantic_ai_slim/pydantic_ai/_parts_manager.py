@@ -72,7 +72,7 @@ class ModelResponsePartsManager:
         vendor_part_id: VendorId | None,
         content: str,
         thinking_tags: tuple[str, str] | None = None,
-        ignore_whitespace_after_thinking: bool = False,
+        ignore_leading_whitespace: bool = False,
     ) -> ModelResponseStreamEvent | None:
         """Handle incoming text content, creating or updating a TextPart in the manager as appropriate.
 
@@ -86,7 +86,7 @@ class ModelResponsePartsManager:
                 a TextPart.
             content: The text content to append to the appropriate TextPart.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
-            ignore_whitespace_after_thinking: If True, will ignore whitespace in the content after the thinking tags.
+            ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
 
         Returns:
             - A `PartStartEvent` if a new part was created.
@@ -130,14 +130,9 @@ class ModelResponsePartsManager:
             return self.handle_thinking_delta(vendor_part_id=vendor_part_id, content='')
 
         if existing_text_part_and_index is None:
-            # This is a workaround for models that emit `<think>\n</think>\n\n` ahead of tool calls (e.g. Ollama + Qwen3),
-            # which we don't want to end up treating as a final result.
-            if (
-                ignore_whitespace_after_thinking
-                and self._parts
-                and isinstance(self._parts[-1], ThinkingPart)
-                and (len(content) == 0 or content.isspace())
-            ):
+            # This is a workaround for models that emit `<think>\n</think>\n\n` or an empty text part ahead of tool calls (e.g. Ollama + Qwen3),
+            # which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
+            if ignore_leading_whitespace and (len(content) == 0 or content.isspace()):
                 return None
 
             # There is no existing text part that should be updated, so create a new one

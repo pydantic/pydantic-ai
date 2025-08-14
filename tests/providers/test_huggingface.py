@@ -149,7 +149,7 @@ def test_huggingface_provider_base_url():
     assert provider.base_url == 'test-model'
 
 
-def test_groq_provider_model_profile(mocker: MockerFixture):
+def test_huggingface_provider_model_profile(mocker: MockerFixture):
     mock_client = Mock(spec=AsyncInferenceClient)
     provider = HuggingFaceProvider(hf_client=mock_client)
 
@@ -162,7 +162,8 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
 
     deepseek_profile = provider.model_profile('deepseek-ai/DeepSeek-R1')
     deepseek_model_profile_mock.assert_called_with('deepseek-r1')
-    assert deepseek_profile is None
+    assert deepseek_profile is not None
+    assert deepseek_profile.ignore_streamed_leading_whitespace is True
 
     meta_profile = provider.model_profile('meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8')
     meta_model_profile_mock.assert_called_with('llama-4-maverick-17b-128e-instruct-fp8')
@@ -173,6 +174,7 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     qwen_model_profile_mock.assert_called_with('qwq-32b')
     assert qwen_profile is not None
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+    assert qwen_profile.ignore_streamed_leading_whitespace is True
 
     mistral_profile = provider.model_profile('mistralai/Devstral-Small-2505')
     mistral_model_profile_mock.assert_called_with('devstral-small-2505')
