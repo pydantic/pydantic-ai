@@ -359,6 +359,7 @@ class AnthropicModel(Model):
                     BetaWebSearchTool20250305Param(
                         name='web_search',
                         type='web_search_20250305',
+                        max_uses=tool.max_uses,
                         allowed_domains=tool.allowed_domains,
                         blocked_domains=tool.blocked_domains,
                         user_location=user_location,
