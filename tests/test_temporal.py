@@ -322,8 +322,6 @@ async def test_complex_agent_run_in_workflow(
             'RunWorkflow:ComplexAgentWorkflow',
             'StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
             'RunActivity:agent__complex_agent__mcp_server__mcp__get_tools',
-            'StartActivity:agent__complex_agent__mcp_server__mcp__get_tools',
-            'RunActivity:agent__complex_agent__mcp_server__mcp__get_tools',
             'StartActivity:agent__complex_agent__model_request_stream',
             'ctx.run_step=1',
             '{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"part_start"}',

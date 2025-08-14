@@ -60,6 +60,7 @@ with try_import() as imports_successful:
         ChoiceDeltaToolCallFunction,
     )
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
     from openai.types.chat.chat_completion_message_tool_call import Function
     from openai.types.chat.chat_completion_token_logprob import ChatCompletionTokenLogprob
     from openai.types.completion_usage import CompletionUsage, PromptTokensDetails
@@ -241,7 +242,7 @@ async def test_request_structured_response(allow_model_requests: None):
             content=None,
             role='assistant',
             tool_calls=[
-                chat.ChatCompletionMessageToolCall(
+                ChatCompletionMessageFunctionToolCall(
                     id='123',
                     function=Function(arguments='{"response": [1, 2, 123]}', name='final_result'),
                     type='function',
@@ -292,7 +293,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 content=None,
                 role='assistant',
                 tool_calls=[
-                    chat.ChatCompletionMessageToolCall(
+                    ChatCompletionMessageFunctionToolCall(
                         id='1',
                         function=Function(arguments='{"loc_name": "San Fransisco"}', name='get_location'),
                         type='function',
@@ -311,7 +312,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 content=None,
                 role='assistant',
                 tool_calls=[
-                    chat.ChatCompletionMessageToolCall(
+                    ChatCompletionMessageFunctionToolCall(
                         id='2',
                         function=Function(arguments='{"loc_name": "London"}', name='get_location'),
                         type='function',
@@ -722,7 +723,7 @@ async def test_parallel_tool_calls(allow_model_requests: None, parallel_tool_cal
             content=None,
             role='assistant',
             tool_calls=[
-                chat.ChatCompletionMessageToolCall(
+                ChatCompletionMessageFunctionToolCall(
                     id='123',
                     function=Function(arguments='{"response": [1, 2, 3]}', name='final_result'),
                     type='function',

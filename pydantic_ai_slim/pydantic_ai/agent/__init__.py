@@ -566,6 +566,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
+        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        tool_manager = ToolManager[AgentDepsT](toolset)
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -581,6 +583,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_step=0,
         )
 
+        # Merge model settings in order of precedence: run > agent > model
+        merged_settings = merge_model_settings(model_used.settings, self.model_settings)
+        model_settings = merge_model_settings(merged_settings, model_settings)
+        usage_limits = usage_limits or _usage.UsageLimits()
+
+        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
+            parts = [
+                self._instructions,
+                *[await func.run(run_context) for func in self._instructions_functions],
+            ]
+
+            model_profile = model_used.profile
+            if isinstance(output_schema, _output.PromptedOutputSchema):
+                instructions = output_schema.instructions(model_profile.prompted_output_template)
+                parts.append(instructions)
+
+            parts = [p for p in parts if p]
+            if not parts:
+                return None
+            return '\n\n'.join(parts).strip()
+
         if isinstance(model_used, InstrumentedModel):
             instrumentation_settings = model_used.instrumentation_settings
             tracer = model_used.instrumentation_settings.tracer
@@ -588,81 +611,45 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        run_context = RunContext[AgentDepsT](
-            deps=deps,
-            model=model_used,
-            usage=usage,
+        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+            user_deps=deps,
             prompt=user_prompt,
-            messages=state.message_history,
+            new_message_index=new_message_index,
+            model=model_used,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            max_result_retries=self._max_result_retries,
+            end_strategy=self.end_strategy,
+            output_schema=output_schema,
+            output_validators=output_validators,
+            history_processors=self.history_processors,
+            builtin_tools=list(self._builtin_tools),
+            tool_manager=tool_manager,
             tracer=tracer,
-            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
-            run_step=state.run_step,
+            get_instructions=get_instructions,
+            instrumentation_settings=instrumentation_settings,
+        )
+        start_node = _agent_graph.UserPromptNode[AgentDepsT](
+            user_prompt=user_prompt,
+            instructions=self._instructions,
+            instructions_functions=self._instructions_functions,
+            system_prompts=self._system_prompts,
+            system_prompt_functions=self._system_prompt_functions,
+            system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        agent_name = self.name or 'agent'
+        run_span = tracer.start_span(
+            'agent run',
+            attributes={
+                'model_name': model_used.model_name if model_used else 'no-model',
+                'agent_name': agent_name,
+                'logfire.msg': f'{agent_name} run',
+            },
+        )
 
-        async with toolset:
-            # This will raise errors for any name conflicts
-            tool_manager = await ToolManager[AgentDepsT].build(toolset, run_context)
-
-            # Merge model settings in order of precedence: run > agent > model
-            merged_settings = merge_model_settings(model_used.settings, self.model_settings)
-            model_settings = merge_model_settings(merged_settings, model_settings)
-            usage_limits = usage_limits or _usage.UsageLimits()
-            agent_name = self.name or 'agent'
-            run_span = tracer.start_span(
-                'agent run',
-                attributes={
-                    'model_name': model_used.model_name if model_used else 'no-model',
-                    'agent_name': agent_name,
-                    'logfire.msg': f'{agent_name} run',
-                },
-            )
-
-            async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-                parts = [
-                    self._instructions,
-                    *[await func.run(run_context) for func in self._instructions_functions],
-                ]
-
-                model_profile = model_used.profile
-                if isinstance(output_schema, _output.PromptedOutputSchema):
-                    instructions = output_schema.instructions(model_profile.prompted_output_template)
-                    parts.append(instructions)
-
-                parts = [p for p in parts if p]
-                if not parts:
-                    return None
-                return '\n\n'.join(parts).strip()
-
-            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
-                user_deps=deps,
-                prompt=user_prompt,
-                new_message_index=new_message_index,
-                model=model_used,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                max_result_retries=self._max_result_retries,
-                end_strategy=self.end_strategy,
-                output_schema=output_schema,
-                output_validators=output_validators,
-                history_processors=self.history_processors,
-                builtin_tools=list(self._builtin_tools),
-                tool_manager=tool_manager,
-                tracer=tracer,
-                get_instructions=get_instructions,
-                instrumentation_settings=instrumentation_settings,
-            )
-            start_node = _agent_graph.UserPromptNode[AgentDepsT](
-                user_prompt=user_prompt,
-                instructions=self._instructions,
-                instructions_functions=self._instructions_functions,
-                system_prompts=self._system_prompts,
-                system_prompt_functions=self._system_prompt_functions,
-                system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
-            )
-
-            try:
+        try:
+            async with toolset:
                 async with graph.iter(
                     start_node,
                     state=state,
@@ -682,12 +669,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                     else json.dumps(InstrumentedModel.serialize_any(final_result.output))
                                 ),
                             )
+        finally:
+            try:
+                if instrumentation_settings and run_span.is_recording():
+                    run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
             finally:
-                try:
-                    if instrumentation_settings and run_span.is_recording():
-                        run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
-                finally:
-                    run_span.end()
+                run_span.end()
 
     def _run_span_end_attributes(
         self, state: _agent_graph.GraphAgentState, usage: _usage.Usage, settings: InstrumentationSettings
