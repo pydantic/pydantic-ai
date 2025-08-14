@@ -5,4 +5,4 @@ from . import ModelProfile
 
 def moonshotai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a MoonshotAI model."""
-    return None
+    return ModelProfile(ignore_whitespace_after_thinking=True)

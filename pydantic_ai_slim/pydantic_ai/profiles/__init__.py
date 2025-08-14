@@ -20,7 +20,7 @@ __all__ = [
 
 @dataclass
 class ModelProfile:
-    """Describes how requests to a specific model or family of models need to be constructed to get the best results, independent of the model and provider classes used."""
+    """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used."""
 
     supports_tools: bool = True
     """Whether the model supports tools."""
@@ -45,6 +45,10 @@ class ModelProfile:
 
     thinking_tags: tuple[str, str] = ('<think>', '</think>')
     """The tags used to indicate thinking parts in the model's output. Defaults to ('<think>', '</think>')."""
+    # This is a workaround for models that emit `<think>\n</think>\n\n` ahead of tool calls (e.g. Ollama + Qwen3),
+    # which we don't want to end up treating as a final result when using `run_stream` with `str` a valid `output_type`.
+    ignore_whitespace_after_thinking: bool = False
+    """Whether to ignore leading whitespace after thinking tags in the model's streaming response."""
 
     @classmethod
     def from_profile(cls, profile: ModelProfile | None) -> Self:
