@@ -39,7 +39,7 @@ with try_import() as imports_successful:
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
     from pydantic_ai.models.google import GoogleModel
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -57,7 +57,7 @@ def mcp_server() -> MCPServerStdio:
 
 @pytest.fixture
 def model(openai_api_key: str) -> Model:
-    return OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    return OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
 
 
 @pytest.fixture
@@ -269,7 +269,7 @@ async def test_agent_with_conflict_tool_name(agent: Agent):
 
 async def test_agent_with_prefix_tool_name(openai_api_key: str):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], tool_prefix='foo')
-    model = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
         model,
         toolsets=[server],

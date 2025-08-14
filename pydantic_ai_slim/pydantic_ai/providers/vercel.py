@@ -15,7 +15,7 @@ from pydantic_ai.profiles.deepseek import deepseek_model_profile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.profiles.grok import grok_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIChatModelProfile, OpenAIJsonSchemaTransformer, openai_model_profile
 from pydantic_ai.providers import Provider
 
 try:
@@ -66,7 +66,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
 
         # As VercelProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(
+        return OpenAIChatModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
         ).update(profile)
 

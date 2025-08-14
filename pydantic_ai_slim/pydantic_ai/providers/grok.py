@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.grok import grok_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIChatModelProfile, OpenAIJsonSchemaTransformer
 from pydantic_ai.providers import Provider
 
 try:
@@ -55,7 +55,7 @@ class GrokProvider(Provider[AsyncOpenAI]):
         # As the Grok API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
         # unless json_schema_transformer is set explicitly.
         # Also, Grok does not support strict tool definitions: https://github.com/pydantic/pydantic-ai/issues/1846
-        return OpenAIModelProfile(
+        return OpenAIChatModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer, openai_supports_strict_tool_definition=False
         ).update(profile)
 

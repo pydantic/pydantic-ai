@@ -700,9 +700,9 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'heroku',
         'github',
     ):
-        from .openai import OpenAIModel
+        from .openai import OpenAIChatModel
 
-        return OpenAIModel(model_name, provider=provider)
+        return OpenAIChatModel(model_name, provider=provider)
     elif provider == 'openai-responses':
         from .openai import OpenAIResponsesModel
 

@@ -6,14 +6,14 @@ from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIChatModelProfile, OpenAIJsonSchemaTransformer
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     import openai
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.heroku import HerokuProvider
 
 pytestmark = [
@@ -57,14 +57,14 @@ def test_heroku_pass_openai_client() -> None:
 
 def test_heroku_model_profile():
     provider = HerokuProvider(api_key='api-key')
-    model = OpenAIModel('claude-3-7-sonnet', provider=provider)
-    assert isinstance(model.profile, OpenAIModelProfile)
+    model = OpenAIChatModel('claude-3-7-sonnet', provider=provider)
+    assert isinstance(model.profile, OpenAIChatModelProfile)
     assert model.profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
 
 async def test_heroku_model_provider_claude_3_7_sonnet(allow_model_requests: None, heroku_inference_key: str):
     provider = HerokuProvider(api_key=heroku_inference_key)
-    m = OpenAIModel('claude-3-7-sonnet', provider=provider)
+    m = OpenAIChatModel('claude-3-7-sonnet', provider=provider)
     agent = Agent(m)
 
     result = await agent.run('What is the capital of France?')

@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
+from pydantic_ai.profiles.openai import OpenAIChatModelProfile, OpenAIJsonSchemaTransformer
 from pydantic_ai.providers import Provider
 
 try:
@@ -38,7 +38,7 @@ class HerokuProvider(Provider[AsyncOpenAI]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         # As the Heroku API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer.
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
+        return OpenAIChatModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer)
 
     @overload
     def __init__(self) -> None: ...

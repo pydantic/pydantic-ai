@@ -4,13 +4,15 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from typing_extensions import deprecated
+
 from . import ModelProfile
 from ._json_schema import JsonSchema, JsonSchemaTransformer
 
 
 @dataclass
-class OpenAIModelProfile(ModelProfile):
-    """Profile for models used with OpenAIModel.
+class OpenAIChatModelProfile(ModelProfile):
+    """Profile for models used with OpenAIChatModel.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
@@ -36,7 +38,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
     # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
     # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
-    return OpenAIModelProfile(
+    return OpenAIChatModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
@@ -180,3 +182,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                         if k not in required:
                             self.is_strict_compatible = False
         return schema
+
+
+# Deprecated alias
+@deprecated('Use `OpenAIChatModelProfile` instead')
+class OpenAIModelProfile(OpenAIChatModelProfile):
+    """Deprecated alias for OpenAIChatModelProfile. Use `OpenAIChatModelProfile` instead."""

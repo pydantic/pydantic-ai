@@ -35,7 +35,7 @@ from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openai import OpenAIChatModelSettings, OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -86,7 +86,7 @@ async def test_openai_responses_output_type(allow_model_requests: None, openai_a
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, model_settings=OpenAIModelSettings(openai_reasoning_effort='low'))
+    agent = Agent(model=model, model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
     result = await agent.run(
         'Explain me how to cook uruguayan alfajor. Do not send whitespaces at the end of the lines.'
     )
@@ -400,7 +400,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
     """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, model_settings=OpenAIModelSettings(temperature=-1))
+    agent = Agent(model=model, model_settings=OpenAIChatModelSettings(temperature=-1))
 
     with pytest.raises(ModelHTTPError):
         async with agent.run_stream('What is the capital of France?'):

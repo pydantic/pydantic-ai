@@ -38,7 +38,7 @@ To run the examples, follow instructions in the [examples docs](examples/index.m
 ## Slim Install
 
 If you know which model you're going to use and want to avoid installing superfluous packages, you can use the [`pydantic-ai-slim`](https://pypi.org/project/pydantic-ai-slim/) package.
-For example, if you're using just [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], you would run:
+For example, if you're using just [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you would run:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai]"

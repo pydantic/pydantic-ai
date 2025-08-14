@@ -13,7 +13,7 @@ this helps save costs for users. In the future, we plan to add a setting to cust
 
 ## OpenAI
 
-When using the [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], thinking objects are not created
+When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], thinking objects are not created
 by default. However, the text content may contain `"<think>"` tags. When this happens, Pydantic AI will
 convert them to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 

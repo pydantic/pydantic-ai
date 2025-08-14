@@ -23,7 +23,7 @@ with try_import() as imports_successful:
     from prompt_toolkit.shortcuts import PromptSession
 
     from pydantic_ai._cli import cli, cli_agent, handle_slash_command
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install cli extras to run cli tests')
 
@@ -110,7 +110,7 @@ def test_agent_flag_set_model(
 
     assert 'using custom agent test_module:custom_agent with openai:gpt-4o' in capfd.readouterr().out.replace('\n', '')
 
-    assert isinstance(custom_agent.model, OpenAIModel)
+    assert isinstance(custom_agent.model, OpenAIChatModel)
 
 
 def test_agent_flag_non_agent(

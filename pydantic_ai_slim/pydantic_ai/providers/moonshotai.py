@@ -11,8 +11,8 @@ from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import (
+    OpenAIChatModelProfile,
     OpenAIJsonSchemaTransformer,
-    OpenAIModelProfile,
 )
 from pydantic_ai.providers import Provider
 
@@ -53,7 +53,7 @@ class MoonshotAIProvider(Provider[AsyncOpenAI]):
         # Also, MoonshotAI does not support strict tool definitions
         # https://platform.moonshot.ai/docs/guide/migrating-from-openai-to-kimi#about-tool_choice
         # "Please note that the current version of Kimi API does not support the tool_choice=required parameter."
-        return OpenAIModelProfile(
+        return OpenAIChatModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_supports_tool_choice_required=False,
             supports_json_object_output=True,
