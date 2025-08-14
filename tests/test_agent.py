@@ -3,7 +3,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -46,7 +46,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import StructuredDict, ToolOutput
+from pydantic_ai.output import DeferredToolCalls, StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
@@ -2063,7 +2063,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
     """Test that an agent run raises error when message_history ends on ModelResponse with tool calls and there's a new prompt."""
 
     def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content='Final response')])
+        return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
 
     agent = Agent(FunctionModel(simple_response))
 
@@ -2083,7 +2083,7 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
     """Test that an agent run raises error when message_history ends on ModelResponse without tool calls or a new prompt."""
 
     def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content='Final response')])
+        return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
 
     agent = Agent(FunctionModel(simple_response))
 
@@ -4260,3 +4260,113 @@ async def test_thinking_only_response_retry():
             ),
         ]
     )
+
+
+async def test_resume_after_temporarily_deferred_tool():
+    @dataclass
+    class ApprovedToolsDeps:
+        approved_tools: list[str] = field(default_factory=list)
+
+    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls], deps_type=ApprovedToolsDeps)
+
+    async def defer_unless_approved(
+        ctx: RunContext[ApprovedToolsDeps], tool_def: ToolDefinition
+    ) -> ToolDefinition | None:
+        # When restarting a run with message history ending on `ModelResponse`, run_step will be 0
+        if ctx.run_step == 0 and tool_def.name in ctx.deps.approved_tools:
+            return tool_def
+        return replace(tool_def, kind='deferred')
+
+    @agent.tool_plain(prepare=defer_unless_approved)
+    def delete_file(path: str) -> str:
+        return f'File {path!r} deleted'
+
+    result = await agent.run('Delete file', deps=ApprovedToolsDeps())
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete file',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file',
+                        args={'path': 'a'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolCalls(
+            tool_calls=[ToolCallPart(tool_name='delete_file', args={'path': 'a'}, tool_call_id=IsStr())],
+            tool_defs={
+                'delete_file': ToolDefinition(
+                    name='delete_file',
+                    parameters_json_schema={
+                        'additionalProperties': False,
+                        'properties': {'path': {'type': 'string'}},
+                        'required': ['path'],
+                        'type': 'object',
+                    },
+                    kind='deferred',
+                )
+            },
+        )
+    )
+
+    result = await agent.run(
+        message_history=messages,
+        deps=ApprovedToolsDeps(approved_tools=['delete_file']),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete file',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file',
+                        args={'path': 'a'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content="File 'a' deleted",
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"delete_file":"File \'a\' deleted"}')],
+                usage=Usage(requests=1, request_tokens=55, response_tokens=11, total_tokens=66),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('{"delete_file":"File \'a\' deleted"}')
