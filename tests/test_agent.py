@@ -4262,33 +4262,54 @@ async def test_thinking_only_response_retry():
     )
 
 
-async def test_resume_after_temporarily_deferred_tool():
-    @dataclass
-    class ApprovedToolsDeps:
-        approved_tools: list[str] = field(default_factory=list)
+async def test_hitl_tool_approval():
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('OK')])
 
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls], deps_type=ApprovedToolsDeps)
+    model = FunctionModel(model_function)
+
+    @dataclass
+    class ApprovableToolsDeps:
+        tool_call_results: dict[str, bool | str] = field(default_factory=dict)
+
+    agent = Agent(model, output_type=[str, DeferredToolCalls], deps_type=ApprovableToolsDeps)
 
     async def defer_unless_approved(
-        ctx: RunContext[ApprovedToolsDeps], tool_def: ToolDefinition
-    ) -> ToolDefinition | None:
+        ctx: RunContext[ApprovableToolsDeps], tool_def: ToolDefinition
+    ) -> Union[ToolDefinition, None]:
         # When restarting a run with message history ending on `ModelResponse`, run_step will be 0
-        if ctx.run_step == 0 and tool_def.name in ctx.deps.approved_tools:
-            return tool_def
-        return replace(tool_def, kind='deferred')
+        return tool_def if ctx.run_step == 0 else replace(tool_def, kind='deferred')
 
-    @agent.tool_plain(prepare=defer_unless_approved)
-    def delete_file(path: str) -> str:
+    @agent.tool(prepare=defer_unless_approved)
+    def delete_file(ctx: RunContext[ApprovableToolsDeps], path: str) -> str:
+        assert ctx.tool_call_id is not None
+        assert ctx.tool_call_id in ctx.deps.tool_call_results
+        response = ctx.deps.tool_call_results[ctx.tool_call_id]
+        if response is not True:
+            raise ModelRetry(f'File {path!r} was not deleted: {response}')
+
         return f'File {path!r} deleted'
 
-    result = await agent.run('Delete file', deps=ApprovedToolsDeps())
+    result = await agent.run('Delete files ok_to_delete.py and never_delete.py', deps=ApprovableToolsDeps())
     messages = result.all_messages()
     assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Delete file',
+                        content='Delete files ok_to_delete.py and never_delete.py',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -4296,20 +4317,24 @@ async def test_resume_after_temporarily_deferred_tool():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='delete_file',
-                        args={'path': 'a'},
-                        tool_call_id=IsStr(),
-                    )
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
                 ],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
-                model_name='test',
+                usage=Usage(requests=1, request_tokens=57, response_tokens=12, total_tokens=69),
+                model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
         ]
     )
     assert result.output == snapshot(
         DeferredToolCalls(
-            tool_calls=[ToolCallPart(tool_name='delete_file', args={'path': 'a'}, tool_call_id=IsStr())],
+            tool_calls=[
+                ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
+                ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
+            ],
             tool_defs={
                 'delete_file': ToolDefinition(
                     name='delete_file',
@@ -4325,16 +4350,15 @@ async def test_resume_after_temporarily_deferred_tool():
         )
     )
 
-    result = await agent.run(
-        message_history=messages,
-        deps=ApprovedToolsDeps(approved_tools=['delete_file']),
-    )
+    results = {'ok_to_delete': True, 'never_delete': 'Please stop!'}
+
+    result = await agent.run(message_history=messages, deps=ApprovableToolsDeps(tool_call_results=results))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Delete file',
+                        content='Delete files ok_to_delete.py and never_delete.py',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -4342,31 +4366,38 @@ async def test_resume_after_temporarily_deferred_tool():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='delete_file',
-                        args={'path': 'a'},
-                        tool_call_id=IsStr(),
-                    )
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
                 ],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
-                model_name='test',
+                usage=Usage(requests=1, request_tokens=57, response_tokens=12, total_tokens=69),
+                model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='delete_file',
-                        content="File 'a' deleted",
-                        tool_call_id=IsStr(),
+                        content="File 'ok_to_delete.py' deleted",
+                        tool_call_id='ok_to_delete',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    RetryPromptPart(
+                        content="File 'never_delete.py' was not deleted: Please stop!",
+                        tool_name='delete_file',
+                        tool_call_id='never_delete',
+                        timestamp=IsDatetime(),
+                    ),
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"delete_file":"File \'a\' deleted"}')],
-                usage=Usage(requests=1, request_tokens=55, response_tokens=11, total_tokens=66),
-                model_name='test',
+                parts=[TextPart(content='OK')],
+                usage=Usage(requests=1, request_tokens=76, response_tokens=13, total_tokens=89),
+                model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
         ]
     )
-    assert result.output == snapshot('{"delete_file":"File \'a\' deleted"}')
+    assert result.output == snapshot('OK')
