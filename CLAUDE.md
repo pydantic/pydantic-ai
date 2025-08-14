@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Core Components
 
-**Agent System (`pydantic_ai_slim/pydantic_ai/agent.py`)**
+**Agent System (`pydantic_ai_slim/pydantic_ai/agent/`)**
 - `Agent[AgentDepsT, OutputDataT]`: Main orchestrator class with generic types for dependency injection and output validation
 - Entry points: `run()`, `run_sync()`, `run_stream()` methods
 - Handles tool management, system prompts, and model interaction
