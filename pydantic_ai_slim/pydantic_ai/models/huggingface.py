@@ -35,7 +35,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -121,6 +121,8 @@ class HuggingFaceModel(Model):
         model_name: str,
         *,
         provider: Literal['huggingface'] | Provider[AsyncInferenceClient] = 'huggingface',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Hugging Face model.
 
@@ -128,12 +130,16 @@ class HuggingFaceModel(Model):
             model_name: The name of the Model to use. You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
             provider: The provider to use for Hugging Face Inference Providers. Can be either the string 'huggingface' or an
                 instance of `Provider[AsyncInferenceClient]`. If not provided, the other parameters will be used.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
         self._provider = provider
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     async def request(
         self,
@@ -444,11 +450,12 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content:
+            if content is not None:
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

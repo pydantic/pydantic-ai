@@ -75,6 +75,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
     # note: we use Union here so that casting works with Python 3.9
@@ -597,7 +598,7 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
         chunk([]),
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    m = OpenAIModel('qwen3', provider=OllamaProvider(openai_client=mock_client))
     agent = Agent(m, output_type=[str, MyTypedDict])
 
     async with agent.run_stream('') as result:
@@ -628,7 +629,7 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
         chunk([]),
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    m = OpenAIModel('qwen3', provider=OllamaProvider(openai_client=mock_client))
     agent = Agent(m, output_type=[str, MyTypedDict])
 
     async with agent.run_stream('') as result:
