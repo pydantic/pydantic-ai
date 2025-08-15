@@ -14,7 +14,9 @@ from pydantic_ai import UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
+    _contains_ref,  # pyright: ignore[reportPrivateUsage]
     check_object_json_schema,
+    get_traceparent,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -146,9 +148,6 @@ def test_get_traceparent_coverage():
     """Test get_traceparent function for coverage."""
     from unittest.mock import Mock
 
-    # Import here to ensure it's loaded
-    from pydantic_ai._utils import get_traceparent
-
     # Create a mock object that simulates AgentRun with no traceparent
     mock_run = Mock()
     mock_run._traceparent = Mock(return_value=None)
@@ -167,8 +166,6 @@ def test_get_traceparent_coverage():
 
 def test_contains_ref_coverage():
     """Test _contains_ref function with various types to ensure full coverage."""
-    from pydantic_ai._utils import _contains_ref  # pyright: ignore[reportPrivateUsage]
-
     # Test with non-dict/list types (covers line 111 - return False for other types)
     assert _contains_ref('string') is False
     assert _contains_ref(123) is False
