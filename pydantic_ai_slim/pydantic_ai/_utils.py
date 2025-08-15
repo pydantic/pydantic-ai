@@ -83,7 +83,10 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
             defs = schema.get('$defs', {})
             if ref_name in defs:
                 resolved = defs[ref_name]
-                # Check if the resolved schema contains nested references
+                # Check if the resolved schema contains nested references.
+                # This is necessary because if we inline a schema that itself contains
+                # $ref references, those references won't be resolvable without the $defs.
+                # The old code used fragile string matching; this uses proper recursive checking.
                 if _contains_ref(resolved):
                     # Keep the $defs because they're needed for nested references
                     return schema

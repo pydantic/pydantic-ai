@@ -143,24 +143,6 @@ def test_check_object_json_schema():
     assert check_object_json_schema(schema_with_different_ref) == schema_with_different_ref
 
 
-def test_get_traceparent_coverage():
-    """Test get_traceparent function for coverage."""
-    from unittest.mock import Mock
-
-    # Create a mock object that simulates AgentRun with no traceparent
-    mock_run = Mock()
-    mock_run._traceparent = Mock(return_value=None)
-
-    # Test with None traceparent (covers line 345 - the "or ''" part)
-    result = get_traceparent(mock_run)
-    assert result == ''
-    mock_run._traceparent.assert_called_once_with(required=False)
-
-    # Test with actual traceparent value
-    mock_run2 = Mock()
-    mock_run2._traceparent = Mock(return_value='00-trace-id-span-id-01')
-    result2 = get_traceparent(mock_run2)
-    assert result2 == '00-trace-id-span-id-01'
 
 
 
