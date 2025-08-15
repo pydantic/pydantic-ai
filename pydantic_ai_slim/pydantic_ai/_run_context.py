@@ -12,7 +12,7 @@ from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .models import Model
-    from .result import Usage
+    from .result import RunUsage
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
@@ -26,7 +26,7 @@ class RunContext(Generic[AgentDepsT]):
     """Dependencies for the agent."""
     model: Model
     """The model used in this run."""
-    usage: Usage
+    usage: RunUsage
     """LLM usage associated with the run."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""

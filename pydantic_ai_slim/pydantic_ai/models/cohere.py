@@ -7,10 +7,13 @@ from typing import Literal, Union, cast
 from typing_extensions import assert_never
 
 from pydantic_ai._thinking_part import split_content_into_text_and_thinking
+from pydantic_ai.exceptions import UserError
 
 from .. import ModelHTTPError, usage
 from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id
 from ..messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -146,7 +149,6 @@ class CohereModel(Model):
         check_allow_model_requests()
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @property
@@ -166,6 +168,10 @@ class CohereModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> V2ChatResponse:
         tools = self._get_tools(model_request_parameters)
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Cohere does not support built-in tools')
+
         cohere_messages = self._map_messages(messages)
         try:
             return await self.client.chat(
@@ -183,7 +189,7 @@ class CohereModel(Model):
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
-            raise  # pragma: no cover
+            raise  # pragma: lax no cover
 
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -192,7 +198,7 @@ class CohereModel(Model):
             # While Cohere's API returns a list, it only does that for future proofing
             # and currently only one item is being returned.
             choice = response.message.content[0]
-            parts.extend(split_content_into_text_and_thinking(choice.text))
+            parts.extend(split_content_into_text_and_thinking(choice.text, self.profile.thinking_tags))
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
@@ -223,6 +229,9 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from cohere
+                        pass
                     else:
                         assert_never(item)
                 message_param = AssistantChatMessageV2(role='assistant')
@@ -238,10 +247,7 @@ class CohereModel(Model):
         return cohere_messages
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolV2]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ToolCallV2:
@@ -294,10 +300,10 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: V2ChatResponse) -> usage.Usage:
+def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
     u = response.usage
     if u is None:
-        return usage.Usage()
+        return usage.RequestUsage()
     else:
         details: dict[str, int] = {}
         if u.billed_units is not None:
@@ -310,11 +316,10 @@ def _map_usage(response: V2ChatResponse) -> usage.Usage:
             if u.billed_units.classifications:  # pragma: no cover
                 details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else None
-        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else None
-        return usage.Usage(
-            request_tokens=request_tokens,
-            response_tokens=response_tokens,
-            total_tokens=(request_tokens or 0) + (response_tokens or 0),
+        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
+        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
+        return usage.RequestUsage(
+            input_tokens=request_tokens,
+            output_tokens=response_tokens,
             details=details,
         )

@@ -44,6 +44,17 @@ agent = Agent(model)
 
 If you are an enterprise user, you can use the `google-vertex` provider with `GoogleModel` to access Gemini via Vertex AI.
 
+This interface has a number of advantages over the Generative Language API:
+
+1. The VertexAI API comes with more enterprise readiness guarantees.
+2. You can [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput) with VertexAI to guarantee capacity.
+3. If you're running Pydantic AI inside GCP, you don't need to set up authentication, it should "just work".
+4. You can decide which region to use, which might be important from a regulatory perspective, and might improve latency.
+
+The big disadvantage is that for local development you may need to create and configure a "service account", which can be challenging to get right.
+
+Whichever way you authenticate, you'll need to have VertexAI enabled in your GCP account.
+
 To use Vertex AI, you may need to set up [application default credentials](https://cloud.google.com/docs/authentication/application-default-credentials) or use a service account. You can also specify the region.
 
 #### Application Default Credentials
@@ -104,14 +115,14 @@ You can supply a custom `GoogleProvider` instance using the `provider` argument 
 This is useful if you're using a custom-compatible endpoint with the Google Generative Language API.
 
 ```python
-from google import genai
+from google.genai import Client
 from google.genai.types import HttpOptions
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-client = genai.Client(
+client = Client(
     api_key='gemini-custom-api-key',
     http_options=HttpOptions(base_url='gemini-custom-base-url'),
 )

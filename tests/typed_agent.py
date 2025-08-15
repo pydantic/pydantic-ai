@@ -1,4 +1,5 @@
 """This file is used to test static typing, it's analyzed with pyright and mypy."""
+# pyright: reportUnnecessaryTypeIgnoreComment=false
 
 import re
 from collections.abc import Awaitable

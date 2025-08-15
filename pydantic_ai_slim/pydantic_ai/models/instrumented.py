@@ -19,6 +19,7 @@ from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
 from .. import _otel_messages
+from .._run_context import RunContext
 from ..messages import (
     ModelMessage,
     ModelRequest,
@@ -142,7 +143,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,
                 explicit_bucket_boundaries_advisory=TOKEN_HISTOGRAM_BOUNDARIES,
             )
-        except TypeError:
+        except TypeError:  # pragma: lax no cover
             # Older OTel/logfire versions don't support explicit_bucket_boundaries_advisory
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
@@ -221,8 +222,8 @@ class InstrumentationSettings:
             self._emit_events(span, events)
         else:
             output_message = cast(_otel_messages.OutputMessage, self.messages_to_otel_messages([response])[0])
-            if response.vendor_details and 'finish_reason' in response.vendor_details:
-                output_message['finish_reason'] = response.vendor_details['finish_reason']
+            if response.provider_details and 'finish_reason' in response.provider_details:
+                output_message['finish_reason'] = response.provider_details['finish_reason']
             instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
             attributes = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
@@ -303,12 +304,13 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:
                 async with super().request_stream(
-                    messages, model_settings, model_request_parameters
+                    messages, model_settings, model_request_parameters, run_context
                 ) as response_stream:
                     yield response_stream
             finally:
@@ -363,14 +365,14 @@ class InstrumentedModel(WrapperModel):
                             'gen_ai.request.model': request_model,
                             'gen_ai.response.model': response_model,
                         }
-                        if response.usage.request_tokens:  # pragma: no branch
+                        if response.usage.input_tokens:  # pragma: no branch
                             self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.request_tokens,
+                                response.usage.input_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'input'},
                             )
-                        if response.usage.response_tokens:  # pragma: no branch
+                        if response.usage.output_tokens:  # pragma: no branch
                             self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.response_tokens,
+                                response.usage.output_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'output'},
                             )
 

@@ -5,18 +5,20 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-from pydantic_ai.providers import Provider, infer_provider
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._run_context import RunContext
+from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc
+from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -33,9 +35,16 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
+from ..profiles import ModelProfile, ModelProfileSpec
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests
+from . import (
+    Model,
+    ModelRequestParameters,
+    StreamedResponse,
+    check_allow_model_requests,
+)
 
 try:
     import aiohttp
@@ -112,6 +121,8 @@ class HuggingFaceModel(Model):
         model_name: str,
         *,
         provider: Literal['huggingface'] | Provider[AsyncInferenceClient] = 'huggingface',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Hugging Face model.
 
@@ -119,12 +130,16 @@ class HuggingFaceModel(Model):
             model_name: The name of the Model to use. You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
             provider: The provider to use for Hugging Face Inference Providers. Can be either the string 'huggingface' or an
                 instance of `Provider[AsyncInferenceClient]`. If not provided, the other parameters will be used.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
         self._provider = provider
         if isinstance(provider, str):
             provider = infer_provider(provider)
         self.client = provider.client
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     async def request(
         self,
@@ -137,7 +152,6 @@ class HuggingFaceModel(Model):
             messages, False, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -146,12 +160,13 @@ class HuggingFaceModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
-        yield await self._process_streamed_response(response)
+        yield await self._process_streamed_response(response, model_request_parameters)
 
     @property
     def model_name(self) -> HuggingFaceModelName:
@@ -196,6 +211,9 @@ class HuggingFaceModel(Model):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('HuggingFace does not support built-in tools')
 
         hf_messages = await self._map_messages(messages)
 
@@ -244,7 +262,7 @@ class HuggingFaceModel(Model):
         items: list[ModelResponsePart] = []
 
         if content is not None:
-            items.extend(split_content_into_text_and_thinking(content))
+            items.extend(split_content_into_text_and_thinking(content, self.profile.thinking_tags))
         if tool_calls is not None:
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
@@ -253,10 +271,12 @@ class HuggingFaceModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            vendor_id=response.id,
+            provider_request_id=response.id,
         )
 
-    async def _process_streamed_response(self, response: AsyncIterable[ChatCompletionStreamOutput]) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncIterable[ChatCompletionStreamOutput], model_request_parameters: ModelRequestParameters
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
@@ -266,16 +286,15 @@ class HuggingFaceModel(Model):
             )
 
         return HuggingFaceStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
+            _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     async def _map_messages(
         self, messages: list[ModelMessage]
@@ -298,6 +317,9 @@ class HuggingFaceModel(Model):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
                         # please open an issue. The below code is the code to send thinking to the provider.
                         # texts.append(f'<think>\n{item.content}\n</think>')
+                        pass
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from huggingface
                         pass
                     else:
                         assert_never(item)
@@ -412,6 +434,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Hugging Face models."""
 
     _model_name: str
+    _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _timestamp: datetime
 
@@ -426,9 +449,12 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content:
+            if content is not None:
                 maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content', content=content, extract_think_tags=True
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -454,14 +480,12 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.Usage:
+def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
 
-    return usage.Usage(
-        request_tokens=response_usage.prompt_tokens,
-        response_tokens=response_usage.completion_tokens,
-        total_tokens=response_usage.total_tokens,
-        details=None,
+    return usage.RequestUsage(
+        input_tokens=response_usage.prompt_tokens,
+        output_tokens=response_usage.completion_tokens,
     )

@@ -7,16 +7,17 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Callable, Union
+from typing import Any, Callable, Union
 
 from typing_extensions import TypeAlias, assert_never, overload
 
-from pydantic_ai.profiles import ModelProfileSpec
-
 from .. import _utils, usage
+from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,6 +31,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -136,7 +138,6 @@ class FunctionModel(Model):
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
             response.usage = _estimate_usage(chain(messages, [response]))
-            response.usage.requests = 1
         return response
 
     @asynccontextmanager
@@ -145,6 +146,7 @@ class FunctionModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
             model_request_parameters.function_tools,
@@ -163,7 +165,11 @@ class FunctionModel(Model):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(_model_name=self._model_name, _iter=response_stream)
+        yield FunctionStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _iter=response_stream,
+        )
 
     @property
     def model_name(self) -> str:
@@ -263,7 +269,7 @@ class FunctionStreamedResponse(StreamedResponse):
         async for item in self._iter:
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
-                self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                self._usage += usage.RequestUsage(output_tokens=response_tokens)
                 maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -272,7 +278,7 @@ class FunctionStreamedResponse(StreamedResponse):
                     if isinstance(delta, DeltaThinkingPart):
                         if delta.content:  # pragma: no branch
                             response_tokens = _estimate_string_tokens(delta.content)
-                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_thinking_delta(
                             vendor_part_id=dtc_index,
                             content=delta.content,
@@ -281,7 +287,7 @@ class FunctionStreamedResponse(StreamedResponse):
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
-                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=dtc_index,
                             tool_name=delta.name,
@@ -304,7 +310,7 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -331,14 +337,20 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
+                # TODO(Marcelo): We need to add coverage here.
+                elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
+                    call = part
+                    response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())
+                # TODO(Marcelo): We need to add coverage here.
+                elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
+                    response_tokens += _estimate_string_tokens(part.model_response_str())
                 else:
                     assert_never(part)
         else:
             assert_never(message)
-    return usage.Usage(
-        request_tokens=request_tokens,
-        response_tokens=response_tokens,
-        total_tokens=request_tokens + response_tokens,
+    return usage.RequestUsage(
+        input_tokens=request_tokens,
+        output_tokens=response_tokens,
     )
 
 

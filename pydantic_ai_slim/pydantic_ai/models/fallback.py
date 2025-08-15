@@ -3,13 +3,15 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from opentelemetry.trace import get_current_span
 
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.models.instrumented import InstrumentedModel
 
 from ..exceptions import FallbackExceptionGroup, ModelHTTPError
+from ..settings import merge_model_settings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
 if TYPE_CHECKING:
@@ -31,8 +33,8 @@ class FallbackModel(Model):
 
     def __init__(
         self,
-        default_model: Model | KnownModelName,
-        *fallback_models: Model | KnownModelName,
+        default_model: Model | KnownModelName | str,
+        *fallback_models: Model | KnownModelName | str,
         fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelHTTPError,),
     ):
         """Initialize a fallback model instance.
@@ -64,8 +66,9 @@ class FallbackModel(Model):
 
         for model in self.models:
             customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
+            merged_settings = merge_model_settings(model.settings, model_settings)
             try:
-                response = await model.request(messages, model_settings, customized_model_request_parameters)
+                response = await model.request(messages, merged_settings, customized_model_request_parameters)
             except Exception as exc:
                 if self._fallback_on(exc):
                     exceptions.append(exc)
@@ -83,16 +86,20 @@ class FallbackModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Try each model in sequence until one succeeds."""
         exceptions: list[Exception] = []
 
         for model in self.models:
             customized_model_request_parameters = model.customize_request_parameters(model_request_parameters)
+            merged_settings = merge_model_settings(model.settings, model_settings)
             async with AsyncExitStack() as stack:
                 try:
                     response = await stack.enter_async_context(
-                        model.request_stream(messages, model_settings, customized_model_request_parameters)
+                        model.request_stream(
+                            messages, merged_settings, customized_model_request_parameters, run_context
+                        )
                     )
                 except Exception as exc:
                     if self._fallback_on(exc):

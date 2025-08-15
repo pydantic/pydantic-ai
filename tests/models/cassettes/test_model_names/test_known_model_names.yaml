@@ -14,12 +14,20 @@ interactions:
     uri: https://us.inference.heroku.com/available-models
   response:
     headers:
+      cache-control:
+      - no-cache, no-store, must-revalidate
+      connection:
+      - keep-alive
       content-length:
-      - '550'
+      - '760'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      expires:
+      - '0'
+      pragma:
+      - no-cache
       strict-transport-security:
       - max-age=63072000
     parsed_body:
@@ -56,6 +64,23 @@ interactions:
       - us
       type:
       - text-to-embedding
+    - model_id: gpt-oss-120b
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: nova-lite
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: nova-pro
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
     - model_id: stable-image-ultra
       regions:
       - us

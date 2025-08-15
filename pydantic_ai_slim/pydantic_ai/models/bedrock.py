@@ -15,9 +15,13 @@ import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, usage
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -59,6 +63,8 @@ if TYPE_CHECKING:
         MessageUnionTypeDef,
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
+        ReasoningContentBlockOutputTypeDef,
+        ReasoningTextBlockTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -225,10 +231,7 @@ class BedrockConverseModel(Model):
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
@@ -255,7 +258,6 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -264,10 +266,15 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
+        yield BedrockStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self.model_name,
+            _event_stream=response,
+        )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
@@ -276,9 +283,10 @@ class BedrockConverseModel(Model):
                 if reasoning_content := item.get('reasoningContent'):
                     reasoning_text = reasoning_content.get('reasoningText')
                     if reasoning_text:  # pragma: no branch
-                        thinking_part = ThinkingPart(content=reasoning_text['text'])
-                        if reasoning_signature := reasoning_text.get('signature'):
-                            thinking_part.signature = reasoning_signature
+                        thinking_part = ThinkingPart(
+                            content=reasoning_text['text'],
+                            signature=reasoning_text.get('signature'),
+                        )
                         items.append(thinking_part)
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
@@ -290,13 +298,12 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        u = usage.Usage(
-            request_tokens=response['usage']['inputTokens'],
-            response_tokens=response['usage']['outputTokens'],
-            total_tokens=response['usage']['totalTokens'],
+        u = usage.RequestUsage(
+            input_tokens=response['usage']['inputTokens'],
+            output_tokens=response['usage']['outputTokens'],
         )
         vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, vendor_id=vendor_id)
+        return ModelResponse(items, usage=u, model_name=self.model_name, provider_request_id=vendor_id)
 
     @overload
     async def _messages_create(
@@ -338,6 +345,9 @@ class BedrockConverseModel(Model):
         tool_config = self._map_tool_config(model_request_parameters)
         if tool_config:
             params['toolConfig'] = tool_config
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Bedrock does not support built-in tools')
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -462,7 +472,20 @@ class BedrockConverseModel(Model):
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't pass the thinking part to Bedrock since it raises an error.
+                        if BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts:
+                            reasoning_text: ReasoningTextBlockTypeDef = {
+                                'text': item.content,
+                            }
+                            if item.signature:
+                                reasoning_text['signature'] = item.signature
+                            reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                'reasoningText': reasoning_text,
+                            }
+                            content.append({'reasoningContent': reasoning_content})
+                        else:
+                            # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
+                            pass
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
                         pass
                     else:
                         assert isinstance(item, ToolCallPart)
@@ -610,7 +633,11 @@ class BedrockStreamedResponse(StreamedResponse):
                 delta = chunk['contentBlockDelta']['delta']
                 if 'reasoningContent' in delta:
                     if text := delta['reasoningContent'].get('text'):
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=index, content=text)
+                        yield self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=index,
+                            content=text,
+                            signature=delta['reasoningContent'].get('signature'),
+                        )
                     else:  # pragma: no cover
                         warnings.warn(
                             f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
@@ -619,7 +646,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         )
                 if 'text' in delta:
                     maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 if 'toolUse' in delta:
                     tool_use = delta['toolUse']
@@ -641,11 +668,10 @@ class BedrockStreamedResponse(StreamedResponse):
         """Get the model name of the response."""
         return self._model_name
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.Usage:
-        return usage.Usage(
-            request_tokens=metadata['usage']['inputTokens'],
-            response_tokens=metadata['usage']['outputTokens'],
-            total_tokens=metadata['usage']['totalTokens'],
+    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        return usage.RequestUsage(
+            input_tokens=metadata['usage']['inputTokens'],
+            output_tokens=metadata['usage']['outputTokens'],
         )
 
 
@@ -665,4 +691,4 @@ class _AsyncIteratorWrapper(Generic[T]):
             if type(e.__cause__) is StopIteration:
                 raise StopAsyncIteration
             else:
-                raise e  # pragma: no cover
+                raise e  # pragma: lax no cover
