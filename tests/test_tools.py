@@ -1337,11 +1337,15 @@ def test_output_type_empty():
         Agent(TestModel(), output_type=[])
 
 
-def test_parallel_tool_return():
+def test_parallel_tool_return_with_deferred():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
-                parts=[ToolCallPart('get_price', {'fruit': 'apple'}), ToolCallPart('get_price', {'fruit': 'banana'})]
+                parts=[
+                    ToolCallPart('get_price', {'fruit': 'apple'}, tool_call_id='get_price_apple'),
+                    ToolCallPart('get_price', {'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart('buy', {'fruit': 'pear'}, tool_call_id='buy_pear'),
+                ]
             )
         else:
             return ModelResponse(
@@ -1350,42 +1354,43 @@ def test_parallel_tool_return():
                 ]
             )
 
-    agent = Agent(FunctionModel(llm))
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolCalls])
 
     @agent.tool_plain
     def get_price(fruit: str) -> ToolReturn:
         return ToolReturn(
             return_value=10.0,
             content=f'The price of {fruit} is 10.0',
-            metadata={'foo': 'bar'},
+            metadata={'fruit': fruit, 'price': 10.0},
         )
 
-    result = agent.run_sync('What do an apple and a banana cost?')
+    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        return replace(tool_def, kind='deferred')
 
-    assert result.all_messages() == snapshot(
+    @agent.tool_plain(prepare=defer)
+    def buy(fruit: str):
+        pass
+
+    result = agent.run_sync('What do an apple and a banana cost? Also buy me a pear.')
+
+    messages = result.all_messages()
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What do an apple and a banana cost?',
+                        content='What do an apple and a banana cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
                 ]
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_price',
-                        args={'fruit': 'apple'},
-                        tool_call_id=IsStr(),
-                    ),
-                    ToolCallPart(
-                        tool_name='get_price',
-                        args={'fruit': 'banana'},
-                        tool_call_id=IsStr(),
-                    ),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
-                usage=RequestUsage(input_tokens=58, output_tokens=10),
+                usage=RequestUsage(input_tokens=64, output_tokens=15),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1394,15 +1399,15 @@ def test_parallel_tool_return():
                     ToolReturnPart(
                         tool_name='get_price',
                         content=10.0,
-                        tool_call_id=IsStr(),
-                        metadata={'foo': 'bar'},
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
                         content=10.0,
-                        tool_call_id=IsStr(),
-                        metadata={'foo': 'bar'},
+                        tool_call_id='get_price_banana',
+                        metadata={'fruit': 'banana', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1415,11 +1420,95 @@ def test_parallel_tool_return():
                     ),
                 ]
             ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolCalls(
+            tool_calls=[ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear')],
+            tool_defs={
+                'buy': ToolDefinition(
+                    name='buy',
+                    parameters_json_schema={
+                        'additionalProperties': False,
+                        'properties': {'fruit': {'type': 'string'}},
+                        'required': ['fruit'],
+                        'type': 'object',
+                    },
+                    kind='deferred',
+                )
+            },
+        )
+    )
+
+    result = agent.run_sync(
+        message_history=messages,
+        tool_call_results={
+            'buy_pear': ToolReturn(
+                return_value=True,
+                content='I bought a pear',
+                metadata={'fruit': 'pear', 'price': 100.0},
+            )
+        },
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What do an apple and a banana cost? Also buy me a pear.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
+                ],
+                usage=RequestUsage(input_tokens=64, output_tokens=15),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_banana',
+                        metadata={'fruit': 'banana', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='buy',
+                        content=True,
+                        tool_call_id='buy_pear',
+                        metadata={'fruit': 'pear', 'price': 100.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=['The price of apple is 10.0', 'The price of banana is 10.0'],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='I bought a pear',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=76, output_tokens=11),
+                usage=RequestUsage(input_tokens=87, output_tokens=16),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
         ]
     )
+    assert result.output == snapshot('Done!')

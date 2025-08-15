@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union
 
@@ -139,7 +139,7 @@ should be returned to the model, or the string `'call'` if the tool call should 
 Directly providing a `ToolReturnPart` and `RetryPromptPart` are also supported.
 """
 
-ToolCallResults: TypeAlias = dict[str, ToolCallResult]
+ToolCallResults: TypeAlias = Mapping[str, ToolCallResult]
 """A dictionary of tool call results, where the key is the tool call ID and the value is the result of the tool call.
 """
 

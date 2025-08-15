@@ -195,7 +195,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             # That run would typically have ended on a `ModelResponse`, but if it had a mix of deferred tool calls and ones that could already be executed,
             # a `ModelRequest` would already have been added to the history with the preliminary results, even if it wouldn't have been sent to the model yet.
             # So now that we have all of the deferred results, we roll back to the last `ModelResponse` and store the contents of the `ModelRequest` on `tool_call_results` to be handled by `CallToolsNode`.
-            self._update_tool_call_results_from_model_request(tool_call_results, last_message)
+            ctx.deps.tool_call_results = self._update_tool_call_results_from_model_request(
+                tool_call_results, last_message
+            )
             messages.pop()
 
         if messages and (last_message := messages[-1]):
@@ -244,7 +246,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     def _update_tool_call_results_from_model_request(
         self, tool_call_results: ToolCallResults, message: _messages.ModelRequest
-    ) -> None:
+    ) -> ToolCallResults:
+        tool_call_results = dict(tool_call_results)
         last_tool_return: _messages.ToolReturn | None = None
         user_content: list[str | _messages.UserContent] = []
         for part in message.parts:
@@ -278,8 +281,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     'Results for deferred tool calls were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.'
                 )
             assert last_tool_return is not None
-            assert isinstance(last_tool_return.content, list)
             last_tool_return.content = user_content
+
+        return tool_call_results
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
@@ -746,7 +750,7 @@ async def process_function_tools(  # noqa: C901
         # Deferred tool calls are "run" as well, by reading their value from the tool call results
         calls_to_run.extend(tool_calls_by_kind['deferred'])
 
-        result_tool_call_ids = tool_call_results.keys()
+        result_tool_call_ids = set(tool_call_results.keys())
         tool_call_ids_to_run = {call.tool_call_id for call in calls_to_run}
         if tool_call_ids_to_run != result_tool_call_ids:
             raise exceptions.UserError(
