@@ -47,7 +47,7 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncAnthropicBedrock
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic
     from anthropic.resources.beta import AsyncBeta
     from anthropic.types.beta import (
         BetaCodeExecutionResultBlock,
@@ -100,10 +100,6 @@ def test_init():
     assert m.model_name == 'claude-3-5-haiku-latest'
     assert m.system == 'anthropic'
     assert m.base_url == 'https://api.anthropic.com'
-    bedrock = AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider())
-    assert isinstance(bedrock.client, AsyncAnthropicBedrock)
-    assert m.model_name == 'claude-3-5-haiku-latest'
-    assert m.system == 'anthropic'
 
 
 @dataclass

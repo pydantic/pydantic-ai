@@ -44,7 +44,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..providers.anthropic import ASYNC_ANTHROPIC_CLIENT
+from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import (
@@ -143,7 +143,7 @@ class AnthropicModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: ASYNC_ANTHROPIC_CLIENT = field(repr=False)
+    client: AsyncAnthropicClient = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
     _system: str = field(default='anthropic', repr=False)
@@ -152,7 +152,7 @@ class AnthropicModel(Model):
         self,
         model_name: AnthropicModelName,
         *,
-        provider: Literal['anthropic'] | Provider[ASYNC_ANTHROPIC_CLIENT] = 'anthropic',
+        provider: Literal['anthropic'] | Provider[AsyncAnthropicClient] = 'anthropic',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):

@@ -32,7 +32,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.vercel import VercelProvider
 
     test_infer_provider_params = [
-        ('anthropic', AnthropicProvider, None),
+        ('anthropic', AnthropicProvider, 'ANTHROPIC_API_KEY'),
         ('deepseek', DeepSeekProvider, 'DEEPSEEK_API_KEY'),
         ('openrouter', OpenRouterProvider, 'OPENROUTER_API_KEY'),
         ('vercel', VercelProvider, 'VERCEL_AI_GATEWAY_API_KEY'),

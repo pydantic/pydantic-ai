@@ -4,7 +4,9 @@ import os
 from typing import Union, overload
 
 import httpx
+from typing_extensions import TypeAlias
 
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -18,12 +20,11 @@ except ImportError as _import_error:  # pragma: no cover
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
     ) from _import_error
 
-from typing_extensions import TypeAlias
 
-ASYNC_ANTHROPIC_CLIENT: TypeAlias = Union[AsyncAnthropic, AsyncAnthropicBedrock]
+AsyncAnthropicClient: TypeAlias = Union[AsyncAnthropic, AsyncAnthropicBedrock]
 
 
-class AnthropicProvider(Provider[ASYNC_ANTHROPIC_CLIENT]):
+class AnthropicProvider(Provider[AsyncAnthropicClient]):
     """Provider for Anthropic API."""
 
     @property
@@ -35,40 +36,23 @@ class AnthropicProvider(Provider[ASYNC_ANTHROPIC_CLIENT]):
         return str(self._client.base_url)
 
     @property
-    def client(self) -> ASYNC_ANTHROPIC_CLIENT:
+    def client(self) -> AsyncAnthropicClient:
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         return anthropic_model_profile(model_name)
 
     @overload
-    def __init__(self, *, anthropic_client: ASYNC_ANTHROPIC_CLIENT | None = None) -> None: ...
+    def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
 
     @overload
     def __init__(self, *, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None: ...
-
-    @overload
-    def __init__(
-        self,
-        *,
-        aws_secret_key: str | None = None,
-        aws_access_key: str | None = None,
-        aws_region: str | None = None,
-        aws_profile: str | None = None,
-        aws_session_token: str | None = None,
-        http_client: httpx.AsyncClient | None = None,
-    ) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
-        aws_secret_key: str | None = None,
-        aws_access_key: str | None = None,
-        aws_region: str | None = None,
-        aws_profile: str | None = None,
-        aws_session_token: str | None = None,
-        anthropic_client: ASYNC_ANTHROPIC_CLIENT | None = None,
+        anthropic_client: AsyncAnthropicClient | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Anthropic provider.
@@ -91,30 +75,13 @@ class AnthropicProvider(Provider[ASYNC_ANTHROPIC_CLIENT]):
             self._client = anthropic_client
         else:
             api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
-            if api_key is None:
-                if http_client is not None:
-                    self._client = AsyncAnthropicBedrock(
-                        aws_access_key=aws_access_key,
-                        aws_secret_key=aws_secret_key,
-                        aws_session_token=aws_session_token,
-                        aws_profile=aws_profile,
-                        aws_region=aws_region,
-                        http_client=http_client,
-                    )
-                else:
-                    http_client = cached_async_http_client(provider='anthropic')
-                    self._client = AsyncAnthropicBedrock(
-                        aws_access_key=aws_access_key,
-                        aws_secret_key=aws_secret_key,
-                        aws_session_token=aws_session_token,
-                        aws_profile=aws_profile,
-                        aws_region=aws_region,
-                        http_client=http_client,
-                    )
-
+            if not api_key:
+                raise UserError(
+                    'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'
+                    'to use the Anthropic provider.'
+                )
+            if http_client is not None:
+                self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
             else:
-                if http_client is not None:
-                    self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
-                else:
-                    http_client = cached_async_http_client(provider='anthropic')
-                    self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
+                http_client = cached_async_http_client(provider='anthropic')
+                self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
