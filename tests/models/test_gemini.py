@@ -34,7 +34,6 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.models._google_common import _GeminiModalityTokenCount
 from pydantic_ai.models.gemini import (
     GeminiModel,
     GeminiModelSettings,
@@ -48,6 +47,7 @@ from pydantic_ai.models.gemini import (
     _GeminiFunctionCall,
     _GeminiFunctionCallingConfig,
     _GeminiFunctionCallPart,
+    _GeminiModalityTokenCount,
     _GeminiResponse,
     _GeminiSafetyRating,
     _GeminiTextPart,

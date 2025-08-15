@@ -46,7 +46,6 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._google_common import GeminiUsageMetaData, metadata_as_request_usage
 
 try:
     from google.genai import Client
@@ -654,5 +653,47 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
         return usage.RequestUsage()  # pragma: no cover
-    metadata = cast(GeminiUsageMetaData, metadata.model_dump(exclude_defaults=True))
-    return metadata_as_request_usage(metadata)
+    details: dict[str, int] = {}
+    if cached_content_token_count := metadata.cached_content_token_count:
+        details['cached_content_tokens'] = cached_content_token_count
+
+    if thoughts_token_count := metadata.thoughts_token_count:
+        details['thoughts_tokens'] = thoughts_token_count
+
+    if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
+
+    input_audio_tokens = 0
+    output_audio_tokens = 0
+    cache_audio_read_tokens = 0
+    for prefix, metadata_details in [
+        ('prompt', metadata.prompt_tokens_details),
+        ('cache', metadata.cache_tokens_details),
+        ('candidates', metadata.candidates_tokens_details),
+        ('tool_use_prompt', metadata.tool_use_prompt_tokens_details),
+    ]:
+        assert getattr(metadata, f'{prefix}_tokens_details') is metadata_details
+        if not metadata_details:
+            continue
+        for detail in metadata_details:
+            if not detail.modality or not detail.token_count:
+                continue
+            details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
+            if detail.modality != 'AUDIO':
+                continue
+            if metadata_details is metadata.prompt_tokens_details:
+                input_audio_tokens = detail.token_count
+            elif metadata_details is metadata.candidates_tokens_details:
+                output_audio_tokens = detail.token_count
+            elif metadata_details is metadata.cache_tokens_details:  # pragma: no branch
+                cache_audio_read_tokens = detail.token_count
+
+    return usage.RequestUsage(
+        input_tokens=metadata.prompt_token_count or 0,
+        output_tokens=metadata.candidates_token_count or 0,
+        cache_read_tokens=cached_content_token_count or 0,
+        input_audio_tokens=input_audio_tokens,
+        output_audio_tokens=output_audio_tokens,
+        cache_audio_read_tokens=cache_audio_read_tokens,
+        details=details,
+    )
