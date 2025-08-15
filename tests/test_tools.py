@@ -1469,9 +1469,10 @@ def test_parallel_tool_return_with_deferred():
                 metadata={'fruit': 'pear', 'price': 100.0},
             ),
             'get_price_apple': RetryPromptPart(content='Unfortunately, we are out of apples.'),
-            'get_price_banana': ToolReturn(
-                return_value=10.0,
-                content='The price of banana is 10.0.',
+            'get_price_banana': ToolReturnPart(
+                content=10.0,
+                tool_name='get_price',
+                tool_call_id='get_price_banana',
                 metadata={'fruit': 'banana', 'price': 10.0},
             ),
         },

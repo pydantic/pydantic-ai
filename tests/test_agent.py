@@ -4297,11 +4297,8 @@ async def test_hitl_tool_approval():
         return f'File {path!r} deleted'
 
     @agent.tool_plain
-    def create_file(path: str, content: str) -> ToolReturn:
-        return ToolReturn(
-            return_value=f'File {path!r} created',
-            content=[f'<content file="{path}">', content, '</content>'],
-        )
+    def create_file(path: str, content: str) -> str:
+        return f'File {path!r} created with content: {content}'
 
     result = await agent.run('Create new_file.py and delete ok_to_delete.py and never_delete.py')
     messages = result.all_messages()
@@ -4337,14 +4334,10 @@ async def test_hitl_tool_approval():
                 parts=[
                     ToolReturnPart(
                         tool_name='create_file',
-                        content="File 'new_file.py' created",
+                        content='File \'new_file.py\' created with content: print("Hello, world!")',
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=['<content file="new_file.py">', 'print("Hello, world!")', '</content>'],
-                        timestamp=IsDatetime(),
-                    ),
+                    )
                 ]
             ),
         ]
@@ -4406,7 +4399,7 @@ async def test_hitl_tool_approval():
                 parts=[
                     ToolReturnPart(
                         tool_name='create_file',
-                        content="File 'new_file.py' created",
+                        content='File \'new_file.py\' created with content: print("Hello, world!")',
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
                     ),
@@ -4422,15 +4415,11 @@ async def test_hitl_tool_approval():
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(
-                        content=['<content file="new_file.py">', 'print("Hello, world!")', '</content>'],
-                        timestamp=IsDatetime(),
-                    ),
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=89, output_tokens=24),
+                usage=RequestUsage(input_tokens=85, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),

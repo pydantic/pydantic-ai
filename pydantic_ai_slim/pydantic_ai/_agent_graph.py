@@ -850,6 +850,8 @@ async def _call_tool(
             tool_call_result.tool_call_id = tool_call.tool_call_id
             raise ToolRetryError(tool_call_result)
         elif isinstance(tool_call_result, _messages.ToolReturnPart):
+            tool_call_result.tool_name = tool_call.tool_name
+            tool_call_result.tool_call_id = tool_call.tool_call_id
             return tool_call_result, None
         else:
             tool_result = tool_call_result
