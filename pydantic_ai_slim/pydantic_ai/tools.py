@@ -137,7 +137,7 @@ class FunctionTextFormat:
     """Used to invoke the function with free-form function calling for tool calls.
 
     This class encapsulates the settings related to free-form function calling
-    as well as optionally constraining the function call argument to a specific grammar.
+    as well as constraining the function call argument to a specific grammar.
     The function must take a single string argument.
 
     Calling a function in this way prevents parallel tool calling.
@@ -433,7 +433,7 @@ class ToolDefinition:
     in exchange for passing raw text payloads to your custom tool without wrapping the data in JSON.
     The function must take a single string argument.
 
-    When `False` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
+    When `None` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
 
     Note: this is currently only supported by OpenAI gpt-5 models.
     """
