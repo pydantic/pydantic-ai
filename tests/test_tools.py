@@ -1535,10 +1535,6 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='The price of banana is 10.0.',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
                         content=[
                             # Ideally this would have been excluded when the `get_price_apple` result was replaced with a `RetryPromptPart`,
                             # but there's no way to tell that this user prompt part belonged to that tool result.
@@ -1555,7 +1551,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=124, output_tokens=26),
+                usage=RequestUsage(input_tokens=116, output_tokens=26),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

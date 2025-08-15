@@ -4458,7 +4458,7 @@ async def test_run_with_tool_call_results_errors():
     with pytest.raises(
         UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
     ):
-        await agent.run('OK files deleted', message_history=message_history)
+        await agent.run('Hello', message_history=message_history)
 
     with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
         await agent.run(
