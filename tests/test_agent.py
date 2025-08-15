@@ -1431,6 +1431,52 @@ def test_output_type_structured_dict_unresolvable_ref():
     assert NoRefsDict.__name__ == '_StructuredDict'
 
 
+def test_structured_dict_coverage():
+    """Test StructuredDict helper functions for full coverage."""
+    from pydantic_ai.output import StructuredDict
+    from pydantic_ai.output import _contains_refs, _resolve_refs  # pyright: ignore[reportPrivateUsage]
+
+    # Test _contains_refs with list containing refs (covers lines 351, 353 in output.py)
+    schema_with_list_refs = [
+        {'$ref': '#/$defs/Model1'},
+        {'type': 'object', 'properties': {'items': {'$ref': '#/$defs/Model2'}}},
+    ]
+    assert _contains_refs(schema_with_list_refs) is True  # pyright: ignore
+
+    # Test _contains_refs with list without refs
+    schema_list_no_refs = [
+        {'type': 'string'},
+        {'type': 'integer'},
+    ]
+    assert _contains_refs(schema_list_no_refs) is False  # pyright: ignore
+
+    # Test _contains_refs with non-dict/list types (line 353)
+    assert _contains_refs('string') is False  # pyright: ignore
+    assert _contains_refs(123) is False  # pyright: ignore
+    assert _contains_refs(None) is False  # pyright: ignore
+
+    # Test _resolve_refs with list containing refs (unique test not in test_output_type_structured_dict_unresolvable_ref)
+    schema_list = [{'$ref': '#/$defs/Model'}, {'type': 'string'}]
+    resolved_list = _resolve_refs(  # pyright: ignore
+        schema_list, {'Model': {'type': 'object', 'properties': {'name': {'type': 'string'}}}}
+    )
+    assert resolved_list[0] == {'type': 'object', 'properties': {'name': {'type': 'string'}}}  # pyright: ignore
+    assert resolved_list[1] == {'type': 'string'}  # pyright: ignore
+
+    # Test StructuredDict with name but no description (covers branch 312->315)
+    simple_schema = {'type': 'object', 'properties': {'field': {'type': 'string'}}}
+    NoDescDict = StructuredDict(simple_schema, name='NoDescription')  # No description parameter
+    assert NoDescDict.__name__ == '_StructuredDict'
+
+    # Test StructuredDict with description but no name
+    DescOnlyDict = StructuredDict(simple_schema, description='Only description')  # No name parameter
+    assert DescOnlyDict.__name__ == '_StructuredDict'
+
+    # Test StructuredDict with neither name nor description
+    NoNameNoDescDict = StructuredDict(simple_schema)  # Neither name nor description
+    assert NoNameNoDescDict.__name__ == '_StructuredDict'
+
+
 def test_default_structured_output_mode():
     def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover

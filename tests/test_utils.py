@@ -142,6 +142,56 @@ def test_check_object_json_schema():
     assert check_object_json_schema(schema_with_different_ref) == schema_with_different_ref
 
 
+def test_get_traceparent_coverage():
+    """Test get_traceparent function for coverage."""
+    from unittest.mock import Mock
+
+    # Import here to ensure it's loaded
+    from pydantic_ai._utils import get_traceparent
+
+    # Create a mock object that simulates AgentRun with no traceparent
+    mock_run = Mock()
+    mock_run._traceparent = Mock(return_value=None)
+
+    # Test with None traceparent (covers line 345 - the "or ''" part)
+    result = get_traceparent(mock_run)
+    assert result == ''
+    mock_run._traceparent.assert_called_once_with(required=False)
+
+    # Test with actual traceparent value
+    mock_run2 = Mock()
+    mock_run2._traceparent = Mock(return_value='00-trace-id-span-id-01')
+    result2 = get_traceparent(mock_run2)
+    assert result2 == '00-trace-id-span-id-01'
+
+
+def test_contains_ref_coverage():
+    """Test _contains_ref function with various types to ensure full coverage."""
+    from pydantic_ai._utils import _contains_ref  # pyright: ignore[reportPrivateUsage]
+
+    # Test with non-dict/list types (covers line 111 - return False for other types)
+    assert _contains_ref('string') is False
+    assert _contains_ref(123) is False
+    assert _contains_ref(None) is False
+    assert _contains_ref(True) is False
+    assert _contains_ref(3.14) is False
+
+    # Test with empty list
+    assert _contains_ref([]) is False
+
+    # Test with list containing non-dict/list items
+    assert _contains_ref(['string', 123, None]) is False
+
+    # Test with list containing dict with $ref
+    assert _contains_ref([{'$ref': '#/$defs/Model'}]) is True
+
+    # Test with list containing nested list with $ref
+    assert _contains_ref([[{'$ref': '#/$defs/Model'}]]) is True
+
+    # Test with dict containing list with $ref
+    assert _contains_ref({'items': [{'$ref': '#/$defs/Model'}]}) is True
+
+
 @pytest.mark.parametrize('peek_first', [True, False])
 @pytest.mark.anyio
 async def test_peekable_async_stream(peek_first: bool):
