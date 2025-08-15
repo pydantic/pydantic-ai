@@ -676,7 +676,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
         if not metadata_details:
             continue
         for detail in metadata_details:
-            if not detail.modality or not detail.token_count:
+            if not detail.modality or not detail.token_count:  # pragma: no cover
                 continue
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
             if detail.modality != 'AUDIO':

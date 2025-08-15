@@ -2164,6 +2164,7 @@ def test_map_usage():
         _GeminiModalityTokenCount(modality='AUDIO', token_count=9400)
     ]
     response['usage_metadata']['thoughts_token_count'] = 9500
+    response['usage_metadata']['tool_use_prompt_token_count'] = 9600
 
     assert _metadata_as_usage(response) == snapshot(
         RequestUsage(
@@ -2175,10 +2176,11 @@ def test_map_usage():
             output_audio_tokens=9400,
             details={
                 'cached_content_tokens': 9100,
-                'thoughts_tokens': 9500,
                 'audio_prompt_tokens': 9200,
                 'audio_cache_tokens': 9300,
                 'audio_candidates_tokens': 9400,
+                'thoughts_tokens': 9500,
+                'tool_use_prompt_tokens': 9600,
             },
         )
     )
