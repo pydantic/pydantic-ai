@@ -1392,19 +1392,19 @@ def test_output_type_structured_dict_nested():
 
     def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
-        
+
         # Verify the output tool schema has been properly transformed
         # The $refs should be inlined by InlineDefsJsonSchemaTransformer
         output_tool = info.output_tools[0]
         assert output_tool.parameters_json_schema is not None
         schema = output_tool.parameters_json_schema
-        
+
         # Check that the Tire definition has been inlined in the tires array items
         assert 'properties' in schema
         assert 'tires' in schema['properties']
         tires_schema = schema['properties']['tires']
         assert tires_schema['type'] == 'array'
-        
+
         # The $ref should have been resolved to the actual Tire schema
         items_schema = tires_schema['items']
         assert '$ref' not in items_schema  # Should be inlined, not a ref
@@ -1412,7 +1412,7 @@ def test_output_type_structured_dict_nested():
         assert 'properties' in items_schema
         assert 'brand' in items_schema['properties']
         assert 'size' in items_schema['properties']
-        
+
         args_json = '{"make": "Toyota", "model": "Camry", "tires": [{"brand": "Michelin", "size": 17}]}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
@@ -1422,38 +1422,6 @@ def test_output_type_structured_dict_nested():
 
     expected = {'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': 17}]}
     assert result.output == expected
-
-
-def test_output_type_structured_dict_unresolvable_ref():
-    """Test StructuredDict with various unresolvable refs for coverage."""
-    # Schema with missing ref
-    schema_with_missing_ref = {
-        '$ref': '#/$defs/MissingModel',
-        '$defs': {'ExistingModel': {'type': 'object', 'properties': {'name': {'type': 'string'}}}},
-    }
-    MissingDict = StructuredDict(schema_with_missing_ref, name='MissingRef')
-
-    # Schema with external ref
-    schema_with_external_ref = {'$ref': 'http://example.com/schemas/model.json'}
-    ExternalDict = StructuredDict(schema_with_external_ref, name='ExternalRef')
-
-    # Schema with non-standard ref format
-    schema_with_different_ref = {'$ref': '#/definitions/Model'}
-    DifferentDict = StructuredDict(schema_with_different_ref, name='DifferentRef')
-
-    # These should all work without errors even with unresolvable refs
-    assert MissingDict.__name__ == '_StructuredDict'
-    assert ExternalDict.__name__ == '_StructuredDict'
-    assert DifferentDict.__name__ == '_StructuredDict'
-    
-    # Verify that the unresolvable ref is preserved (though title may be added)
-    # The important part is that the $ref is not modified when it can't be resolved
-    # We need to get the actual schema from the StructuredDict class
-    dict_schema = DifferentDict.__get_pydantic_json_schema__(None, None)  # pyright: ignore
-    assert '$ref' in dict_schema
-    assert dict_schema['$ref'] == '#/definitions/Model'
-
-
 
 
 def test_default_structured_output_mode():

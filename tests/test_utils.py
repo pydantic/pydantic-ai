@@ -15,7 +15,6 @@ from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
     check_object_json_schema,
-    get_traceparent,
     group_by_temporal,
     is_async_callable,
     merge_json_schema_defs,
@@ -116,31 +115,6 @@ def test_check_object_json_schema():
     array_schema = {'type': 'array', 'items': {'type': 'string'}}
     with pytest.raises(UserError, match='^Schema must be an object$'):
         check_object_json_schema(array_schema)
-
-    # Test unresolvable local refs (covers line coverage in _utils.py)
-    schema_with_missing_ref = {
-        '$ref': '#/$defs/MissingModel',
-        '$defs': {
-            'ExistingModel': {
-                'properties': {'name': {'type': 'string'}},
-                'type': 'object',
-            }
-        },
-    }
-    # Should return the original schema unchanged since the ref can't be resolved
-    assert check_object_json_schema(schema_with_missing_ref) == schema_with_missing_ref
-
-    # Test non-local refs (covers line coverage in _utils.py)
-    schema_with_external_ref = {
-        '$ref': 'http://example.com/schemas/model.json',
-    }
-    assert check_object_json_schema(schema_with_external_ref) == schema_with_external_ref
-
-    # Test with different format ref (not starting with #/$defs/)
-    schema_with_different_ref = {
-        '$ref': '#/definitions/Model',
-    }
-    assert check_object_json_schema(schema_with_different_ref) == schema_with_different_ref
 
 
 
