@@ -309,7 +309,7 @@ def StructuredDict(
     # JSON schema generator (Issue #2466)
     if '$defs' in json_schema:
         from .profiles import InlineDefsJsonSchemaTransformer
-        
+
         try:
             transformer = InlineDefsJsonSchemaTransformer(json_schema)
             json_schema = transformer.walk()

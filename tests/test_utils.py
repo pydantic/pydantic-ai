@@ -117,10 +117,6 @@ def test_check_object_json_schema():
         check_object_json_schema(array_schema)
 
 
-
-
-
-
 @pytest.mark.parametrize('peek_first', [True, False])
 @pytest.mark.anyio
 async def test_peekable_async_stream(peek_first: bool):
