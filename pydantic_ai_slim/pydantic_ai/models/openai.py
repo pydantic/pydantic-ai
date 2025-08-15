@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
 from pydantic import ValidationError
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -40,7 +40,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import OpenAIModelProfile
+from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -99,8 +99,6 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
-
-OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 class OpenAIModelSettings(ModelSettings, total=False):
@@ -196,10 +194,59 @@ class OpenAIModel(Model):
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None, repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
     _system: str = field(default='openai', repr=False)
+
+    @overload
+    def __init__(
+        self,
+        model_name: OpenAIModelName,
+        *,
+        provider: Literal[
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'moonshotai',
+            'vercel',
+            'grok',
+            'fireworks',
+            'together',
+            'heroku',
+            'github',
+            'ollama',
+        ]
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
+    ) -> None: ...
+
+    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
+    @overload
+    def __init__(
+        self,
+        model_name: OpenAIModelName,
+        *,
+        provider: Literal[
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'moonshotai',
+            'vercel',
+            'grok',
+            'fireworks',
+            'together',
+            'heroku',
+            'github',
+            'ollama',
+        ]
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
+        system_prompt_role: OpenAISystemPromptRole | None = None,
+        settings: ModelSettings | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
@@ -242,13 +289,19 @@ class OpenAIModel(Model):
             provider = infer_provider(provider)
         self.client = provider.client
 
-        self.system_prompt_role = system_prompt_role
-
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+        if system_prompt_role is not None:
+            self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
 
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
+    def system_prompt_role(self) -> OpenAISystemPromptRole | None:
+        return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
     async def request(
         self,
@@ -561,9 +614,10 @@ class OpenAIModel(Model):
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                if self.system_prompt_role == 'developer':
+                system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
+                if system_prompt_role == 'developer':
                     yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
-                elif self.system_prompt_role == 'user':
+                elif system_prompt_role == 'user':
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
@@ -659,7 +713,6 @@ class OpenAIResponsesModel(Model):
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
     _model_name: OpenAIModelName = field(repr=False)
     _system: str = field(default='openai', repr=False)
