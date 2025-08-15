@@ -341,13 +341,13 @@ def _contains_refs(schema: JsonSchemaValue) -> bool:
     if isinstance(schema, dict):
         if '$ref' in schema:
             return True
-        for value in schema.values():
-            if _contains_refs(value):
+        for v in schema.values():
+            if isinstance(v, (dict, list)) and _contains_refs(v):  # pyright: ignore[reportArgumentType]
                 return True
         return False
     elif isinstance(schema, list):
-        for element in schema:
-            if _contains_refs(element):
+        for item in schema:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(item, (dict, list)) and _contains_refs(item):  # pyright: ignore[reportArgumentType]
                 return True
         return False
     return False

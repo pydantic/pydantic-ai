@@ -99,13 +99,13 @@ def _contains_ref(obj: Any) -> bool:
     if isinstance(obj, dict):
         if '$ref' in obj:
             return True
-        for value in obj.values():  # pyright: ignore[reportUnknownVariableType]
-            if _contains_ref(value):
+        for v in obj.values():  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(v, (dict, list)) and _contains_ref(v):
                 return True
         return False
     elif isinstance(obj, list):
-        for element in obj:  # pyright: ignore[reportUnknownVariableType]
-            if _contains_ref(element):
+        for item in obj:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(item, (dict, list)) and _contains_ref(item):
                 return True
         return False
     return False
