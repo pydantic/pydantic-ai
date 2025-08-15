@@ -292,7 +292,7 @@ class OpenAIModel(Model):
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
         if system_prompt_role is not None:
-            self.profile = self.profile.update(OpenAIModelProfile(openai_system_prompt_role=system_prompt_role))
+            self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
 
     @property
     def base_url(self) -> str:

@@ -711,6 +711,12 @@ async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
+async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
+    profile = OpenAIModelProfile(openai_system_prompt_role='user')
+    model = OpenAIModel('o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key))
+    assert OpenAIModelProfile.from_profile(model.profile).openai_system_prompt_role == 'user'
+
+
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
 async def test_openai_o1_mini_system_role(
     allow_model_requests: None,
