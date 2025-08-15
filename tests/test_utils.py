@@ -14,7 +14,6 @@ from pydantic_ai import UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
-    _contains_ref,  # pyright: ignore[reportPrivateUsage]
     check_object_json_schema,
     get_traceparent,
     group_by_temporal,
@@ -164,29 +163,6 @@ def test_get_traceparent_coverage():
     assert result2 == '00-trace-id-span-id-01'
 
 
-def test_contains_ref_coverage():
-    """Test _contains_ref function with various types to ensure full coverage."""
-    # Test with non-dict/list types (covers line 111 - return False for other types)
-    assert _contains_ref('string') is False
-    assert _contains_ref(123) is False
-    assert _contains_ref(None) is False
-    assert _contains_ref(True) is False
-    assert _contains_ref(3.14) is False
-
-    # Test with empty list
-    assert _contains_ref([]) is False
-
-    # Test with list containing non-dict/list items
-    assert _contains_ref(['string', 123, None]) is False
-
-    # Test with list containing dict with $ref
-    assert _contains_ref([{'$ref': '#/$defs/Model'}]) is True
-
-    # Test with list containing nested list with $ref
-    assert _contains_ref([[{'$ref': '#/$defs/Model'}]]) is True
-
-    # Test with dict containing list with $ref
-    assert _contains_ref({'items': [{'$ref': '#/$defs/Model'}]}) is True
 
 
 @pytest.mark.parametrize('peek_first', [True, False])

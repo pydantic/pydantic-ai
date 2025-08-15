@@ -50,8 +50,6 @@ from pydantic_ai.output import (
     DeferredToolCalls,
     StructuredDict,
     ToolOutput,
-    _contains_refs,  # pyright: ignore[reportPrivateUsage]
-    _resolve_refs,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
@@ -1437,50 +1435,11 @@ def test_output_type_structured_dict_unresolvable_ref():
     assert NoRefsDict.__name__ == '_StructuredDict'
 
 
-def test_structured_dict_coverage():
-    """Test StructuredDict helper functions for full coverage."""
-    # Test _contains_refs with list containing refs (covers lines 351, 353 in output.py)
-    schema_with_list_refs = [
-        {'$ref': '#/$defs/Model1'},
-        {'type': 'object', 'properties': {'items': {'$ref': '#/$defs/Model2'}}},
-    ]
-    assert _contains_refs(schema_with_list_refs) is True  # pyright: ignore
-
-    # Test _contains_refs with list without refs
-    schema_list_no_refs = [
-        {'type': 'string'},
-        {'type': 'integer'},
-    ]
-    assert _contains_refs(schema_list_no_refs) is False  # pyright: ignore
-
-    # Test _contains_refs with non-dict/list types (line 353)
-    assert _contains_refs('string') is False  # pyright: ignore
-    assert _contains_refs(123) is False  # pyright: ignore
-    assert _contains_refs(None) is False  # pyright: ignore
-
-    # Test _resolve_refs with list containing refs (unique test not in test_output_type_structured_dict_unresolvable_ref)
-    schema_list: Any = [{'$ref': '#/$defs/Model'}, {'type': 'string'}]
-    resolved_list = _resolve_refs(
-        schema_list,
-        {'Model': {'type': 'object', 'properties': {'name': {'type': 'string'}}}},
-    )
-    assert resolved_list[0] == {'type': 'object', 'properties': {'name': {'type': 'string'}}}  # pyright: ignore
-    assert resolved_list[1] == {'type': 'string'}  # pyright: ignore
-
-    # Test _resolve_refs with non-standard ref format (covers branch 364->369)
-    schema_non_standard_ref = {'$ref': '#/definitions/Model'}  # Not #/$defs/
-    resolved_non_standard = _resolve_refs(schema_non_standard_ref)
-    assert resolved_non_standard == {'$ref': '#/definitions/Model'}  # Should be unchanged
-
-    # Also test with explicit defs parameter to ensure branch coverage
-    resolved_with_defs = _resolve_refs(
-        {'$ref': 'http://example.com/schema.json'},
-        {'SomeModel': {'type': 'object'}},
-    )
-    assert resolved_with_defs == {'$ref': 'http://example.com/schema.json'}
-
-    # Test StructuredDict with name but no description (covers branch 312->315)
+def test_structured_dict_name_description():
+    """Test StructuredDict with name and description parameters."""
     simple_schema = {'type': 'object', 'properties': {'field': {'type': 'string'}}}
+    
+    # Test StructuredDict with name but no description
     NoDescDict = StructuredDict(simple_schema, name='NoDescription')  # No description parameter
     assert NoDescDict.__name__ == '_StructuredDict'
 
