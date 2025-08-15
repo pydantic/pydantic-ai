@@ -8,14 +8,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
-from anthropic.types.beta import (
-    BetaCitationsDelta,
-    BetaCodeExecutionToolResultBlock,
-    BetaCodeExecutionToolResultBlockParam,
-    BetaInputJSONDelta,
-    BetaServerToolUseBlockParam,
-    BetaWebSearchToolResultBlockParam,
-)
 from typing_extensions import assert_never
 
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
@@ -47,24 +39,21 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
+        BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
+        BetaCodeExecutionToolResultBlock,
+        BetaCodeExecutionToolResultBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaImageBlockParam,
+        BetaInputJSONDelta,
         BetaMessage,
         BetaMessageParam,
         BetaMetadataParam,
@@ -78,6 +67,7 @@ try:
         BetaRawMessageStreamEvent,
         BetaRedactedThinkingBlock,
         BetaServerToolUseBlock,
+        BetaServerToolUseBlockParam,
         BetaSignatureDelta,
         BetaTextBlock,
         BetaTextBlockParam,
@@ -94,6 +84,7 @@ try:
         BetaToolUseBlockParam,
         BetaWebSearchTool20250305Param,
         BetaWebSearchToolResultBlock,
+        BetaWebSearchToolResultBlockParam,
     )
     from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
     from anthropic.types.model_param import ModelParam
@@ -246,7 +237,9 @@ class AnthropicModel(Model):
     ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
-        tools += self._get_builtin_tools(model_request_parameters)
+        builtin_tools, tool_headers = self._get_builtin_tools(model_request_parameters)
+        tools += builtin_tools
+
         tool_choice: BetaToolChoiceParam | None
 
         if not tools:
@@ -264,8 +257,10 @@ class AnthropicModel(Model):
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
+            for k, v in tool_headers.items():
+                extra_headers.setdefault(k, v)
             extra_headers.setdefault('User-Agent', get_user_agent())
-            extra_headers.setdefault('anthropic-beta', 'code-execution-2025-05-22')
+
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or NOT_GIVEN,
@@ -352,8 +347,11 @@ class AnthropicModel(Model):
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
-    def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolUnionParam]:
+    def _get_builtin_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[BetaToolUnionParam], dict[str, str]]:
         tools: list[BetaToolUnionParam] = []
+        extra_headers: dict[str, str] = {}
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
@@ -361,18 +359,20 @@ class AnthropicModel(Model):
                     BetaWebSearchTool20250305Param(
                         name='web_search',
                         type='web_search_20250305',
+                        max_uses=tool.max_uses,
                         allowed_domains=tool.allowed_domains,
                         blocked_domains=tool.blocked_domains,
                         user_location=user_location,
                     )
                 )
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                extra_headers['anthropic-beta'] = 'code-execution-2025-05-22'
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
                 )
-        return tools
+        return tools, extra_headers
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""

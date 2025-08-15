@@ -59,6 +59,11 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_function_tool_call_param import (
+        ChatCompletionMessageFunctionToolCallParam,
+    )
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
@@ -172,6 +177,14 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
         middle of the conversation.
     """
 
+    openai_text_verbosity: Literal['low', 'medium', 'high']
+    """Constrains the verbosity of the model's text response.
+
+    Lower values will result in more concise responses, while higher values will
+    result in more verbose responses. Currently supported values are `low`,
+    `medium`, and `high`.
+    """
+
 
 @dataclass(init=False)
 class OpenAIModel(Model):
@@ -204,6 +217,7 @@ class OpenAIModel(Model):
             'together',
             'heroku',
             'github',
+            'ollama',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -416,7 +430,14 @@ class OpenAIModel(Model):
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                if isinstance(c, ChatCompletionMessageFunctionToolCall):
+                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
+                    # NOTE: Custom tool calls are not supported.
+                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
+                    raise RuntimeError('Custom tool calls are not supported')
+                else:
+                    assert_never(c)
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
@@ -476,7 +497,7 @@ class OpenAIModel(Model):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
-                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
@@ -507,8 +528,8 @@ class OpenAIModel(Model):
         return openai_messages
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-        return chat.ChatCompletionMessageToolCallParam(
+    def _map_tool_call(t: ToolCallPart) -> ChatCompletionMessageFunctionToolCallParam:
+        return ChatCompletionMessageFunctionToolCallParam(
             id=_guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
@@ -807,6 +828,10 @@ class OpenAIResponsesModel(Model):
             openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
             instructions = NOT_GIVEN
 
+        if verbosity := model_settings.get('openai_text_verbosity'):
+            text = text or {}
+            text['verbosity'] = verbosity
+
         sampling_settings = (
             model_settings
             if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
@@ -1083,11 +1108,12 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content:
+            if content is not None:
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event

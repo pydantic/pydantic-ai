@@ -1150,9 +1150,15 @@ Also\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all together.\n')),
             PartStartEvent(
                 index=1,
-                part=TextPart(content='Crossing the'),
+                part=TextPart(
+                    content="""\
+
+
+"""
+                ),
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Crossing the')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street safely involves')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' careful')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' observation')),

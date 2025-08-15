@@ -3,7 +3,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -46,7 +46,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import StructuredDict, ToolOutput
+from pydantic_ai.output import DeferredToolCalls, StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import Usage
 from pydantic_ai.tools import ToolDefinition
@@ -1976,7 +1976,7 @@ def test_run_with_history_new_structured():
     assert result2.new_messages_json().startswith(b'[{"parts":[{"content":"Hello again",')
 
 
-def test_run_with_history_and_no_user_prompt():
+def test_run_with_history_ending_on_model_request_and_no_user_prompt():
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Original instructions'),
     ]
@@ -2000,6 +2000,111 @@ def test_run_with_history_and_no_user_prompt():
                 parts=[TextPart(content='success (no tool calls)')],
                 usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
                 model_name='test',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
+    """Test that an agent run with message_history ending on ModelResponse starts with CallToolsNode."""
+
+    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Final response')])
+
+    agent = Agent(FunctionModel(simple_response))
+
+    @agent.tool_plain
+    def test_tool() -> str:
+        return 'Test response'
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')]),
+    ]
+
+    result = agent.run_sync(message_history=message_history)
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='test_tool',
+                        content='Test response',
+                        tool_call_id='call_123',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Final response')],
+                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
+                model_name='function:simple_response:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prompt():
+    """Test that an agent run raises error when message_history ends on ModelResponse with tool calls and there's a new prompt."""
+
+    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(simple_response))
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')]),
+    ]
+
+    with pytest.raises(
+        UserError,
+        match='Cannot provide a new user prompt when the message history ends with a model response containing unprocessed tool calls',
+    ):
+        agent.run_sync(user_prompt='New question', message_history=message_history)
+
+
+def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_prompt():
+    """Test that an agent run raises error when message_history ends on ModelResponse without tool calls or a new prompt."""
+
+    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(simple_response))
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart('world')]),
+    ]
+
+    result = agent.run_sync(message_history=message_history)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
                 timestamp=IsDatetime(),
             ),
         ]
@@ -3768,11 +3873,7 @@ def test_toolset_factory():
     assert run_result._state.run_step == 3  # pyright: ignore[reportPrivateUsage]
     assert len(available_tools) == 3
     assert toolset_creation_counts == snapshot(
-        {
-            'via_toolsets_arg': 4,
-            'via_toolset_decorator': 4,
-            'via_toolset_decorator_for_entire_run': 1,
-        }
+        defaultdict(int, {'via_toolsets_arg': 3, 'via_toolset_decorator': 3, 'via_toolset_decorator_for_entire_run': 1})
     )
 
 
@@ -4091,3 +4192,212 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+async def test_thinking_only_response_retry():
+    """Test that thinking-only responses trigger a retry mechanism."""
+    from pydantic_ai.messages import ThinkingPart
+    from pydantic_ai.models.function import FunctionModel
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: return thinking-only response
+            return ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                model_name='thinking-test-model',
+            )
+        else:
+            # Second call: return proper response
+            return ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                model_name='thinking-test-model',
+            )
+
+    model = FunctionModel(model_function)
+    agent = Agent(model, system_prompt='You are a helpful assistant.')
+
+    result = await agent.run('Hello')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=6, total_tokens=63),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Responses without text or tool calls are not permitted.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                usage=Usage(requests=1, request_tokens=75, response_tokens=8, total_tokens=83),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_hitl_tool_approval():
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('OK')])
+
+    model = FunctionModel(model_function)
+
+    @dataclass
+    class ApprovableToolsDeps:
+        tool_call_results: dict[str, Union[bool, str]] = field(default_factory=dict)
+
+    agent = Agent(model, output_type=[str, DeferredToolCalls], deps_type=ApprovableToolsDeps)
+
+    async def defer_unless_approved(
+        ctx: RunContext[ApprovableToolsDeps], tool_def: ToolDefinition
+    ) -> Union[ToolDefinition, None]:
+        # When restarting a run with message history ending on `ModelResponse`, run_step will be 0
+        return tool_def if ctx.run_step == 0 else replace(tool_def, kind='deferred')
+
+    @agent.tool(prepare=defer_unless_approved)
+    def delete_file(ctx: RunContext[ApprovableToolsDeps], path: str) -> str:
+        assert ctx.tool_call_id is not None
+        assert ctx.tool_call_id in ctx.deps.tool_call_results
+        response = ctx.deps.tool_call_results[ctx.tool_call_id]
+        if response is not True:
+            raise ModelRetry(f'File {path!r} was not deleted: {response}')
+
+        return f'File {path!r} deleted'
+
+    result = await agent.run('Delete files ok_to_delete.py and never_delete.py', deps=ApprovableToolsDeps())
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete files ok_to_delete.py and never_delete.py',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=12, total_tokens=69),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolCalls(
+            tool_calls=[
+                ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
+                ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
+            ],
+            tool_defs={
+                'delete_file': ToolDefinition(
+                    name='delete_file',
+                    parameters_json_schema={
+                        'additionalProperties': False,
+                        'properties': {'path': {'type': 'string'}},
+                        'required': ['path'],
+                        'type': 'object',
+                    },
+                    kind='deferred',
+                )
+            },
+        )
+    )
+
+    results = {'ok_to_delete': True, 'never_delete': 'Please stop!'}
+
+    result = await agent.run(message_history=messages, deps=ApprovableToolsDeps(tool_call_results=results))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete files ok_to_delete.py and never_delete.py',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ],
+                usage=Usage(requests=1, request_tokens=57, response_tokens=12, total_tokens=69),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content="File 'ok_to_delete.py' deleted",
+                        tool_call_id='ok_to_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content="File 'never_delete.py' was not deleted: Please stop!",
+                        tool_name='delete_file',
+                        tool_call_id='never_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='OK')],
+                usage=Usage(requests=1, request_tokens=76, response_tokens=13, total_tokens=89),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('OK')

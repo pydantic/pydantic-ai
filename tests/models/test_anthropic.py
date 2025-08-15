@@ -515,7 +515,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
     assert first_response.parts == snapshot(
         [
             TextPart(
-                content="I'll help you find out who is the youngest by retrieving information about each family member.",
+                content="I'll help you find out who is the youngest by retrieving information about each family member. I'll retrieve their entity information to compare their ages.",
                 part_kind='text',
             ),
             ToolCallPart(
@@ -712,7 +712,7 @@ async def test_image_url_input(allow_model_requests: None, anthropic_api_key: st
         ]
     )
     assert result.output == snapshot(
-        "This is a potato. It's a yellow/golden-colored potato with a characteristic oblong, slightly irregular shape and a skin covered in small eyes or indentations. Potatoes are a starchy root vegetable that belongs to the nightshade family and are a staple food in many cuisines around the world. This particular potato looks like it's in good condition, with a smooth, unblemished skin and a uniform yellow color."
+        "This is a potato. It's a yellow/golden-colored potato with a smooth, slightly bumpy skin typical of many potato varieties. The potato appears to be a whole, unpeeled tuber with a classic oblong or oval shape. Potatoes are starchy root vegetables that are widely consumed around the world and can be prepared in many ways, such as boiling, baking, frying, or mashing."
     )
 
 
@@ -741,7 +741,7 @@ async def test_image_url_input_invalid_mime_type(allow_model_requests: None, ant
         ]
     )
     assert result.output == snapshot(
-        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The owl is shown sitting on a branch surrounded by yellow-green foliage, with its distinctive mottled gray-brown feathers and prominent ear tufts (often called "horns"). It has striking yellow eyes that are looking directly at the camera, giving it an intense and alert appearance. Great Horned Owls are known for their excellent camouflage, powerful talons, and nocturnal hunting habits. They are widespread across North and South America and are one of the most common and adaptable owl species.'
+        'This is a Great Horned Owl (Bubo virginianus), a large and powerful owl species native to the Americas. The image shows the owl perched on a log or branch, surrounded by soft yellow and green vegetation. The owl has distinctive ear tufts (the "horns"), large yellow eyes, and a mottled gray-brown plumage that provides excellent camouflage in woodland and grassland environments. Great Horned Owls are known for their impressive size, sharp talons, and nocturnal hunting habits. They are formidable predators that can hunt animals as large as skunks, rabbits, and even other birds of prey.'
     )
 
 
@@ -768,31 +768,31 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Let me get the image and check.'),
-                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01YJiJ82nETV7aRdJr9f6Np7'),
+                    TextPart(content='Let me get the image and check what fruit is shown.'),
+                    ToolCallPart(tool_name='get_image', args={}, tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc'),
                 ],
                 usage=Usage(
                     requests=1,
                     request_tokens=372,
-                    response_tokens=45,
-                    total_tokens=417,
+                    response_tokens=49,
+                    total_tokens=421,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 372,
-                        'output_tokens': 45,
+                        'output_tokens': 49,
                     },
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01CC59GmUmYXKCV26rHfr32m',
+                vendor_id='msg_01Kwjzggomz7bv9og51qGFuH',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='toolu_01YJiJ82nETV7aRdJr9f6Np7',
+                        tool_call_id='toolu_01WALUz3dC75yywrmL6dF3Bc',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -807,24 +807,24 @@ async def test_image_as_binary_content_tool_response(
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The fruit's thin, fuzzy brown skin is visible around the edges of the slice."
+                        content="The image shows a kiwi fruit that has been cut in half, displaying its characteristic bright green flesh with small black seeds arranged in a circular pattern around a white center core. The kiwi's flesh has the typical fuzzy brown skin visible around the edges. The image is a clean, well-lit close-up shot of the kiwi slice against a white background."
                     )
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=2021,
-                    response_tokens=57,
-                    total_tokens=2078,
+                    request_tokens=2025,
+                    response_tokens=81,
+                    total_tokens=2106,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 2021,
-                        'output_tokens': 57,
+                        'input_tokens': 2025,
+                        'output_tokens': 81,
                     },
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014MJqSsWD1pUC23Vvi57LoY',
+                vendor_id='msg_015btMBYLTuDnMP7zAeuHQGi',
             ),
         ]
     )
@@ -868,7 +868,7 @@ async def test_document_binary_content_input(
 
     result = await agent.run(['What is the main content on this document?', document_content])
     assert result.output == snapshot(
-        'The document shows only the text "Dummy PDF file" at the top of what appears to be a blank white page.'
+        'The document simply contains the text "Dummy PDF file" at the top of what appears to be an otherwise blank page.'
     )
 
 
@@ -880,7 +880,7 @@ async def test_document_url_input(allow_model_requests: None, anthropic_api_key:
 
     result = await agent.run(['What is the main content on this document?', document_url])
     assert result.output == snapshot(
-        'This document appears to be a sample PDF file that contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document starts with "Sample PDF" and includes the line "This is a simple PDF file. Fun fun fun." followed by several paragraphs of Lorem ipsum text. Lorem ipsum is dummy text that has no meaningful content - it\'s typically used to demonstrate the visual form of a document or typeface without the distraction of meaningful content.'
+        'This document appears to be a sample PDF file that mainly contains Lorem ipsum text, which is placeholder text commonly used in design and publishing. The document starts with "Sample PDF" as its title, followed by the line "This is a simple PDF file. Fun fun fun." The rest of the content consists of several paragraphs of Lorem ipsum text, which is Latin-looking but essentially meaningless text used to demonstrate the visual form of a document without the distraction of meaningful content.'
     )
 
 
@@ -892,23 +892,13 @@ async def test_text_document_url_input(allow_model_requests: None, anthropic_api
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot("""\
-This document is primarily about the use of placeholder names, specifically focusing on "John Doe" and its variants. The content explains how these placeholder names are used in legal contexts and other situations when a person's identity is unknown or needs to be withheld. The text describes:
+This document is a TXT test file that contains example content about the use of placeholder names like "John Doe," "Jane Doe," and their variants in legal and cultural contexts. The main content is divided into three main paragraphs explaining:
 
-1. Various placeholder names like:
-- "John Doe" (for males)
-- "Jane Doe" or "Jane Roe" (for females)
-- "Jonnie Doe" and "Janie Doe" (for children)
-- "Baby Doe" (for unidentified children)
+1. The use of "Doe" names as placeholders for unknown parties in legal actions
+2. The use of "John Doe" as a reference to a typical male in various contexts
+3. The use of variations like "Baby Doe" and numbered "John Doe"s in specific cases
 
-2. The usage of these names in:
-- Legal actions and cases
-- Hospital settings for unidentified patients
-- Forms and examples
-- Popular culture
-
-3. Regional variations, noting that while this practice is common in the United States and Canada, other English-speaking countries like the UK use alternatives such as "Joe Bloggs" or "John Smith."
-
-The document appears to be a test file with example content sourced from Wikipedia, including licensing information and attribution details at the end.\
+The document also includes metadata about the file itself, including its purpose, type, and version, as well as attribution information indicating that the example content is from Wikipedia and is licensed under Attribution-ShareAlike 4.0.\
 """)
 
 
@@ -957,7 +947,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01BznVNBje2zyfpCfNQCD5en',
+                vendor_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
             ),
         ]
     )
@@ -975,26 +965,38 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content="This is a basic question about pedestrian safety when crossing a street. I'll provide a clear, step-by-step explanation of how to safely cross a street. This is important safety information that applies to most places, though specific rules might vary slightly by country.",
-                        signature='ErUBCkYIBBgCIkDdtS5sPfAhQSct3TDKHzeqm87m7bk/P0ecMKVxqofk9q15fEDVWXxuIzQIYZCLUfcJzFi4/IYnpQYrgP34x4pnEgzeA7mWRCy/f1bK+IYaDH5i0Q5hgZkqPeMdwSIwMzHMBPM4Xae4czWnzjHGLR9Xg7DN+sb+MXKFgdXY4bcaOKzhImS05aqIjqBs4CHyKh1dTzSnHd76MAHgM1qjBQ2eIZJJ7s5WGkRkbvWzTxgC',
+                        content="""\
+This is a straightforward question about a common everyday task - crossing the street safely. I should provide clear, helpful instructions that emphasize safety.
+
+The basic steps for crossing a street safely include:
+1. Find a designated crossing area if possible (crosswalk, pedestrian crossing)
+2. Look both ways before crossing
+3. Make eye contact with drivers if possible
+4. Follow traffic signals if present
+5. Cross quickly but don't run
+6. Continue to be aware of traffic while crossing
+
+I'll provide this information in a clear, helpful way, emphasizing safety without being condescending.\
+""",
+                        signature='ErUBCkYIBhgCIkB9AyHADyBknnHL4dh+Yj3rg3javltU/bz1MLHKCQTEVZwvjis+DKTOFSYqZU0F2xasSofECVAmYmgtRf87AL52EgyXRs8lh+1HtZ0V+wAaDBo0eAabII+t1pdHzyIweFpD2l4j1eeUwN8UQOW+bxcN3mwu144OdOoUxmEKeOcU97wv+VF2pCsm07qcvucSKh1P/rZzWuYm7vxdnD4EVFHdBeewghoO0Ngc1MTNsxgC',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=Usage(
                     requests=1,
                     request_tokens=42,
-                    response_tokens=302,
-                    total_tokens=344,
+                    response_tokens=363,
+                    total_tokens=405,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 42,
-                        'output_tokens': 302,
+                        'output_tokens': 363,
                     },
                 ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01FWiSVNCRHvHUYU21BRandY',
+                vendor_id='msg_01BnZvs3naGorn93wjjCDwbd',
             ),
         ]
     )
@@ -1011,13 +1013,13 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 usage=Usage(
                     requests=1,
                     request_tokens=42,
-                    response_tokens=302,
-                    total_tokens=344,
+                    response_tokens=363,
+                    total_tokens=405,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 42,
-                        'output_tokens': 302,
+                        'output_tokens': 363,
                     },
                 ),
                 model_name='claude-3-7-sonnet-20250219',
@@ -1036,31 +1038,32 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
                 parts=[
                     ThinkingPart(
                         content="""\
-This is an interesting analogy question. The person is asking how to cross a river by comparing it to crossing a street. I should outline the key principles of river crossing that parallel street crossing safety, while adapting for the unique challenges of a river environment.
+The person is asking me to draw an analogy between crossing a street and crossing a river. I'll structure my response similarly to my street-crossing guidelines, but adapt it for river crossing, which has different safety considerations and methods.
 
-For crossing a river, I should consider:
-1. Finding the right spot (like shallow areas, bridges, or ferry crossings)
-2. Assessing the conditions (river speed, depth, width, obstacles)
-3. Choosing the appropriate method based on the river conditions
-4. Safety precautions specific to water crossings
+For crossing a river, I should include:
+1. Finding the right spot (bridges, shallow areas, ferry points)
+2. Assessing safety (current speed, depth, obstacles)
+3. Choosing the appropriate method (walking across shallow areas, using bridges, boats, etc.)
+4. Safety precautions (life vests, ropes, etc.)
 5. The actual crossing technique
+6. What to do in emergencies
 
-I'll structure this as a parallel to the street crossing guide, highlighting the similarities in approach while acknowledging the different hazards and considerations.\
+I'll keep the format similar to my street-crossing response for consistency.\
 """,
-                        signature='ErUBCkYIBBgCIkCNPEqIUXmAqiaqIqaHEmtiTi5sG6jBLYWmyfr9ELAh9dLAPPiq0Bnp2YQFJB2kz0aWYC8pJW9ylay8cJPFOGdIEgwcoJGGceEVCihog7MaDBZNwmI8LweQANgdvCIwvYrhAAqUDGHfQUYWuVB3ay4ySnmnROCDhtjOe6zTA2N2NC+BCePcZQBGQh/tnuoXKh37QqP3KRrKdVU5j1x4vAtUNtxQhbh4ip5qU5J12xgC',
+                        signature='ErUBCkYIBhgCIkDvSvKCs5ePyYmR6zFw5i+jF7KEmortSIleqDa4gfa3pbuBclQt0TPdacouhdXFHdVSqR4qOAAAOpN7RQEUz2o6Egy9MPee6H8U4SW/G2QaDP/9ysoEvk+yNyVYZSIw+/+5wuRyc3oajwV3w0EdL9CIAXXd5thQH7DwAe3HTFvoJuF4oZ4fU+Kh6LRqxnEaKh3SSRqAH4UH/sD86duzg0jox4J/NH4C9iILVesEERgC',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=303,
-                    response_tokens=486,
-                    total_tokens=789,
+                    request_tokens=291,
+                    response_tokens=471,
+                    total_tokens=762,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 303,
-                        'output_tokens': 486,
+                        'input_tokens': 291,
+                        'output_tokens': 471,
                     },
                 ),
                 model_name='claude-3-7-sonnet-20250219',
@@ -1096,6 +1099,91 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+.)
+2. Look\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='right-left in countries')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' where cars drive on the right;')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where')),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+
+3. Wait for\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ gap in traffic
+4\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ possible
+5. Cross at\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ a steady pace without running
+6. Continue\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ watching for traffic while crossing
+7\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta="""\
+ available
+
+I'll also mention\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' some additional safety tips and considerations for')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' different situations (busy streets, streets')
+            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC'
+                ),
+            ),
             PartStartEvent(index=1, part=IsInstance(TextPart)),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
@@ -1104,73 +1192,35 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
 
 
-1. **Fin\
+Follow these steps to cross a\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='d a designated crossing point** if')),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
- possible:
-   -\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Crosswalks')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
+ street safely:
 
-   - Pedestrian signals
-   -\
+1\
 """
                 ),
             ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Pedestrian bridges')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='. **Find a proper')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' crossing point** - Use a crosswalk,')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' pedestrian crossing, or intersection')),
             PartDeltaEvent(
                 index=1,
                 delta=TextPartDelta(
                     content_delta="""\
+ whenever possible.
 
-   - Inters\
+2.\
 """
                 ),
             ),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-ections
-
-2. **Before\
-"""
-                ),
-            ),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
- crossing:**
-   - Stop\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' at the curb or edge of the road')),
-            PartDeltaEvent(
-                index=1,
-                delta=TextPartDelta(
-                    content_delta="""\
-
-   - Look left,\
-"""
-                ),
-            ),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' right, then left again (')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='or right, left, right again')),
-            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' in countries with left')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' **Stop at the curb** -')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' Stand slightly back from the edge.')),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
@@ -1305,14 +1355,14 @@ async def test_anthropic_model_empty_message_on_history(allow_model_requests: No
         ],
     )
     assert result.output == snapshot("""\
-I can't physically give you a potato since I'm a computer program. However, I can:
+I can't physically give you a potato since I'm a digital assistant. However, I can:
 
 1. Help you find recipes that use potatoes
-2. Give you tips on how to select, store, or cook potatoes
-3. Share information about different potato varieties
-4. Provide guidance on growing potatoes
+2. Give you tips on how to select, store, or prepare potatoes
+3. Share information about different types of potatoes
+4. Suggest where you might buy potatoes locally
 
-What specifically would you like to know about potatoes?\
+What specific information about potatoes would be most helpful to you?\
 """)
 
 
@@ -1321,140 +1371,142 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
     agent = Agent(m, builtin_tools=[WebSearchTool()])
 
     result = await agent.run('What day is today?')
-    assert (
-        result.all_messages()
-        == snapshot(
-            [
-                ModelRequest(parts=[UserPromptPart(content='What day is today?', timestamp=IsDatetime())]),
-                ModelResponse(
-                    parts=[
-                        TextPart(content="Let me search for current events to help establish today's date."),
-                        BuiltinToolCallPart(
-                            tool_name='web_search',
-                            args={'query': 'current events news today May 26 2025'},
-                            tool_call_id='srvtoolu_01MqVvTi9LWTrMRuZ2KttD3M',
-                            provider_name='anthropic',
-                        ),
-                        BuiltinToolReturnPart(
-                            tool_name='web_search_tool_result',
-                            content=[
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='News: U.S. and World News Headlines : NPR',
-                                    type='web_search_result',
-                                    url='https://www.npr.org/sections/news/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='ErwHCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDK2W0Qu0wNgI6mf5EhoMNCqr1gVeM/Fj3PSYIjBrgyGKmTOrJLgDCXcOvRtrbigKDeccd5oypMBGnMVhm6h3Ade/9+vNOwI3ByflKmwqvwZqUUdfJ6+k9ZDrmb7VM6ktRqsZ4Z++yOdyubDNbsyM6RdwYuNi+bS5ZUON+rMd8+ZrQYlGYqq7NF43o5klxpac+Dsgx3OlKbu6Hq6eiKOQ3rdPGYlUYKdDouAx6RjypXjhYkqErPrjlFZhNv2lO6cohI0QU66p6b7G8UMVyweqYZ+2QYTFfbwU5VdIAOiQW8PBgNwPC5LRnidfbiT04VY+cEsNW04zOq9coXs4NgFRw2WDCZDBPGTEJex0xv7vD0/D0YpBhfiawNJ8FgBTI6q0gXQ2+YwqelVaZ+BDpu2JeRABLXiXQAMIiBBiayofacvfgJZ4omPY1JRiJwX5IpbLFqLcNz2fWr8veYedwrDZV/lOjyn755WTp2i89GD4Pv53htWrDOH8/YJBQ9u5KA2DFz7zAtRLyPqvPz3YaLMr3ATFvs8m0igrllgC5uaWPWfO/28RU7QNnxyBLGNonF3dtz3Uu2naeNvxjRhqCtUOON5odOahtPrRs5qkjv/UrL2YzlnfsRL4Qb/qsGJE6YWScvLhjBaum29Whk2p6RtYJqzzSqDbk0jxKe/hNatl3s2JF1bAW4L7p9FnsK1v/G7AYSaIYl4RDLGuL1bFOKGKVlUZtohNMws+gvTCYKdhQzfurimTsNIpBP4Ci6aJ+/yACa22AXGhZQqyiOS7yxI6zj3vZdQGFBle1TjDpzveY2Nz/kuuTCPbGsWt5kd9v7BkWvkNacqZ70KijyIk5dVt3H0q4eavyNLU0gF4hSCPDHW7eeWXTmNs1YniKiaHrwmOOqXjw2PCQrZv0i7UQRjDmRQqx9NtuqzMup9DRPbQuZM23b8JwzqA0Qjyxc5pTlWRL9aU+U7ZKOD1OdBszAU54c5N9jOca8S2Plt4TGJcAv2Wy73Bex74GPlkHcKWO8TJYhrV4ZF2nMjssncQEKCltJaZg6TJpazpLKoQ1XmYmgzebbVMRc8RTDXk335AYKkN62xRnfrDd5T5wBhGbPNQeF7PGigtAK/SpSpTna/vmGOBul/cONWOFFKNdY+FtCAGd4AOo3s/N8QUnKR66TEv9ocuVep1UZxV2fJcqIuJukutfT9eWPcou6VImLUzRQMYAw==',
-                                    page_age='4 days ago',
-                                    title='The Biggest News Stories Of 2025',
-                                    type='web_search_result',
-                                    url='https://92q.com/playlist/the-biggest-news-stories-of-2025/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='EuYCCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCmLeaYgzUtJ4Mi+fBoMpktwxWvlSdpeNRRlIjDckkEHzeMKWP+vkSJ+7ci91OlLvn1nTU4wG+0am9miZ+68Q8XjsyCBGekIPeSsgpkq6QFTAvqrNhd55GMbj8VQtB/7oV66lwp8PzaymgQlLzCnxBdZ6IRYyEd6XwFOPrWCwyjtlKbwRiM2NIaNsGcrraBVrDfsjCz20qsDPGNsQf587z/TD3zWUSelhjhf+T5nDCEXUkYM2+4MaGP5Ty57Khh3WQr5q6Q46m85jBBF+akWf1uKZEgjgFug1ufj/8TXEEAaKCVY9YeXTXfYH8DocKveCXH4Bp9TNbgx55UrL8NdXiwdtpI/zqY+8hM/SiaVeXXI/Rbmjg3HzFTLfrH4wSrl5awdKWuGwQy8nqRISZlwNVnwFY0e8uc08xgD',
-                                    title='ABC News – Breaking News, Latest News and Videos',
-                                    type='web_search_result',
-                                    url='https://abcnews.go.com/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='Breaking News, Latest News and Videos | CNN',
-                                    type='web_search_result',
-                                    url='https://www.cnn.com/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='ErQCCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDGPat3RtBffd6jd9uxoMkx9uAfM4hgJRbrR4IjCBVNWqux+TsqDP0poLm+ss84SLrVR4rAcjrQSDPna9ZfR0OFhPjv2ko1ZVuBzeRE4qtwGOPV6my0G/y4nPEH8gNVc3y/8uZzh7O8CBrduzchEMd5RRXLlsC+bU/SjZ+5LBYGzAVwRCfVXIdaJ0/d8RYdJWHo3bvKc5Lu/WFPV6Po9gVHLOU5WVDsyzwmrvqzCYC0UhkUMa0yf5j7WTFaT+kgHZcFcbvYPG53USqNh0seahaaCC5fJRjRBTAvuyj4md+ppTjIXGZEp3rTMG3MTkv8t60MgPzn4ObLGEmBQIQrfES9G2BT1k7lUYAw==',  # codespell:ignore
-                                    title='Philippines Top Stories: Politics, Environment, Education, Trending | Inquirer.net',
-                                    type='web_search_result',
-                                    url='https://newsinfo.inquirer.net',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='Portal:Current events/May 2025 - Wikipedia',
-                                    type='web_search_result',
-                                    url='https://en.wikipedia.org/wiki/Portal:Current_events/May_2025',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    title='Portal:Current events - Wikipedia',
-                                    type='web_search_result',
-                                    url='https://en.wikipedia.org/wiki/Portal:Current_events',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='EsoJCioIAxgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDAYjLeq1Kci5o2pi8BoMqJacE/46sh+pR01VIjDPMDUx0d3wj2zbUnowpxFwHvCCnCwLoPMxQsQm/dnvm0Fzfga5o6zXqDwWpXvUzhEqzQg/X9w2opL/m5o7bUw/TubgkYaR6l4t2n0oQlGgetbSj1gOEor/WWJ8bWXL3BZnS2xkIzwGrbLdlPDn/NoXICDQZ+P3IlA6B8CVwiijOnNq+x5nTpX0m794VFJIfO5SdupAiWqhWmtqt8XhcWs8W2gnhDDvNsBG6oH2ZsRenxt3n7a7eWo7yRk/KSHdBM9c+L5r3wu3Ul81DW9CuE6KqUdFjjePJfWKL8OvzfkvJjIqcRaqc/3RIRZbSPbimBiRMXtCBZeCYE1yeBs3xLQ7TJXgRM/9ScKromcFWckYpGXBYSGL8SiXXoBUD7pLsuP5FnRnZUkQLCHTLoId0/w4jVbuXmDh3oipIlGUQCSbp3FkogFB/CZFpKz4tY5E9WQ4pBkApGYgAeGgOOStiUW3pE9oCy5TRpCfilrg66RtJozGI+LWM/XYuuOwSK+f+/c6AaUJ7av+LCUSPFI6G1XErfHK/KeBSJp7ZVoRXn/f7yJXlZvybKQXdN6UtxqxRJbil9RnmmXsBc6cesWW/cHbz01V8tkaqcYdrtJdVM/LesICK77C/JYiA6PQsneeg5xdZDCUp7yUO9P/CHMBqhPB8geS9y4dG7UIdJrFbv43cGOiqoSBsBGCLCc7crptYYGydT6YBgKb+ktUJm14MfbF8lzKt6SVYpn8KWL2dyhsDbfi88h51fvZqDV6loTDpyHbMHeJoA4pIxLhkBIriQOLNnEIEwqTGy2XFy326bahzINKJVTY1mMq2v3O0Snl0DNcAZ1X/iHt393xPgdcSy6c2+sDRexvpU4grX1GGFD4E8kg1QP0fErasq17XzRVpnU7Kedk/ntU/X6zeI3aTEeyRNG7IPH67w6GyIF8XmgCh25H6bCBGN87N8hnPSVAy8/qIMcfZYaF1c8W/QB9n7HBWhQgdyZv3relj0Ur0xdRi2osqo+k2c0a9mmIVupbzpLAxfY7LiwU8Edsr+1WY62x1omk+b4XNiGnhHnrF4B2o+f89icgAVSqRo2ydqIUDnZUYewu8jjUg/j+WUI8yKqZHCgCRdkm4fDSOcK8faTeaITl1iI6XFbUicEWZzG87tFykNSv5fz+ueDbMj936cm97rPUhp/qMnS2uloAxmiWLcS2/oV605i97ccR9IlwB0tt259e9iCvltjxzcC6P95vbhLS94+xVNOG2fmQtzE8oyaREZBkwSjVHuJ3lDAxvHDRYY8F+lkuLE4AvLiye3CDAMXNyCrG+/xiQIBNUGs+1aV9edHMmwpCVs99Q+nHO1RBVPljY607Q6u06Wt4VHnY+45+IxzpHHWXxg3Jn8Lh1AuzFKEaRWaI7JDSCgJmYxjIwkUO7988PWjOmFLquOd6mQsQ6iVG/89zSwr019RlAQRDIbMimefHIYhLm4S/Y8TzPhLFXJ6FaxrPFAkkkp2LnLQUoNKlo2h64JaAerGAku2FEwn/vo3hsCXwILg6R4QYAw==',
-                                    title='Current Affairs Today – Current Affairs – 2025-26 - GKToday',
-                                    type='web_search_result',
-                                    url='https://www.gktoday.in/current-affairs/',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    page_age='3 weeks ago',
-                                    title='May 6, 2025: Top news events to look out for today - People Daily',
-                                    type='web_search_result',
-                                    url='https://peopledaily.digital/news/may-6-2025-top-news-events-to-look-out-for-today',
-                                ),
-                                BetaWebSearchResultBlock(
-                                    encrypted_content='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',
-                                    page_age='7 hours ago',
-                                    title='26 May 2025 UPSC Current Affairs - Daily News Headlines',
-                                    type='web_search_result',
-                                    url='https://testbook.com/ias-preparation/upsc-current-affairs-for-26-may-2025',
-                                ),
-                            ],
-                            tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
-                            provider_name='anthropic',
-                        ),
-                        TextPart(
-                            content="""\
-
-
-Based on the search results, today is Monday, May 26, 2025. This is confirmed by several sources:
-
-1. \
-"""
-                        ),
-                        TextPart(content="It's Memorial Day today, May 26, 2025"),
-                        TextPart(
-                            content="""\
-
-
-2. \
-"""
-                        ),
-                        TextPart(
-                            content='May 2025 is the fifth month of the current common year. The month began on a Thursday and will end on a Saturday after 31 days'
-                        ),
-                        TextPart(
-                            content="""\
-
-
-3. \
-"""
-                        ),
-                        TextPart(
-                            content="On May 26, 2025, there are significant developments happening, including India's launch of the Bharat Forecasting System to boost weather prediction and disaster preparedness"
-                        ),
-                    ],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=16312,
-                        response_tokens=258,
-                        total_tokens=16570,
-                        details={
-                            'cache_creation_input_tokens': 0,
-                            'cache_read_input_tokens': 0,
-                            'input_tokens': 16312,
-                            'output_tokens': 258,
-                        },
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='What day is today?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(content="Let me search for current events to help establish today's date."),
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args={'query': 'current events today August 14 2025'},
+                        tool_call_id='srvtoolu_016Z2mQT8AFaH17TpZnmuj2Z',
+                        provider_name='anthropic',
                     ),
-                    model_name='claude-3-5-sonnet-20241022',
-                    timestamp=IsDatetime(),
-                    vendor_id=IsStr(),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search_tool_result',
+                        content=[
+                            BetaWebSearchResultBlock(
+                                encrypted_content='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',
+                                title='Portal:Current events/August 2025 - Wikipedia',
+                                type='web_search_result',
+                                url='https://en.wikipedia.org/wiki/Portal:Current_events/August_2025',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='Eu8CCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDI9+btUbgH5OLcLdUxoMG1wsVr7IuhSKMy3qIjBHk3pUXhm2b3ewsnrLIz6lTnViIULTjxK9hDivEVsoRww/fuVDQRZ8PbKaUO+dpk4q8gFrBL8hUB97ESFLZ4zGMOzedNRyEAAy3REe5WBSt2XXPIbvxMdlhxwDmnECJAlT/2tXFxrbSYFsrarrXfd6qGqb5ftE58fwKaISFh5dDwbZRT898FWEpWEjBhU+bXPy80gJOKZnQDva8eV0VYlFJnF+76Q5aIqcop0kHRzKD/KEj1LZj+k1WBrvKxNZU7RFdsr0mGx5apGPoczvdED5aQxkTIku+pea87u+coJg5kIsz0AM76P0sssYIcH8GmnlgMih5juw/P+g3GOYRiT67R9TfgPBff/6fpU8GlWZGn3Ap3nmUvrYp8LKUfOwR6sNyeuYxxgD',
+                                title='August 14, 2025 Calendar with Holidays & Count Down - USA',
+                                type='web_search_result',
+                                url='https://www.wincalendar.com/Calendar/Date/August-14-2025',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='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',
+                                title='Portal:Current events - Wikipedia',
+                                type='web_search_result',
+                                url='https://en.wikipedia.org/wiki/Portal:Current_events',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='EpsCCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDM3/Olb0Z6OTNOAHHBoM8w2gzZQzodDjHZ5dIjDVb68LcKw9pkL8J9qZM/RCJ8Nwr9ntCnKALzYkJxFopMFT6Q0hKH9pK9Gw8K32o1gqngGFvSjOvyyznbW3kaNNQRMXXZtfg6l+GDJ8Vj+EbuSJkV+OCjRNUJCYTOeO0zlrDaspULGTCf5Y7Ifw1wCvpjwLE7I8oI+YJA9ZGhfHXxyDiP1jtu7Lm6TGT80vefH3yiNbYnuJnpogbkzYgAxHZtDWpq4kcGk7cci2gtBkBu4JskwW4XUio4gS1kJ4TGXLny6dTA72L+oe/EYBnyXiNRgD',
+                                title='Portal:Current events/2025 August 14 - Wikipedia',
+                                type='web_search_result',
+                                url='https://en.wikipedia.org/wiki/Portal:Current_events/2025_August_14',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='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',
+                                title='International News | Latest World News, Videos & Photos -ABC News - ABC News',
+                                type='web_search_result',
+                                url='https://abcnews.go.com/International',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='EqkHCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDJhXQuVJyASY4nS14xoMPV7fmqhPOQvs53T2IjClShZH0ZjtMv3tcGa1ND/qwawzQZ3TWJQPdnRRlyky0zsjOz1hwoB4i/cw9vKMiuMqrAacvSreqm8Soq4R8zc3RlH+q99DrUCa6rb1U0zbH3YpGfeR+kZLIi55f45Xz0GGddBH4MiYjm2SvqBPXSHW51j0EsaqXXZ+fecTRZ6rF+HGwQl/sQbHSiL+uLqaEoraQMtQo3VxwM0CLFV7lbo3ntovUo//6oD1y5qCuJ0SyUWnkhgC9ERygHyTTnftbNO843fPiZ+ghIfxE7LhRbbKZXgRdsCXbjMvI6Y1lEhCAY6m8HLXEgHl/lLa7cFAEUsEhbBSf5e6zE3rDsY9XCdCf4yYZ0m5tWtkqfWA7z1tuUFE0WQDwEYJzhvpU9Kx7lBKC+T3gO5wddxy19g0NX0DV4D7uHl50G7J4eBdheUzXdlNo5PJkj5aWqZ5G1LpQMaJz6bTEVmp07TlA3c0/M2AY4AvRDiAARRI12+GRwKWBvkCkx4OchItfrZMx+APuv/ePFfrco4j0uddTdKSJZThRqLFP/nBbSsYUm3vewX1D+4BtJw5d/sUppt+CQGUtWcU+nKcFReHMIIFFzm6SjV3Q8LEjtx2BRYY2f53XXgtuV4CgqoI9MA+H9Gp3z9NNpQt4FuWfCFphOG+SzOIusldoE5rp6xuzedQpgR5AW4pV9sM5GgPLYlRogi6emLSaUOTx08gqCyuOOMJHu0KvSWBG5gi7t484ei9dLROA6R4Kbzj1WuiISYFBIMH65nEtnPWy51hXAAaOBuLQsT7gvYOTDN3bHCZ+O8p0FroaOz8q7D1fLWH/+yTHURa6PPfXV5POHUWjVDFdDRtdKBYMloBQ53azLx73Q9VH7ZGxE+g9336BCFXfl/nonNHbFNNo88mXy1+LVpRpsACQ5Txn17xGclRvfNHRK/7/7/hittleD7lbw8rBgUZaKWBCGq19QO2ovPr49IeW7xgCPXm6AgLDxcznI29dT2fzpsNbaufWrfIuNp/fZqjhieSGV24Iaq1xGqsNXOKnL0I86lpuMF8f+CO8zys1sm78S5PRgjnxj4jH/8eYOG/MwHR6zEYPQI5SYBpTqijc6sWznEe2ZsfZ0tyt1s03QzNiysRpWQx+wFxeQpg2CounVxImhgUMBgD',
+                                title='ABC News – Breaking News, Latest News and Videos',
+                                type='web_search_result',
+                                url='https://abcnews.go.com/',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='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',
+                                page_age='2 weeks ago',
+                                title='40+ of the best NYC events in August 2025, including US Open, music fests and free shows',
+                                type='web_search_result',
+                                url='https://www.timeout.com/newyork/events-calendar/august-events-calendar',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='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',
+                                title='Holidays for August 14th, 2025 | Checkiday.com',
+                                type='web_search_result',
+                                url='https://www.checkiday.com/8/14/2025',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='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',
+                                page_age='5 hours ago',
+                                title='Current Affairs 14 August 2025',
+                                type='web_search_result',
+                                url='https://ssbcrackexams.com/current-affairs-14-august-2025/',
+                            ),
+                            BetaWebSearchResultBlock(
+                                encrypted_content='EokeCioIBhgCIiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDO37v+xwo15eRJ596RoMwQUF0ejh3d2sKSrXIjCqbFiPWGWak/NX4eAIGqGIMUCNKffRFhCrD7Kpy/xaK35Pz3QIz6NJcoX+mO1wROYqjB0LOCT/AOR+L0qnUjuij76F19fWNnZ0a0ki7FV7fzbcAnkvilkgBuAAw1jN8JqOtcKTli01Q2IO4TRZHubTtX7CifQH//CNE+RZtMkvhxnTuT1eZQXHpsyOFI1w7qiI92kk7L/Hu8aNI/BSAm0jy5FyfbiyBW/jOMMRd2OEanN7qRRvSorapONaE6YZY7BKCVdBFROiJtEjzxqpA9LPUzhHcAs+95T0zXjC+OpIoQOMQBsXm4FvE4H7hmkJQl2utH5HbCIPeDPYR7OhTd8xvgUhIenwnE25TD9O+F+AXyzSber/gDiK2zAdG/SnVKiFHB3IEoIDmPdFBSMA4NEC7HAjNAdKRfnEe7NVFvQC+SgHPY44XRiid6RLzGpzo22hgYHdd17p3kkw+z3yRCmlCGm1VR3YM1iLKYEZ0TuwPUT5KLd5myQYexCrVQY08lzEnojTBSJNliOFk7o0CxYUd9ScYb7nJXR9eCSTmHy+enI/qrL4zPCrBwBGycdZ6oZVeGf4G0zhHlexfPgxyAMUaN/8BCCzUvH0TT0nSrfhKtuQwN5LxyzWCmhidFruCPL6VUDrLn6AISfNqJ5V/NERMyEy7/eOvOyjjNN/adj80lT850qx6c5ukf4LOAZXcO+lHlfYBcDzrDPjrqZ0lGOL3ltqVG4N5+2s8W+cAaZ0efogerd4Yvq7weoPPM9TcK/X5unBbA42sm4435IJtFM48aUzGBYIZUOwEGNoRvyShbvCARwu3DL0PWDMCuQaF9UkfU3qzoVe7Bbz1lIrr8xl1MSIOOmpx7pHsGhcm6XUYzLn/qcRFkVfiauD7kJbEoh0vtxog05k6KXQ23n1uQeVyuV7YGwGDN4ccSsPBY1x6jBH9rJkqL4ZgFwNf6lXec+med9B+ZuIU2UWlx+PWf90/aiRRrHqLMNCBJO/pNLGeT0TrGjoPmlyx4iVMQNTKnK/cNPwY/DIBwlwvZUXFunZu85vnfueOqnbUEKFW6v8PiYn1SUISyFlK/KkG6CxhbuFUKoQvVyHMfgrjBRLkROA9EJR80kJfhwPepE/cuxAtQSLE3LMghYBcrTbYOIrNnSmKdEx7Rr8b4ICmPJ3ObpDptgq7UdhqwHIpfTEF84rsF0Om4ISs7IbWPe7xSbrwSOwTZCfpjKAxcl8WH8UFjqiNHHBQG9O3/+cSocwQX0NrfwUzz9LEPfjTbSdA3iINKl+H7Zgr8oxva9tmM/Ipx/UiwopQkHSMA5YiyV3qE1aKf16ATEt/b5JhLO0oYHBO0pIjqhaL+HksakV1+ZYVqAuTTH2n4m3YrSmZFXpKSy5Ov1Ra/h3EsR63PhbHr3arc9Zdp/PWIH3yHscUa06n63wIArQ+uCJmDjSQuO9rcZ7Ox1Wa+uCkB/UW0Ofy9Q9Zpd6OiyyX98rH+ssu3pBraZwM+aX7y7Tu4EBFNOU84bOmUNpWum2Fp5hSIcr3hb/1z9EkwtaPBCmdeYSsiucRzLghoyFAWvn3b2sws57iVgHvhYVn5/aySi+v79REPAqeJffkYkZpCV/kM4XmjseUTZdSF/8Q7T/JFtZpWLaYyOC22UDm7zhkklBmETVYwDg9UhH5aMd508hilUlnjiOk1gG2kVyjxisuaNgKP6lEOBDMUJPe9wE6hZ/XsWC5zqy1OruqRylTTB/TxroSWBb9Gm9d+SeBa6Ry9TcM6zruiELn+niHB3FEeDSm1cs+U4b8uqUWdElJTRsCFUn9jzVLHLs9q7/VA1o7W8a71dbR0/WwtozgCK9bGpszr5dSrgM1dATMzwnw3ES2DSPZSl6ZMOSnmGeBh44P4tszMo1pVShpm8idO15mdiutpP0LdqwGZ/9pEkglKDUFy7aZ8GVw4ut7NiwEIQ2HknMTvqpXo5uDAJMcd6mLvxwqfwNVcvY2j3d9AZxU/l3gMQeKtz1HfqBmGXPL5RJHrzRpkxpi9EdcWWjFkgR5XTd6Y9TbawZnxjTZl5Wbt0bWbPwnSb0laaj5BGAUlsvJCp7R2mtvImfSG+9m87W3t5n7xcnE+eEwEjJILDCqhtnGZynDhUVV8enU3XFFa2lgAqorxZ8CwZXwkdopq5VMGbq4KNsYG46I3YySpW9HCNw2jiIANrYVVfFsTMfVofSnEV4nzkcePAhjmNeHIgMJv1MPzEuvAVrgBNczWnU1CUBU8E2ueh3TPNK7mNFbXhd0gdfDWOWwIbViwNZJn3X7nBijrLiNMxWIEve/si3zjCU+88oPkbljQgmivuFSqdtvP+0kZZurJYqPk/9DqgKsEHBWML2e1UXZpA8Yw7ZUyi5Fogr8BJbA4KWK5sgV+bGXGEkklmmQUEJdzHyQfN9MSnLv061hNqG4AwnXt00Xe+o99D+IanI+xDmnL5S7Laz9PbxHJpw1lC7dOog9T+dsNrRH0OF9PxnMxl7SYMGUNPwQB77kVtozcnOFzaDOjLsDEjydv/NnZCIh8JHoOH5TBMdaXiXWagvr3MxO/7plPsvfF7QshXpffm0t1m1H3RZcGB8pgbw8Be6EtCdxz0/uBl2t98AYEezNEW0DxzuejOmOj1dny+XMOaeyeMnJQFrpF0ukXKZgb+OG/vwu098zNO2JbJRiTxNfKvXKjBZLZys+caYyO9ywKmDBlcB/vRFFyk9XDLhHmdDPJDiJdEdvesF1qUll5+uS1AADcMDdAlAGQwWIkbwaJJDPnCbLcpSz8GDC6RsuzLM1FMLuXadDWqQPQ5QXblXaPQt+Mr0mZrc0zTUlTgmnde3Za6+LK1VXkpfguxP5FmuPYGIXExsGnRlOpxZ3D6WsOVqCnrgEbFvFs6UkqkQwOYUEEFJVAIkQqhLgFZvBi5SN7lnCy71qBRm7aJ6rzknQFDWPZ3q9WcRoly6Dstrs4Ll+A6+LEQQEOkbMHyFRsfqvcaZfFkJXIAmqWzHPna/NrDheURuyZS0i/8QULexjsTYXrjr/qV4jNtvMAaQOrU46bAXZEFPVv7hTSRfqQFWpC7fLWeLSVgBDUsnBcUVdp7NEEh1XwCvxLQ6rrfqbT23lWYG/UT/jAY3kdymEbnV/MqjqTjBjIYptCQept8op5xVGVR1U60ulW9FhxxvpdSJmZdQ1qZpCywFvdRiEWYAxm5Pk33GWOgU2W3SBVkWVmsHtXcssqTLqJclHMKStUVxx8mOHIwmbJfGUpp9jjPudaobn43NKXR+X1z8iE4oDwzG8QVd5VQi45q9pPhjVZXY2pKMBzWb9ytHYP/nxTToco2q5j8DXBGcHafa9afjV1xp8C5K6W4+M14JBeYvNwWiR0GprGSX/nYSHoiAUi+N+W4ibgoK+ylginjZVDMw8qmwF75v7KJQQ72pT6XWNgG+QpelpabSzL2ibvtUKGngf0OI+4Eb5VFQjmZchI8wGMZYhhCrIRPPEg1sQIrF+6QiaR2Co5tigfuZGd4lVj2GG/QZZe2FMTCvopKqWAG+bjdL8s7JRgHmIgwWoLi4KpsCgaWW1xwjXBaWd9cZ9gMwfPbhhdoWYQ9UeKig5ANg1O7VAdQ0DicBZZRoQKXPVVnglaXrzc2UJ6Tq8LxVm8JJEBpRC9dqPu7tDcqXkb1+cTEoLS3jVL85vZk3bVex0hy8UzqWKTi/SkWnwasvC71S4TWOmMhSSU9XsZ+PPx7nbd5vD87V25qwSo9t+iRYAk9kVFSlbsGoALtDTcKekz1H/vo8h1sfSFzJaPIQO14VBYBgPxjnCmjiYWVa3AYvd1oqD9/D3HLr4auX4e353i+ufPMKYrfEy6vXsYLdxnnesfooaGQhr8jwPFHk8Pil3zfZvbe1+bk4yKbp5IalRuwgoBfc6JRPxui+YUO61lB3qKhePxZxxyIui2mQ5k8PxcUlmXl+rpEjnLIpCF/Osm5VxLxZ8GJtpjQRHcg3gLel62NvDTXmDrYah0KlVXVlyaQLFHTgR643oNRDLF5u5MAMuzM/ifGfBpXXJJLVf26p8obIuqAI+nU5t94dK35D/pkAZYSi6/SwN7luo67eO9y2MsOm/ZB7LQJXl11p4rbC/UZdLjkiqtsgn4jQdmqVACc4R/0dEc8g6UVyXRANrCLEvMhoVbJ49Red1cB7+0n/Zl0Cgm1rXwuHC4lqQaNKXxbwPKXdq9O1OnhNzZJDCrth7AgQI51zvfKv3l3groOF0s++VWYziX3VKZjoG+IFyTMyKoCzvT4OthpXHgF/Q9eSmd3K0mQ57uYuNvFKLy+YFk0BaH3AQ62E5JVYvOXXroQSCpJGumd6YnPgHZ2d9yXx9D1ZRs/iyAnrC08mYISLJL81WsZt9AUfMkrr3Dfk9Y2m0j3E4hFIHUjcOXcsJ0U70KJV9n81WdLTTdd4LhlV4SXKDx+ciFC/wUvpQJTog0j3dI4pQZj6RGrvln17BgkIyJ634rASWhFsZhxe0vpsiFLcHCXMW8JBasUX3v1NK5SkJ6qJduasXLOW5NH+a5ukSeC6OzRZAgyx04FG4qYrRYEsnP7JWF+gQc6r14XXciPSg1gMLUFFLvpFPNOsCjX2Y81bwl22c8iRpUbNY2vLSUE41Mm16/MJVAW3AxJFGj7nH4oLfzO0pgyfh3xmEvugdtSDxMCk9XQKIdGtITQThn04h9VP9k0vTfwaOXXABGmj18Rdg4kJnwPr+ldkbeShqruK48jrSr2uhyn8GzinXWmIpXX3TmE8sv0XCb3iBtfuHP46ZA8rcKNJlilm6IXmnesYAfqcZJCqvH+ahILnYW6CBniGWq1GIPLy6rmq/XsSNw1Cxmr4M6utEhPDXLtyleS/iMZ/08gxHjwuZ/JI1SyeNa+vGZWXOs7YTKgLn7LTnZMxZ0OSctVHOYMFb26gu2vDsx+GSMRNkv5yILopXfVezCEq7Kt+p53IOdT0mW0Zhv98/YGUlMf+iTjJjDlL3vamBYVbSnzerAkrAEJRrzg8AeoSe8YwgFmh11fvy2K6GAM=',
+                                title='Monopoly Go Events Today Schedule for August 14, 2025',
+                                type='web_search_result',
+                                url='https://monopolygo.game/monopoly-go-events-today-schedule',
+                            ),
+                        ],
+                        tool_call_id='srvtoolu_016Z2mQT8AFaH17TpZnmuj2Z',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(
+                        content="""\
+Based on the search results, today is Thursday, August 14, 2025. This is confirmed by multiple sources:
+
+"""
+                    ),
+                    TextPart(content='Today is August 14, 2025 (Thursday)'),
+                    TextPart(
+                        content="""\
+
+
+Several major events are happening today, including:
+
+"""
+                    ),
+                    TextPart(
+                        content='There is an ongoing situation in Gaza with Israeli forces launching a massive aerial bombardment of Gaza City'
+                    ),
+                    TextPart(
+                        content="""\
+
+
+"""
+                    ),
+                    TextPart(
+                        content='U.S. President Donald Trump has announced he will be meeting Russian President Vladimir Putin in Alaska tomorrow (August 15) to discuss ending the war in Ukraine'
+                    ),
+                    TextPart(
+                        content="""\
+
+
+"""
+                    ),
+                    TextPart(
+                        content="Mount Lewotobi Laki Laki in Indonesia is experiencing its second consecutive day of eruption, sending volcanic materials and ash up to 18 km into the sky. This is one of Indonesia's largest eruptions since 2010, though fortunately no casualties have been reported."
+                    ),
+                ],
+                usage=Usage(
+                    requests=1,
+                    request_tokens=14923,
+                    response_tokens=317,
+                    total_tokens=15240,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 14923,
+                        'output_tokens': 317,
+                    },
                 ),
-            ]
-        )
+                model_name='claude-3-5-sonnet-20241022',
+                timestamp=IsDatetime(),
+                vendor_id=IsStr(),
+            ),
+        ]
     )
 
 
@@ -1493,18 +1545,18 @@ print(f"3 * 12390 = {result}")\
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                     ),
-                    TextPart(content='The answer is **37,170**.'),
+                    TextPart(content='3 * 12390 = 37,170'),
                 ],
                 usage=Usage(
                     requests=1,
                     request_tokens=1630,
-                    response_tokens=105,
-                    total_tokens=1735,
+                    response_tokens=109,
+                    total_tokens=1739,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 1630,
-                        'output_tokens': 105,
+                        'output_tokens': 109,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
@@ -1527,39 +1579,43 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot("""\
-Let me search for today's date.
+Let me search to find today's date.
+
+Based on the search results, today is Thursday, August 14, 2025. Here are some additional details about the date:
 
 
 
-Based on the search results, \n\
+It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year
 
-today is Monday, May 26, 2025 (Week 22)
+.
 
-. This is notably \n\
+Some interesting observances for today include:
 
-Memorial Day, which was originally known as Decoration Day
 
-. \n\
-
-The year 2025 is a regular year with 365 days
-
-.\
+It's being celebrated as:
+- Color Book Day
+- National Creamsicle Day
+- National Financial Awareness Day
+- National Navajo Code Talkers Day
+- National Tattoo Removal Day
+- National Wiffle Ball Day
+- Social Security Day\
 """)
     result = await agent.run('What day is tomorrow?', model=openai_model, message_history=result.all_messages())
     assert result.new_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
-                parts=[TextPart(content='Tomorrow will be **Tuesday, May 27, 2025**.')],
+                parts=[TextPart(content='Tomorrow will be **Friday, August 15, 2025**.')],
                 usage=Usage(
-                    request_tokens=410,
+                    request_tokens=458,
                     response_tokens=17,
-                    total_tokens=427,
+                    total_tokens=475,
                     details={'reasoning_tokens': 0, 'cached_tokens': 0},
                 ),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
-                vendor_id='resp_6834631faf2481918638284f62855ddf040b4e5d7e74f261',
+                vendor_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
             ),
         ]
     )
@@ -1660,7 +1716,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y')
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa')
                 ],
                 usage=Usage(
                     requests=1,
@@ -1676,14 +1732,14 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01EnfsDTixCmHjqvk9QarBj4',
+                vendor_id='msg_012TXW181edhmR5JCsQRsBKx',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_019pMboNVRg5jkw4PKkofQ6Y',
+                        tool_call_id='toolu_01X9wcHKKAZD9tBC711xipPa',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1693,7 +1749,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                     ToolCallPart(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
-                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                     )
                 ],
                 usage=Usage(
@@ -1710,14 +1766,14 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_01Hbm5BtKzfVtWs8Eb7rCNNx',
+                vendor_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='toolu_01V4d2H4EWp5LDM2aXaeyR6W',
+                        tool_call_id='toolu_01LZABsgreMefH2Go8D5PQbW',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1742,7 +1798,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
         'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
     )
     assert result.output == snapshot(
-        "BASED ON THE RESULT, YOU ARE LOCATED IN MEXICO. THE LARGEST CITY IN MEXICO IS MEXICO CITY (CIUDAD DE MÉXICO), WHICH IS ALSO THE NATION'S CAPITAL. MEXICO CITY HAS A POPULATION OF APPROXIMATELY 9.2 MILLION PEOPLE IN THE CITY PROPER, AND OVER 21 MILLION PEOPLE IN ITS METROPOLITAN AREA, MAKING IT ONE OF THE LARGEST URBAN AGGLOMERATIONS IN THE WORLD. IT IS BOTH THE POLITICAL AND ECONOMIC CENTER OF MEXICO, LOCATED IN THE VALLEY OF MEXICO IN THE CENTRAL PART OF THE COUNTRY."
+        'BASED ON THE RESULT, YOU ARE LOCATED IN MEXICO. THE LARGEST CITY IN MEXICO IS MEXICO CITY (CIUDAD DE MÉXICO), WHICH IS BOTH THE CAPITAL AND THE MOST POPULOUS CITY IN THE COUNTRY. WITH A POPULATION OF APPROXIMATELY 9.2 MILLION PEOPLE IN THE CITY PROPER AND OVER 21 MILLION PEOPLE IN ITS METROPOLITAN AREA, MEXICO CITY IS NOT ONLY THE LARGEST CITY IN MEXICO BUT ALSO ONE OF THE LARGEST CITIES IN THE WORLD.'
     )
 
     assert result.all_messages() == snapshot(
@@ -1758,32 +1814,32 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="I'll help you find the largest city in your country. Let me first check your country using the get_user_country tool."
+                        content="I'll help find the largest city in your country. Let me first check your country using the get_user_country tool."
                     ),
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e'),
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK'),
                 ],
                 usage=Usage(
                     requests=1,
                     request_tokens=383,
-                    response_tokens=66,
-                    total_tokens=449,
+                    response_tokens=65,
+                    total_tokens=448,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 383,
-                        'output_tokens': 66,
+                        'output_tokens': 65,
                     },
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014NE4yfV1Yz2vLAJzapxxef',
+                vendor_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_01EZuxfc6MsPsPgrAKQohw3e',
+                        tool_call_id='toolu_01JJ8TequDsrEU2pv1QFRWAK',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1791,24 +1847,24 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
             ModelResponse(
                 parts=[
                     TextPart(
-                        content="Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is also the nation's capital. Mexico City has a population of approximately 9.2 million people in the city proper, and over 21 million people in its metropolitan area, making it one of the largest urban agglomerations in the world. It is both the political and economic center of Mexico, located in the Valley of Mexico in the central part of the country."
+                        content='Based on the result, you are located in Mexico. The largest city in Mexico is Mexico City (Ciudad de México), which is both the capital and the most populous city in the country. With a population of approximately 9.2 million people in the city proper and over 21 million people in its metropolitan area, Mexico City is not only the largest city in Mexico but also one of the largest cities in the world.'
                     )
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=461,
-                    response_tokens=107,
-                    total_tokens=568,
+                    request_tokens=460,
+                    response_tokens=91,
+                    total_tokens=551,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 461,
-                        'output_tokens': 107,
+                        'input_tokens': 460,
+                        'output_tokens': 91,
                     },
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_0193srwo7TCx49h97wDwc7K7',
+                vendor_id='msg_0142umg4diSckrDtV9vAmmPL',
             ),
         ]
     )
@@ -1851,7 +1907,7 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X')
+                    ToolCallPart(tool_name='get_user_country', args={}, tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM')
                 ],
                 usage=Usage(
                     requests=1,
@@ -1867,14 +1923,14 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014CpBKzioMqUyLWrMihpvsz',
+                vendor_id='msg_018YiNXULHGpoKoHkTt6GivG',
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='toolu_017UryVwtsKsjonhFV3cgV3X',
+                        tool_call_id='toolu_01ArHq5f2wxRpRF2PVQcKExM',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1902,7 +1958,7 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_014JeWCouH6DpdqzMTaBdkpJ',
+                vendor_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
             ),
         ]
     )
@@ -1949,19 +2005,19 @@ Don't include any text or Markdown fencing before or after.\
                 ],
                 usage=Usage(
                     requests=1,
-                    request_tokens=281,
+                    request_tokens=265,
                     response_tokens=31,
-                    total_tokens=312,
+                    total_tokens=296,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 281,
+                        'input_tokens': 265,
                         'output_tokens': 31,
                     },
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
-                vendor_id='msg_013ttUi3HCcKt7PkJpoWs5FT',
+                vendor_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
             ),
         ]
     )
@@ -1997,7 +2053,9 @@ async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropi
     assert result.output == snapshot("""\
 Based on the information that you're in Mexico, the largest city in your country is **Mexico City** (Ciudad de México). \n\
 
-Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world, with a metropolitan population of over 21 million people. The city proper has a population of approximately 9 million people and serves as the capital and political, cultural, and economic center of Mexico.\
+Mexico City is not only the largest city in Mexico but also one of the largest metropolitan areas in the world. The city proper has a population of approximately 9.2 million people, while the greater Mexico City metropolitan area has over 21 million inhabitants, making it the most populous metropolitan area in North America.
+
+Mexico City serves as the country's capital and is the political, economic, and cultural center of Mexico.\
 """)
 
 
@@ -2143,23 +2201,22 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                         event_parts.append(event)
 
     assert event_parts.pop(0) == snapshot(
-        PartStartEvent(index=0, part=TextPart(content="I'll search for the latest world"))
+        PartStartEvent(index=0, part=TextPart(content='Let me search for more specific breaking'))
     )
     assert event_parts.pop(0) == snapshot(FinalResultEvent(tool_name=None, tool_call_id=None))
     assert ''.join(event.delta.content_delta for event in event_parts) == snapshot("""\
- news to get you the top 3 stories from today.Let me search for more specific and recent global news stories from today.Let me search for more specific global news stories from today.Based on my search results, here are the top 3 global news stories from today, July 16, 2025:
+ news stories to get clearer headlines.Based on the search results, I can identify the top 3 major news stories from around the world today (August 14, 2025):
 
-## 1. Trump's Ukraine Special Envoy Visits Kyiv
+## Top 3 World News Stories Today
 
-U.S. President Donald Trump's special envoy to Ukraine, retired Lt. Gen. Keith Kellogg, arrived in Kyiv on Monday. This high-profile diplomatic visit comes as tensions continue over the ongoing conflict, with President Trump threatening to punish Russia with heavy tariffs on countries that trade with Moscow if the Kremlin fails to reach a ceasefire deal with Ukraine, while promising Kyiv weapons.
+**1. Trump-Putin Summit and Ukraine Crisis**
+European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit. The White House lowered its expectations surrounding the Trump-Putin summit on Friday. In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids.
 
-## 2. EU Trade Ministers Meet Over U.S. Tariffs
+**2. Trump's Federal Takeover of Washington D.C.**
+Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night. National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital. Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover.
 
-European trade ministers are meeting in Brussels after U.S. President Donald Trump announced 30% tariffs on the European Union. The EU is America's biggest business partner and the world's largest trading block. The U.S. decision will have repercussions for governments, companies and consumers on both sides of the Atlantic.
+**3. Air Canada Flight Disruption**
+Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend. Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants.
 
-## 3. Syria Violence Escalates
-
-Clashes between Druze militias and Sunni Bedouin clans in Syria's Sweida province have killed more than 30 people and injured nearly 100. This represents a significant escalation in sectarian violence in the region.
-
-Additional notable stories include Vietnam's plan to ban fossil-fuel motorcycles in the heart of Hanoi starting July 2026, aiming to cut air pollution and move toward cleaner transport, and ongoing restoration efforts for Copenhagen's Old Stock Exchange, which is taking shape 15 months after a fire destroyed more than half of the 400-year-old building.\
+These stories represent major international diplomatic developments, significant domestic policy changes in the US, and major transportation disruptions affecting North America.\
 """)
