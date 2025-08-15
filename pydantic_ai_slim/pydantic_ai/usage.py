@@ -177,7 +177,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
 @dataclass
 @deprecated('`Usage` is deprecated, use `RunUsage` instead')
 class Usage(RunUsage):
-    pass
+    """Deprecated alias for `RunUsage`."""
 
 
 @dataclass(repr=False)
