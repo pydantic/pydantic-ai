@@ -238,6 +238,8 @@ To use [Ollama](https://ollama.com/), you must first download the Ollama client,
 
 You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
 
+You can then use the model with the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
+
 #### Example local usage
 
 With `ollama` installed, you can run the server with the model you want to use:
@@ -255,7 +257,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.ollama import OllamaProvider
 
 
 class CityLocation(BaseModel):
@@ -264,7 +266,8 @@ class CityLocation(BaseModel):
 
 
 ollama_model = OpenAIModel(
-    model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
+    model_name='llama3.2',
+    provider=OllamaProvider(base_url='http://localhost:11434/v1'),
 )
 agent = Agent(ollama_model, output_type=CityLocation)
 
@@ -282,11 +285,11 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.ollama import OllamaProvider
 
 ollama_model = OpenAIModel(
     model_name='qwen2.5-coder:7b',  # (1)!
-    provider=OpenAIProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
+    provider=OllamaProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
 )
 
 

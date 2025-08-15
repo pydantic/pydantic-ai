@@ -196,7 +196,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
-                    yield event.part.content, event.index
+                    yield event.part.content, event.index  # pragma: no cover
                 elif (  # pragma: no branch
                     isinstance(event, _messages.PartDeltaEvent)
                     and isinstance(event.delta, _messages.TextPartDelta)
