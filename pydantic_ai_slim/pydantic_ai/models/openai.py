@@ -313,7 +313,7 @@ class OpenAIModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
-        model_response = self._process_response(response, model_request_parameters)
+        model_response = self._process_response(response)
         return model_response
 
     @asynccontextmanager
