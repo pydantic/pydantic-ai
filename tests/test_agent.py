@@ -1362,6 +1362,102 @@ def test_output_type_structured_dict():
     )
 
 
+def test_output_type_structured_dict_nested():
+    """Test StructuredDict with nested JSON schemas using $ref - Issue #2466."""
+    # Schema with nested $ref that pydantic's generator can't resolve
+    CarDict = StructuredDict(
+        {
+            '$defs': {
+                'Tire': {
+                    'type': 'object',
+                    'properties': {
+                        'brand': {'type': 'string'},
+                        'size': {'type': 'integer'}
+                    },
+                    'required': ['brand', 'size']
+                }
+            },
+            'type': 'object',
+            'properties': {
+                'make': {'type': 'string'},
+                'model': {'type': 'string'},
+                'tires': {
+                    'type': 'array',
+                    'items': {'$ref': '#/$defs/Tire'}
+                }
+            },
+            'required': ['make', 'model', 'tires']
+        },
+        name='Car',
+        description='A car with tires'
+    )
+    
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        args_json = '{"make": "Toyota", "model": "Camry", "tires": [{"brand": "Michelin", "size": 17}]}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+    
+    agent = Agent(
+        FunctionModel(call_tool),
+        output_type=CarDict
+    )
+    
+    result = agent.run_sync('Generate a car')
+    
+    expected = {
+        'make': 'Toyota',
+        'model': 'Camry',
+        'tires': [{'brand': 'Michelin', 'size': 17}]
+    }
+    assert result.output == expected
+
+
+def test_output_type_structured_dict_unresolvable_ref():
+    """Test StructuredDict with various unresolvable refs for coverage."""
+    # Schema with missing ref
+    schema_with_missing_ref = {
+        '$ref': '#/$defs/MissingModel',
+        '$defs': {
+            'ExistingModel': {
+                'type': 'object',
+                'properties': {'name': {'type': 'string'}}
+            }
+        }
+    }
+    MissingDict = StructuredDict(schema_with_missing_ref, name='MissingRef')
+    
+    # Schema with external ref
+    schema_with_external_ref = {
+        '$ref': 'http://example.com/schemas/model.json'
+    }
+    ExternalDict = StructuredDict(schema_with_external_ref, name='ExternalRef')
+    
+    # Schema with non-standard ref format
+    schema_with_different_ref = {
+        '$ref': '#/definitions/Model'
+    }
+    DifferentDict = StructuredDict(schema_with_different_ref, name='DifferentRef')
+    
+    # Schema with no refs at all (for coverage of line 347 in output.py)
+    schema_no_refs = {
+        'type': 'object',
+        'properties': {'simple': {'type': 'string'}},
+        '$defs': {
+            'Unused': {
+                'type': 'object',
+                'properties': {'name': {'type': 'string'}}
+            }
+        }
+    }
+    NoRefsDict = StructuredDict(schema_no_refs, name='NoRefs')
+    
+    # These should all work without errors even with unresolvable refs
+    assert MissingDict.__name__ == '_StructuredDict'
+    assert ExternalDict.__name__ == '_StructuredDict'
+    assert DifferentDict.__name__ == '_StructuredDict'
+    assert NoRefsDict.__name__ == '_StructuredDict'
+
+
 def test_default_structured_output_mode():
     def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover

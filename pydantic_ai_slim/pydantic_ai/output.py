@@ -304,6 +304,11 @@ def StructuredDict(
     """
     json_schema = _utils.check_object_json_schema(json_schema)
 
+    # If the schema contains $defs with $ref references, resolve them inline
+    # to avoid issues with pydantic's JSON schema generator (Issue #2466)
+    if '$defs' in json_schema and _contains_refs(json_schema):
+        json_schema = _resolve_refs(json_schema)
+
     if name:
         json_schema['title'] = name
 
@@ -329,6 +334,46 @@ def StructuredDict(
             return json_schema
 
     return _StructuredDict
+
+
+def _contains_refs(schema: JsonSchemaValue) -> bool:
+    """Check if a schema contains any $ref references."""
+    if isinstance(schema, dict):
+        if '$ref' in schema:
+            return True
+        return any(_contains_refs(v) for v in schema.values() if isinstance(v, (dict, list)))
+    elif isinstance(schema, list):
+        return any(_contains_refs(item) for item in schema if isinstance(item, (dict, list)))
+    return False
+
+
+def _resolve_refs(schema: JsonSchemaValue, defs: dict[str, JsonSchemaValue] | None = None) -> JsonSchemaValue:
+    """Recursively resolve all $ref references in a JSON schema."""
+    if defs is None and isinstance(schema, dict):
+        defs = schema.get('$defs', {})
+
+    if isinstance(schema, dict):
+        if '$ref' in schema:
+            ref = schema['$ref']
+            if ref.startswith('#/$defs/'):
+                ref_name = ref[8:]
+                if defs and ref_name in defs:
+                    # Return the resolved schema
+                    return _resolve_refs(defs[ref_name], defs)
+            return schema
+        else:
+            # Recursively resolve refs in nested structures
+            result = {}
+            for key, value in schema.items():
+                if key == '$defs':
+                    # Skip $defs at root level since we're inlining them
+                    continue
+                result[key] = _resolve_refs(value, defs)
+            return result
+    elif isinstance(schema, list):
+        return [_resolve_refs(item, defs) for item in schema]
+    else:
+        return schema
 
 
 _OutputSpecItem = TypeAliasType(
