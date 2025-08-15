@@ -1,0 +1,415 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '531'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 50000
+      messages:
+      - content:
+        - text: Generate a random user for me.
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      temperature: 1.0
+      thinking:
+        budget_tokens: 10000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: The final response which ends this conversation
+        input_schema:
+          properties:
+            age:
+              type: integer
+            email:
+              type: string
+            name:
+              type: string
+          required:
+          - name
+          - email
+          - age
+          title: User
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2105'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EskFCkYIBhgCKkBWb6bErX7M5yI4xg6T758WOxfjjTUKmhPCMt4/n+LBBJXATkAkYmevwTHlfaK7UShp5VP8azIbAHMVzrfwhVRDEgyoznctsbAm0L6gkMMaDKimXKhHa4vEjfD/WiIwoEqsmWAR665eEfJmdf/b23CHLwRMVxLccCyFgRgEKoRSm/3wIGsDREbbvWma9ZwkKrAEzq4WE1vvQm1rIagjjSVPL2G/tojqiRn79OHhIQp3bo6/TDHU4KN9HSmZq2f+8wHxBNyLEnA5ckMd06RVNWckvjZZgXBQ/ZWL412FTqlPNRdwDaSZtGkxU9hmwDpAgNlbY0cQFXqNi8o4UVfKqEnX9YIX9RBHse6A0imjVqpFQZyUvHJWWtpR223vh2ujvq/a4DkxRD7NkZHlOqHomjdSCOpuT4FtBZhBOqrNLAj4hEopE5VFuHnsaT66yc0r14xX9DZRTJsTmfeVNc16mhFGmhK3uSjB8ncljUheyqIRLSK+WQ3krHq1SuvRN3p+A0L3hawDACHPY+soZvo0qNIbmn43sRjo/LDWSvPapq52kpxmayPnMvIFVbtGIYDj+c8E4F3MEsdrrIO1C8PjugC/T+j9jsYWifzhYA81+LpT3Hu0cX3esxqoQZkDwom3x/4OxZMbNUUKpj1NjKuwcQO7ncf5sLvW+Hl/YsOMiQS3KYTqFB4sGvpnaHMtWBjyLKQ6ZNN4UACwqwnkrjLgGRQTj9KPYwmk8x1RTUXz0L7eSn6un5pBM/+1Wykzb/BNAa9NjP6MqgjolOlzRo4RIM0KtLoPp0YdMHXIWX34fiXe+6JvOqEl+NdKHSHl964X5SwCwW2dvBFn4YAk+2fZmWGaE6uXFjBeEF01KARHPMU7elrhy4BYvASLIcEJVqOWgcvONV+0jSTClSAPne390IGT0BUEeLzP2AO8h38b0NRZtuUYAQ==
+        thinking: "The user is asking me to generate a random user. Looking at the available function, I have a \"final_result\"
+          function that takes parameters for name, email, and age. All of these are required parameters.\n\nThe user is asking
+          for a \"random user\" so I should generate realistic but fictional values for:\n- name: I'll create a realistic
+          name\n- email: I'll create a realistic email address \n- age: I'll pick a reasonable age\n\nSince the user asked
+          for a \"random\" user, I should create fictional data rather than asking them to provide specific values."
+        type: thinking
+      - text: I'll generate a random user for you with realistic details.
+        type: text
+      - id: toolu_01Ak3nZRU7hLMPbZqNjYE7qp
+        input:
+          age: 31
+          email: sarah.chen.92@gmail.com
+          name: Sarah Chen
+        name: final_result
+        type: tool_use
+      id: msg_013P9c4TAXU7k4zbswpYAQkV
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 443
+        output_tokens: 241
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '742'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 50000
+      messages:
+      - content:
+        - text: What is a banana?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      temperature: 1.0
+      thinking:
+        budget_tokens: 10000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: 'Fruit: The final response which ends this conversation'
+        input_schema:
+          properties:
+            color:
+              type: string
+            name:
+              type: string
+          required:
+          - name
+          - color
+          title: Fruit
+          type: object
+        name: return_fruit
+      - description: 'Vehicle: The final response which ends this conversation'
+        input_schema:
+          properties:
+            name:
+              type: string
+            wheels:
+              type: integer
+          required:
+          - name
+          - wheels
+          title: Vehicle
+          type: object
+        name: return_vehicle
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2450'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EosHCkYIBhgCKkCc6N4RUTGNsq+3S0/iI+gJAOh66cmYDK2rusvh5kS0uO8B2pGHpZZisuouPJDu9+j4k0ompps9KOSDMyVdCtLSEgxqBH/vRHi7cphNW2waDOHqy3RulBLBwX6CZyIwYT4nn8/psKzVHcF8jO8wvUn8O28oNe2cr0GhiVkMbGAw2DVAyLQTD++svbv/c11tKvIF99RpLmw31Xj9A+NdZuMnwq26AAQGTbWUGMrKL44Krg0CTWDNc5TCh3DPsMeLOtMEPeeufacByYSCo1dEV1v1MUbuANBOcY1PqZhg13BS7WoAwOzxWM3r1DXTAbYr9PorYh0gZHhbNSLzmRAU5Je5WrZjBLwdYQU98ozzQ/HA+CGWpQ3TeKGL26N6JN8cudwc6o7JP6GeVN5IKH7GZjWeuKDjyB6nyXhzpS5mUNCmFPcnwzlORERJoLQJ2zw14aKtxIBLIlMJCVVv6t5cbFL4V+s0GJ5TOXtEZmiKJAGKNWPe0Uj5ff1VooaISQme2HA0nMKUYZBSWVbDds5WO+qM8wMxoRpBxfSvqqx7GELXEJ1qO+6F631/5y2wsUwqyzXn/dil7GkAo3pl6UfbcAoIQdix0DaVlmK5499Lp3j5dPkwJZf27w91M1J8ZKnFME/t0C0SWyez1gPKDWj9kOb3PhSWLi+qHrWWvU40udoR/HC0OPLV2DxBQFppR/hTD2FvT5gfDtGDJziQ6Itx93khLl6jO4IFQfNvrIQ1szBlXAZOQgwk1omX0XxMOoyc6l/wNo/dYYFczR9g+XsIkoD1k/1nHaNFJm8NJjlidGkdwuCbp4e89fYpSUdWhy+E1F9yAQ96eF4m/hPb4Jhezl2/DvowOTE0E+ZWfR/sqjWBadfm9g2K64ZLJ+xOde9LSOABBAoN87fkTw8b/Aw7aij+Jv4541Uwy38LDXZVVCjFPdK/VXG2XZnET7vsGMP/ItrsQgrrFsX60Pm26rOI8H8Nnew1d9QLwzG6TFBUxWaUNZNIdkhdxQUiMMei6QZaxtiM47Lycui8RxsoKULqz68HSs6twDVVoYSvhg7TfNSo/Z3kTWGGTlvY7nrCuX+99b1/F+/aQ/4ueWLie3ARnI/d0kBFX8Ndj7/+xSa5kOwp8pflSb/hvZWe0A/24QVKs5A7JzBviFXgwofSAaRGTRtlrMEFNvkM9kMaFHQnSDAjP0L1vRgB
+        thinking: |-
+          The user is asking "What is a banana?" This seems like they want information about a banana, which is a fruit. Looking at the available functions, I have:
+
+          1. `return_fruit` - which takes parameters "name" and "color"
+          2. `return_vehicle` - which takes parameters "name" and "wheels"
+
+          Since a banana is a fruit, I should use the `return_fruit` function. A banana's name would be "banana" and its color is typically "yellow" (though it can be green when unripe or brown when overripe, yellow is the most common/characteristic color).
+
+          The user is asking "what is a banana" which suggests they want me to identify/describe a banana using the available tools. Since I have a fruit function available, this seems like the appropriate response.
+        type: thinking
+      - id: toolu_01GKTmLC6p74jArCZhsHVsX5
+        input:
+          color: yellow
+          name: banana
+        name: return_fruit
+        type: tool_use
+      id: msg_01BMKYLhu2rfgtXaecCRbH9t
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 508
+        output_tokens: 255
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '463'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 50000
+      messages:
+      - content:
+        - text: Create a person
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      temperature: 1.0
+      thinking:
+        budget_tokens: 10000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: A human with a name and age
+        input_schema:
+          properties:
+            age:
+              type: integer
+            name:
+              type: string
+          required:
+          - name
+          - age
+          title: Human
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1943'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: EvMECkYIBhgCKkDpAEPmFfOwaBZV6HGH8fEEfXxNhYwh1XHA93DL9gH/Bi9spQFPXq1QXpkSbps3osBnIGdKQu72KlOVaJCxPicKEgy0/cGCe0UYPwrde+gaDEZRwXTXTNFMMHFeyCIwNUIoY4q+EsnWY9EDXOzocBOz72XGOreT6HV4hNGAPYsxkjEZ4YseqaRLJzJNpVPgKtoDHi8PwmwHgaxfJaWJnRGMiMzzcNisx2QK65DXIMJKEMHBBDpvdyBVTAFDaabLD79C9knlBP2l2MX7y0HhDqEjxB+HJHLnN1ONiDd0o+u6YfH+/iK0H/ZX3+oe+LYC3nv9N9eXVhT62QYlMehTcmh+Gxyt+33MV0kaETHeSliVX9jFqyO7OW6pMx3tKmyIeyNM2t0Y9sa9RQ9MqtKMbnUcBTUErgsDa1DxUv/OcF7hgRHxd+7glUszCf174YmTYmxz/5HgBypYNFpoxXECbo3QzT8wM5urbo9b+seGWj6n61sbSfnImT/IwLYlQHvsDB5UZj7PvCptyBAS/bSKIa9pNjSYbVPtbVEEXw1i5BC3w1XQHQe5eP5Qs5s1sABKbj+gUj0vP8PhUW5judXq2ARF6Q6GHaYwcvm65DPWdNJkFGqxzHrevmeUTzTITpfwbwzreROeETuTmbLoFVZejhStr5B9pue/EcJOgkA1YUPnWY/ujeSqXlbv8wBl2V7OpO2pk9huEFF1I/l8xP4l4rCbbDyJB72KHnXPKGbBXhJP8evej3qOWLfCcdBG+M3R8uVszaQcfjty22WqJSNQ8zKSArKnCUBZ9mLD+cH5G//4btek1GNH0HQgfCyRGAE=
+        thinking: |-
+          The user is asking me to create a person. I have access to a function called "final_result" that takes a name (string) and age (integer) as required parameters to create a human.
+
+          However, the user hasn't provided specific values for the name or age. According to the instructions, if there are missing values for required parameters, I should ask the user to supply these values rather than making them up.
+
+          Let me ask the user for the required information.
+        type: thinking
+      - text: |-
+          I can help you create a person, but I need some information first. The person needs:
+
+          1. **Name** - What would you like the person's name to be?
+          2. **Age** - How old should this person be?
+
+          Please provide these details so I can create the person for you.
+        type: text
+      id: msg_01LLofLw3PyTku1cDSfXvEe8
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 426
+        output_tokens: 175
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2330'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 50000
+      messages:
+      - content:
+        - text: Create a person
+          type: text
+        role: user
+      - content:
+        - signature: EvMECkYIBhgCKkDpAEPmFfOwaBZV6HGH8fEEfXxNhYwh1XHA93DL9gH/Bi9spQFPXq1QXpkSbps3osBnIGdKQu72KlOVaJCxPicKEgy0/cGCe0UYPwrde+gaDEZRwXTXTNFMMHFeyCIwNUIoY4q+EsnWY9EDXOzocBOz72XGOreT6HV4hNGAPYsxkjEZ4YseqaRLJzJNpVPgKtoDHi8PwmwHgaxfJaWJnRGMiMzzcNisx2QK65DXIMJKEMHBBDpvdyBVTAFDaabLD79C9knlBP2l2MX7y0HhDqEjxB+HJHLnN1ONiDd0o+u6YfH+/iK0H/ZX3+oe+LYC3nv9N9eXVhT62QYlMehTcmh+Gxyt+33MV0kaETHeSliVX9jFqyO7OW6pMx3tKmyIeyNM2t0Y9sa9RQ9MqtKMbnUcBTUErgsDa1DxUv/OcF7hgRHxd+7glUszCf174YmTYmxz/5HgBypYNFpoxXECbo3QzT8wM5urbo9b+seGWj6n61sbSfnImT/IwLYlQHvsDB5UZj7PvCptyBAS/bSKIa9pNjSYbVPtbVEEXw1i5BC3w1XQHQe5eP5Qs5s1sABKbj+gUj0vP8PhUW5judXq2ARF6Q6GHaYwcvm65DPWdNJkFGqxzHrevmeUTzTITpfwbwzreROeETuTmbLoFVZejhStr5B9pue/EcJOgkA1YUPnWY/ujeSqXlbv8wBl2V7OpO2pk9huEFF1I/l8xP4l4rCbbDyJB72KHnXPKGbBXhJP8evej3qOWLfCcdBG+M3R8uVszaQcfjty22WqJSNQ8zKSArKnCUBZ9mLD+cH5G//4btek1GNH0HQgfCyRGAE=
+          thinking: |-
+            The user is asking me to create a person. I have access to a function called "final_result" that takes a name (string) and age (integer) as required parameters to create a human.
+
+            However, the user hasn't provided specific values for the name or age. According to the instructions, if there are missing values for required parameters, I should ask the user to supply these values rather than making them up.
+
+            Let me ask the user for the required information.
+          type: thinking
+        - text: |-
+            I can help you create a person, but I need some information first. The person needs:
+
+            1. **Name** - What would you like the person's name to be?
+            2. **Age** - How old should this person be?
+
+            Please provide these details so I can create the person for you.
+          type: text
+        role: assistant
+      - content:
+        - text: |-
+            Validation feedback:
+            Plain text responses are not permitted, please include your response in a tool call
+
+            Fix the errors and try again.
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      temperature: 1.0
+      thinking:
+        budget_tokens: 10000
+        type: enabled
+      tool_choice:
+        type: auto
+      tools:
+      - description: A human with a name and age
+        input_schema:
+          properties:
+            age:
+              type: integer
+            name:
+              type: string
+          required:
+          - name
+          - age
+          title: Human
+          type: object
+        name: final_result
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '5377'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - signature: 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
+        thinking: "The user wants me to create a person, but I need a name and age. However, the validation feedback indicates
+          that I must use a tool call and cannot provide plain text responses. \n\nSince the user asked to \"Create a person\"
+          but didn't provide the required parameters (name and age), I need to make a tool call. But I can't make the tool
+          call without the required parameters. \n\nLooking at the function schema again:\n- name: required string parameter
+          \ \n- age: required integer parameter\n\nSince both are required and the user hasn't provided them, I would normally
+          ask for them. But the validation feedback says \"Plain text responses are not permitted, please include your response
+          in a tool call.\"\n\nThis seems to be a contradiction - I need the required parameters to make the tool call, but
+          I can't ask for them in plain text. \n\nLet me think about this differently. Maybe I should make a tool call with
+          some default/example values since the user didn't specify? But the instructions say \"Check that all the required
+          parameters for each tool call are provided or can reasonably be inferred from context. IF there are no relevant
+          tools or there are missing values for required parameters, ask the user to supply these values.\"\n\nBut then the
+          validation feedback contradicts this by saying no plain text responses are allowed.\n\nI think the issue might be
+          that I need to make a tool call anyway, even if I'm essentially asking for information. But that doesn't make sense
+          given the tool's purpose.\n\nWait, let me re-read the validation feedback. It says \"Plain text responses are not
+          permitted, please include your response in a tool call\". Maybe this means I should try to create a person with
+          reasonable default values since the user asked me to \"create a person\" without being specific?\n\nActually, looking
+          at this again, I think the validation is telling me that I must use the tool call regardless. Since I can't provide
+          a plain text response, I'll need to create a person with some default values."
+        type: thinking
+      - id: toolu_01CiDGGbWTx5u93eq1LDZRH7
+        input:
+          age: 30
+          name: John Doe
+        name: final_result
+        type: tool_use
+      id: msg_01524kkeMBEk4Rw6igYkTzRC
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 525
+        output_tokens: 500
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
