@@ -4431,7 +4431,7 @@ async def test_hitl_tool_approval():
 async def test_run_with_tool_call_results_errors():
     agent = Agent('test')
 
-    message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
+    message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])])]
 
     with pytest.raises(
         UserError,
