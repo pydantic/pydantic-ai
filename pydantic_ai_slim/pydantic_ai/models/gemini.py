@@ -278,7 +278,6 @@ class GeminiModel(Model):
         if finish_reason:
             vendor_details = {'finish_reason': finish_reason}
         usage = _metadata_as_usage(response)
-        usage.requests = 1
         return _process_response_from_parts(
             parts,
             response.get('model_version', self._model_name),
@@ -673,7 +672,7 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 def _process_response_from_parts(
     parts: Sequence[_GeminiPartUnion],
     model_name: GeminiModelName,
-    usage: usage.Usage,
+    usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
@@ -693,7 +692,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, vendor_id=vendor_id, vendor_details=vendor_details
+        parts=items, usage=usage, model_name=model_name, provider_request_id=vendor_id, provider_details=vendor_details
     )
 
 
@@ -859,31 +858,45 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     ]
 
 
-def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
+def _metadata_as_usage(response: _GeminiResponse) -> usage.RequestUsage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return usage.Usage()  # pragma: no cover
+        return usage.RequestUsage()
     details: dict[str, int] = {}
-    if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
+    if cached_content_token_count := metadata.get('cached_content_token_count', 0):
+        details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := metadata.get('thoughts_token_count'):
+    if thoughts_token_count := metadata.get('thoughts_token_count', 0):
         details['thoughts_tokens'] = thoughts_token_count
 
-    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
-        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count', 0):
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
+    input_audio_tokens = 0
+    output_audio_tokens = 0
+    cache_audio_read_tokens = 0
     for key, metadata_details in metadata.items():
         if key.endswith('_details') and metadata_details:
             metadata_details = cast(list[_GeminiModalityTokenCount], metadata_details)
             suffix = key.removesuffix('_details')
             for detail in metadata_details:
-                details[f'{detail["modality"].lower()}_{suffix}'] = detail.get('token_count', 0)
+                modality = detail['modality']
+                details[f'{modality.lower()}_{suffix}'] = value = detail.get('token_count', 0)
+                if value and modality == 'AUDIO':
+                    if key == 'prompt_tokens_details':
+                        input_audio_tokens = value
+                    elif key == 'candidates_tokens_details':
+                        output_audio_tokens = value
+                    elif key == 'cache_tokens_details':  # pragma: no branch
+                        cache_audio_read_tokens = value
 
-    return usage.Usage(
-        request_tokens=metadata.get('prompt_token_count', 0),
-        response_tokens=metadata.get('candidates_token_count', 0),
-        total_tokens=metadata.get('total_token_count', 0),
+    return usage.RequestUsage(
+        input_tokens=metadata.get('prompt_token_count', 0),
+        output_tokens=metadata.get('candidates_token_count', 0),
+        cache_read_tokens=cached_content_token_count,
+        input_audio_tokens=input_audio_tokens,
+        output_audio_tokens=output_audio_tokens,
+        cache_audio_read_tokens=cache_audio_read_tokens,
         details=details,
     )
 

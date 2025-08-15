@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsStr, try_import
 
@@ -82,7 +82,7 @@ class MyModel(Model):
                 TextPart('text2'),
                 {},  # test unexpected parts  # type: ignore
             ],
-            usage=Usage(request_tokens=100, response_tokens=200),
+            usage=RequestUsage(input_tokens=100, output_tokens=200),
             model_name='my_model_123',
         )
 
@@ -99,7 +99,7 @@ class MyModel(Model):
 
 class MyResponseStream(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        self._usage = Usage(request_tokens=300, response_tokens=400)
+        self._usage = RequestUsage(input_tokens=300, output_tokens=400)
         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=0, content='text1')
         if maybe_event is not None:  # pragma: no branch
             yield maybe_event

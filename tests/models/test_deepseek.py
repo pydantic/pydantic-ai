@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     UserPromptPart,
 )
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsStr, try_import
 
@@ -44,21 +44,18 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[ThinkingPart(content=IsStr()), TextPart(content=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=12,
-                    response_tokens=789,
-                    total_tokens=801,
+                usage=RequestUsage(
+                    input_tokens=12,
+                    output_tokens=789,
                     details={
                         'prompt_cache_hit_tokens': 0,
                         'prompt_cache_miss_tokens': 12,
                         'reasoning_tokens': 415,
-                        'cached_tokens': 0,
                     },
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),
-                vendor_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
+                provider_request_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
             ),
         ]
     )

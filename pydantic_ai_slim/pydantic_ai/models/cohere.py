@@ -149,7 +149,6 @@ class CohereModel(Model):
         check_allow_model_requests()
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @property
@@ -301,10 +300,10 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: V2ChatResponse) -> usage.Usage:
+def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
     u = response.usage
     if u is None:
-        return usage.Usage()
+        return usage.RequestUsage()
     else:
         details: dict[str, int] = {}
         if u.billed_units is not None:
@@ -317,11 +316,10 @@ def _map_usage(response: V2ChatResponse) -> usage.Usage:
             if u.billed_units.classifications:  # pragma: no cover
                 details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else None
-        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else None
-        return usage.Usage(
-            request_tokens=request_tokens,
-            response_tokens=response_tokens,
-            total_tokens=(request_tokens or 0) + (response_tokens or 0),
+        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
+        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
+        return usage.RequestUsage(
+            input_tokens=request_tokens,
+            output_tokens=response_tokens,
             details=details,
         )

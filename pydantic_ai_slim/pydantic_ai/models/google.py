@@ -195,7 +195,7 @@ class GoogleModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> usage.Usage:
+    ) -> usage.RequestUsage:
         check_allow_model_requests()
         model_settings = cast(GoogleModelSettings, model_settings or {})
         contents, generation_config = await self._build_content_and_config(
@@ -238,9 +238,8 @@ class GoogleModel(Model):
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Total tokens missing from Gemini response', str(response)
             )
-        return usage.Usage(
-            request_tokens=response.total_tokens,
-            total_tokens=response.total_tokens,
+        return usage.RequestUsage(
+            input_tokens=response.total_tokens,
         )
 
     @asynccontextmanager
@@ -392,9 +391,12 @@ class GoogleModel(Model):
         if finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': finish_reason.value}
         usage = _metadata_as_usage(response)
-        usage.requests = 1
         return _process_response_from_parts(
-            parts, response.model_version or self._model_name, usage, vendor_id=vendor_id, vendor_details=vendor_details
+            parts,
+            response.model_version or self._model_name,
+            usage,
+            vendor_id=vendor_id,
+            vendor_details=vendor_details,
         )
 
     async def _process_streamed_response(
@@ -590,7 +592,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
 def _process_response_from_parts(
     parts: list[Part],
     model_name: GoogleModelName,
-    usage: usage.Usage,
+    usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
@@ -627,7 +629,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, model_name=model_name, usage=usage, vendor_id=vendor_id, vendor_details=vendor_details
+        parts=items, model_name=model_name, usage=usage, provider_request_id=vendor_id, provider_details=vendor_details
     )
 
 
@@ -647,31 +649,51 @@ def _tool_config(function_names: list[str]) -> ToolConfigDict:
     return ToolConfigDict(function_calling_config=function_calling_config)
 
 
-def _metadata_as_usage(response: GenerateContentResponse) -> usage.Usage:
+def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return usage.Usage()  # pragma: no cover
-    metadata = metadata.model_dump(exclude_defaults=True)
-
+        return usage.RequestUsage()
     details: dict[str, int] = {}
-    if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
+    if cached_content_token_count := metadata.cached_content_token_count:
+        details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := metadata.get('thoughts_token_count'):
+    if thoughts_token_count := metadata.thoughts_token_count:
         details['thoughts_tokens'] = thoughts_token_count
 
-    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
+    if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
         details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
-    for key, metadata_details in metadata.items():
-        if key.endswith('_details') and metadata_details:
-            suffix = key.removesuffix('_details')
-            for detail in metadata_details:
-                details[f'{detail["modality"].lower()}_{suffix}'] = detail.get('token_count', 0)
+    input_audio_tokens = 0
+    output_audio_tokens = 0
+    cache_audio_read_tokens = 0
+    for prefix, metadata_details in [
+        ('prompt', metadata.prompt_tokens_details),
+        ('cache', metadata.cache_tokens_details),
+        ('candidates', metadata.candidates_tokens_details),
+        ('tool_use_prompt', metadata.tool_use_prompt_tokens_details),
+    ]:
+        assert getattr(metadata, f'{prefix}_tokens_details') is metadata_details
+        if not metadata_details:
+            continue
+        for detail in metadata_details:
+            if not detail.modality or not detail.token_count:  # pragma: no cover
+                continue
+            details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
+            if detail.modality != 'AUDIO':
+                continue
+            if metadata_details is metadata.prompt_tokens_details:
+                input_audio_tokens = detail.token_count
+            elif metadata_details is metadata.candidates_tokens_details:
+                output_audio_tokens = detail.token_count
+            elif metadata_details is metadata.cache_tokens_details:  # pragma: no branch
+                cache_audio_read_tokens = detail.token_count
 
-    return usage.Usage(
-        request_tokens=metadata.get('prompt_token_count', 0),
-        response_tokens=metadata.get('candidates_token_count', 0),
-        total_tokens=metadata.get('total_token_count', 0),
+    return usage.RequestUsage(
+        input_tokens=metadata.prompt_token_count or 0,
+        output_tokens=metadata.candidates_token_count or 0,
+        cache_read_tokens=cached_content_token_count or 0,
+        input_audio_tokens=input_audio_tokens,
+        output_audio_tokens=output_audio_tokens,
+        cache_audio_read_tokens=cache_audio_read_tokens,
         details=details,
     )

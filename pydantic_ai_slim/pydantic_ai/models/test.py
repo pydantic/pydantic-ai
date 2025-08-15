@@ -31,7 +31,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
@@ -113,7 +113,6 @@ class TestModel(Model):
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -468,6 +467,6 @@ class _JsonSchemaTestData:
         return s
 
 
-def _get_string_usage(text: str) -> Usage:
+def _get_string_usage(text: str) -> RequestUsage:
     response_tokens = _estimate_string_tokens(text)
-    return Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+    return RequestUsage(output_tokens=response_tokens)
