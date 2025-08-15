@@ -47,9 +47,19 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
-    from google.genai.types import CodeExecutionResult, HarmBlockThreshold, HarmCategory, Language, Outcome
+    from google.genai.types import (
+        CodeExecutionResult,
+        GenerateContentResponse,
+        GenerateContentResponseUsageMetadata,
+        HarmBlockThreshold,
+        HarmCategory,
+        Language,
+        MediaModality,
+        ModalityTokenCount,
+        Outcome,
+    )
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, _metadata_as_usage  # type: ignore
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -1663,3 +1673,36 @@ async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: 
             'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
             usage_limits=UsageLimits(total_tokens_limit=9, count_tokens_before_request=True),
         )
+
+
+def test_map_usage():
+    assert _metadata_as_usage(GenerateContentResponse()) == RequestUsage()
+
+    response = GenerateContentResponse(
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=1,
+            candidates_token_count=2,
+            cached_content_token_count=9100,
+            thoughts_token_count=9500,
+            prompt_tokens_details=[ModalityTokenCount(modality=MediaModality.AUDIO, token_count=9200)],
+            cache_tokens_details=[ModalityTokenCount(modality=MediaModality.AUDIO, token_count=9300)],
+            candidates_tokens_details=[ModalityTokenCount(modality=MediaModality.AUDIO, token_count=9400)],
+        )
+    )
+    assert _metadata_as_usage(response) == snapshot(
+        RequestUsage(
+            input_tokens=1,
+            cache_read_tokens=9100,
+            output_tokens=2,
+            input_audio_tokens=9200,
+            cache_audio_read_tokens=9300,
+            output_audio_tokens=9400,
+            details={
+                'cached_content_tokens': 9100,
+                'thoughts_tokens': 9500,
+                'audio_prompt_tokens': 9200,
+                'audio_cache_tokens': 9300,
+                'audio_candidates_tokens': 9400,
+            },
+        )
+    )
