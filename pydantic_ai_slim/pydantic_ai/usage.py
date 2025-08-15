@@ -9,7 +9,7 @@ from typing_extensions import deprecated, overload
 from . import _utils
 from .exceptions import UsageLimitExceeded
 
-__all__ = 'Usage', 'RequestUsage', 'RunUsage', 'UsageLimits'
+__all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
 
 
 @dataclass(repr=False)
