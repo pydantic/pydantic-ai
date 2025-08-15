@@ -1471,7 +1471,7 @@ def test_structured_dict_coverage():
     schema_non_standard_ref = {'$ref': '#/definitions/Model'}  # Not #/$defs/
     resolved_non_standard = _resolve_refs(schema_non_standard_ref)
     assert resolved_non_standard == {'$ref': '#/definitions/Model'}  # Should be unchanged
-    
+
     # Also test with explicit defs parameter to ensure branch coverage
     resolved_with_defs = _resolve_refs(
         {'$ref': 'http://example.com/schema.json'},
