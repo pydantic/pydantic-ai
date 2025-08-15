@@ -711,9 +711,13 @@ async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api
 
 
 async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
-    profile = OpenAIModelProfile(openai_system_prompt_role='user')
-    model = OpenAIModel('o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key))
-    assert OpenAIModelProfile.from_profile(model.profile).openai_system_prompt_role == 'user'
+    profile = ModelProfile(supports_tools=False)
+    model = OpenAIModel(
+        'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
+    )
+    profile = OpenAIModelProfile.from_profile(model.profile)
+    assert profile.openai_system_prompt_role == 'user'
+    assert profile.supports_tools is False
 
 
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
