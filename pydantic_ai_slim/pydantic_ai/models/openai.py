@@ -941,13 +941,15 @@ class OpenAIResponsesModel(Model):
                 )
             if not f.only_takes_string_argument:
                 raise UserError(f'`{f.name}` is set as free_form but does not take a single string argument.')
+            if f.grammar_syntax is not None:
+                format = {'type': 'grammar', 'syntax': f.grammar_syntax, 'definition': f.grammar_definition}
+            else:
+                format = {'type': 'text'}
             tool_param: responses.CustomToolParam = {
                 'name': f.name,
                 'type': 'custom',
                 'description': f.description or '',
-                'format': {
-                    'type': 'text',
-                },
+                'format': format,
             }
             return tool_param
 

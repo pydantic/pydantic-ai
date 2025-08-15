@@ -936,7 +936,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict, free_form=free_form)
+            processor = ObjectOutputProcessor(
+                output=output, description=description, strict=strict, free_form=free_form
+            )
             object_def = processor.object_def
 
             if name is None:

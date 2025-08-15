@@ -1746,6 +1746,15 @@ wheels = [
 ]
 
 [[package]]
+name = "lark"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/60/bc7622aefb2aee1c0b4ba23c1446d3e30225c8770b38d7aedbfb65ca9d5a/lark-1.2.2.tar.gz", hash = "sha256:ca807d0162cd16cef15a8feecb862d7319e7a09bdb13aef927968e45040fed80", size = 252132, upload-time = "2024-08-13T19:49:00.652Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2d/00/d90b10b962b4277f5e64a78b6609968859ff86889f5b898c1a778c06ec00/lark-1.2.2-py3-none-any.whl", hash = "sha256:c2276486b02f0f1b90be155f2c8ba4a8e194d42775786db622faccd652d8e80c", size = 111036, upload-time = "2024-08-13T19:48:58.603Z" },
+]
+
+[[package]]
 name = "logfire"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3511,6 +3520,9 @@ groq = [
 huggingface = [
     { name = "huggingface-hub", extra = ["inference"] },
 ]
+lark = [
+    { name = "lark" },
+]
 logfire = [
     { name = "logfire" },
 ]
@@ -3554,6 +3566,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5" },
+    { name = "lark", marker = "extra == 'lark'", specifier = ">=1.2.2" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.10.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.2" },
@@ -3571,7 +3584,7 @@ requires-dist = [
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "temporal", "vertexai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "huggingface", "lark", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "temporal", "vertexai"]
 
 [[package]]
 name = "pydantic-core"

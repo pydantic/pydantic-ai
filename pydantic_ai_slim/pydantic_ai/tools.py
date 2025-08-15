@@ -1,5 +1,7 @@
 from __future__ import annotations as _annotations
 
+import re
+from warnings import warn
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union
@@ -174,6 +176,8 @@ class Tool(Generic[AgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
+    grammar_syntax: Literal['regex', 'lark'] | None
+    grammar_definition: str | None
 
     def __init__(
         self,
@@ -188,7 +192,9 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
+        free_form: bool | None = None,
+        grammar_syntax: Literal['regex', 'lark'] | None = None,
+        grammar_definition: str | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -244,6 +250,10 @@ class Tool(Generic[AgentDepsT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            grammar_syntax: Whether to restrict the free-form function calling argument according to this syntax.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            grammar_definition: Whether to restrict the free-form function calling argument according to this syntax.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -262,7 +272,28 @@ class Tool(Generic[AgentDepsT]):
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
+
+        if free_form is None:
+            free_form = grammar_syntax is not None
         self.free_form = free_form
+        if (grammar_syntax is not None) != (grammar_definition is not None):
+            raise ValueError(f'Tool {self.name} defines one of grammar_syntax and grammar_definition but not both')
+        if grammar_syntax == 'lark':
+            try:
+                import lark
+
+                lark.Lark(grammar_definition)
+            except ImportError:
+                warn("Cannot validate lark grammar as the lark optional dependency group has not been installed")
+            except lark.exceptions.GrammarError as e:
+                raise ValueError('Lark grammar is invalid') from e
+        elif grammar_syntax == 'regex':
+            try:
+                re.compile(grammar_definition)
+            except re.error as e:
+                raise ValueError('Regex is invalid') from e
+        self.grammar_syntax = grammar_syntax
+        self.grammar_definition = grammar_definition
 
     @classmethod
     def from_schema(
@@ -311,6 +342,8 @@ class Tool(Generic[AgentDepsT]):
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             free_form=self.free_form,
+            grammar_syntax=self.grammar_syntax,
+            grammar_definition=self.grammar_definition,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
@@ -383,6 +416,23 @@ class ToolDefinition:
     The function must take a single string argument.
 
     When `False` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
+
+    Note: this is currently only supported by OpenAI gpt-5 models.
+    """
+
+    grammar_syntax: Literal['regex', 'lark'] | None = None
+    """The syntax type for the grammar to constrain the free-form function call.
+
+    This only applies when free_form is `True` and this additionally restricts the raw text payload
+    to match the grammar_definition provided.
+
+    Note: this is currently only supported by OpenAI gpt-5 models.
+    """
+    grammar_definition: str | None = None
+    """The syntax definition for the grammar to constrain the free-form function call.
+
+    This only applies when free_form is `True` and this additionally restricts the raw text payload
+    to match the grammar definition.
 
     Note: this is currently only supported by OpenAI gpt-5 models.
     """

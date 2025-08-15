@@ -8,7 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -965,7 +965,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
+        free_form: bool | None = None,
+        grammar_syntax: Literal['regex', 'lark'] | None = None,
+        grammar_definition: str | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -980,7 +982,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
+        free_form: bool | None = None,
+        grammar_syntax: Literal['regex', 'lark'] | None = None,
+        grammar_definition: str | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1027,6 +1031,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            grammar_syntax: Whether to restrict the free-form function calling argument according to this syntax.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            grammar_definition: Whether to restrict the free-form function calling argument according to this syntax.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(
@@ -1044,6 +1052,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
                 free_form,
+                grammar_syntax,
+                grammar_definition,
             )
             return func_
 
@@ -1064,7 +1074,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
+        free_form: bool | None = None,
+        grammar_syntax: Literal['regex', 'lark'] | None = None,
+        grammar_definition: str | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1079,7 +1091,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
+        free_form: bool | None = None,
+        grammar_syntax: Literal['regex', 'lark'] | None = None,
+        grammar_definition: str | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1126,6 +1140,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            grammar_syntax: Whether to restrict the free-form function calling argument according to this syntax.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            grammar_definition: Whether to restrict the free-form function calling argument according to this syntax.
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1141,6 +1159,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 schema_generator,
                 strict,
                 free_form,
+                grammar_syntax,
+                grammar_definition,
             )
             return func_
 
