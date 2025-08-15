@@ -80,6 +80,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -94,6 +95,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -140,6 +142,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(
@@ -156,6 +160,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                free_form,
             )
             return func_
 
@@ -172,6 +177,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -195,6 +201,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         tool = Tool[AgentDepsT](
             func,
@@ -206,6 +214,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
             strict=strict,
+            free_form=free_form,
         )
         self.add_tool(tool)
 

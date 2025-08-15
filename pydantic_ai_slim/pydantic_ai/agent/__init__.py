@@ -965,6 +965,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -979,6 +980,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1023,6 +1025,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(
@@ -1039,6 +1043,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                free_form,
             )
             return func_
 
@@ -1059,6 +1064,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1073,6 +1079,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1117,6 +1124,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1131,6 +1140,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                free_form,
             )
             return func_
 

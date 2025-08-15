@@ -841,11 +841,14 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+            parallel_tool_calls = self._get_parallel_tool_calling(
+                model_settings=model_settings, model_request_parameters=model_request_parameters
+            )
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
+                parallel_tool_calls=parallel_tool_calls,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
@@ -885,7 +888,16 @@ class OpenAIResponsesModel(Model):
             return NOT_GIVEN
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam | responses.CustomToolParam]:
+    def _get_parallel_tool_calling(
+        self, model_settings: OpenAIResponsesModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool | NotGiven:
+        if any(tool_definition.free_form for tool_definition in model_request_parameters.tool_defs.values()):
+            return False
+        return model_settings.get('parallel_tool_calls', NOT_GIVEN)
+
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[responses.FunctionToolParam | responses.CustomToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
@@ -910,7 +922,13 @@ class OpenAIResponsesModel(Model):
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam | responses.CustomToolParam:
         model_profile = OpenAIModelProfile.from_profile(self.profile)
-        if f.only_takes_string_argument and model_profile.openai_supports_freeform_function_calling:
+        if f.free_form:
+            if not model_profile.openai_supports_freeform_function_calling:
+                raise UserError(
+                    f'`{f.name}` is set as free_form but {model_profile.name} does not support free form function calling.'
+                )
+            if not f.only_takes_string_argument:
+                raise UserError(f'`{f.name}` is set as free_form but does not take a single string argument.')
             tool_param: responses.CustomToolParam = {
                 'name': f.name,
                 'type': 'custom',
@@ -926,11 +944,8 @@ class OpenAIResponsesModel(Model):
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            'strict': bool(
-                f.strict and model_profile.openai_supports_strict_tool_definition
-            ),
+            'strict': bool(f.strict and model_profile.openai_supports_strict_tool_definition),
         }
-
 
     async def _map_messages(
         self, messages: list[ModelMessage]

@@ -167,6 +167,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
+    free_form: bool
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -187,6 +188,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        free_form: bool = False,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -240,6 +242,8 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -258,6 +262,7 @@ class Tool(Generic[AgentDepsT]):
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
+        self.free_form = free_form
 
     @classmethod
     def from_schema(
@@ -305,6 +310,7 @@ class Tool(Generic[AgentDepsT]):
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
+            free_form=self.free_form,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
@@ -369,6 +375,18 @@ class ToolDefinition:
     Note: this is currently only supported by OpenAI models.
     """
 
+    free_form: bool = False
+    """Whether to invoke the function with free-form function calling for tool calls.
+
+    Setting this to `True` while using a supported model prevents parallel tool calling
+    in exchange for passing raw text payloads to your custom tool without wrapping the data in JSON.
+    The function must take a single string argument.
+
+    When `False` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
+
+    Note: this is currently only supported by OpenAI gpt-5 models.
+    """
+
     kind: ToolKind = field(default='function')
     """The kind of tool:
 
@@ -383,17 +401,12 @@ class ToolDefinition:
         # true if the parameters_json_schema looks like:
         # {"additionalProperties": False, "properties": {NAME: {"type": "string"}}, "required": ["NAME"], "type": "object"}
         schema = self.parameters_json_schema
+        print(self.parameters_json_schema)
         if len(schema['required']) != 1:
             return False
         if len(schema['properties']) != 1:
             return False
         property_name: str = schema['required'][0]
-        expected_schema = {
-            'additionalProperties': False,
-            'properties': {property_name: {'type': 'string'}},
-            'required': [property_name],
-            'type': 'object',
-        }
-        return schema == expected_schema
+        return schema['properties'][property_name].get('type', None) == 'string'
 
     __repr__ = _utils.dataclasses_no_defaults_repr
