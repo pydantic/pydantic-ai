@@ -49,7 +49,7 @@ requires-python = ">=3.9"
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     "rich>=13.9.4",
-    "logfire-api>=1.2.0",
+    "logfire-api>=3.14.1",
     "pydantic>=2.10",
     "pydantic-ai-slim=={{ version }}",
     "anyio>=0",
@@ -58,7 +58,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-logfire = ["logfire>=2.3"]
+logfire = ["logfire>=3.14.1"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev/evals"

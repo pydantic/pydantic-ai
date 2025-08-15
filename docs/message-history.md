@@ -334,6 +334,10 @@ custom processing logic.
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
 the message history before each model request.
 
+!!! warning "History processors replace the message history"
+    History processors replace the message history in the state with the processed messages, including the new user prompt part.
+    This means that if you want to keep the original message history, you need to make a copy of it.
+
 ### Usage
 
 The `history_processors` is a list of callables that take a list of
@@ -388,6 +392,9 @@ agent = Agent('openai:gpt-4o', history_processors=[keep_recent_messages])
 long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
 # result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
+
+!!! warning "Be careful when slicing the message history"
+    When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
 
 #### `RunContext` parameter
 
@@ -448,6 +455,9 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
 
 agent = Agent('openai:gpt-4o', history_processors=[summarize_old_messages])
 ```
+
+!!! warning "Be careful when summarizing the message history"
+    When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
 
 ### Testing History Processors
 

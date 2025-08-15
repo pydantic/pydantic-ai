@@ -1,0 +1,46 @@
+interactions:
+- request:
+    body: '{"contents": [{"parts": [{"text": "The quick brown fox jumps over the lazydog."}],
+      "role": "user"}]}'
+    headers:
+      Content-Type:
+      - application/json
+      user-agent:
+      - google-genai-sdk/1.26.0 gl-python/3.12.7
+      x-goog-api-client:
+      - google-genai-sdk/1.26.0 gl-python/3.12.7
+    method: post
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens
+  response:
+    body:
+      string: "{\n  \"totalTokens\": 12,\n  \"promptTokensDetails\": [\n    {\n      \"modality\":
+        \"TEXT\",\n      \"tokenCount\": 12\n    }\n  ]\n}\n"
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Fri, 01 Aug 2025 15:59:25 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=1582
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-XSS-Protection:
+      - '0'
+      content-length:
+      - '117'
+    status:
+      code: 200
+      message: OK
+version: 1

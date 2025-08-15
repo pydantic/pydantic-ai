@@ -44,6 +44,10 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.wrapped.name = value
 
     @property
+    def deps_type(self) -> type:
+        return self.wrapped.deps_type
+
+    @property
     def output_type(self) -> OutputSpec[OutputDataT]:
         return self.wrapped.output_type
 
@@ -196,8 +200,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
-        ) as result:
-            yield result
+        ) as run:
+            yield run
 
     @contextmanager
     def override(

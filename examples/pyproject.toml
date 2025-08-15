@@ -52,7 +52,7 @@ dependencies = [
     "pydantic-evals=={{ version }}",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
-    "logfire[asyncpg,fastapi,sqlite3,httpx]>=2.6",
+    "logfire[asyncpg,fastapi,sqlite3,httpx]>=3.14.1",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",

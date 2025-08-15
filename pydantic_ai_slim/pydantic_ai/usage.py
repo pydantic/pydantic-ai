@@ -96,6 +96,10 @@ class UsageLimits:
     """The maximum number of tokens allowed in responses from the model."""
     total_tokens_limit: int | None = None
     """The maximum number of tokens allowed in requests and responses combined."""
+    count_tokens_before_request: bool = False
+    """If True, perform a token counting pass before sending the request to the model,
+    to enforce `request_tokens_limit` ahead of time. This may incur additional overhead
+    (from calling the model's `count_tokens` API before making the actual request) and is disabled by default."""
 
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.
@@ -111,10 +115,22 @@ class UsageLimits:
         )
 
     def check_before_request(self, usage: Usage) -> None:
-        """Raises a `UsageLimitExceeded` exception if the next request would exceed the request_limit."""
+        """Raises a `UsageLimitExceeded` exception if the next request would exceed any of the limits."""
         request_limit = self.request_limit
         if request_limit is not None and usage.requests >= request_limit:
             raise UsageLimitExceeded(f'The next request would exceed the request_limit of {request_limit}')
+
+        request_tokens = usage.request_tokens or 0
+        if self.request_tokens_limit is not None and request_tokens > self.request_tokens_limit:
+            raise UsageLimitExceeded(
+                f'The next request would exceed the request_tokens_limit of {self.request_tokens_limit} ({request_tokens=})'
+            )
+
+        total_tokens = usage.total_tokens or 0
+        if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
+            raise UsageLimitExceeded(
+                f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
+            )
 
     def check_tokens(self, usage: Usage) -> None:
         """Raises a `UsageLimitExceeded` exception if the usage exceeds any of the token limits."""

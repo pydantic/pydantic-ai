@@ -23,7 +23,7 @@ from pydantic_graph.nodes import End, NodeRunEndT
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
-from .settings import ModelSettings, merge_model_settings
+from .settings import ModelSettings
 from .tools import RunContext, ToolDefinition, ToolKind
 
 if TYPE_CHECKING:
@@ -158,28 +158,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> ModelRequestNode[DepsT, NodeRunEndT]:
-        return ModelRequestNode[DepsT, NodeRunEndT](request=await self._get_first_message(ctx))
-
-    async def _get_first_message(
-        self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> _messages.ModelRequest:
-        run_context = build_run_context(ctx)
-        history, next_message = await self._prepare_messages(
-            self.user_prompt, ctx.state.message_history, ctx.deps.get_instructions, run_context
-        )
-        ctx.state.message_history = history
-        run_context.messages = history
-
-        return next_message
-
-    async def _prepare_messages(
-        self,
-        user_prompt: str | Sequence[_messages.UserContent] | None,
-        message_history: list[_messages.ModelMessage] | None,
-        get_instructions: Callable[[RunContext[DepsT]], Awaitable[str | None]],
-        run_context: RunContext[DepsT],
-    ) -> tuple[list[_messages.ModelMessage], _messages.ModelRequest]:
+    ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], CallToolsNode[DepsT, NodeRunEndT]]:  # noqa UP007
         try:
             ctx_messages = get_captured_run_messages()
         except LookupError:
@@ -191,29 +170,48 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
+        # Add message history to the `capture_run_messages` list, which will be empty at this point
+        messages.extend(ctx.state.message_history)
+        # Use the `capture_run_messages` list as the message history so that new messages are added to it
+        ctx.state.message_history = messages
+
+        run_context = build_run_context(ctx)
+
         parts: list[_messages.ModelRequestPart] = []
-        instructions = await get_instructions(run_context)
-        if message_history:
-            # Shallow copy messages
-            messages.extend(message_history)
+        if messages:
             # Reevaluate any dynamic system prompt parts
             await self._reevaluate_dynamic_prompts(messages, run_context)
         else:
             parts.extend(await self._sys_parts(run_context))
 
-        if user_prompt is not None:
-            parts.append(_messages.UserPromptPart(user_prompt))
-        elif (
-            len(parts) == 0
-            and message_history
-            and (last_message := message_history[-1])
-            and isinstance(last_message, _messages.ModelRequest)
-        ):
-            # Drop last message that came from history and reuse its parts
-            messages.pop()
-            parts.extend(last_message.parts)
+        if messages and (last_message := messages[-1]):
+            if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
+                # Drop last message from history and reuse its parts
+                messages.pop()
+                parts.extend(last_message.parts)
+            elif isinstance(last_message, _messages.ModelResponse):
+                if self.user_prompt is None:
+                    # `CallToolsNode` requires the tool manager to be prepared for the run step
+                    # This will raise errors for any tool name conflicts
+                    ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        return messages, _messages.ModelRequest(parts, instructions=instructions)
+                    # Skip ModelRequestNode and go directly to CallToolsNode
+                    return CallToolsNode[DepsT, NodeRunEndT](model_response=last_message)
+                elif any(isinstance(part, _messages.ToolCallPart) for part in last_message.parts):
+                    raise exceptions.UserError(
+                        'Cannot provide a new user prompt when the message history ends with '
+                        'a model response containing unprocessed tool calls. Either process the '
+                        'tool calls first (by calling `iter` with `user_prompt=None`) or append a '
+                        '`ModelRequest` with `ToolResultPart`s.'
+                    )
+
+        if self.user_prompt is not None:
+            parts.append(_messages.UserPromptPart(self.user_prompt))
+
+        instructions = await ctx.deps.get_instructions(run_context)
+        next_message = _messages.ModelRequest(parts, instructions=instructions)
+
+        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
@@ -250,9 +248,6 @@ async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
-    run_context = build_run_context(ctx)
-    ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
-
     output_schema = ctx.deps.output_schema
     output_object = None
     if isinstance(output_schema, _output.NativeOutputSchema):
@@ -351,23 +346,28 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> tuple[ModelSettings | None, models.ModelRequestParameters, list[_messages.ModelMessage], RunContext[DepsT]]:
         ctx.state.message_history.append(self.request)
 
-        # Check usage
-        if ctx.deps.usage_limits:  # pragma: no branch
-            ctx.deps.usage_limits.check_before_request(ctx.state.usage)
-
-        # Increment run_step
         ctx.state.run_step += 1
 
         run_context = build_run_context(ctx)
 
-        model_settings = merge_model_settings(ctx.deps.model_settings, None)
+        # This will raise errors for any tool name conflicts
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, run_context)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
-        message_history = await _process_message_history(
-            ctx.state.message_history, ctx.deps.history_processors, run_context
-        )
+        model_settings = ctx.deps.model_settings
+        usage = ctx.state.usage
+        if ctx.deps.usage_limits.count_tokens_before_request:
+            # Copy to avoid modifying the original usage object with the counted usage
+            usage = dataclasses.replace(usage)
+
+            counted_usage = await ctx.deps.model.count_tokens(message_history, model_settings, model_request_parameters)
+            usage.incr(counted_usage)
+
+        ctx.deps.usage_limits.check_before_request(usage)
 
         return model_settings, model_request_parameters, message_history, run_context
 
@@ -427,9 +427,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if self._events_iterator is None:
             # Ensure that the stream is only run once
 
-            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:
+            async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 texts: list[str] = []
                 tool_calls: list[_messages.ToolCallPart] = []
+                thinking_parts: list[_messages.ThinkingPart] = []
+
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
                         # ignore empty content for text parts, see #437
@@ -442,11 +444,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
                         yield _messages.BuiltinToolResultEvent(part)
                     elif isinstance(part, _messages.ThinkingPart):
-                        # We don't need to do anything with thinking parts in this tool-calling node.
-                        # We need to handle text parts in case there are no tool calls and/or the desired output comes
-                        # from the text, but thinking parts should not directly influence the execution of tools or
-                        # determination of the next node of graph execution here.
-                        pass
+                        thinking_parts.append(part)
                     else:
                         assert_never(part)
 
@@ -460,8 +458,18 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 elif texts:
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
                     self._next_node = await self._handle_text_response(ctx, texts)
+                elif thinking_parts:
+                    # handle thinking-only responses (responses that contain only ThinkingPart instances)
+                    # this can happen with models that support thinking mode when they don't provide
+                    # actionable output alongside their thinking content.
+                    self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
+                        _messages.ModelRequest(
+                            parts=[_messages.RetryPromptPart('Responses without text or tool calls are not permitted.')]
+                        )
+                    )
                 else:
-                    # we've got an empty response, this sometimes happens with anthropic (and perhaps other models)
+                    # we got an empty response with no tool calls, text, or thinking
+                    # this sometimes happens with anthropic (and perhaps other models)
                     # when the model has already returned text along side tool calls
                     # in this scenario, if text responses are allowed, we return text from the most recent model
                     # response, if any
@@ -859,11 +867,12 @@ def build_agent_graph(
 
 
 async def _process_message_history(
-    messages: list[_messages.ModelMessage],
+    state: GraphAgentState,
     processors: Sequence[HistoryProcessor[DepsT]],
     run_context: RunContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
+    messages = state.message_history
     for processor in processors:
         takes_ctx = is_takes_ctx(processor)
 
@@ -880,4 +889,7 @@ async def _process_message_history(
             else:
                 sync_processor = cast(_HistoryProcessorSync, processor)
                 messages = await run_in_executor(sync_processor, messages)
+
+    # Replaces the message history in the state with the processed messages
+    state.message_history = messages
     return messages
