@@ -168,10 +168,11 @@ class FunctionTextFormat:
         if self.syntax == 'lark':
             try:
                 import lark
+                from lark.exceptions import GrammarError
 
                 try:
                     lark.Lark(self.grammar)
-                except lark.exceptions.GrammarError as e:
+                except GrammarError as e:
                     raise ValueError('Lark grammar is invalid') from e
             except ImportError:
                 warn('Cannot validate lark grammar as the lark optional dependency group has not been installed')
