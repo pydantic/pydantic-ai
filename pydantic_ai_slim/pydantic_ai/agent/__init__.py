@@ -42,6 +42,7 @@ from ..tools import (
     GenerateToolJsonSchema,
     RunContext,
     Tool,
+    ToolCallResults,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -427,6 +428,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        tool_call_results: ToolCallResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -443,6 +445,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        tool_call_results: ToolCallResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -459,6 +462,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        tool_call_results: ToolCallResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -531,6 +535,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            tool_call_results: Optional results of tool calls to use if the message history ends on a model response with unhandled tool calls.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -623,6 +628,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors=self.history_processors,
             builtin_tools=list(self._builtin_tools),
             tool_manager=tool_manager,
+            tool_call_results=tool_call_results,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,

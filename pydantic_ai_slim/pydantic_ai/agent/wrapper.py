@@ -16,6 +16,7 @@ from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
     Tool,
+    ToolCallResults,
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
@@ -72,6 +73,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        tool_call_results: ToolCallResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -88,6 +90,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        tool_call_results: ToolCallResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -104,6 +107,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        tool_call_results: ToolCallResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -176,6 +180,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            tool_call_results: Optional results of tool calls to use if the message history ends on a model response with unhandled tool calls.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -191,6 +196,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             user_prompt=user_prompt,
             output_type=output_type,
             message_history=message_history,
+            tool_call_results=tool_call_results,
             model=model,
             deps=deps,
             model_settings=model_settings,

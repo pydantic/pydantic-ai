@@ -8,6 +8,9 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
+from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import RetryPromptPart, ToolReturn, ToolReturnPart
+
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
 
@@ -25,6 +28,7 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
+    'ToolCallResults',
 )
 
 
@@ -125,6 +129,18 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 * `'numpy'` — [Numpy-style](https://numpydoc.readthedocs.io/en/latest/format.html) docstrings.
 * `'sphinx'` — [Sphinx-style](https://sphinx-rtd-tutorial.readthedocs.io/en/latest/docstrings.html#the-sphinx-docstring-format) docstrings.
 * `'auto'` — Automatically infer the format based on the structure of the docstring.
+"""
+
+ToolCallResult: TypeAlias = Union[ToolReturn, ModelRetry, ToolReturnPart, RetryPromptPart, Literal['call']]
+"""A result of a tool call.
+
+This can be a `ModelRetry` exception if the tool call should be retried, a `ToolReturn` object if a result
+should be returned to the model, or the string `'call'` if the tool call should be executed as normal.
+Directly providing a `ToolReturnPart` and `RetryPromptPart` are also supported.
+"""
+
+ToolCallResults: TypeAlias = dict[str, ToolCallResult]
+"""A dictionary of tool call results, where the key is the tool call ID and the value is the result of the tool call.
 """
 
 A = TypeVar('A')

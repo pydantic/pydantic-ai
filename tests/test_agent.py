@@ -2069,7 +2069,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
     with pytest.raises(
         UserError,
-        match='Cannot provide a new user prompt when the message history ends with a model response containing unprocessed tool calls',
+        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.',
     ):
         agent.run_sync(user_prompt='New question', message_history=message_history)
 
