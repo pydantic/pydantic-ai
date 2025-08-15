@@ -163,8 +163,6 @@ class FunctionTextFormat:
     """
 
     def __post_init__(self) -> None:
-        if self.syntax is None or self.grammar is None:
-            raise ValueError('FunctionTextFormat lacks a syntax or grammar')
         if self.syntax == 'lark':
             try:
                 import lark
