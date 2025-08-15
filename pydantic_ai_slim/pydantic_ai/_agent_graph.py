@@ -273,7 +273,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 else:
                     user_content.extend(part.content)
             else:
-                raise exceptions.UserError(f'Unexpected message part type: {type(part)}')
+                raise exceptions.UserError(f'Unexpected message part type: {type(part)}')  # pragma: no cover
 
         if user_content:
             if last_tool_return is None:
@@ -754,7 +754,7 @@ async def process_function_tools(  # noqa: C901
         tool_call_ids_to_run = {call.tool_call_id for call in calls_to_run}
         if tool_call_ids_to_run != result_tool_call_ids:
             raise exceptions.UserError(
-                'Tool call results need to be provided for all pending tool calls. '
+                'Tool call results need to be provided for all deferred tool calls. '
                 f'Expected: {tool_call_ids_to_run}, got: {result_tool_call_ids}'
             )
 

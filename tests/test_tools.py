@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -1358,11 +1359,14 @@ def test_parallel_tool_return_with_deferred():
 
     @agent.tool_plain
     def get_price(fruit: str) -> ToolReturn:
-        return ToolReturn(
-            return_value=10.0,
-            content=f'The price of {fruit} is 10.0',
-            metadata={'fruit': fruit, 'price': 10.0},
-        )
+        if fruit == 'apple':
+            return ToolReturn(
+                return_value=10.0,
+                content=f'The price of {fruit} is 10.0.',
+                metadata={'fruit': fruit, 'price': 10.0},
+            )
+        else:
+            raise ModelRetry(f'Unknown fruit: {fruit}')
 
     async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
         return replace(tool_def, kind='deferred')
@@ -1403,19 +1407,14 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
-                    ToolReturnPart(
+                    RetryPromptPart(
+                        content='Unknown fruit: banana',
                         tool_name='get_price',
-                        content=10.0,
                         tool_call_id='get_price_banana',
-                        metadata={'fruit': 'banana', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='The price of apple is 10.0',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content='The price of banana is 10.0',
+                        content='The price of apple is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                 ]
@@ -1447,7 +1446,12 @@ def test_parallel_tool_return_with_deferred():
                 return_value=True,
                 content='I bought a pear',
                 metadata={'fruit': 'pear', 'price': 100.0},
-            )
+            ),
+            'get_price_banana': ToolReturn(
+                return_value=10.0,
+                content='The price of banana is 10.0.',
+                metadata={'fruit': 'banana', 'price': 10.0},
+            ),
         },
     )
     assert result.all_messages() == snapshot(
@@ -1494,7 +1498,11 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=['The price of apple is 10.0', 'The price of banana is 10.0'],
+                        content=['The price of apple is 10.0.'],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of banana is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1505,7 +1513,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=87, output_tokens=16),
+                usage=RequestUsage(input_tokens=89, output_tokens=16),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

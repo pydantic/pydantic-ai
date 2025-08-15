@@ -4297,17 +4297,20 @@ async def test_hitl_tool_approval():
         return f'File {path!r} deleted'
 
     @agent.tool_plain
-    def create_file(path: str, content: str) -> str:
-        return f'File {path!r} created with content: {content!r}'
+    def create_file(path: str, content: str) -> ToolReturn:
+        return ToolReturn(
+            return_value=f'File {path!r} created',
+            content=[f'<content file="{path}">', content, '</content>'],
+        )
 
-    result = await agent.run('Delete files ok_to_delete.py and never_delete.py')
+    result = await agent.run('Create new_file.py and delete ok_to_delete.py and never_delete.py')
     messages = result.all_messages()
     assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Delete files ok_to_delete.py and never_delete.py',
+                        content='Create new_file.py and delete ok_to_delete.py and never_delete.py',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -4326,7 +4329,7 @@ async def test_hitl_tool_approval():
                         tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=57, output_tokens=23),
+                usage=RequestUsage(input_tokens=60, output_tokens=23),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -4334,10 +4337,14 @@ async def test_hitl_tool_approval():
                 parts=[
                     ToolReturnPart(
                         tool_name='create_file',
-                        content="File 'new_file.py' created with content: 'print(\"Hello, world!\")'",
+                        content="File 'new_file.py' created",
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
-                    )
+                    ),
+                    UserPromptPart(
+                        content=['<content file="new_file.py">', 'print("Hello, world!")', '</content>'],
+                        timestamp=IsDatetime(),
+                    ),
                 ]
             ),
         ]
@@ -4363,6 +4370,17 @@ async def test_hitl_tool_approval():
         )
     )
 
+    with pytest.raises(
+        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+    ):
+        await agent.run('OK files deleted', message_history=messages, tool_call_results={})
+
+    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+        await agent.run(
+            message_history=messages,
+            tool_call_results={'never_delete': ModelRetry('File cannot be deleted')},
+        )
+
     result = await agent.run(
         message_history=messages,
         tool_call_results={'ok_to_delete': 'call', 'never_delete': ModelRetry('File cannot be deleted')},
@@ -4372,7 +4390,7 @@ async def test_hitl_tool_approval():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Delete files ok_to_delete.py and never_delete.py',
+                        content='Create new_file.py and delete ok_to_delete.py and never_delete.py',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -4391,7 +4409,7 @@ async def test_hitl_tool_approval():
                         tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=57, output_tokens=23),
+                usage=RequestUsage(input_tokens=60, output_tokens=23),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -4399,7 +4417,7 @@ async def test_hitl_tool_approval():
                 parts=[
                     ToolReturnPart(
                         tool_name='create_file',
-                        content="File 'new_file.py' created with content: 'print(\"Hello, world!\")'",
+                        content="File 'new_file.py' created",
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
                     ),
@@ -4415,11 +4433,15 @@ async def test_hitl_tool_approval():
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                     ),
+                    UserPromptPart(
+                        content=['<content file="new_file.py">', 'print("Hello, world!")', '</content>'],
+                        timestamp=IsDatetime(),
+                    ),
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=82, output_tokens=24),
+                usage=RequestUsage(input_tokens=89, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
