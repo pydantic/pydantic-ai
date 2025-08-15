@@ -8,7 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Literal, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -39,6 +39,7 @@ from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
     DocstringFormat,
+    FunctionTextFormat,
     GenerateToolJsonSchema,
     RunContext,
     Tool,
@@ -963,6 +964,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -977,6 +979,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1021,6 +1024,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(
@@ -1037,6 +1042,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                text_format,
             )
             return func_
 
@@ -1057,6 +1063,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1071,6 +1078,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1115,6 +1123,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1129,6 +1139,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                text_format,
             )
             return func_
 

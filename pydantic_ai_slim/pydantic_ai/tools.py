@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
+import re
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union
+from warnings import warn
 
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
@@ -130,6 +132,55 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 A = TypeVar('A')
 
 
+@dataclass
+class FunctionTextFormat:
+    """Used to invoke the function with free-form function calling for tool calls.
+
+    This class encapsulates the settings related to free-form function calling
+    as well as constraining the function call argument to a specific grammar.
+    The function must take a single string argument.
+
+    Calling a function in this way prevents parallel tool calling.
+
+    Note: this is currently only supported by OpenAI gpt-5 models.
+    """
+
+    syntax: Literal['lark', 'regex']
+    """The syntax type for the grammar to constrain the free-form function call.
+
+    For 'lark' the grammar attribute contains the lark grammar that the text must
+    conform to.
+    For 'regex' the grammar attribute contains the regex pattern that the text must
+    conform to.
+    """
+    grammar: str
+    """The grammar to constrain the free-form function call.
+
+    When the syntax is 'lark' this attribute contains the lark grammar that the text must
+    conform to.
+    When the syntax is 'regex' this attribute contains the regex pattern that the text must
+    conform to.
+    """
+
+    def __post_init__(self) -> None:
+        if self.syntax == 'lark':
+            try:
+                import lark
+                from lark.exceptions import GrammarError
+
+                try:
+                    lark.Lark(self.grammar)
+                except GrammarError as e:
+                    raise ValueError('Lark grammar is invalid') from e
+            except ImportError:
+                warn('Cannot validate lark grammar as the lark optional dependency group has not been installed')
+        elif self.syntax == 'regex':
+            try:
+                re.compile(self.grammar)
+            except re.error as e:
+                raise ValueError('Regex is invalid') from e
+
+
 class GenerateToolJsonSchema(GenerateJsonSchema):
     def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
         json_schema = super().typed_dict_schema(schema)
@@ -167,6 +218,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
+    text_format: Literal['text'] | FunctionTextFormat | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -187,6 +239,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -240,6 +293,8 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -258,6 +313,7 @@ class Tool(Generic[AgentDepsT]):
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
+        self.text_format = text_format
 
     @classmethod
     def from_schema(
@@ -305,6 +361,7 @@ class Tool(Generic[AgentDepsT]):
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
+            text_format=self.text_format,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
@@ -369,6 +426,18 @@ class ToolDefinition:
     Note: this is currently only supported by OpenAI models.
     """
 
+    text_format: Literal['text'] | FunctionTextFormat | None = None
+    """Whether to invoke the function with free-form function calling for tool calls.
+
+    Setting this to a format while using a supported model prevents parallel tool calling
+    in exchange for passing raw text payloads to your custom tool without wrapping the data in JSON.
+    The function must take a single string argument.
+
+    When `None` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
+
+    Note: this is currently only supported by OpenAI gpt-5 models.
+    """
+
     kind: ToolKind = field(default='function')
     """The kind of tool:
 
@@ -377,5 +446,27 @@ class ToolDefinition:
     - `'deferred'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
         When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
     """
+
+    @property
+    def only_takes_string_argument(self) -> bool:
+        # true if the parameters_json_schema looks like:
+        # {"additionalProperties": False, "properties": {NAME: {"type": "string"}}, "required": ["NAME"], "type": "object"}
+        return self.single_string_argument_name is not None
+
+    @property
+    def single_string_argument_name(self) -> str | None:
+        # returns the name of the single argument that is a string
+        # used for free-form function calling
+        # will return None if there is more or less than one argument,
+        # or if the argument is not a string
+        schema = self.parameters_json_schema
+        if len(schema['required']) != 1:
+            return None
+        if len(schema['properties']) != 1:
+            return None
+        property_name: str = schema['required'][0]
+        if not schema['properties'][property_name].get('type', None) == 'string':
+            return None
+        return property_name
 
     __repr__ = _utils.dataclasses_no_defaults_repr
