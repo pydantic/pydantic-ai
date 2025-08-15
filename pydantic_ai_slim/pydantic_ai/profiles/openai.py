@@ -26,8 +26,7 @@ class OpenAIModelProfile(ModelProfile):
     # safe to pass that value along.  Default is `True` to preserve existing
     # behaviour for OpenAI itself and most providers.
     openai_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value ``tool_choice='required'`` in the
-    request payload."""
+    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:

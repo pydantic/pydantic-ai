@@ -14,7 +14,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, TextEditorTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -2144,3 +2144,11 @@ Air Canada plans to lock out its flight attendants and cancel all flights starti
 
 These stories represent major international diplomatic developments, significant domestic policy changes in the US, and major transportation disruptions affecting North America.\
 """)
+
+
+async def test_anthropic_text_editor_tool(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, builtin_tools=[TextEditorTool()])
+
+    result = await agent.run('Please edit the following text: "This is a test."')
+    assert result.output == 'This is a test.'

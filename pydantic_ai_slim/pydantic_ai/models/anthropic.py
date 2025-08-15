@@ -10,7 +10,8 @@ from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, TextEditorTool, WebSearchTool
+from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
@@ -79,6 +80,9 @@ try:
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolResultBlockParam,
+        BetaToolTextEditor20241022Param,
+        BetaToolTextEditor20250124Param,
+        BetaToolTextEditor20250728Param,
         BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
@@ -369,6 +373,14 @@ class AnthropicModel(Model):
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 extra_headers['anthropic-beta'] = 'code-execution-2025-05-22'
                 tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
+            elif isinstance(tool, TextEditorTool):  # pragma: no branch
+                text_editor_tool = AnthropicModelProfile.from_profile(self.profile).anthropic_text_editor_tool
+                if text_editor_tool is not None:
+                    tools.append(text_editor_tool)
+                else:
+                    raise UserError(
+                        f'Text editor tool is not supported by the model {self._model_name}. Please use a different model.'
+                    )
             else:  # pragma: no cover
                 raise UserError(
                     f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'

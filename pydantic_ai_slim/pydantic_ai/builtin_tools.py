@@ -103,3 +103,14 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * OpenAI
     * Google
     """
+
+
+class TextEditorTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to view and edit text files.
+
+    This tool enables your agent to read, create, modify, and delete text files in your workspace.
+    It's particularly useful for code editing, documentation updates, and configuration management.
+
+    Supported by:
+    * Anthropic
+    """
