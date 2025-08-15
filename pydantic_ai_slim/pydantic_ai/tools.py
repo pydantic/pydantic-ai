@@ -400,13 +400,22 @@ class ToolDefinition:
     def only_takes_string_argument(self) -> bool:
         # true if the parameters_json_schema looks like:
         # {"additionalProperties": False, "properties": {NAME: {"type": "string"}}, "required": ["NAME"], "type": "object"}
+        return self.single_string_argument_name is not None
+
+    @property
+    def single_string_argument_name(self) -> str | None:
+        # returns the name of the single argument that is a string
+        # used for free-form function calling
+        # will return None if there is more or less than one argument,
+        # or if the argument is not a string
         schema = self.parameters_json_schema
-        print(self.parameters_json_schema)
         if len(schema['required']) != 1:
-            return False
+            return None
         if len(schema['properties']) != 1:
-            return False
+            return None
         property_name: str = schema['required'][0]
-        return schema['properties'][property_name].get('type', None) == 'string'
+        if not schema['properties'][property_name].get('type', None) == 'string':
+            return None
+        return property_name
 
     __repr__ = _utils.dataclasses_no_defaults_repr

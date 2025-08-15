@@ -177,7 +177,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False
+        free_form: bool = False,
     ) -> None:
         """Add a function as a tool to the toolset.
 

@@ -260,7 +260,7 @@ class OpenAIModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
-        model_response = self._process_response(response)
+        model_response = self._process_response(response, model_request_parameters)
         model_response.usage.requests = 1
         return model_response
 
@@ -710,7 +710,7 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response)
+        return self._process_response(response, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
@@ -727,7 +727,11 @@ class OpenAIResponsesModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
-    def _process_response(self, response: responses.Response) -> ModelResponse:
+    def _process_response(
+        self,
+        response: responses.Response,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
@@ -743,6 +747,14 @@ class OpenAIResponsesModel(Model):
                         items.append(TextPart(content.text))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+            elif item.type == 'custom_tool_call':
+                tool_name = item.name
+                tool = model_request_parameters.tool_defs[tool_name]
+                if tool_name not in model_request_parameters.tool_defs:
+                    raise UnexpectedModelBehavior(f'Unknown tool called: {tool_name}')
+                argument_name = tool.single_string_argument_name
+                argument_value = item.input
+                items.append(ToolCallPart(item.name, {argument_name: argument_value}, tool_call_id=item.call_id))
         return ModelResponse(
             items,
             usage=_map_usage(response),
