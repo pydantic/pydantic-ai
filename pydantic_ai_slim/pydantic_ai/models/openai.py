@@ -748,13 +748,11 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
             elif item.type == 'custom_tool_call':
-                tool_name = item.name
-                tool = model_request_parameters.tool_defs[tool_name]
-                if tool_name not in model_request_parameters.tool_defs:
-                    raise UnexpectedModelBehavior(f'Unknown tool called: {tool_name}')
+                if item.name not in model_request_parameters.tool_defs:
+                    raise UnexpectedModelBehavior(f'Unknown tool called: {item.name}')
+                tool = model_request_parameters.tool_defs[item.name]
                 argument_name = tool.single_string_argument_name
-                argument_value = item.input
-                items.append(ToolCallPart(item.name, {argument_name: argument_value}, tool_call_id=item.call_id))
+                items.append(ToolCallPart(item.name, {argument_name: item.input}, tool_call_id=item.call_id))
         return ModelResponse(
             items,
             usage=_map_usage(response),
