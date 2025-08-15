@@ -220,7 +220,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    text_format: Literal['text'] | FunctionTextFormat | None = None
+    text_format: Literal['text'] | FunctionTextFormat | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
