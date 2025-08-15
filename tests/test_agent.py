@@ -1433,8 +1433,7 @@ def test_output_type_structured_dict_unresolvable_ref():
 
 def test_structured_dict_coverage():
     """Test StructuredDict helper functions for full coverage."""
-    from pydantic_ai.output import StructuredDict
-    from pydantic_ai.output import _contains_refs, _resolve_refs  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.output import StructuredDict, _contains_refs, _resolve_refs  # pyright: ignore[reportPrivateUsage]
 
     # Test _contains_refs with list containing refs (covers lines 351, 353 in output.py)
     schema_with_list_refs = [
@@ -1457,8 +1456,8 @@ def test_structured_dict_coverage():
 
     # Test _resolve_refs with list containing refs (unique test not in test_output_type_structured_dict_unresolvable_ref)
     schema_list = [{'$ref': '#/$defs/Model'}, {'type': 'string'}]
-    resolved_list = _resolve_refs(  # pyright: ignore
-        schema_list, {'Model': {'type': 'object', 'properties': {'name': {'type': 'string'}}}}
+    resolved_list = _resolve_refs(
+        schema_list, {'Model': {'type': 'object', 'properties': {'name': {'type': 'string'}}}}  # pyright: ignore[reportArgumentType]
     )
     assert resolved_list[0] == {'type': 'object', 'properties': {'name': {'type': 'string'}}}  # pyright: ignore
     assert resolved_list[1] == {'type': 'string'}  # pyright: ignore
