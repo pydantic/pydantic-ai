@@ -33,8 +33,8 @@ class FallbackModel(Model):
 
     def __init__(
         self,
-        default_model: Model | KnownModelName,
-        *fallback_models: Model | KnownModelName,
+        default_model: Model | KnownModelName | str,
+        *fallback_models: Model | KnownModelName | str,
         fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelHTTPError,),
     ):
         """Initialize a fallback model instance.

@@ -46,6 +46,12 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 
+[project.urls]
+Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
+Source = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
+Documentation = "https://ai.pydantic.dev/install/#slim-install"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     "eval-type-backport>=0.2.0",
@@ -56,6 +62,7 @@ dependencies = [
     "exceptiongroup; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
+    "genai-prices>=0.0.22",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -93,7 +100,7 @@ temporal = ["temporalio>=1.15.0"]
 allow-direct-references = true
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli_exit"  # TODO remove this when clai has been out for a while
+pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
