@@ -652,7 +652,7 @@ def _tool_config(function_names: list[str]) -> ToolConfigDict:
 def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
     metadata = response.usage_metadata
     if metadata is None:
-        return usage.RequestUsage()  # pragma: no cover
+        return usage.RequestUsage()
     details: dict[str, int] = {}
     if cached_content_token_count := metadata.cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
