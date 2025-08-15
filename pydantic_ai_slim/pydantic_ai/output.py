@@ -341,13 +341,13 @@ def _contains_refs(schema: JsonSchemaValue) -> bool:
     if isinstance(schema, dict):
         if '$ref' in schema:
             return True
-        for v in schema.values():
-            if isinstance(v, (dict, list)) and _contains_refs(v):
+        for value in schema.values():
+            if _contains_refs(value):
                 return True
         return False
     elif isinstance(schema, list):
-        for item in schema:
-            if isinstance(item, (dict, list)) and _contains_refs(item):
+        for element in schema:
+            if _contains_refs(element):
                 return True
         return False
     return False
