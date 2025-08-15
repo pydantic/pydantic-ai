@@ -112,6 +112,8 @@ class ToolOutput(Generic[OutputDataT]):
     """The maximum number of retries for the tool."""
     strict: bool | None
     """Whether to use strict mode for the tool."""
+    free_form: bool
+    """Whether to invoke the function with free-form function calling for tool calls."""
 
     def __init__(
         self,
@@ -121,12 +123,14 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        free_form: bool = False,
     ):
         self.output = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.free_form = free_form
 
 
 @dataclass(init=False)

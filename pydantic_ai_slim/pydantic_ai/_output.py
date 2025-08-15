@@ -591,6 +591,7 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
+    free_form: bool = False
 
 
 @dataclass(init=False)
@@ -621,6 +622,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        free_form: bool = False,
     ):
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
@@ -663,6 +665,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             description=description,
             json_schema=json_schema,
             strict=strict,
+            free_form=free_form,
         )
 
     async def process(
@@ -925,6 +928,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 name = output.name
                 description = output.description
                 strict = output.strict
+                free_form = output.free_form
 
                 output = output.output
 
@@ -932,7 +936,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            processor = ObjectOutputProcessor(output=output, description=description, strict=strict, free_form=free_form)
             object_def = processor.object_def
 
             if name is None:
@@ -957,6 +961,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description=description,
                 parameters_json_schema=object_def.json_schema,
                 strict=object_def.strict,
+                free_form=object_def.free_form,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
             )

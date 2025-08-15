@@ -903,6 +903,8 @@ class OpenAIResponsesModel(Model):
     ) -> bool | NotGiven:
         if any(tool_definition.free_form for tool_definition in model_request_parameters.tool_defs.values()):
             return False
+        if any(tool_definition.free_form for tool_definition in model_request_parameters.output_tools):
+            return False
         return model_settings.get('parallel_tool_calls', NOT_GIVEN)
 
     def _get_tools(
