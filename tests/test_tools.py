@@ -31,7 +31,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.deferred import DeferredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
 
@@ -1385,7 +1385,7 @@ def test_parallel_tool_return():
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=58, response_tokens=10, total_tokens=68),
+                usage=RequestUsage(input_tokens=58, output_tokens=10),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1417,7 +1417,7 @@ def test_parallel_tool_return():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=Usage(requests=1, request_tokens=76, response_tokens=11, total_tokens=87),
+                usage=RequestUsage(input_tokens=76, output_tokens=11),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

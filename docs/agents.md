@@ -302,9 +302,7 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                ),
+                usage=RequestUsage(input_tokens=56, output_tokens=7),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             )
@@ -367,12 +365,7 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=56,
-                        response_tokens=7,
-                        total_tokens=63,
-                    ),
+                    usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
@@ -391,7 +384,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 #### Accessing usage and final output
 
-You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`Usage`][pydantic_ai.usage.Usage] object containing the usage data.
+You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -570,7 +563,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage())
-#> Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63)
+#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
 
 try:
     result_sync = agent.run_sync(
@@ -579,7 +572,7 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> Exceeded the response_tokens_limit of 10 (response_tokens=32)
+    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -1018,9 +1011,7 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=62, response_tokens=4, total_tokens=66
-                ),
+                usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),
@@ -1042,9 +1033,7 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=72, response_tokens=8, total_tokens=80
-                ),
+                usage=RequestUsage(input_tokens=72, output_tokens=8),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),

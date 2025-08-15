@@ -19,7 +19,7 @@ from ._utils import (
     now_utc as _now_utc,
 )
 from .exceptions import UnexpectedModelBehavior
-from .usage import Usage
+from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
@@ -830,7 +830,7 @@ class ModelResponse:
     parts: list[ModelResponsePart]
     """The parts of the model message."""
 
-    usage: Usage = field(default_factory=Usage)
+    usage: RequestUsage = field(default_factory=RequestUsage)
     """Usage information for the request.
 
     This has a default to make tests easier, and to support loading old messages where usage will be missing.
@@ -848,15 +848,15 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    vendor_details: dict[str, Any] | None = field(default=None)
-    """Additional vendor-specific details in a serializable format.
+    provider_details: dict[str, Any] | None = field(default=None)
+    """Additional provider-specific details in a serializable format.
 
     This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    vendor_id: str | None = None
-    """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
+    provider_request_id: str | None = None
+    """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
@@ -893,6 +893,16 @@ class ModelResponse:
                 body['content'] = text_content
 
         return result
+
+    @property
+    @deprecated('`vendor_details` is deprecated, use `provider_details` instead')
+    def vendor_details(self) -> dict[str, Any] | None:
+        return self.provider_details
+
+    @property
+    @deprecated('`vendor_id` is deprecated, use `provider_request_id` instead')
+    def vendor_id(self) -> str | None:
+        return self.provider_request_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

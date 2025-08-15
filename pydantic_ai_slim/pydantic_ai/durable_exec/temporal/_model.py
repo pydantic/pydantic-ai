@@ -21,7 +21,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from ._run_context import TemporalRunContext
 
@@ -48,7 +48,7 @@ class TemporalStreamedResponse(StreamedResponse):
     def get(self) -> ModelResponse:
         return self.response
 
-    def usage(self) -> Usage:
+    def usage(self) -> RequestUsage:
         return self.response.usage  # pragma: no cover
 
     @property

@@ -261,7 +261,6 @@ class OpenAIModel(Model):
             messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -445,8 +444,8 @@ class OpenAIModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            vendor_details=vendor_details,
-            vendor_id=response.id,
+            provider_details=vendor_details,
+            provider_request_id=response.id,
         )
 
     async def _process_streamed_response(
@@ -747,7 +746,7 @@ class OpenAIResponsesModel(Model):
             items,
             usage=_map_usage(response),
             model_name=response.model,
-            vendor_id=response.id,
+            provider_request_id=response.id,
             timestamp=timestamp,
         )
 
@@ -1265,10 +1264,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.Usage:
+def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
     elif isinstance(response_usage, responses.ResponseUsage):
         details: dict[str, int] = {
             key: value
@@ -1278,29 +1277,29 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             if isinstance(value, int)
         }
         details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
-        details['cached_tokens'] = response_usage.input_tokens_details.cached_tokens
-        return usage.Usage(
-            request_tokens=response_usage.input_tokens,
-            response_tokens=response_usage.output_tokens,
-            total_tokens=response_usage.total_tokens,
+        return usage.RequestUsage(
+            input_tokens=response_usage.input_tokens,
+            output_tokens=response_usage.output_tokens,
+            cache_read_tokens=response_usage.input_tokens_details.cached_tokens,
             details=details,
         )
     else:
         details = {
             key: value
             for key, value in response_usage.model_dump(
-                exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
+                exclude_none=True, exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
             ).items()
             if isinstance(value, int)
         }
-        if response_usage.completion_tokens_details is not None:
-            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
-        if response_usage.prompt_tokens_details is not None:
-            details.update(response_usage.prompt_tokens_details.model_dump(exclude_none=True))
-        return usage.Usage(
-            requests=1,
-            request_tokens=response_usage.prompt_tokens,
-            response_tokens=response_usage.completion_tokens,
-            total_tokens=response_usage.total_tokens,
+        u = usage.RequestUsage(
+            input_tokens=response_usage.prompt_tokens,
+            output_tokens=response_usage.completion_tokens,
             details=details,
         )
+        if response_usage.completion_tokens_details is not None:
+            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+            u.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens or 0
+        if response_usage.prompt_tokens_details is not None:
+            u.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens or 0
+            u.cache_read_tokens = response_usage.prompt_tokens_details.cached_tokens or 0
+        return u

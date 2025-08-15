@@ -40,7 +40,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 from . import (
     Model,
     ModelRequestParameters,
@@ -167,7 +167,6 @@ class MistralModel(Model):
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -348,7 +347,11 @@ class MistralModel(Model):
                 parts.append(tool)
 
         return ModelResponse(
-            parts, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+            parts,
+            usage=_map_usage(response),
+            model_name=response.model,
+            timestamp=timestamp,
+            provider_request_id=response.id,
         )
 
     async def _process_streamed_response(
@@ -699,17 +702,15 @@ SIMPLE_JSON_TYPE_MAPPING = {
 }
 
 
-def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Usage:
+def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
     if response.usage:
-        return Usage(
-            request_tokens=response.usage.prompt_tokens,
-            response_tokens=response.usage.completion_tokens,
-            total_tokens=response.usage.total_tokens,
-            details=None,
+        return RequestUsage(
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
         )
     else:
-        return Usage()  # pragma: no cover
+        return RequestUsage()  # pragma: no cover
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:
