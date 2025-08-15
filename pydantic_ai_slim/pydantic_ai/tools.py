@@ -145,17 +145,15 @@ class FunctionTextFormat:
     Note: this is currently only supported by OpenAI gpt-5 models.
     """
 
-    syntax: Literal['text', 'lark', 'regex'] = 'text'
+    syntax: Literal['lark', 'regex']
     """The syntax type for the grammar to constrain the free-form function call.
 
-    For 'text' this only enables free-form function calling without constraining
-    the text to a grammar.
     For 'lark' the grammar attribute contains the lark grammar that the text must
     conform to.
     For 'regex' the grammar attribute contains the regex pattern that the text must
     conform to.
     """
-    grammar: str | None = None
+    grammar: str
     """The grammar to constrain the free-form function call.
 
     When the syntax is 'lark' this attribute contains the lark grammar that the text must
@@ -165,8 +163,8 @@ class FunctionTextFormat:
     """
 
     def __post_init__(self) -> None:
-        if self.syntax != 'text' and self.grammar is None:
-            raise ValueError(f'Function format of {self.syntax} lacks a grammar')
+        if self.syntax is None or self.grammar is None:
+            raise ValueError('FunctionTextFormat lacks a syntax or grammar')
         if self.syntax == 'lark':
             try:
                 import lark
@@ -221,7 +219,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    text_format: FunctionTextFormat | None = None
+    text_format: Literal['text'] | FunctionTextFormat | None = None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -242,7 +240,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        text_format: FunctionTextFormat | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -429,7 +427,7 @@ class ToolDefinition:
     Note: this is currently only supported by OpenAI models.
     """
 
-    text_format: FunctionTextFormat | None = None
+    text_format: Literal['text'] | FunctionTextFormat | None = None
     """Whether to invoke the function with free-form function calling for tool calls.
 
     Setting this to a format while using a supported model prevents parallel tool calling

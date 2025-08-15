@@ -591,7 +591,7 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
-    text_format: FunctionTextFormat | None = None
+    text_format: Literal['text'] | FunctionTextFormat | None = None
 
 
 @dataclass(init=False)
@@ -622,7 +622,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-        text_format: FunctionTextFormat | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ):
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)

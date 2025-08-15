@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Callable, overload
+from typing import Any, Callable, Literal, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
@@ -81,7 +81,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        text_format: FunctionTextFormat | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -96,7 +96,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        text_format: FunctionTextFormat | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -178,7 +178,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        text_format: FunctionTextFormat | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 

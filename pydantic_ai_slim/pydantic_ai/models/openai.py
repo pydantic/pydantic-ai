@@ -995,7 +995,7 @@ class OpenAIResponsesModel(Model):
                 raise UserError(
                     f'`{f.name}` is set as a free-form function but does not take a single string argument.'
                 )
-            if f.text_format.syntax == 'text':
+            if f.text_format == 'text':
                 format = {'type': 'text'}
             else:
                 format = {'type': 'grammar', 'syntax': f.text_format.syntax, 'definition': f.text_format.grammar}

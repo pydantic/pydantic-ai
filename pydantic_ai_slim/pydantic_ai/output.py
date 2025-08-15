@@ -112,7 +112,7 @@ class ToolOutput(Generic[OutputDataT]):
     """The maximum number of retries for the tool."""
     strict: bool | None
     """Whether to use strict mode for the tool."""
-    text_format: FunctionTextFormat | None = None
+    text_format: Literal['text'] | FunctionTextFormat | None = None
     """Whether to invoke the function with free-form function calling for tool calls."""
 
     def __init__(
@@ -123,7 +123,7 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
-        text_format: FunctionTextFormat | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ):
         self.output = type_
         self.name = name
