@@ -295,6 +295,7 @@ def test_logfire(
                                 },
                                 'outer_typed_dict_key': None,
                                 'strict': None,
+                                'text_format': None,
                                 'kind': 'function',
                             }
                         ],
