@@ -1398,15 +1398,15 @@ def test_parallel_tool_return():
                         metadata={'foo': 'bar'},
                         timestamp=IsDatetime(),
                     ),
+                    UserPromptPart(
+                        content='The price of apple is 10.0',
+                        timestamp=IsDatetime(),
+                    ),
                     ToolReturnPart(
                         tool_name='get_price',
                         content=10.0,
                         tool_call_id=IsStr(),
                         metadata={'foo': 'bar'},
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content='The price of apple is 10.0',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(

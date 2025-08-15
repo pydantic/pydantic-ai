@@ -695,8 +695,15 @@ async def process_function_tools(  # noqa: C901
 
         # We append the results at the end, rather than as they are received, to retain a consistent ordering
         # This is mostly just to simplify testing
+        # IMPORTANT: We must interleave tool return parts with their associated user prompt parts
+        # to maintain proper message ordering when tools return ToolReturn with content
         for k in sorted(tool_parts_by_index):
             output_parts.append(tool_parts_by_index[k])
+            # Immediately add any user prompt parts associated with this tool return
+            # This ensures proper ordering when mixing regular tools (that may return ToolReturn)
+            # with deferred tools in parallel execution
+            if k in user_parts_by_index:
+                output_parts.extend(user_parts_by_index[k])
 
     # Finally, we handle deferred tool calls
     for call in tool_calls_by_kind['deferred']:
@@ -710,9 +717,6 @@ async def process_function_tools(  # noqa: C901
             )
         else:
             yield _messages.FunctionToolCallEvent(call)
-
-    for k in sorted(user_parts_by_index):
-        output_parts.extend(user_parts_by_index[k])
 
     if final_result:
         output_final_result.append(final_result)
