@@ -99,9 +99,15 @@ def _contains_ref(obj: Any) -> bool:
     if isinstance(obj, dict):
         if '$ref' in obj:
             return True
-        return any(_contains_ref(v) for v in obj.values() if isinstance(v, (dict, list)))
+        for v in obj.values():
+            if isinstance(v, (dict, list)) and _contains_ref(v):
+                return True
+        return False
     elif isinstance(obj, list):
-        return any(_contains_ref(item) for item in obj if isinstance(item, (dict, list)))
+        for item in obj:
+            if isinstance(item, (dict, list)) and _contains_ref(item):
+                return True
+        return False
     return False
 
 

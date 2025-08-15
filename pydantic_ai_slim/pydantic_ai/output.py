@@ -341,9 +341,15 @@ def _contains_refs(schema: JsonSchemaValue) -> bool:
     if isinstance(schema, dict):
         if '$ref' in schema:
             return True
-        return any(_contains_refs(v) for v in schema.values() if isinstance(v, (dict, list)))
+        for v in schema.values():
+            if isinstance(v, (dict, list)) and _contains_refs(v):
+                return True
+        return False
     elif isinstance(schema, list):
-        return any(_contains_refs(item) for item in schema if isinstance(item, (dict, list)))
+        for item in schema:
+            if isinstance(item, (dict, list)) and _contains_refs(item):
+                return True
+        return False
     return False
 
 
@@ -363,7 +369,7 @@ def _resolve_refs(schema: JsonSchemaValue, defs: dict[str, JsonSchemaValue] | No
             return schema
         else:
             # Recursively resolve refs in nested structures
-            result = {}
+            result: dict[str, Any] = {}
             for key, value in schema.items():
                 if key == '$defs':
                     # Skip $defs at root level since we're inlining them
