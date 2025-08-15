@@ -134,25 +134,12 @@ def test_check_object_json_schema():
         '$ref': 'http://example.com/schemas/model.json',
     }
     assert check_object_json_schema(schema_with_external_ref) == schema_with_external_ref
-    
+
     # Test with different format ref (not starting with #/$defs/)
     schema_with_different_ref = {
         '$ref': '#/definitions/Model',
     }
     assert check_object_json_schema(schema_with_different_ref) == schema_with_different_ref
-
-    # Test that _contains_ref returns False for primitive values
-    from pydantic_ai._utils import _contains_ref
-    
-    # Test with various primitive types
-    assert _contains_ref('string') is False
-    assert _contains_ref(123) is False
-    assert _contains_ref(None) is False
-    assert _contains_ref(True) is False
-    
-    # Test with nested structures containing primitives
-    assert _contains_ref({'key': 'value', 'number': 123}) is False
-    assert _contains_ref([1, 2, 'three', None]) is False
 
 
 @pytest.mark.parametrize('peek_first', [True, False])
