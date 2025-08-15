@@ -1345,6 +1345,8 @@ def test_parallel_tool_return_with_deferred():
                 parts=[
                     ToolCallPart('get_price', {'fruit': 'apple'}, tool_call_id='get_price_apple'),
                     ToolCallPart('get_price', {'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart('get_price', {'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart('get_price', {'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart('buy', {'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ]
             )
@@ -1359,7 +1361,7 @@ def test_parallel_tool_return_with_deferred():
 
     @agent.tool_plain
     def get_price(fruit: str) -> ToolReturn:
-        if fruit == 'apple':
+        if fruit in ['apple', 'pear']:
             return ToolReturn(
                 return_value=10.0,
                 content=f'The price of {fruit} is 10.0.',
@@ -1375,7 +1377,7 @@ def test_parallel_tool_return_with_deferred():
     def buy(fruit: str):
         pass
 
-    result = agent.run_sync('What do an apple and a banana cost? Also buy me a pear.')
+    result = agent.run_sync('What do an apple, a banana, a pear and a grape cost? Also buy me a pear.')
 
     messages = result.all_messages()
     assert messages == snapshot(
@@ -1383,7 +1385,7 @@ def test_parallel_tool_return_with_deferred():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What do an apple and a banana cost? Also buy me a pear.',
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1392,9 +1394,11 @@ def test_parallel_tool_return_with_deferred():
                 parts=[
                     ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
                     ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
-                usage=RequestUsage(input_tokens=64, output_tokens=15),
+                usage=RequestUsage(input_tokens=68, output_tokens=25),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1413,8 +1417,25 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                     ),
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
+                        timestamp=IsDatetime(),
+                    ),
                     UserPromptPart(
                         content='The price of apple is 10.0.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of pear is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                 ]
@@ -1447,6 +1468,7 @@ def test_parallel_tool_return_with_deferred():
                 content='I bought a pear',
                 metadata={'fruit': 'pear', 'price': 100.0},
             ),
+            'get_price_apple': RetryPromptPart(content='Unfortunately, we are out of apples.'),
             'get_price_banana': ToolReturn(
                 return_value=10.0,
                 content='The price of banana is 10.0.',
@@ -1459,7 +1481,7 @@ def test_parallel_tool_return_with_deferred():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What do an apple and a banana cost? Also buy me a pear.',
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1468,19 +1490,20 @@ def test_parallel_tool_return_with_deferred():
                 parts=[
                     ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
                     ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
-                usage=RequestUsage(input_tokens=64, output_tokens=15),
+                usage=RequestUsage(input_tokens=68, output_tokens=25),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
-                    ToolReturnPart(
+                    RetryPromptPart(
+                        content='Unfortunately, we are out of apples.',
                         tool_name='get_price',
-                        content=10.0,
                         tool_call_id='get_price_apple',
-                        metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
@@ -1491,6 +1514,19 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
                         tool_name='buy',
                         content=True,
                         tool_call_id='buy_pear',
@@ -1498,11 +1534,16 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content=['The price of apple is 10.0.'],
+                        content='The price of banana is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='The price of banana is 10.0.',
+                        content=[
+                            # Ideally this would have been excluded when the `get_price_apple` result was replaced with a `RetryPromptPart`,
+                            # but there's no way to tell that this user prompt part belonged to that tool result.
+                            'The price of apple is 10.0.',
+                            'The price of pear is 10.0.',
+                        ],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1513,7 +1554,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=89, output_tokens=16),
+                usage=RequestUsage(input_tokens=124, output_tokens=26),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

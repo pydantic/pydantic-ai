@@ -4370,17 +4370,6 @@ async def test_hitl_tool_approval():
         )
     )
 
-    with pytest.raises(
-        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
-    ):
-        await agent.run('OK files deleted', message_history=messages, tool_call_results={})
-
-    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
-        await agent.run(
-            message_history=messages,
-            tool_call_results={'never_delete': ModelRetry('File cannot be deleted')},
-        )
-
     result = await agent.run(
         message_history=messages,
         tool_call_results={'ok_to_delete': 'call', 'never_delete': ModelRetry('File cannot be deleted')},
@@ -4448,3 +4437,42 @@ async def test_hitl_tool_approval():
         ]
     )
     assert result.output == snapshot('Done!')
+
+
+async def test_run_with_tool_call_results_errors():
+    agent = Agent('test')
+
+    message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='Hello')])]
+
+    with pytest.raises(
+        UserError,
+        match='Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.',
+    ):
+        await agent.run('Hello again', message_history=message_history, tool_call_results={'create_file': 'call'})
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='Hello to you too!')]),
+    ]
+
+    with pytest.raises(
+        UserError,
+        match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.',
+    ):
+        await agent.run('Hello again', message_history=message_history, tool_call_results={'create_file': 'call'})
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='say_hello')]),
+    ]
+
+    with pytest.raises(
+        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+    ):
+        await agent.run('OK files deleted', message_history=message_history)
+
+    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+        await agent.run(
+            message_history=message_history,
+            tool_call_results={},
+        )

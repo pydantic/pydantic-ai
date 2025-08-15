@@ -278,7 +278,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if user_content:
             if last_tool_return is None:
                 raise exceptions.UserError(
-                    'Results for deferred tool calls were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.'
+                    'Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.'
                 )
             assert last_tool_return is not None
             last_tool_return.content = user_content
@@ -845,10 +845,16 @@ async def _call_tool(
                 tool_call_id=tool_call.tool_call_id,
             )
             raise ToolRetryError(m)
+        elif isinstance(tool_call_result, _messages.RetryPromptPart):
+            tool_call_result.tool_name = tool_call.tool_name
+            tool_call_result.tool_call_id = tool_call.tool_call_id
+            raise ToolRetryError(tool_call_result)
+        elif isinstance(tool_call_result, _messages.ToolReturnPart):
+            return tool_call_result, None
         else:
             tool_result = tool_call_result
     except ToolRetryError as e:
-        return (e.tool_retry, None)
+        return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
         tool_return = tool_result
@@ -907,7 +913,7 @@ async def _call_tool(
             part_kind='user-prompt',
         )
 
-    return (return_part, user_part)
+    return return_part, user_part
 
 
 @dataclasses.dataclass
