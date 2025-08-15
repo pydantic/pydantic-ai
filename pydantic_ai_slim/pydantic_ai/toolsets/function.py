@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Literal, overload
+from typing import Any, Callable, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
@@ -10,6 +10,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import (
     DocstringFormat,
+    FunctionTextFormat,
     GenerateToolJsonSchema,
     Tool,
     ToolFuncEither,
@@ -80,9 +81,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -97,9 +96,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -146,7 +143,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
@@ -164,9 +161,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
-                free_form,
-                grammar_definition,
-                grammar_syntax,
+                text_format,
             )
             return func_
 
@@ -183,9 +178,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool = False,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -209,7 +202,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
         tool = Tool[AgentDepsT](
@@ -222,9 +215,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
             strict=strict,
-            free_form=free_form,
-            grammar_definition=grammar_definition,
-            grammar_syntax=grammar_syntax,
+            text_format=text_format,
         )
         self.add_tool(tool)
 

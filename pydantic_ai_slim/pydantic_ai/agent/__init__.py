@@ -39,6 +39,7 @@ from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
     DocstringFormat,
+    FunctionTextFormat,
     GenerateToolJsonSchema,
     RunContext,
     Tool,
@@ -963,9 +964,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool | None = None,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -980,9 +979,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool | None = None,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1027,11 +1024,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
-                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            grammar_syntax: Whether to restrict the free-form function calling argument according to this syntax.
-                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            grammar_definition: Whether to restrict the free-form function calling argument according to this syntax.
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
@@ -1049,9 +1042,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
-                free_form,
-                grammar_syntax,
-                grammar_definition,
+                text_format,
             )
             return func_
 
@@ -1072,9 +1063,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool | None = None,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1089,9 +1078,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool | None = None,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1136,11 +1123,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
-                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            grammar_syntax: Whether to restrict the free-form function calling argument according to this syntax.
-                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            grammar_definition: Whether to restrict the free-form function calling argument according to this syntax.
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
 
@@ -1156,9 +1139,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
-                free_form,
-                grammar_syntax,
-                grammar_definition,
+                text_format,
             )
             return func_
 

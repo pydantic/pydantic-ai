@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 import re
-from warnings import warn
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union
+from warnings import warn
 
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
@@ -132,6 +132,58 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 A = TypeVar('A')
 
 
+@dataclass
+class FunctionTextFormat:
+    """Used to invoke the function with free-form function calling for tool calls.
+
+    This class encapsulates the settings related to free-form function calling
+    as well as optionally constraining the function call argument to a specific grammar.
+    The function must take a single string argument.
+
+    Calling a function in this way prevents parallel tool calling.
+
+    Note: this is currently only supported by OpenAI gpt-5 models.
+    """
+
+    syntax: Literal['text', 'lark', 'regex'] = 'text'
+    """The syntax type for the grammar to constrain the free-form function call.
+
+    For 'text' this only enables free-form function calling without constraining
+    the text to a grammar.
+    For 'lark' the grammar attribute contains the lark grammar that the text must
+    conform to.
+    For 'regex' the grammar attribute contains the regex pattern that the text must
+    conform to.
+    """
+    grammar: str | None = None
+    """The grammar to constrain the free-form function call.
+
+    When the syntax is 'lark' this attribute contains the lark grammar that the text must
+    conform to.
+    When the syntax is 'regex' this attribute contains the regex pattern that the text must
+    conform to.
+    """
+
+    def __post_init__(self) -> None:
+        if self.syntax != 'text' and self.grammar is None:
+            raise ValueError(f'Function format of {self.syntax} lacks a grammar')
+        if self.syntax == 'lark':
+            try:
+                import lark
+
+                try:
+                    lark.Lark(self.grammar)
+                except lark.exceptions.GrammarError as e:
+                    raise ValueError('Lark grammar is invalid') from e
+            except ImportError:
+                warn('Cannot validate lark grammar as the lark optional dependency group has not been installed')
+        elif self.syntax == 'regex':
+            try:
+                re.compile(self.grammar)
+            except re.error as e:
+                raise ValueError('Regex is invalid') from e
+
+
 class GenerateToolJsonSchema(GenerateJsonSchema):
     def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
         json_schema = super().typed_dict_schema(schema)
@@ -169,15 +221,13 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    free_form: bool
+    text_format: FunctionTextFormat | None = None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
-    grammar_syntax: Literal['regex', 'lark'] | None
-    grammar_definition: str | None
 
     def __init__(
         self,
@@ -192,9 +242,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        free_form: bool | None = None,
-        grammar_syntax: Literal['regex', 'lark'] | None = None,
-        grammar_definition: str | None = None,
+        text_format: FunctionTextFormat | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -248,11 +296,7 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            free_form: Whether to invoke the function using free-form function calling (only affects OpenAI).
-                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            grammar_syntax: Whether to restrict the free-form function calling argument according to this syntax.
-                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            grammar_definition: Whether to restrict the free-form function calling argument according to this syntax.
+            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
@@ -272,28 +316,7 @@ class Tool(Generic[AgentDepsT]):
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
-
-        if free_form is None:
-            free_form = grammar_syntax is not None
-        self.free_form = free_form
-        if (grammar_syntax is not None) != (grammar_definition is not None):
-            raise ValueError(f'Tool {self.name} defines one of grammar_syntax and grammar_definition but not both')
-        if grammar_syntax == 'lark':
-            try:
-                import lark
-
-                lark.Lark(grammar_definition)
-            except ImportError:
-                warn("Cannot validate lark grammar as the lark optional dependency group has not been installed")
-            except lark.exceptions.GrammarError as e:
-                raise ValueError('Lark grammar is invalid') from e
-        elif grammar_syntax == 'regex':
-            try:
-                re.compile(grammar_definition)
-            except re.error as e:
-                raise ValueError('Regex is invalid') from e
-        self.grammar_syntax = grammar_syntax
-        self.grammar_definition = grammar_definition
+        self.text_format = text_format
 
     @classmethod
     def from_schema(
@@ -341,9 +364,7 @@ class Tool(Generic[AgentDepsT]):
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
-            free_form=self.free_form,
-            grammar_syntax=self.grammar_syntax,
-            grammar_definition=self.grammar_definition,
+            text_format=self.text_format,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
@@ -408,31 +429,14 @@ class ToolDefinition:
     Note: this is currently only supported by OpenAI models.
     """
 
-    free_form: bool = False
+    text_format: FunctionTextFormat | None = None
     """Whether to invoke the function with free-form function calling for tool calls.
 
-    Setting this to `True` while using a supported model prevents parallel tool calling
+    Setting this to a format while using a supported model prevents parallel tool calling
     in exchange for passing raw text payloads to your custom tool without wrapping the data in JSON.
     The function must take a single string argument.
 
     When `False` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
-
-    Note: this is currently only supported by OpenAI gpt-5 models.
-    """
-
-    grammar_syntax: Literal['regex', 'lark'] | None = None
-    """The syntax type for the grammar to constrain the free-form function call.
-
-    This only applies when free_form is `True` and this additionally restricts the raw text payload
-    to match the grammar_definition provided.
-
-    Note: this is currently only supported by OpenAI gpt-5 models.
-    """
-    grammar_definition: str | None = None
-    """The syntax definition for the grammar to constrain the free-form function call.
-
-    This only applies when free_form is `True` and this additionally restricts the raw text payload
-    to match the grammar definition.
 
     Note: this is currently only supported by OpenAI gpt-5 models.
     """

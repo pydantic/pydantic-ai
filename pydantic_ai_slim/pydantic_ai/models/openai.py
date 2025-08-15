@@ -953,9 +953,9 @@ class OpenAIResponsesModel(Model):
     def _get_parallel_tool_calling(
         self, model_settings: OpenAIResponsesModelSettings, model_request_parameters: ModelRequestParameters
     ) -> bool | NotGiven:
-        if any(tool_definition.free_form for tool_definition in model_request_parameters.tool_defs.values()):
+        if any(tool_definition.text_format for tool_definition in model_request_parameters.tool_defs.values()):
             return False
-        if any(tool_definition.free_form for tool_definition in model_request_parameters.output_tools):
+        if any(tool_definition.text_format for tool_definition in model_request_parameters.output_tools):
             return False
         return model_settings.get('parallel_tool_calls', NOT_GIVEN)
 
@@ -986,17 +986,19 @@ class OpenAIResponsesModel(Model):
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam | responses.CustomToolParam:
         model_profile = OpenAIModelProfile.from_profile(self.profile)
-        if f.free_form:
+        if f.text_format:
             if not model_profile.openai_supports_freeform_function_calling:
                 raise UserError(
-                    f'`{f.name}` is set as free_form but {model_profile.name} does not support free form function calling.'
+                    f'`{f.name}` is uses free-form function calling but {model_profile.name} does not support free form function calling.'
                 )
             if not f.only_takes_string_argument:
-                raise UserError(f'`{f.name}` is set as free_form but does not take a single string argument.')
-            if f.grammar_syntax is not None:
-                format = {'type': 'grammar', 'syntax': f.grammar_syntax, 'definition': f.grammar_definition}
-            else:
+                raise UserError(
+                    f'`{f.name}` is set as a free-form function but does not take a single string argument.'
+                )
+            if f.text_format.syntax == 'text':
                 format = {'type': 'text'}
+            else:
+                format = {'type': 'grammar', 'syntax': f.text_format.syntax, 'definition': f.text_format.grammar}
             tool_param: responses.CustomToolParam = {
                 'name': f.name,
                 'type': 'custom',
