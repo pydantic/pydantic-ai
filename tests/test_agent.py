@@ -2046,7 +2046,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
             ),
             ModelResponse(
                 parts=[TextPart(content='Final response')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='function:simple_response:',
                 timestamp=IsDatetime(),
             ),
@@ -4240,7 +4240,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[ThinkingPart(content='Let me think about this...')],
-                usage=Usage(requests=1, request_tokens=57, response_tokens=6, total_tokens=63),
+                usage=RequestUsage(input_tokens=57, output_tokens=6),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -4255,7 +4255,7 @@ async def test_thinking_only_response_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Final answer')],
-                usage=Usage(requests=1, request_tokens=75, response_tokens=8, total_tokens=83),
+                usage=RequestUsage(input_tokens=75, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -4324,7 +4324,7 @@ async def test_hitl_tool_approval():
                         tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=57, response_tokens=12, total_tokens=69),
+                usage=RequestUsage(input_tokens=57, output_tokens=12),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -4373,7 +4373,7 @@ async def test_hitl_tool_approval():
                         tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=57, response_tokens=12, total_tokens=69),
+                usage=RequestUsage(input_tokens=57, output_tokens=12),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -4395,7 +4395,7 @@ async def test_hitl_tool_approval():
             ),
             ModelResponse(
                 parts=[TextPart(content='OK')],
-                usage=Usage(requests=1, request_tokens=76, response_tokens=13, total_tokens=89),
+                usage=RequestUsage(input_tokens=76, output_tokens=13),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
