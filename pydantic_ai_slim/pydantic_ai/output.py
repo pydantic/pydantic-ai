@@ -10,6 +10,7 @@ from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils
+from .exceptions import UserError
 from .messages import ToolCallPart
 from .tools import RunContext, ToolDefinition
 
@@ -307,7 +308,6 @@ def StructuredDict(
     # If the schema contains $defs, inline them to avoid issues with pydantic's
     # JSON schema generator (Issue #2466)
     if '$defs' in json_schema:
-        from .exceptions import UserError
         from .profiles import InlineDefsJsonSchemaTransformer
         
         try:
