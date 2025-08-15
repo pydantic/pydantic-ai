@@ -591,7 +591,9 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
-    free_form: bool = False
+    free_form: bool | None = None
+    grammar_syntax: Literal['regex', 'lark'] | None = None
+    grammar_definition: str | None = None
 
 
 @dataclass(init=False)
@@ -622,7 +624,9 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
-        free_form: bool = False,
+        free_form: bool | None = None,
+        grammar_syntax: Literal['regex', 'lark'] | None = None,
+        grammar_definition: str | None = None,
     ):
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
@@ -666,6 +670,8 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             json_schema=json_schema,
             strict=strict,
             free_form=free_form,
+            grammar_syntax=grammar_syntax,
+            grammar_definition=grammar_definition,
         )
 
     async def process(
@@ -923,12 +929,17 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            free_form = None
+            grammar_syntax = None
+            grammar_definition = None
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
                 free_form = output.free_form
+                grammar_syntax = output.grammar_syntax
+                grammar_definition = output.grammar_definition
 
                 output = output.output
 
@@ -937,7 +948,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 strict = default_strict
 
             processor = ObjectOutputProcessor(
-                output=output, description=description, strict=strict, free_form=free_form
+                output=output, description=description, strict=strict, free_form=free_form, grammar_syntax=grammar_syntax, grammar_definition=grammar_definition,
             )
             object_def = processor.object_def
 
@@ -958,12 +969,17 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 if multiple:
                     description = f'{object_def.name}: {description}'
 
+            free_form = object_def.free_form
+            if free_form is None:
+                free_form = object_def.grammar_syntax is not None
             tool_def = ToolDefinition(
                 name=name,
                 description=description,
                 parameters_json_schema=object_def.json_schema,
                 strict=object_def.strict,
-                free_form=object_def.free_form,
+                free_form=free_form,
+                grammar_syntax=object_def.grammar_syntax,
+                grammar_definition=object_def.grammar_definition,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
             )

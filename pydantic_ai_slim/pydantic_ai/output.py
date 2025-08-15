@@ -112,8 +112,12 @@ class ToolOutput(Generic[OutputDataT]):
     """The maximum number of retries for the tool."""
     strict: bool | None
     """Whether to use strict mode for the tool."""
-    free_form: bool
+    free_form: bool | None
     """Whether to invoke the function with free-form function calling for tool calls."""
+    grammar_syntax: Literal['regex', 'lark'] | None
+    """Whether to restrict the free-form function call to a given grammar."""
+    grammar_definition: str | None
+    """The grammar definition for the restricted free-form function call."""
 
     def __init__(
         self,
@@ -123,7 +127,9 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
-        free_form: bool = False,
+        free_form: bool | None = None,
+        grammar_syntax: Literal['regex', 'lark'] | None = None,
+        grammar_definition: str | None = None,
     ):
         self.output = type_
         self.name = name
@@ -131,6 +137,8 @@ class ToolOutput(Generic[OutputDataT]):
         self.max_retries = max_retries
         self.strict = strict
         self.free_form = free_form
+        self.grammar_definition = grammar_definition
+        self.grammar_syntax = grammar_syntax
 
 
 @dataclass(init=False)
