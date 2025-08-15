@@ -712,7 +712,7 @@ async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api
 
 async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
     profile = ModelProfile(supports_tools=False)
-    model = OpenAIModel(
+    model = OpenAIModel(  # type: ignore[reportDeprecated]
         'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
     )
     profile = OpenAIModelProfile.from_profile(model.profile)
