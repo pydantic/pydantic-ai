@@ -14,7 +14,7 @@ from pydantic_ai.providers import Provider
 
 try:
     from anthropic import AsyncAnthropic, AsyncAnthropicBedrock
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `anthropic` package to use the Anthropic provider, '
         'you can use the `anthropic` optional group — `pip install "pydantic-ai-slim[anthropic]"`'
