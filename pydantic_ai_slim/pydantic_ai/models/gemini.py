@@ -803,7 +803,7 @@ class _GeminiResponse(TypedDict):
 
     candidates: list[_GeminiCandidates]
     # usageMetadata appears to be required by both APIs but is omitted when streaming responses until the last response
-    usage_metadata: NotRequired[Annotated[GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
+    usage_metadata: NotRequired[Annotated[_GeminiUsageMetaData, pydantic.Field(alias='usageMetadata')]]
     prompt_feedback: NotRequired[Annotated[_GeminiPromptFeedback, pydantic.Field(alias='promptFeedback')]]
     model_version: NotRequired[Annotated[str, pydantic.Field(alias='modelVersion')]]
     vendor_id: NotRequired[Annotated[str, pydantic.Field(alias='responseId')]]
@@ -832,7 +832,7 @@ class _GeminiModalityTokenCount(TypedDict):
     token_count: Annotated[int, pydantic.Field(alias='tokenCount', default=0)]
 
 
-class GeminiUsageMetaData(TypedDict, total=False):
+class _GeminiUsageMetaData(TypedDict, total=False):
     """See <https://ai.google.dev/api/generate-content#UsageMetadata>.
 
     The docs suggest all fields are required, but some are actually not required, so we assume they are all optional.

@@ -37,7 +37,6 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     GeminiModel,
     GeminiModelSettings,
-    GeminiUsageMetaData,
     _content_model_response,
     _gemini_response_ta,
     _gemini_streamed_response_ta,
@@ -54,6 +53,7 @@ from pydantic_ai.models.gemini import (
     _GeminiThoughtPart,
     _GeminiToolConfig,
     _GeminiTools,
+    _GeminiUsageMetaData,
     _metadata_as_usage,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -605,8 +605,8 @@ def gemini_response(content: _GeminiContent, finish_reason: Literal['STOP'] | No
     return _GeminiResponse(candidates=[candidate], usage_metadata=example_usage(), model_version='gemini-1.5-flash-123')
 
 
-def example_usage() -> GeminiUsageMetaData:
-    return GeminiUsageMetaData(prompt_token_count=1, candidates_token_count=2, total_token_count=3)
+def example_usage() -> _GeminiUsageMetaData:
+    return _GeminiUsageMetaData(prompt_token_count=1, candidates_token_count=2, total_token_count=3)
 
 
 async def test_text_success(get_gemini_client: GetGeminiClient):
