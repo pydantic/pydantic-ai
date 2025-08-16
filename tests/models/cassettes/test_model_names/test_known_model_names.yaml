@@ -4,8 +4,6 @@ interactions:
     headers:
       accept:
       - '*/*'
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
       host:
@@ -14,8 +12,6 @@ interactions:
     uri: https://us.inference.heroku.com/available-models
   response:
     headers:
-      cache-control:
-      - no-cache, no-store, must-revalidate
       connection:
       - keep-alive
       content-length:
