@@ -29,7 +29,7 @@ pytestmark = [
 ]
 
 
-def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:
+def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
     for header in response['headers'].copy():
         assert isinstance(header, str)
         if header.lower() in filter_headers:
