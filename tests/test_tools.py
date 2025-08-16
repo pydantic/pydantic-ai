@@ -27,8 +27,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, ToolOutput
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.output import DeferredToolRequests, ToolOutput
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets.deferred import DeferredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -1242,24 +1242,12 @@ def test_deferred_tool():
             ),
         ]
     )
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls], toolsets=[deferred_toolset])
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], toolsets=[deferred_toolset])
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolCalls(
-            tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-            tool_defs={
-                'my_tool': ToolDefinition(
-                    name='my_tool',
-                    description='',
-                    parameters_json_schema={
-                        'type': 'object',
-                        'properties': {'x': {'type': 'integer'}},
-                        'required': ['x'],
-                    },
-                    kind='deferred',
-                )
-            },
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
         )
     )
 
@@ -1277,7 +1265,7 @@ def test_deferred_tool_with_output_type():
             ),
         ]
     )
-    agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolCalls], toolsets=[deferred_toolset])
+    agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolRequests], toolsets=[deferred_toolset])
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(MyModel(foo='a'))
@@ -1298,7 +1286,7 @@ def test_deferred_tool_with_tool_output_type():
     )
     agent = Agent(
         TestModel(call_tools=[]),
-        output_type=[[ToolOutput(MyModel), ToolOutput(MyModel)], DeferredToolCalls],
+        output_type=[[ToolOutput(MyModel), ToolOutput(MyModel)], DeferredToolRequests],
         toolsets=[deferred_toolset],
     )
 
@@ -1318,7 +1306,7 @@ async def test_deferred_tool_without_output_type():
     )
     agent = Agent(TestModel(), toolsets=[deferred_toolset])
 
-    msg = 'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
+    msg = 'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
 
     with pytest.raises(UserError, match=msg):
         await agent.run('Hello')
@@ -1328,9 +1316,9 @@ async def test_deferred_tool_without_output_type():
             await result.get_output()
 
 
-def test_output_type_deferred_tool_calls_by_itself():
-    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolCalls`.'):
-        Agent(TestModel(), output_type=DeferredToolCalls)
+def test_output_type_deferred_tool_requests_by_itself():
+    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolRequests`.'):
+        Agent(TestModel(), output_type=DeferredToolRequests)
 
 
 def test_output_type_empty():
@@ -1357,7 +1345,7 @@ def test_parallel_tool_return_with_deferred():
                 ]
             )
 
-    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolCalls])
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain
     def get_price(fruit: str) -> ToolReturn:
@@ -1443,39 +1431,29 @@ def test_parallel_tool_return_with_deferred():
         ]
     )
     assert result.output == snapshot(
-        DeferredToolCalls(
-            tool_calls=[ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear')],
-            tool_defs={
-                'buy': ToolDefinition(
-                    name='buy',
-                    parameters_json_schema={
-                        'additionalProperties': False,
-                        'properties': {'fruit': {'type': 'string'}},
-                        'required': ['fruit'],
-                        'type': 'object',
-                    },
-                    kind='deferred',
-                )
-            },
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear')],
         )
     )
 
     result = agent.run_sync(
         message_history=messages,
-        tool_call_results={
-            'buy_pear': ToolReturn(
-                return_value=True,
-                content='I bought a pear',
-                metadata={'fruit': 'pear', 'price': 100.0},
-            ),
-            'get_price_apple': RetryPromptPart(content='Unfortunately, we are out of apples.'),
-            'get_price_banana': ToolReturnPart(
-                content=10.0,
-                tool_name='get_price',
-                tool_call_id='get_price_banana',
-                metadata={'fruit': 'banana', 'price': 10.0},
-            ),
-        },
+        deferred_tool_results=DeferredToolResults(
+            calls={
+                'buy_pear': ToolReturn(
+                    return_value=True,
+                    content='I bought a pear',
+                    metadata={'fruit': 'pear', 'price': 100.0},
+                ),
+                'get_price_apple': RetryPromptPart(content='Unfortunately, we are out of apples.'),
+                'get_price_banana': ToolReturnPart(
+                    content=10.0,
+                    tool_name='get_price',
+                    tool_call_id='get_price_banana',
+                    metadata={'fruit': 'banana', 'price': 10.0},
+                ),
+            },
+        ),
     )
     assert result.all_messages() == snapshot(
         [
@@ -1538,6 +1516,7 @@ def test_parallel_tool_return_with_deferred():
                         content=[
                             # Ideally this would have been excluded when the `get_price_apple` result was replaced with a `RetryPromptPart`,
                             # but there's no way to tell that this user prompt part belonged to that tool result.
+                            # TODO: This won't be a problem once we disallow overriding previously executed tool results
                             'The price of apple is 10.0.',
                             'The price of pear is 10.0.',
                         ],

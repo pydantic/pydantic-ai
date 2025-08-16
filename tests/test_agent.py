@@ -3,7 +3,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -46,10 +46,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, StructuredDict, ToolOutput
+from pydantic_ai.output import DeferredToolRequests, StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -4286,13 +4286,9 @@ async def test_hitl_tool_approval():
 
     model = FunctionModel(model_function)
 
-    agent = Agent(model, output_type=[str, DeferredToolCalls])
+    agent = Agent(model, output_type=[str, DeferredToolRequests])
 
-    async def defer_unless_resuming(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
-        # When resuming a run that ended on deferred tool calls, run_step will be 0
-        return tool_def if ctx.run_step == 0 else replace(tool_def, kind='deferred')
-
-    @agent.tool_plain(prepare=defer_unless_resuming)
+    @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
         return f'File {path!r} deleted'
 
@@ -4343,29 +4339,19 @@ async def test_hitl_tool_approval():
         ]
     )
     assert result.output == snapshot(
-        DeferredToolCalls(
-            tool_calls=[
+        DeferredToolRequests(
+            approvals=[
                 ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
                 ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ],
-            tool_defs={
-                'delete_file': ToolDefinition(
-                    name='delete_file',
-                    parameters_json_schema={
-                        'additionalProperties': False,
-                        'properties': {'path': {'type': 'string'}},
-                        'required': ['path'],
-                        'type': 'object',
-                    },
-                    kind='deferred',
-                )
-            },
+            ]
         )
     )
 
     result = await agent.run(
         message_history=messages,
-        tool_call_results={'ok_to_delete': 'call', 'never_delete': ModelRetry('File cannot be deleted')},
+        deferred_tool_results=DeferredToolResults(
+            approvals={'ok_to_delete': True, 'never_delete': ToolDenied('File cannot be deleted')},
+        ),
     )
     assert result.all_messages() == snapshot(
         [
@@ -4409,9 +4395,9 @@ async def test_hitl_tool_approval():
                         tool_call_id='ok_to_delete',
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
-                        content='File cannot be deleted',
+                    ToolReturnPart(
                         tool_name='delete_file',
+                        content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                     ),
@@ -4419,7 +4405,7 @@ async def test_hitl_tool_approval():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=85, output_tokens=24),
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
@@ -4428,7 +4414,7 @@ async def test_hitl_tool_approval():
     assert result.output == snapshot('Done!')
 
 
-async def test_run_with_tool_call_results_errors():
+async def test_run_with_deferred_tool_results_errors():
     agent = Agent('test')
 
     message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])])]
@@ -4437,7 +4423,11 @@ async def test_run_with_tool_call_results_errors():
         UserError,
         match='Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.',
     ):
-        await agent.run('Hello again', message_history=message_history, tool_call_results={'create_file': 'call'})
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
 
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
@@ -4448,7 +4438,11 @@ async def test_run_with_tool_call_results_errors():
         UserError,
         match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.',
     ):
-        await agent.run('Hello again', message_history=message_history, tool_call_results={'create_file': 'call'})
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
 
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
@@ -4463,5 +4457,12 @@ async def test_run_with_tool_call_results_errors():
     with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
         await agent.run(
             message_history=message_history,
-            tool_call_results={},
+            deferred_tool_results=DeferredToolResults(),
+        )
+
+    # TODO: Raise an error, and disallow in method overloads
+    with pytest.raises(UserError):
+        await agent.run(
+            'Hello again',
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )

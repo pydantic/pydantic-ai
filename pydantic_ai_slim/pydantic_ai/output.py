@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
@@ -11,7 +11,7 @@ from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils
 from .messages import ToolCallPart
-from .tools import RunContext, ToolDefinition
+from .tools import RunContext
 
 __all__ = (
     # classes
@@ -360,11 +360,11 @@ See [output docs](../output.md) for more information.
 
 
 @dataclass
-class DeferredToolCalls:
+class DeferredToolRequests:
     """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
 
     See [deferred toolset docs](../toolsets.md#deferred-toolset) for more information.
     """
 
-    tool_calls: list[ToolCallPart]
-    tool_defs: dict[str, ToolDefinition]
+    calls: list[ToolCallPart] = field(default_factory=list)
+    approvals: list[ToolCallPart] = field(default_factory=list)

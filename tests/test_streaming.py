@@ -35,7 +35,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, PromptedOutput, TextOutput
+from pydantic_ai.output import DeferredToolRequests, PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
@@ -1159,7 +1159,7 @@ def test_function_tool_event_tool_call_id_properties():
 
 
 async def test_deferred_tool():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, kind='deferred')
@@ -1172,27 +1172,15 @@ async def test_deferred_tool():
         assert not result.is_complete
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolCalls(
-                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                tool_defs={
-                    'my_tool': ToolDefinition(
-                        name='my_tool',
-                        parameters_json_schema={
-                            'additionalProperties': False,
-                            'properties': {'x': {'type': 'integer'}},
-                            'required': ['x'],
-                            'type': 'object',
-                        },
-                        kind='deferred',
-                    )
-                },
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             )
         )
         assert result.is_complete
 
 
 async def test_deferred_tool_iter():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
         return replace(tool_def, kind='deferred')
@@ -1201,7 +1189,7 @@ async def test_deferred_tool_iter():
     def my_tool(x: int) -> int:
         return x + 1  # pragma: no cover
 
-    outputs: list[str | DeferredToolCalls] = []
+    outputs: list[str | DeferredToolRequests] = []
     events: list[Any] = []
 
     async with agent.iter('test') as run:
@@ -1219,20 +1207,8 @@ async def test_deferred_tool_iter():
 
     assert outputs == snapshot(
         [
-            DeferredToolCalls(
-                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                tool_defs={
-                    'my_tool': ToolDefinition(
-                        name='my_tool',
-                        parameters_json_schema={
-                            'additionalProperties': False,
-                            'properties': {'x': {'type': 'integer'}},
-                            'required': ['x'],
-                            'type': 'object',
-                        },
-                        kind='deferred',
-                    )
-                },
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
             )
         ]
     )

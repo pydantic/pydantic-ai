@@ -38,11 +38,15 @@ from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
+    DeferredToolCallResult,
+    DeferredToolResult,
+    DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
     RunContext,
     Tool,
-    ToolCallResults,
+    ToolApproved,
+    ToolDenied,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -428,7 +432,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        tool_call_results: ToolCallResults | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -445,7 +449,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
-        tool_call_results: ToolCallResults | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -456,13 +460,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(
+    async def iter(  # noqa: C901
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
-        tool_call_results: ToolCallResults | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -535,7 +539,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
-            tool_call_results: Optional results for deferred tool calls in the message history.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -613,6 +617,21 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             instrumentation_settings = None
             tracer = NoOpTracer()
+
+        # TODO: It's kinda ugly to do this here
+        tool_call_results: dict[str, DeferredToolResult] | None = None
+        if deferred_tool_results is not None:
+            tool_call_results = {}
+            for tool_call_id, approval in deferred_tool_results.approvals.items():
+                if approval is True:
+                    approval = ToolApproved()
+                elif approval is False:
+                    approval = ToolDenied('The tool call was denied.')
+                tool_call_results[tool_call_id] = approval
+            for tool_call_id, result in deferred_tool_results.calls.items():
+                if not isinstance(result, _utils.get_union_args(DeferredToolCallResult)):
+                    result = _messages.ToolReturn(result)
+                tool_call_results[tool_call_id] = result
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
@@ -969,6 +988,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -983,6 +1003,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1027,6 +1048,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: TODO: Docstring
         """
 
         def tool_decorator(
@@ -1043,6 +1065,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                requires_approval,
             )
             return func_
 
@@ -1063,6 +1086,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1077,6 +1101,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1121,6 +1146,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: TODO: Docstring
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1135,6 +1161,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                requires_approval,
             )
             return func_
 

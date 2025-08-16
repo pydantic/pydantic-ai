@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Generic, Literal, Union
 
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -28,7 +28,7 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
-    'ToolCallResults',
+    'DeferredToolResults',
 )
 
 
@@ -131,17 +131,36 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 * `'auto'` — Automatically infer the format based on the structure of the docstring.
 """
 
-ToolCallResult: TypeAlias = Union[ToolReturn, ModelRetry, ToolReturnPart, RetryPromptPart, Literal['call']]
-"""A result of a tool call.
 
-This can be a `ModelRetry` exception if the tool call should be retried, a `ToolReturn` object if a result
-should be returned to the model, or the string `'call'` if the tool call should be executed as normal.
-Directly providing a `ToolReturnPart` and `RetryPromptPart` are also supported.
-"""
+@dataclass
+class ToolApproved:
+    """TODO: Docstring."""
 
-ToolCallResults: TypeAlias = Mapping[str, ToolCallResult]
-"""A dictionary of tool call results, where the key is the tool call ID and the value is the result of the tool call.
-"""
+    override_args: dict[str, Any] | None = None
+
+
+@dataclass
+class ToolDenied:
+    """TODO: Docstring."""
+
+    message: str
+
+
+DeferredToolApprovalResult: TypeAlias = Union[ToolApproved, ToolDenied]
+"""TODO: Docstring."""
+DeferredToolCallResult: TypeAlias = Union[ToolReturn, ModelRetry, ToolReturnPart, RetryPromptPart]
+"""TODO: Docstring."""
+DeferredToolResult = Union[DeferredToolApprovalResult, DeferredToolCallResult]
+"""TODO: Docstring."""
+
+
+@dataclass
+class DeferredToolResults:
+    """TODO: Docstring."""
+
+    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict)
+    approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=dict)
+
 
 A = TypeVar('A')
 
@@ -183,6 +202,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
+    requires_approval: bool
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -203,6 +223,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -256,6 +277,7 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: TODO: Docstring
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -274,6 +296,7 @@ class Tool(Generic[AgentDepsT]):
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
+        self.requires_approval = requires_approval
 
     @classmethod
     def from_schema(
@@ -333,6 +356,11 @@ class Tool(Generic[AgentDepsT]):
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
         base_tool_def = self.tool_def
+
+        # When resuming a run that ended on deferred tool calls, run_step will be 0
+        if self.requires_approval and ctx.run_step > 0:
+            base_tool_def = replace(base_tool_def, kind='unapproved')
+
         if self.prepare is not None:
             return await self.prepare(ctx, base_tool_def)
         else:
@@ -347,7 +375,7 @@ This type is used to define tools parameters (aka arguments) in [ToolDefinition]
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
 
-ToolKind: TypeAlias = Literal['function', 'output', 'deferred']
+ToolKind: TypeAlias = Literal['function', 'output', 'deferred', 'unapproved']
 """Kind of tool."""
 
 
@@ -392,6 +420,11 @@ class ToolDefinition:
     - `'output'`: a tool that passes through an output value that ends the run
     - `'deferred'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
         When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
+    # TODO: 'unapproved'
     """
+
+    @property
+    def is_deferred(self) -> bool:
+        return self.kind in ('deferred', 'unapproved')
 
     __repr__ = _utils.dataclasses_no_defaults_repr
