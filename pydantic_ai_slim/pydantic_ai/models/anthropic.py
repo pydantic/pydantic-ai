@@ -20,6 +20,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -47,6 +48,7 @@ try:
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
+        BetaCacheControlEphemeralParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
@@ -106,6 +108,16 @@ Since Anthropic supports a variety of date-stamped models, we explicitly list th
 allow any name in the type hints.
 See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models) for a full list.
 """
+
+CacheableContentBlockParam = (
+    BetaTextBlockParam
+    | BetaToolUseBlockParam
+    | BetaServerToolUseBlockParam
+    | BetaImageBlockParam
+    | BetaToolResultBlockParam
+)
+"""Content block parameter types that support cache_control."""
+CACHEABLE_CONTENT_BLOCK_PARAM_TYPES = {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result'}
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -382,6 +394,19 @@ class AnthropicModel(Model):
                 )
         return tools, extra_headers
 
+    @staticmethod
+    def _add_cache_control_to_last_param(params: list[BetaContentBlockParam]) -> None:
+        if not params:
+            raise UserError(
+                'CachePoint cannot be the first content in a user message - there must be previous content to attach the CachePoint to.'
+            )
+
+        if params[-1]['type'] not in CACHEABLE_CONTENT_BLOCK_PARAM_TYPES:
+            raise UserError(f'Cache control not supported for param type: {params[-1]["type"]}')
+
+        cacheable_param = cast(CacheableContentBlockParam, params[-1])
+        cacheable_param['cache_control'] = BetaCacheControlEphemeralParam(type='ephemeral')
+
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
@@ -394,7 +419,10 @@ class AnthropicModel(Model):
                         system_prompt_parts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
-                            user_content_params.append(content)
+                            if isinstance(content, CachePoint):
+                                self._add_cache_control_to_last_param(user_content_params)
+                            else:
+                                user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_block_param = BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
@@ -483,7 +511,7 @@ class AnthropicModel(Model):
     @staticmethod
     async def _map_user_prompt(
         part: UserPromptPart,
-    ) -> AsyncGenerator[BetaContentBlockParam]:
+    ) -> AsyncGenerator[BetaContentBlockParam | CachePoint]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
                 yield BetaTextBlockParam(text=part.content, type='text')
@@ -524,6 +552,8 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, CachePoint):
+                    yield item
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 

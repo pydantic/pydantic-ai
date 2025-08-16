@@ -23,6 +23,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -713,6 +714,8 @@ class OpenAIChatModel(Model):
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
+                elif isinstance(item, CachePoint):
+                    raise NotImplementedError('CachePoint is not supported for OpenAI')
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
@@ -1150,6 +1153,8 @@ class OpenAIResponsesModel(Model):
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                elif isinstance(item, CachePoint):
+                    raise NotImplementedError('CachePoint is not supported for OpenAI')
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
