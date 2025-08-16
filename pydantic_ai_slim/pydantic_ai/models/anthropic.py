@@ -20,6 +20,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -46,6 +47,7 @@ try:
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
+        BetaCacheControlEphemeralParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
@@ -387,7 +389,15 @@ class AnthropicModel(Model):
                         system_prompt_parts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
-                            user_content_params.append(content)
+                            if isinstance(content, dict) and content.get('type') == 'ephemeral':
+                                if user_content_params:
+                                    # TODO(larryhudson): Ensure the last user content param supports cache_control
+                                    user_content_params[-1]['cache_control'] = cast(
+                                        BetaCacheControlEphemeralParam, content
+                                    )
+                                continue
+                            else:
+                                user_content_params.append(content)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_block_param = BetaToolResultBlockParam(
                             tool_use_id=_guard_tool_call_id(t=request_part),
@@ -476,7 +486,7 @@ class AnthropicModel(Model):
     @staticmethod
     async def _map_user_prompt(
         part: UserPromptPart,
-    ) -> AsyncGenerator[BetaContentBlockParam]:
+    ) -> AsyncGenerator[BetaContentBlockParam | BetaCacheControlEphemeralParam]:
         if isinstance(part.content, str):
             if part.content:  # Only yield non-empty text
                 yield BetaTextBlockParam(text=part.content, type='text')
@@ -517,6 +527,8 @@ class AnthropicModel(Model):
                         )
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported media type: {item.media_type}')
+                elif isinstance(item, CachePoint):
+                    yield BetaCacheControlEphemeralParam(type='ephemeral')
                 else:
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
