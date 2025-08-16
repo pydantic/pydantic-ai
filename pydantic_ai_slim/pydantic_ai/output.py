@@ -10,6 +10,7 @@ from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils
+from .exceptions import UserError
 from .messages import ToolCallPart
 from .tools import RunContext, ToolDefinition
 
@@ -303,6 +304,19 @@ def StructuredDict(
     ```
     """
     json_schema = _utils.check_object_json_schema(json_schema)
+
+    # If the schema contains $defs, inline them to avoid issues with pydantic's
+    # JSON schema generator (Issue #2466)
+    if '$defs' in json_schema:
+        from .profiles import InlineDefsJsonSchemaTransformer
+
+        try:
+            transformer = InlineDefsJsonSchemaTransformer(json_schema)
+            json_schema = transformer.walk()
+        except UserError:
+            # If the transformer can't resolve refs (e.g., missing definitions),
+            # keep the original schema unchanged
+            pass
 
     if name:
         json_schema['title'] = name
