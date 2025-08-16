@@ -16,7 +16,7 @@ pip/uv-add "pydantic-ai-slim[mcp]"
 
 ## Usage
 
-Pydantic AI comes with two ways to connect to MCP servers:
+Pydantic AI comes with three ways to connect to MCP servers:
 
 - [`MCPServerStreamableHTTP`][pydantic_ai.mcp.MCPServerStreamableHTTP] which connects to an MCP server using the [Streamable HTTP](https://modelcontextprotocol.io/introduction#streamable-http) transport
 - [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
@@ -62,9 +62,9 @@ agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
     async with agent:  # (3)!
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+        result = await agent.run('What is 25 + 17?')
     print(result.output)
-    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+    #> The sum of 25 and 17 is 42.
 ```
 
 1. Define the MCP server with the URL used to connect.
@@ -75,14 +75,14 @@ _(This example is complete, it can be run "as is" with Python 3.10+ — you'll n
 
 **What's happening here?**
 
-- The model is receiving the prompt "how many days between 2000-01-01 and 2025-03-18?"
-- The model decides "Oh, I've got this `run_python_code` tool, that will be a good way to answer this question", and writes some python code to calculate the answer.
+- The model is receiving the prompt "What is 25 + 17?"
+- The model decides "Oh, I've got this `add` tool, that will be a good way to answer this question", and calls the add function with arguments 25 and 17.
 - The model returns a tool call
-- Pydantic AI sends the tool call to the MCP server using the SSE transport
-- The model is called again with the return value of running the code
+- Pydantic AI sends the tool call to the MCP server using the Streamable HTTP transport
+- The model is called again with the return value from the add function (42)
 - The model returns the final answer
 
-You can visualise this clearly, and even see the code that's run by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
+You can visualise this clearly, and even see the tool call by adding three lines of code to instrument the example with [logfire](https://logfire.pydantic.dev/docs):
 
 ```python {title="mcp_sse_client_logfire.py" test="skip"}
 import logfire
@@ -93,7 +93,7 @@ logfire.instrument_pydantic_ai()
 
 Will display as follows:
 
-![Logfire run python code](../img/logfire-run-python-code.png)
+![Logfire MCP tool call](../img/logfire-run-python-code.png)
 
 ### SSE Client
 
