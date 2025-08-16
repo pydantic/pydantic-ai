@@ -27,6 +27,7 @@ from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings
 from ..tools import (
     AgentDepsT,
+    DeferredToolResults,
     RunContext,
     Tool,
     ToolFuncEither,
@@ -127,6 +128,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -144,6 +146,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -160,6 +163,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -191,6 +195,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -212,6 +217,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             user_prompt=user_prompt,
             output_type=output_type,
             message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
             model=model,
             deps=deps,
             model_settings=model_settings,
@@ -236,6 +242,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -253,6 +260,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -269,6 +277,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -299,6 +308,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -319,6 +329,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 user_prompt,
                 output_type=output_type,
                 message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
                 model=model,
                 deps=deps,
                 model_settings=model_settings,
@@ -337,6 +348,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -354,6 +366,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -371,6 +384,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -409,6 +423,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -435,6 +450,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             user_prompt,
             output_type=output_type,
             message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
             model=model,
             deps=deps,
             model_settings=model_settings,
@@ -530,6 +546,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -546,6 +563,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -563,6 +581,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
@@ -635,6 +654,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
