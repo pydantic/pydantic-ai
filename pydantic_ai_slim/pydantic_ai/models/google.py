@@ -384,6 +384,42 @@ class GoogleModel(Model):
         )
         return contents, config
 
+    @staticmethod
+    def _map_finish_reason_to_otel(raw: str | None) -> str | None:
+        """Map provider-specific finish reasons to OpenTelemetry gen_ai.response.finish_reasons values.
+
+        Only returns a value if it matches a known OTEL value; otherwise returns None.
+        """
+        if raw is None:
+            return None
+        upper = raw.upper()
+        # Known mappings for Google Gemini
+        if upper == 'STOP':
+            return 'stop'
+        if upper in {'MAX_TOKENS', 'MAX_OUTPUT_TOKENS'}:
+            return 'length'
+        if upper in {'SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII'}:
+            return 'content_filter'
+        # Unknown or provider-specific value — do not set
+        return None
+
+    def _finish_reason_details(
+        self, finish_reason: Any, vendor_id: str | None
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Build provider_details and mapped OTEL finish_reason from a provider finish reason.
+
+        Returns a tuple of (provider_details, mapped_finish_reason).
+        """
+        details: dict[str, Any] = {}
+        mapped_finish_reason: str | None = None
+        if finish_reason is not None:
+            raw_finish_reason = getattr(finish_reason, 'value', str(finish_reason))
+            details['finish_reason'] = raw_finish_reason
+            mapped_finish_reason = self._map_finish_reason_to_otel(raw_finish_reason)
+        if vendor_id:
+            details['provider_response_id'] = vendor_id
+        return (details or None), mapped_finish_reason
+
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates or len(response.candidates) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
@@ -397,10 +433,7 @@ class GoogleModel(Model):
                 )  # pragma: no cover
         parts = candidate.content.parts or []
         vendor_id = response.response_id or None
-        vendor_details: dict[str, Any] | None = None
-        finish_reason = candidate.finish_reason
-        if finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': finish_reason.value}
+        vendor_details, mapped_finish_reason = self._finish_reason_details(candidate.finish_reason, vendor_id)
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
             parts,
@@ -409,6 +442,7 @@ class GoogleModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            finish_reason=mapped_finish_reason,
         )
 
     async def _process_streamed_response(
@@ -543,6 +577,11 @@ class GeminiStreamedResponse(StreamedResponse):
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
+
+            # Capture mapped finish_reason if provided by the candidate
+            if self.finish_reason is None and candidate.finish_reason is not None:
+                raw_fr = getattr(candidate.finish_reason, 'value', str(candidate.finish_reason))
+                self.finish_reason = GoogleModel._map_finish_reason_to_otel(raw_fr)
             if candidate.content is None or candidate.content.parts is None:
                 if candidate.finish_reason == 'STOP':  # pragma: no cover
                     # Normal completion - skip this chunk
@@ -625,6 +664,7 @@ def _process_response_from_parts(
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
+    finish_reason: str | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -665,6 +705,7 @@ def _process_response_from_parts(
         provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
+        finish_reason=finish_reason,
     )
 
 

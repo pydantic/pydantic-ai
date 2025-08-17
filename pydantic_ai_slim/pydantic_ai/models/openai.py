@@ -30,6 +30,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    OtelFinishReason,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -493,6 +494,12 @@ class OpenAIChatModel(Model):
                 ],
             }
 
+        # Map finish_reason to OTEL and include raw in provider details
+        mapped_finish_reason = _map_openai_chat_finish_reason(choice.finish_reason)
+        if vendor_details is None:
+            vendor_details = {}
+        vendor_details['finish_reason'] = choice.finish_reason
+
         if choice.message.content is not None:
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
@@ -515,6 +522,7 @@ class OpenAIChatModel(Model):
             provider_details=vendor_details,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=mapped_finish_reason,
         )
 
     async def _process_streamed_response(
@@ -718,6 +726,53 @@ class OpenAIChatModel(Model):
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
 
+def _map_openai_responses_finish_reason(
+    status: str | None, incomplete_reason: str | None
+) -> tuple[str | None, OtelFinishReason | None]:
+    """Map OpenAI Responses status/incomplete_details to (raw, OTEL-mapped) finish reasons.
+
+    Raw holds provider data for provider_details, while the mapped value is used for ModelResponse.finish_reason
+    to comply with gen_ai.response.finish_reasons.
+    """
+    if status is None:
+        return None, None
+
+    # Incomplete: use the reason for more specific mapping
+    if status == 'incomplete':
+        raw = incomplete_reason or status
+        if incomplete_reason == 'max_output_tokens':
+            return raw, 'length'
+        if incomplete_reason == 'content_filter':
+            return raw, 'content_filter'
+        if incomplete_reason == 'timeout':
+            return raw, 'error'
+        # Unknown reason for incomplete — do not set mapped value
+        return raw, None
+
+    # Completed/cancelled/failed map to stop/error
+    if status == 'completed':
+        return status, 'stop'
+    if status == 'cancelled':
+        return status, 'error'
+    if status == 'failed':
+        return status, 'error'
+
+    # Unknown/other statuses -> keep raw, do not set mapped
+    return status, None
+
+
+OPENAI_CHAT_FINISH_MAP: dict[str, OtelFinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'content_filter': 'content_filter',
+    'tool_calls': 'tool_call',
+}
+
+
+def _map_openai_chat_finish_reason(raw: str | None) -> OtelFinishReason | None:
+    return OPENAI_CHAT_FINISH_MAP.get(raw) if raw else None
+
+
 @deprecated(
     '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
     "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
@@ -823,6 +878,16 @@ class OpenAIResponsesModel(Model):
                         items.append(TextPart(content.text))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+
+        # Map OpenAI Responses status/incomplete_details to OTEL-compliant finish_reasons
+        details = response.incomplete_details
+        incomplete_reason = details.reason if details else None
+        raw_finish, mapped_finish = _map_openai_responses_finish_reason(response.status, incomplete_reason)
+
+        provider_details: dict[str, Any] | None = None
+        if raw_finish is not None:
+            provider_details = {'finish_reason': raw_finish}
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
@@ -830,6 +895,8 @@ class OpenAIResponsesModel(Model):
             provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
+            finish_reason=mapped_finish,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -1169,6 +1236,10 @@ class OpenAIStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
+            # Capture the response ID from the chunk
+            if chunk.id and self.provider_response_id is None:
+                self.provider_response_id = chunk.id
+
             try:
                 choice = chunk.choices[0]
             except IndexError:
@@ -1177,6 +1248,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
+            # Capture the finish_reason when it becomes available (mapped to OTEL)
+            if choice.finish_reason:
+                self.finish_reason = _map_openai_chat_finish_reason(choice.finish_reason)
 
             # Handle the text part of the response
             content = choice.delta.content
@@ -1236,6 +1310,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
+                # Capture id and mapped finish_reason from completed response
+                if chunk.response.id and self.provider_response_id is None:
+                    self.provider_response_id = chunk.response.id
+                if self.finish_reason is None:
+                    details = chunk.response.incomplete_details
+                    incomplete_reason = details.reason if details else None
+                    _, mapped = _map_openai_responses_finish_reason(chunk.response.status, incomplete_reason)
+                    self.finish_reason = mapped
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
@@ -1244,7 +1326,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
-                pass  # there's nothing we need to do here
+                # Capture id from created response
+                if chunk.response.id and self.provider_response_id is None:
+                    self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)

@@ -271,6 +271,11 @@ class InstrumentationSettings:
                     }
                 ),
             }
+            # Also set finish reason and response ID as span attributes (v2 format)
+            if response.provider_response_id is not None:
+                attributes['gen_ai.response.id'] = response.provider_response_id
+            if response.finish_reason is not None:
+                attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
             span.set_attributes(attributes)
 
     def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
