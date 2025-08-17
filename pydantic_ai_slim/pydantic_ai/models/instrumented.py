@@ -299,22 +299,27 @@ class InstrumentedModel(WrapperModel):
 
                     events = self.instrumentation_settings.messages_to_otel_events(messages)
                     for event in self.instrumentation_settings.messages_to_otel_events([response]):
+                        choice_body: dict[str, Any] = {
+                            'index': 0,
+                            'message': event.body,
+                        }
+                        if response.finish_reason is not None:
+                            choice_body['finish_reason'] = response.finish_reason
                         events.append(
                             Event(
                                 'gen_ai.choice',
-                                body={
-                                    # TODO finish_reason
-                                    'index': 0,
-                                    'message': event.body,
-                                },
+                                body=choice_body,
                             )
                         )
-                    span.set_attributes(
-                        {
-                            **response.usage.opentelemetry_attributes(),
-                            'gen_ai.response.model': response_model,
-                        }
-                    )
+                    response_attributes = {
+                        **response.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
+                    if response.id is not None:
+                        response_attributes['gen_ai.response.id'] = response.id
+                    if response.finish_reason is not None:
+                        response_attributes['gen_ai.response.finish_reasons'] = [response.finish_reason]
+                    span.set_attributes(response_attributes)
                     span.update_name(f'{operation} {request_model}')
                     for event in events:
                         event.attributes = {

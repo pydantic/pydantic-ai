@@ -544,6 +544,8 @@ class StreamedResponse(ABC):
 
     model_request_parameters: ModelRequestParameters
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
+    _id: str | None = field(default=None, init=False)
+    _finish_reason: str | None = field(default=None, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
@@ -598,6 +600,8 @@ class StreamedResponse(ABC):
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),
+            id=self._id,
+            finish_reason=self._finish_reason,
         )
 
     def usage(self) -> RequestUsage:

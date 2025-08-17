@@ -499,6 +499,8 @@ class OpenAIModel(Model):
             timestamp=timestamp,
             provider_details=vendor_details,
             provider_request_id=response.id,
+            id=response.id,
+            finish_reason=choice.finish_reason,
         )
 
     async def _process_streamed_response(
@@ -801,6 +803,8 @@ class OpenAIResponsesModel(Model):
             model_name=response.model,
             provider_request_id=response.id,
             timestamp=timestamp,
+            id=response.id,
+            finish_reason=response.status,
         )
 
     async def _process_streamed_response(
@@ -1140,10 +1144,18 @@ class OpenAIStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
+            # Capture the response ID from the chunk
+            if chunk.id and self._id is None:
+                self._id = chunk.id
+
             try:
                 choice = chunk.choices[0]
             except IndexError:
                 continue
+
+            # Capture the finish_reason when it becomes available
+            if choice.finish_reason and self._finish_reason is None:
+                self._finish_reason = choice.finish_reason
 
             # Handle the text part of the response
             content = choice.delta.content
@@ -1197,6 +1209,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
+                # Capture id and finish_reason from completed response
+                if chunk.response.id and self._id is None:
+                    self._id = chunk.response.id
+                if chunk.response.status and self._finish_reason is None:
+                    self._finish_reason = chunk.response.status
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
@@ -1205,7 +1222,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
-                pass  # there's nothing we need to do here
+                # Capture id from created response
+                if chunk.response.id and self._id is None:
+                    self._id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)

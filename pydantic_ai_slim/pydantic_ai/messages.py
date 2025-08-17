@@ -858,6 +858,12 @@ class ModelResponse:
     provider_request_id: str | None = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
+    id: str | None = None
+    """Response ID as specified by the model provider. Used to populate gen_ai.response.id in OpenTelemetry."""
+
+    finish_reason: str | None = None
+    """Reason the model finished generating the response. Used to populate gen_ai.response.finish_reasons in OpenTelemetry."""
+
     def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
         result: list[Event] = []
