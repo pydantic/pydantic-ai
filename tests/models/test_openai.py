@@ -673,6 +673,7 @@ async def test_no_delta(allow_model_requests: None):
         assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
 
 
+@pytest.mark.filterwarnings('ignore:Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer', 'user', None])
 async def test_system_prompt_role(
     allow_model_requests: None, system_prompt_role: OpenAISystemPromptRole | None
@@ -681,8 +682,8 @@ async def test_system_prompt_role(
 
     c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIModel('gpt-4o', system_prompt_role=system_prompt_role, provider=OpenAIProvider(openai_client=mock_client))
-    assert m.system_prompt_role == system_prompt_role
+    m = OpenAIModel('gpt-4o', system_prompt_role=system_prompt_role, provider=OpenAIProvider(openai_client=mock_client))  # type: ignore[reportDeprecated]
+    assert m.system_prompt_role == system_prompt_role  # type: ignore[reportDeprecated]
 
     agent = Agent(m, system_prompt='some instructions')
     result = await agent.run('hello')
@@ -701,13 +702,31 @@ async def test_system_prompt_role(
     ]
 
 
+async def test_system_prompt_role_o1_mini(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIModel('o1-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model, system_prompt='You are a helpful assistant.')
+
+    result = await agent.run("What's the capital of France?")
+    assert result.output == snapshot('The capital of France is **Paris**.')
+
+
+async def test_openai_pass_custom_system_prompt_role(allow_model_requests: None, openai_api_key: str):
+    profile = ModelProfile(supports_tools=False)
+    model = OpenAIModel(  # type: ignore[reportDeprecated]
+        'o1-mini', profile=profile, provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role='user'
+    )
+    profile = OpenAIModelProfile.from_profile(model.profile)
+    assert profile.openai_system_prompt_role == 'user'
+    assert profile.supports_tools is False
+
+
 @pytest.mark.parametrize('system_prompt_role', ['system', 'developer'])
 async def test_openai_o1_mini_system_role(
     allow_model_requests: None,
     system_prompt_role: Literal['system', 'developer'],
     openai_api_key: str,
 ) -> None:
-    model = OpenAIModel(
+    model = OpenAIModel(  # type: ignore[reportDeprecated]
         'o1-mini', provider=OpenAIProvider(api_key=openai_api_key), system_prompt_role=system_prompt_role
     )
     agent = Agent(model=model, system_prompt='You are a helpful assistant.')
