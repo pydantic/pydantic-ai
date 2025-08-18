@@ -120,7 +120,7 @@ class MistralModel(Model):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     _model_name: MistralModelName = field(repr=False)
-    _system: str = field(default='mistral_ai', repr=False)
+    _provider: Provider[Mistral] = field(repr=False)
 
     def __init__(
         self,
@@ -147,13 +147,24 @@ class MistralModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
-        return self.client.sdk_configuration.get_server_details()[0]
+        return self._provider.base_url
+
+    @property
+    def model_name(self) -> MistralModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -184,16 +195,6 @@ class MistralModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> MistralModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     async def _completions_create(
         self,

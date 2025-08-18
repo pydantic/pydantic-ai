@@ -52,6 +52,19 @@ class FallbackModel(Model):
         else:
             self._fallback_on = fallback_on
 
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return f'fallback:{",".join(model.model_name for model in self.models)}'
+
+    @property
+    def system(self) -> str:
+        return f'fallback:{",".join(model.system for model in self.models)}'
+
+    @property
+    def base_url(self) -> str | None:
+        return self.models[0].base_url
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -120,19 +133,6 @@ class FallbackModel(Model):
                 attributes = getattr(span, 'attributes', {})
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
                     span.set_attributes(InstrumentedModel.model_attributes(model))
-
-    @property
-    def model_name(self) -> str:
-        """The model name."""
-        return f'fallback:{",".join(model.model_name for model in self.models)}'
-
-    @property
-    def system(self) -> str:
-        return f'fallback:{",".join(model.system for model in self.models)}'
-
-    @property
-    def base_url(self) -> str | None:
-        return self.models[0].base_url
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:
