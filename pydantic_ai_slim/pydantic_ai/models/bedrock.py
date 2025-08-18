@@ -190,17 +190,7 @@ class BedrockConverseModel(Model):
     client: BedrockRuntimeClient
 
     _model_name: BedrockModelName = field(repr=False)
-    _system: str = field(default='bedrock', repr=False)
-
-    @property
-    def model_name(self) -> str:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider, ex: openai."""
-        return self._system
+    _provider: Provider[BaseClient] = field(repr=False)
 
     def __init__(
         self,
@@ -226,9 +216,24 @@ class BedrockConverseModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def base_url(self) -> str:
+        return str(self.client.meta.endpoint_url)
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
@@ -244,10 +249,6 @@ class BedrockConverseModel(Model):
             tool_spec['description'] = f.description
 
         return {'toolSpec': tool_spec}
-
-    @property
-    def base_url(self) -> str:
-        return str(self.client.meta.endpoint_url)
 
     async def request(
         self,

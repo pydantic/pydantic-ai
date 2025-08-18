@@ -30,11 +30,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, check_allow_model_requests
 
 try:
     from cohere import (
@@ -106,7 +102,7 @@ class CohereModel(Model):
     client: AsyncClientV2 = field(repr=False)
 
     _model_name: CohereModelName = field(repr=False)
-    _system: str = field(default='cohere', repr=False)
+    _provider: Provider[AsyncClientV2] = field(repr=False)
 
     def __init__(
         self,
@@ -131,6 +127,7 @@ class CohereModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -139,6 +136,16 @@ class CohereModel(Model):
     def base_url(self) -> str:
         client_wrapper = self.client._client_wrapper  # type: ignore
         return str(client_wrapper.get_base_url())
+
+    @property
+    def model_name(self) -> CohereModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -150,16 +157,6 @@ class CohereModel(Model):
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
         return model_response
-
-    @property
-    def model_name(self) -> CohereModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     async def _chat(
         self,

@@ -196,7 +196,7 @@ class OpenAIModel(Model):
     client: AsyncOpenAI = field(repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str = field(default='openai', repr=False)
+    _provider: Provider[AsyncOpenAI] = field(repr=False)
 
     @overload
     def __init__(
@@ -287,6 +287,7 @@ class OpenAIModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -297,6 +298,16 @@ class OpenAIModel(Model):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> OpenAIModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     @property
     @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
@@ -330,16 +341,6 @@ class OpenAIModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> OpenAIModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
@@ -715,7 +716,7 @@ class OpenAIResponsesModel(Model):
     client: AsyncOpenAI = field(repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str = field(default='openai', repr=False)
+    _provider: Provider[AsyncOpenAI] = field(repr=False)
 
     def __init__(
         self,
@@ -738,6 +739,7 @@ class OpenAIResponsesModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -749,8 +751,8 @@ class OpenAIResponsesModel(Model):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
-        return self._system
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,

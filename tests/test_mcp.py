@@ -178,7 +178,6 @@ def test_sse_server_conflicting_timeout_params():
         )
 
 
-@pytest.mark.vcr()
 async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
@@ -280,7 +279,6 @@ async def test_agent_with_prefix_tool_name(openai_api_key: str):
             await agent.run('No conflict')
 
 
-@pytest.mark.vcr()
 async def test_agent_with_server_not_running(agent: Agent, allow_model_requests: None):
     result = await agent.run('What is 0 degrees Celsius in Fahrenheit?')
     assert result.output == snapshot('0 degrees Celsius is 32.0 degrees Fahrenheit.')
@@ -306,7 +304,6 @@ async def test_log_level_set(run_context: RunContext[int]):
         assert result == snapshot('info')
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('What is the weather in Mexico City?')
@@ -379,7 +376,6 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_text_resource(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me the product name')
@@ -446,7 +442,6 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_text_resource_link(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me the product name via get_product_name_link')
@@ -513,7 +508,6 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_image_resource(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me the image resource')
@@ -587,7 +581,6 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_image_resource_link(
     allow_model_requests: None, agent: Agent, image_content: BinaryContent
 ):
@@ -663,7 +656,6 @@ async def test_tool_returning_image_resource_link(
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_audio_resource(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
@@ -712,7 +704,6 @@ async def test_tool_returning_audio_resource(
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_audio_resource_link(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
@@ -771,7 +762,6 @@ async def test_tool_returning_audio_resource_link(
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_image(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me an image')
@@ -845,7 +835,6 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me a dict, respond on one line')
@@ -906,7 +895,6 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
@@ -1011,7 +999,6 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Call the none tool and say Hello')
@@ -1072,7 +1059,6 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
         )
 
 
-@pytest.mark.vcr()
 async def test_tool_returning_multiple_items(allow_model_requests: None, agent: Agent, image_content: BinaryContent):
     async with agent:
         result = await agent.run('Get me multiple items and summarize in one sentence')

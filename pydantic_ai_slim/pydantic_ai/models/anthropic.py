@@ -137,7 +137,7 @@ class AnthropicModel(Model):
     client: AsyncAnthropic = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _system: str = field(default='anthropic', repr=False)
+    _provider: Provider[AsyncAnthropic] = field(repr=False)
 
     def __init__(
         self,
@@ -161,6 +161,7 @@ class AnthropicModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -168,6 +169,16 @@ class AnthropicModel(Model):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> AnthropicModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -196,16 +207,6 @@ class AnthropicModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> AnthropicModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _messages_create(

@@ -480,7 +480,7 @@ class Model(ABC):
     @property
     @abstractmethod
     def system(self) -> str:
-        """The system / model provider, ex: openai.
+        """The model provider, ex: openai.
 
         Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
         so should use well-known values listed in

@@ -118,7 +118,7 @@ class GroqModel(Model):
     client: AsyncGroq = field(repr=False)
 
     _model_name: GroqModelName = field(repr=False)
-    _system: str = field(default='groq', repr=False)
+    _provider: Provider[AsyncGroq] = field(repr=False)
 
     def __init__(
         self,
@@ -143,6 +143,7 @@ class GroqModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -150,6 +151,16 @@ class GroqModel(Model):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> GroqModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -178,16 +189,6 @@ class GroqModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> GroqModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
