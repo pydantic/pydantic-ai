@@ -132,6 +132,7 @@ async def test_function_toolset():
 
 async def test_function_toolset_with_defaults():
     defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
     with pytest.raises(
         UserError,
         match=re.escape('Missing parameter descriptions for'),

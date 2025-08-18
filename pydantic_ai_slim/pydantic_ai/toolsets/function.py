@@ -36,7 +36,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     max_retries: int
     tools: dict[str, Tool[Any]]
     _id: str | None
-    _default_docstring_format: DocstringFormat
     _default_require_parameter_descriptions: bool
 
     def __init__(
@@ -45,7 +44,6 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         max_retries: int = 1,
         *,
         id: str | None = None,
-        docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
     ):
         """Build a new function toolset.
@@ -54,13 +52,10 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
-            docstring_format: An optional default for all tool docstrings. See [`DocstringFormat`][pydantic_ai.tools.DocstringFormat]. If `None`, defaults to `'auto'`, such that the format is inferred from the structure of the docstring. Can be overridden when adding individual tools.
             require_parameter_descriptions: An optional default for all tools. If True, raise an error if a parameter description is missing. If `None`, defaults to False. Can be overridden when adding individual tools.
         """
         self.max_retries = max_retries
         self._id = id
-
-        self._default_docstring_format = docstring_format or 'auto'
         self._default_require_parameter_descriptions = require_parameter_descriptions or False
 
         self.tools = {}
@@ -85,7 +80,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat | None = None,
+        docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
@@ -99,7 +94,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat | None = None,
+        docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
@@ -144,7 +139,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
-                If `None`, defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None, defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
@@ -177,7 +172,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat | None = None,
+        docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
@@ -198,15 +193,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             prepare: custom method to prepare the tool definition for each step, return `None` to omit this
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
-            docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
-                If `None, defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            docstring_format: the format of the docstring, see [`docstringformat`][pydantic_ai.tools.docstringformat].
+                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None, defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
-        if docstring_format is None:
-            docstring_format = self._default_docstring_format
         if require_parameter_descriptions is None:
             require_parameter_descriptions = self._default_require_parameter_descriptions
 
