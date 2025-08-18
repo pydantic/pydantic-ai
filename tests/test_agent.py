@@ -4074,9 +4074,7 @@ async def test_implicit_context_manager():
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
-    async with agent.iter(
-        user_prompt='Hello',
-    ):
+    async with agent.iter(user_prompt='Hello'):
         assert server1.is_running
         assert server2.is_running
 
