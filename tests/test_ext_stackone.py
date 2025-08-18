@@ -8,16 +8,12 @@ import pytest
 from pydantic_ai.tools import Tool
 from pydantic_ai.toolsets.function import FunctionToolset
 
-
-# Test helper to skip tests if stackone-ai is not available
-def requires_stackone():
-    """Decorator to skip tests if stackone-ai is not available."""
-    try:
-        import stackone_ai  # noqa: F401
-
-        return lambda func: func
-    except ImportError:
-        return pytest.mark.skip(reason='stackone-ai not installed')
+try:
+    import stackone_ai  # noqa: F401
+except ImportError:  # pragma: lax no cover
+    stackone_installed = False
+else:
+    stackone_installed = True
 
 
 class TestStackOneImportError:
@@ -36,7 +32,7 @@ class TestStackOneImportError:
                 importlib.reload(pydantic_ai.ext.stackone)
 
 
-@requires_stackone()
+@pytest.mark.skipif(not stackone_installed, reason='stackone-ai not installed')
 class TestToolFromStackOne:
     """Test the tool_from_stackone function."""
 
@@ -135,7 +131,7 @@ class TestToolFromStackOne:
         mock_stackone_toolset_class.assert_called_once_with(api_key='env-key', account_id='env-account')
 
 
-@requires_stackone()
+@pytest.mark.skipif(not stackone_installed, reason='stackone-ai not installed')
 class TestStackOneToolset:
     """Test the StackOneToolset class."""
 
@@ -236,7 +232,7 @@ class TestStackOneToolset:
 
         # Verify that fallback tools were attempted
         # The toolset should try to create tools for common HRIS operations
-        assert len(toolset._tools) > 0  # Some tools should be created
+        assert len(toolset.tools) > 0  # Some tools should be created
 
     @patch.dict(os.environ, {'STACKONE_API_KEY': 'env-key', 'STACKONE_ACCOUNT_ID': 'env-account'})
     @patch('pydantic_ai.ext.stackone.StackOneToolSet')
@@ -280,7 +276,7 @@ class TestStackOneToolset:
         )
 
 
-@requires_stackone()
+@pytest.mark.skipif(not stackone_installed, reason='stackone-ai not installed')
 class TestStackOneIntegration:
     """Integration tests for StackOne functionality."""
 
@@ -301,7 +297,7 @@ class TestStackOneIntegration:
         tool = tool_from_stackone('hris_list_employees')
 
         # Verify JSON schema structure
-        schema = tool.json_schema
+        schema = tool.function_schema.json_schema
         assert schema['type'] == 'object'
         assert 'properties' in schema
         assert 'additionalProperties' in schema
