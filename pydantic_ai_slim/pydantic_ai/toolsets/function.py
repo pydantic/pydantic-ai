@@ -36,6 +36,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     max_retries: int
     tools: dict[str, Tool[Any]]
     _id: str | None
+    _default_docstring_format: DocstringFormat
+    _default_require_parameter_descriptions: bool
 
     def __init__(
         self,
@@ -43,6 +45,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         max_retries: int = 1,
         *,
         id: str | None = None,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
     ):
         """Build a new function toolset.
 
@@ -50,9 +54,14 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+            docstring_format: An optional default for all tool docstrings. See [`DocstringFormat`][pydantic_ai.tools.DocstringFormat]. If `None`, defaults to 'auto', such that the format is inferred from the structure of the docstring.
+            require_parameter_descriptions: An optional default for all tools. If True, raise an error if a parameter description is missing. If `None`, defaults to False.
         """
         self.max_retries = max_retries
         self._id = id
+
+        self._default_docstring_format: DocstringFormat = docstring_format or 'auto'
+        self._default_require_parameter_descriptions: bool = require_parameter_descriptions or False
 
         self.tools = {}
         for tool in tools:
@@ -76,8 +85,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
-        require_parameter_descriptions: bool = False,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
@@ -90,8 +99,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
-        require_parameter_descriptions: bool = False,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
     ) -> Any:
@@ -168,8 +177,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
-        require_parameter_descriptions: bool = False,
+        docstring_format: DocstringFormat | None = None,
+        require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
     ) -> None:
@@ -202,8 +211,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             name=name,
             max_retries=retries,
             prepare=prepare,
-            docstring_format=docstring_format,
-            require_parameter_descriptions=require_parameter_descriptions,
+            docstring_format=docstring_format or self._default_docstring_format,
+            require_parameter_descriptions=require_parameter_descriptions
+            or self._default_require_parameter_descriptions,
             schema_generator=schema_generator,
             strict=strict,
         )
