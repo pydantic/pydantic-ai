@@ -81,6 +81,7 @@ huggingface = ["huggingface-hub[inference]>=0.33.5"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
+stackone = ["stackone-ai>=0.0.4; python_version >= '3.11'"]
 # CLI
 cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0", "pyperclip>=1.9.0"]
 # MCP

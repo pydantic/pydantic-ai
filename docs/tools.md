@@ -831,3 +831,49 @@ toolset = ACIToolset(
 
 agent = Agent('openai:gpt-4o', toolsets=[toolset])
 ```
+
+### StackOne Tools {#stackone-tools}
+
+If you'd like to use a tool from the [StackOne unified API platform](https://www.stackone.co/) with Pydantic AI, you can use the [`tool_from_stackone`][pydantic_ai.ext.stackone.tool_from_stackone] convenience method. StackOne provides unified APIs for HRIS, ATS, CRM, and other business systems.
+
+You will need to install the `stackone-ai` package, set your StackOne API key in the `STACKONE_API_KEY` environment variable, and provide your StackOne account ID via the `STACKONE_ACCOUNT_ID` environment variable or pass it directly to the function.
+
+Here is how you can use the StackOne `hris_list_employees` tool:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.stackone import tool_from_stackone
+
+
+employee_tool = tool_from_stackone(
+    'hris_list_employees',
+    account_id=os.getenv('STACKONE_ACCOUNT_ID'),
+)
+
+agent = Agent(
+    'openai:gpt-4o',
+    tools=[employee_tool],
+)
+
+result = agent.run_sync('List all employees in the HR system')
+print(result.output)
+```
+
+If you'd like to use multiple StackOne tools, you can use the [`StackOneToolset`][pydantic_ai.ext.stackone.StackOneToolset] [toolset](toolsets.md) which supports glob patterns for tool selection:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.stackone import StackOneToolset
+
+
+toolset = StackOneToolset(
+    ['hris_*', '!hris_delete_*'],  # Include all HRIS tools except delete operations
+    account_id=os.getenv('STACKONE_ACCOUNT_ID'),
+)
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+```
