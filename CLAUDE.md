@@ -134,7 +134,7 @@ from typing_extensions import deprecated
 
 class NewClass: ...  # This class was renamed from OldClass.
 
-@deprecated("Use `NewClass` instead")
+@deprecated("Use `NewClass` instead.")
 class OldClass(NewClass): ...
 ```
 
@@ -143,7 +143,7 @@ deprecation warning:
 
 ```python
 def test_old_class_is_deprecated():
-    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead"):
+    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead."):
         OldClass()
 ```
 

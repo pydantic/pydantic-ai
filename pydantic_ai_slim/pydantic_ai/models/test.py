@@ -140,7 +140,7 @@ class TestModel(Model):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
+        """The model provider."""
         return self._system
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:

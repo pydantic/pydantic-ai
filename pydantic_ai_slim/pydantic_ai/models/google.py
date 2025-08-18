@@ -144,7 +144,6 @@ class GoogleModel(Model):
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
     _url: str | None = field(repr=False)
-    _system: str = field(default='google', repr=False)
 
     def __init__(
         self,
@@ -168,9 +167,7 @@ class GoogleModel(Model):
 
         if isinstance(provider, str):
             provider = GoogleProvider(vertexai=provider == 'google-vertex')
-
         self._provider = provider
-        self._system = provider.name
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -178,6 +175,16 @@ class GoogleModel(Model):
     @property
     def base_url(self) -> str:
         return self._provider.base_url
+
+    @property
+    def model_name(self) -> GoogleModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -209,7 +216,7 @@ class GoogleModel(Model):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self.system != 'google-gla':
+        if self._provider.name != 'google-gla':
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             config.update(
                 system_instruction=generation_config.get('system_instruction'),
@@ -254,16 +261,6 @@ class GoogleModel(Model):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
-
-    @property
-    def model_name(self) -> GoogleModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolDict] | None:
         tools: list[ToolDict] = [
