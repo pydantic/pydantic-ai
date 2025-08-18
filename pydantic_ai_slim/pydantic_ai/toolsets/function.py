@@ -140,7 +140,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None, defaults to False.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None`, defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
@@ -195,7 +195,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
                 Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None, defaults to False.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None`, defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
