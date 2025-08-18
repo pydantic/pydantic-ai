@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
@@ -24,6 +25,7 @@ from ..messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
 )
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
@@ -193,11 +195,14 @@ class InstrumentationSettings:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                message_parts: list[_otel_messages.MessagePart] = []
-                for part in message.parts:
-                    if hasattr(part, 'otel_message_parts'):
-                        message_parts.extend(part.otel_message_parts(self))
-                result.append(_otel_messages.ChatMessage(role='user', parts=message_parts))
+                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
+                    message_parts: list[_otel_messages.MessagePart] = []
+                    for part in group:
+                        if hasattr(part, 'otel_message_parts'):
+                            message_parts.extend(part.otel_message_parts(self))
+                    result.append(
+                        _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
+                    )
             elif isinstance(message, ModelResponse):  # pragma: no branch
                 result.append(_otel_messages.ChatMessage(role='assistant', parts=message.otel_message_parts(self)))
         return result

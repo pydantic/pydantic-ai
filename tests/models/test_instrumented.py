@@ -704,9 +704,14 @@ Fix the errors and try again.\
                         'logfire.span_type': 'span',
                         'gen_ai.input.messages': [
                             {
-                                'role': 'user',
+                                'role': 'system',
                                 'parts': [
                                     {'type': 'text', 'content': 'system_prompt'},
+                                ],
+                            },
+                            {
+                                'role': 'user',
+                                'parts': [
                                     {'type': 'text', 'content': 'user_prompt'},
                                     {
                                         'type': 'tool_call_response',
@@ -1129,7 +1134,7 @@ def test_messages_without_content(document_content: BinaryContent):
     )
     assert settings.messages_to_otel_messages(messages) == snapshot(
         [
-            {'role': 'user', 'parts': [{'type': 'text'}]},
+            {'role': 'system', 'parts': [{'type': 'text'}]},
             {'role': 'assistant', 'parts': [{'type': 'text'}]},
             {
                 'role': 'user',
