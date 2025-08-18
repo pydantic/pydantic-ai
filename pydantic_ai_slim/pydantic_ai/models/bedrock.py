@@ -272,6 +272,7 @@ class BedrockConverseModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _event_stream=response,
+            _provider_name=self._provider.name,
         )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
@@ -593,6 +594,7 @@ class BedrockStreamedResponse(StreamedResponse):
 
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -660,13 +662,18 @@ class BedrockStreamedResponse(StreamedResponse):
                         yield maybe_event
 
     @property
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-    @property
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
         return usage.RequestUsage(

@@ -67,6 +67,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -96,6 +97,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -109,6 +111,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=52, output_tokens=11),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
@@ -226,42 +229,49 @@ async def test_streamed_text_stream():
                     usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
@@ -329,6 +339,7 @@ async def test_call_tool():
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='function',
                 ),
                 ModelRequest(
                     parts=[
@@ -351,6 +362,7 @@ async def test_call_tool():
                     usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='function',
                 ),
                 ModelRequest(
                     parts=[
@@ -373,6 +385,7 @@ async def test_call_tool():
                     usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='function',
                 ),
                 ModelRequest(
                     parts=[
@@ -426,6 +439,7 @@ async def test_call_tool_wrong_name():
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -482,6 +496,7 @@ async def test_early_strategy_stops_after_first_final_result():
                 usage=RequestUsage(input_tokens=50, output_tokens=10),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -538,6 +553,7 @@ async def test_early_strategy_uses_first_final_result():
                 usage=RequestUsage(input_tokens=50, output_tokens=8),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -605,6 +621,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                 usage=RequestUsage(input_tokens=50, output_tokens=18),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -714,6 +731,7 @@ async def test_early_strategy_with_final_result_in_middle():
                 usage=RequestUsage(input_tokens=50, output_tokens=14),
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
+                provider_name='function',
                 kind='response',
             ),
             ModelRequest(
@@ -785,6 +803,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 usage=RequestUsage(input_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -798,6 +817,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -901,6 +921,7 @@ async def test_iter_stream_responses():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             kind='response',
+            provider_name='test',
         )
         for text in [
             '',

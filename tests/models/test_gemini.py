@@ -944,6 +944,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -960,6 +961,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -1028,6 +1030,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[

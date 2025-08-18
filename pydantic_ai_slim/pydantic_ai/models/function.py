@@ -169,6 +169,7 @@ class FunctionModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _iter=response_stream,
+            _provider_name=self._system,
         )
 
     @property
@@ -260,6 +261,7 @@ class FunctionStreamedResponse(StreamedResponse):
 
     _model_name: str
     _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     def __post_init__(self):
@@ -303,6 +305,11 @@ class FunctionStreamedResponse(StreamedResponse):
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

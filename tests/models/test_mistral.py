@@ -1384,6 +1384,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
             ),
             ModelRequest(
                 parts=[
@@ -1400,6 +1401,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
             ),
             ModelRequest(
                 parts=[
@@ -1485,6 +1487,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
             ),
             ModelRequest(
                 parts=[
@@ -1501,6 +1504,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
             ),
         ]
     )
@@ -1589,6 +1593,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
             ),
             ModelRequest(
                 parts=[
@@ -1611,6 +1616,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
             ),
             ModelRequest(
                 parts=[
@@ -1627,6 +1633,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='mistral',
             ),
         ]
     )

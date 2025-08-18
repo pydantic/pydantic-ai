@@ -468,6 +468,7 @@ async def test_stream_structured(allow_model_requests: None):
                 ],
                 model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='groq',
             ),
             ModelRequest(
                 parts=[
