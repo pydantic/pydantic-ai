@@ -613,7 +613,7 @@ class StreamedResponse(ABC):
 
     @property
     @abstractmethod
-    def provider_name(self) -> str:
+    def provider_name(self) -> str | None:
         """Get the provider name."""
         raise NotImplementedError()
 

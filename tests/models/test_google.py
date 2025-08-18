@@ -1078,6 +1078,7 @@ async def test_google_url_input(
                 usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
                 provider_request_id=IsStr(),
             ),
