@@ -18,6 +18,11 @@ from ..tools import (
 )
 from .abstract import AbstractToolset, ToolsetTool
 
+# Sentinel object to detect when parameters were explicitly provided
+_UNSET = object()
+# Sentinel object to indicate that retries should use toolset max_retries
+_USE_TOOLSET_MAX_RETRIES = object()
+
 
 @dataclass
 class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
@@ -36,6 +41,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     max_retries: int
     tools: dict[str, Tool[Any]]
     _id: str | None
+    _default_tool_kwargs: dict[str, Any]
 
     def __init__(
         self,
@@ -43,6 +49,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         max_retries: int = 1,
         *,
         id: str | None = None,
+        name: str | None = None,
+        retries: int | None = None,
+        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        strict: bool | None = None,
     ):
         """Build a new function toolset.
 
@@ -50,9 +63,27 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
+            name: Default name for tools (will be overridden by tool-specific name).
+            retries: Default number of retries for tools (will be overridden by tool-specific retries).
+            prepare: Default prepare function for tools (will be overridden by tool-specific prepare).
+            docstring_format: Default format for docstring parsing (will be overridden by tool-specific format).
+            require_parameter_descriptions: Default setting for requiring parameter descriptions (will be overridden by tool-specific setting).
+            schema_generator: Default JSON schema generator class (will be overridden by tool-specific generator).
+            strict: Default strict setting for JSON schema compliance (will be overridden by tool-specific setting).
         """
         self.max_retries = max_retries
         self._id = id
+
+        # Store default kwargs for tool configuration
+        self._default_tool_kwargs = {
+            'name': name,
+            'retries': retries,
+            'prepare': prepare,
+            'docstring_format': docstring_format,
+            'require_parameter_descriptions': require_parameter_descriptions,
+            'schema_generator': schema_generator,
+            'strict': strict,
+        }
 
         self.tools = {}
         for tool in tools:
@@ -73,13 +104,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         self,
         /,
         *,
-        name: str | None = None,
-        retries: int | None = None,
-        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
-        require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
-        strict: bool | None = None,
+        name: str | None | object = _UNSET,
+        retries: int | None | object = _UNSET,
+        prepare: ToolPrepareFunc[AgentDepsT] | None | object = _UNSET,
+        docstring_format: DocstringFormat | object = _UNSET,
+        require_parameter_descriptions: bool | object = _UNSET,
+        schema_generator: type[GenerateJsonSchema] | object = _UNSET,
+        strict: bool | None | object = _UNSET,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -87,13 +118,13 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         func: ToolFuncEither[AgentDepsT, ToolParams] | None = None,
         /,
         *,
-        name: str | None = None,
-        retries: int | None = None,
-        prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
-        require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
-        strict: bool | None = None,
+        name: str | None | object = _UNSET,
+        retries: int | None | object = _UNSET,
+        prepare: ToolPrepareFunc[AgentDepsT] | None | object = _UNSET,
+        docstring_format: DocstringFormat | object = _UNSET,
+        require_parameter_descriptions: bool | object = _UNSET,
+        schema_generator: type[GenerateJsonSchema] | object = _UNSET,
+        strict: bool | None | object = _UNSET,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -145,17 +176,43 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         def tool_decorator(
             func_: ToolFuncEither[AgentDepsT, ToolParams],
         ) -> ToolFuncEither[AgentDepsT, ToolParams]:
+            # Merge defaults with explicitly provided parameters, with explicit parameters taking precedence
+            merged_name = name if name is not _UNSET else self._default_tool_kwargs.get('name')
+            # Special handling for retries: if not set explicitly, use sentinel to indicate it should use toolset max_retries
+            if retries is not _UNSET:
+                merged_retries = retries
+            else:
+                default_retries = self._default_tool_kwargs.get('retries')
+                merged_retries = default_retries if default_retries is not None else _USE_TOOLSET_MAX_RETRIES
+            merged_prepare = prepare if prepare is not _UNSET else self._default_tool_kwargs.get('prepare')
+            merged_docstring_format = (
+                docstring_format
+                if docstring_format is not _UNSET
+                else self._default_tool_kwargs.get('docstring_format', 'auto')
+            )
+            merged_require_parameter_descriptions = (
+                require_parameter_descriptions
+                if require_parameter_descriptions is not _UNSET
+                else self._default_tool_kwargs.get('require_parameter_descriptions', False)
+            )
+            merged_schema_generator = (
+                schema_generator
+                if schema_generator is not _UNSET
+                else self._default_tool_kwargs.get('schema_generator', GenerateToolJsonSchema)
+            )
+            merged_strict = strict if strict is not _UNSET else self._default_tool_kwargs.get('strict')
+
             # noinspection PyTypeChecker
             self.add_function(
                 func_,
                 None,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
+                merged_name,  # type: ignore[arg-type]
+                merged_retries,  # type: ignore[arg-type]
+                merged_prepare,  # type: ignore[arg-type]
+                merged_docstring_format,  # type: ignore[arg-type]
+                merged_require_parameter_descriptions,  # type: ignore[arg-type]
+                merged_schema_generator,  # type: ignore[arg-type]
+                merged_strict,  # type: ignore[arg-type]
             )
             return func_
 
@@ -217,7 +274,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         """
         if tool.name in self.tools:
             raise UserError(f'Tool name conflicts with existing tool: {tool.name!r}')
-        if tool.max_retries is None:
+        if tool.max_retries is _USE_TOOLSET_MAX_RETRIES:
             tool.max_retries = self.max_retries
         self.tools[tool.name] = tool
 

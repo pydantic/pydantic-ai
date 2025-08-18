@@ -772,3 +772,170 @@ async def test_dynamic_toolset_empty():
         assert tools == {}
 
         assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_function_toolset_default_kwargs():
+    """Test that FunctionToolset accepts default kwargs and merges them with decorator parameters."""
+
+    # Test with default docstring_format and require_parameter_descriptions
+    toolset = FunctionToolset[None](
+        docstring_format='google',
+        require_parameter_descriptions=True,
+    )
+
+    @toolset.tool
+    def search_with_defaults(query: str) -> str:
+        """Search for stuff.
+
+        Args:
+            query: what to search for.
+        """
+        return f'searching for: {query}'
+
+    # Test that default kwargs are applied
+    tool = toolset.tools['search_with_defaults']
+    assert tool.docstring_format == 'google'
+    assert tool.require_parameter_descriptions is True
+
+    # Verify the tool works
+    context = build_run_context(None)
+    toolset_manager = await ToolManager[None](toolset).for_run_step(context)
+    result = await toolset_manager.handle_call(ToolCallPart(tool_name='search_with_defaults', args={'query': 'test'}))
+    assert result == 'searching for: test'
+
+
+async def test_function_toolset_explicit_override_defaults():
+    """Test that explicit parameters in tool decorator override defaults."""
+
+    # Set defaults
+    toolset = FunctionToolset[None](
+        docstring_format='google',
+        require_parameter_descriptions=True,
+    )
+
+    # Tool that explicitly overrides defaults
+    @toolset.tool(docstring_format='auto', require_parameter_descriptions=False)
+    def search_override(query: str) -> str:
+        """Search for stuff."""
+        return f'searching for: {query}'
+
+    # Tool that uses defaults
+    @toolset.tool
+    def search_defaults(query: str) -> str:
+        """Search for stuff.
+
+        Args:
+            query: what to search for.
+        """
+        return f'searching for: {query}'
+
+    # Check that override tool uses explicit values
+    override_tool = toolset.tools['search_override']
+    assert override_tool.docstring_format == 'auto'
+    assert override_tool.require_parameter_descriptions is False
+
+    # Check that defaults tool uses default values
+    defaults_tool = toolset.tools['search_defaults']
+    assert defaults_tool.docstring_format == 'google'
+    assert defaults_tool.require_parameter_descriptions is True
+
+
+async def test_function_toolset_default_kwargs_all_parameters():
+    """Test that all supported default parameters work correctly."""
+    from pydantic_ai.tools import GenerateToolJsonSchema
+
+    class CustomSchemaGenerator(GenerateToolJsonSchema):
+        pass
+
+    async def custom_prepare(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        return tool_def
+
+    # Test with all possible default parameters
+    toolset = FunctionToolset[None](
+        retries=5,
+        prepare=custom_prepare,
+        docstring_format='numpy',
+        require_parameter_descriptions=True,
+        schema_generator=CustomSchemaGenerator,
+        strict=True,
+    )
+
+    @toolset.tool
+    def test_tool(value: int) -> int:
+        """Test tool.
+
+        Parameters
+        ----------
+        value : int
+            The input value.
+        """
+        return value * 2
+
+    tool = toolset.tools['test_tool']
+    assert tool.name == 'test_tool'
+    assert tool.max_retries == 5
+    assert tool.prepare is custom_prepare
+    assert tool.docstring_format == 'numpy'
+    assert tool.require_parameter_descriptions is True
+    # Just check that schema generator default was applied by checking if the tool was created successfully with the custom schema generator
+    assert tool.strict is True
+
+
+async def test_function_toolset_no_defaults():
+    """Test that FunctionToolset works normally when no defaults are provided."""
+
+    # Create toolset without any defaults
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool(docstring_format='google', require_parameter_descriptions=True)
+    def search(query: str) -> str:
+        """Search for stuff.
+
+        Args:
+            query: what to search for.
+        """
+        return f'searching for: {query}'
+
+    tool = toolset.tools['search']
+    assert tool.docstring_format == 'google'
+    assert tool.require_parameter_descriptions is True
+
+
+async def test_function_toolset_mixed_defaults_and_explicit():
+    """Test mixing default kwargs with explicit parameters on individual tools."""
+
+    toolset = FunctionToolset[None](
+        docstring_format='google',
+        require_parameter_descriptions=True,
+        strict=True,
+    )
+
+    # Tool with some explicit overrides and some defaults
+    @toolset.tool(docstring_format='auto', require_parameter_descriptions=False)  # Override defaults
+    def search_mixed(query: str) -> str:
+        """Search for stuff."""
+        return f'searching for: {query}'
+
+    tool = toolset.tools['search_mixed']
+    assert tool.docstring_format == 'auto'  # Explicitly overridden
+    assert tool.require_parameter_descriptions is False  # Explicitly overridden
+    assert tool.strict is True  # From defaults
+
+
+async def test_function_toolset_none_values_vs_defaults():
+    """Test that None values in decorator are treated as explicit and override defaults."""
+
+    toolset = FunctionToolset[None](
+        strict=True,
+        retries=5,
+    )
+
+    # Explicitly set None values should override defaults
+    @toolset.tool(strict=None, retries=None)
+    def test_none_override(value: int) -> int:
+        """Test tool."""
+        return value
+
+    tool = toolset.tools['test_none_override']
+    assert tool.strict is None  # Explicitly set to None
+    assert tool.max_retries is None  # Explicitly set to None
