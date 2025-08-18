@@ -243,7 +243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Create an agent.
 
         Args:
-            model: The default model to use for this agent, if not provide,
+            model: The default model to use for this agent, if not provided,
                 you must provide the model when calling it. We allow `str` here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
