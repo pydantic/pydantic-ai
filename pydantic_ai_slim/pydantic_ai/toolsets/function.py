@@ -54,8 +54,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
             id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
-            docstring_format: An optional default for all tool docstrings. See [`DocstringFormat`][pydantic_ai.tools.DocstringFormat]. If `None`, defaults to 'auto', such that the format is inferred from the structure of the docstring.
-            require_parameter_descriptions: An optional default for all tools. If True, raise an error if a parameter description is missing. If `None`, defaults to False.
+            docstring_format: An optional default for all tool docstrings. See [`DocstringFormat`][pydantic_ai.tools.DocstringFormat]. If `None`, defaults to `'auto'`, such that the format is inferred from the structure of the docstring. Can be overidden when adding individual tools.
+            require_parameter_descriptions: An optional default for all tools. If True, raise an error if a parameter description is missing. If `None`, defaults to False. Can be overidden when adding individual tools.
         """
         self.max_retries = max_retries
         self._id = id
@@ -144,8 +144,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
-                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-            require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+                If `None`, defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None, defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
@@ -199,8 +199,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
-                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-            require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+                If `None, defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None, defaults to False.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
