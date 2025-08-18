@@ -1118,6 +1118,7 @@ async def test_google_url_input_force_download(allow_model_requests: None) -> No
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
                 provider_request_id=IsStr(),
+                provider_name='google-vertex',
             ),
         ]
     )

@@ -138,7 +138,6 @@ async def test_history_processor_streaming_replaces_message_history(function_mod
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
-                provider_name='function',
             ),
         ]
     )
