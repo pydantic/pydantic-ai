@@ -391,6 +391,7 @@ class GoogleModel(Model):
         return _process_response_from_parts(
             parts,
             response.model_version or self._model_name,
+            self._provider.name,
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
@@ -589,6 +590,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
 def _process_response_from_parts(
     parts: list[Part],
     model_name: GoogleModelName,
+    provider_name: str,
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
@@ -626,7 +628,12 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, model_name=model_name, usage=usage, provider_request_id=vendor_id, provider_details=vendor_details
+        parts=items,
+        model_name=model_name,
+        usage=usage,
+        provider_request_id=vendor_id,
+        provider_details=vendor_details,
+        provider_name=provider_name,
     )
 
 

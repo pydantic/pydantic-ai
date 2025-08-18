@@ -500,6 +500,7 @@ class OpenAIModel(Model):
             timestamp=timestamp,
             provider_details=vendor_details,
             provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -803,6 +804,7 @@ class OpenAIResponsesModel(Model):
             model_name=response.model,
             provider_request_id=response.id,
             timestamp=timestamp,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(

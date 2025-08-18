@@ -353,6 +353,7 @@ class MistralModel(Model):
             model_name=response.model,
             timestamp=timestamp,
             provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(

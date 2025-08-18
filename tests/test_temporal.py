@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
@@ -42,18 +43,11 @@ try:
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec.temporal import (
-        AgentPlugin,
-        LogfirePlugin,
-        PydanticAIPlugin,
-        TemporalAgent,
-    )
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('temporal not installed', allow_module_level=True)
 
 try:
@@ -63,23 +57,17 @@ try:
     from logfire.testing import CaptureLogfire
     from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.mcp import MCPServerStdio
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('openai not installed', allow_module_level=True)
 
 
@@ -89,7 +77,6 @@ with workflow.unsafe.imports_passed_through():
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
 
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
-    import pytest
     from inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import

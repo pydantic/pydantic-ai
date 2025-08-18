@@ -202,6 +202,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
                 provider_request_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
@@ -210,6 +211,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=5, output_tokens=10, details={'input_tokens': 5, 'output_tokens': 10}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
                 provider_request_id='123',
             ),
         ]
@@ -297,6 +299,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
                 provider_request_id='123',
             ),
             ModelRequest(
@@ -361,6 +364,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=2, output_tokens=1, details={'input_tokens': 2, 'output_tokens': 1}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
                 provider_request_id='123',
             ),
             ModelRequest(
@@ -384,6 +388,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=3, output_tokens=2, details={'input_tokens': 3, 'output_tokens': 2}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
                 provider_request_id='123',
             ),
             ModelRequest(
@@ -401,6 +406,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=3, output_tokens=5, details={'input_tokens': 3, 'output_tokens': 5}),
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='anthropic',
                 provider_request_id='123',
             ),
         ]
@@ -747,6 +753,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01Kwjzggomz7bv9og51qGFuH',
             ),
             ModelRequest(
@@ -784,6 +791,7 @@ async def test_image_as_binary_content_tool_response(
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_015btMBYLTuDnMP7zAeuHQGi',
             ),
         ]
@@ -905,6 +913,7 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 ),
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
             ),
         ]
@@ -952,6 +961,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01BnZvs3naGorn93wjjCDwbd',
             ),
         ]
@@ -978,6 +988,7 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id=IsStr(),
             ),
             ModelRequest(
@@ -1020,6 +1031,7 @@ I'll keep the format similar to my street-crossing response for consistency.\
                 ),
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id=IsStr(),
             ),
         ]
@@ -1449,6 +1461,7 @@ Several major events are happening today, including:
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01W2YfD2EF8BbAqLRr8ftH4W',
             ),
         ]
@@ -1504,6 +1517,7 @@ print(f"3 * 12390 = {result}")\
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01RJnbK7VMxvS2SyvtyJAQVU',
             ),
         ]
@@ -1553,6 +1567,7 @@ It's being celebrated as:
                 usage=RequestUsage(input_tokens=458, output_tokens=17, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
+                provider_name='openai',
                 provider_request_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
             ),
         ]
@@ -1668,6 +1683,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_012TXW181edhmR5JCsQRsBKx',
             ),
             ModelRequest(
@@ -1700,6 +1716,7 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
             ),
             ModelRequest(
@@ -1764,6 +1781,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
             ),
             ModelRequest(
@@ -1794,6 +1812,7 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_0142umg4diSckrDtV9vAmmPL',
             ),
         ]
@@ -1851,6 +1870,7 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_018YiNXULHGpoKoHkTt6GivG',
             ),
             ModelRequest(
@@ -1884,6 +1904,7 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
             ),
         ]
@@ -1941,6 +1962,7 @@ Don't include any text or Markdown fencing before or after.\
                 ),
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
+                provider_name='anthropic',
                 provider_request_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
             ),
         ]

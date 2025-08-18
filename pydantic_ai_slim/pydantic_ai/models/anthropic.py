@@ -326,7 +326,11 @@ class AnthropicModel(Model):
                 )
 
         return ModelResponse(
-            items, usage=_map_usage(response), model_name=response.model, provider_request_id=response.id
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(

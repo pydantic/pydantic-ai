@@ -240,10 +240,7 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        tool_spec: ToolSpecificationTypeDef = {
-            'name': f.name,
-            'inputSchema': {'json': f.parameters_json_schema},
-        }
+        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
@@ -304,7 +301,9 @@ class BedrockConverseModel(Model):
             output_tokens=response['usage']['outputTokens'],
         )
         vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, provider_request_id=vendor_id)
+        return ModelResponse(
+            items, usage=u, model_name=self.model_name, provider_request_id=vendor_id, provider_name=self._provider.name
+        )
 
     @overload
     async def _messages_create(
