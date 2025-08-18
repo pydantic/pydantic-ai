@@ -205,15 +205,19 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
+        if docstring_format is None:
+            docstring_format = self._default_docstring_format
+        if require_parameter_descriptions is None:
+            require_parameter_descriptions = self._default_require_parameter_descriptions
+
         tool = Tool[AgentDepsT](
             func,
             takes_ctx=takes_ctx,
             name=name,
             max_retries=retries,
             prepare=prepare,
-            docstring_format=docstring_format or self._default_docstring_format,
-            require_parameter_descriptions=require_parameter_descriptions
-            or self._default_require_parameter_descriptions,
+            docstring_format=docstring_format,
+            require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
             strict=strict,
         )
