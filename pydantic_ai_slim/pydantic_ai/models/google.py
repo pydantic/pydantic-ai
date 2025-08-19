@@ -31,6 +31,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -54,6 +55,7 @@ try:
         ContentUnionDict,
         CountTokensConfigDict,
         ExecutableCodeDict,
+        File,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -425,7 +427,7 @@ class GoogleModel(Model):
                     if isinstance(part, SystemPromptPart):
                         system_parts.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        message_parts.extend(await self._map_user_prompt(part))
+                        message_parts.extend(await self._map_user_prompt(part, contents))
                     elif isinstance(part, ToolReturnPart):
                         message_parts.append(
                             {
@@ -465,7 +467,7 @@ class GoogleModel(Model):
         system_instruction = ContentDict(role='user', parts=system_parts) if system_parts else None
         return system_instruction, contents
 
-    async def _map_user_prompt(self, part: UserPromptPart) -> list[PartDict]:
+    async def _map_user_prompt(self, part: UserPromptPart, contents: list[ContentUnionDict]) -> list[PartDict]:
         if isinstance(part.content, str):
             return [{'text': part.content}]
         else:
@@ -499,6 +501,12 @@ class GoogleModel(Model):
                         content.append(
                             {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
                         )  # pragma: lax no cover
+                elif isinstance(item, UploadedFile):
+                    if not isinstance(item.file, File):
+                        raise UserError('UploadedFile.file must be a genai.types.File object')
+                    # genai.types.File is its own ContentUnionDict and not a
+                    # PartDict, so append to the contents directly.
+                    contents.append(item.file)
                 else:
                     assert_never(item)
         return content
