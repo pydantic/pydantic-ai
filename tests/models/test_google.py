@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -49,6 +50,7 @@ from ..parts_from_messages import part_types_from_messages
 with try_import() as imports_successful:
     from google.genai.types import (
         CodeExecutionResult,
+        File,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
         HarmBlockThreshold,
@@ -1705,4 +1707,29 @@ def test_map_usage():
                 'audio_candidates_tokens': 9400,
             },
         )
+    )
+
+
+async def test_uploaded_file_input(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    # client = google_provider.client
+    # with open('tests/assets/smiley.pdf', 'rb') as f:
+    #     google_file = client.files.upload(
+    #         file=f,
+    #         config={
+    #             'mime_type': 'application/pdf',
+    #         },
+    #     )
+    # print(google_file)
+    google_file = File(
+        name='files/6myu0b1v3mxl',
+        mime_type='application/pdf',
+        uri='https://generativelanguage.googleapis.com/v1beta/files/6myu0b1v3mxl',
+    )
+    agent = Agent(m)
+
+    result = await agent.run(['Give me a short description of this image', UploadedFile(file=google_file)])
+    assert result.output == snapshot(
+        'The image displays a classic smiley face. It features a bright yellow circular face with two simple black dot eyes and an upward-curved black line forming a smile. The yellow circle has a subtle darker yellow outline and is set against a plain white background.'
     )
