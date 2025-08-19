@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Callable, Literal, Union
 
@@ -12,11 +13,27 @@ from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import ToolOutput
+from pydantic_ai.output import DeferredToolCalls, ToolOutput
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets.deferred import DeferredToolset
+from pydantic_ai.toolsets.function import FunctionToolset
+from pydantic_ai.toolsets.prefixed import PrefixedToolset
+from pydantic_ai.usage import RequestUsage
+
+from .conftest import IsDatetime, IsStr
 
 
 def test_tool_no_ctx():
@@ -47,6 +64,26 @@ def test_tool_plain_with_ctx():
         'Error generating schema for test_tool_plain_with_ctx.<locals>.invalid_tool:\n'
         '  RunContext annotations can only be used with tools that take context'
     )
+
+
+def test_builtin_tool_registration():
+    """
+    Test that built-in functions can't be registered as tools.
+    """
+
+    with pytest.raises(
+        UserError,
+        match='Error generating schema for min:\n  no signature found for builtin <built-in function min>',
+    ):
+        agent = Agent(TestModel())
+        agent.tool_plain(min)
+
+    with pytest.raises(
+        UserError,
+        match='Error generating schema for max:\n  no signature found for builtin <built-in function max>',
+    ):
+        agent = Agent(TestModel())
+        agent.tool_plain(max)
 
 
 def test_tool_ctx_second():
@@ -105,13 +142,9 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
-    keys = list(json_schema.keys())
-    # name should be the first key
-    assert keys[0] == 'name'
-    # description should be the second key
-    assert keys[1] == 'description'
 
 
 def sphinx_style_docstring(foo: int, /) -> str:  # pragma: no cover
@@ -141,6 +174,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -180,6 +214,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -219,6 +254,7 @@ def test_google_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -256,6 +292,7 @@ def test_sphinx_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -299,6 +336,7 @@ def test_numpy_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -330,6 +368,7 @@ def test_only_returns_type():
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -349,9 +388,10 @@ def test_docstring_unknown():
         {
             'name': 'unknown_docstring',
             'description': 'Unknown style docstring.',
-            'parameters_json_schema': {'properties': {}, 'type': 'object'},
+            'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -392,6 +432,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -425,6 +466,7 @@ def test_takes_just_model():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -444,7 +486,7 @@ def test_takes_model_and_int():
     assert json_schema == snapshot(
         {
             'name': 'takes_just_model',
-            'description': '',
+            'description': None,
             'parameters_json_schema': {
                 '$defs': {
                     'Foo': {
@@ -467,6 +509,7 @@ def test_takes_model_and_int():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -486,15 +529,15 @@ def test_init_tool_plain():
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0])
-    assert agent._function_tools['plain_tool'].takes_ctx is False
-    assert agent._function_tools['plain_tool'].max_retries == 7
+    assert agent._function_toolset.tools['plain_tool'].takes_ctx is False
+    assert agent._function_toolset.tools['plain_tool'].max_retries == 7
 
     agent_infer = Agent('test', tools=[plain_tool], retries=7)
     result = agent_infer.run_sync('foobar')
     assert result.output == snapshot('{"plain_tool":1}')
     assert call_args == snapshot([0, 0])
-    assert agent_infer._function_tools['plain_tool'].takes_ctx is False
-    assert agent_infer._function_tools['plain_tool'].max_retries == 7
+    assert agent_infer._function_toolset.tools['plain_tool'].takes_ctx is False
+    assert agent_infer._function_toolset.tools['plain_tool'].max_retries == 7
 
 
 def ctx_tool(ctx: RunContext[int], x: int) -> int:
@@ -506,13 +549,13 @@ def test_init_tool_ctx():
     agent = Agent('test', tools=[Tool(ctx_tool, takes_ctx=True, max_retries=3)], deps_type=int, retries=7)
     result = agent.run_sync('foobar', deps=5)
     assert result.output == snapshot('{"ctx_tool":5}')
-    assert agent._function_tools['ctx_tool'].takes_ctx is True
-    assert agent._function_tools['ctx_tool'].max_retries == 3
+    assert agent._function_toolset.tools['ctx_tool'].takes_ctx is True
+    assert agent._function_toolset.tools['ctx_tool'].max_retries == 3
 
     agent_infer = Agent('test', tools=[ctx_tool], deps_type=int)
     result = agent_infer.run_sync('foobar', deps=6)
     assert result.output == snapshot('{"ctx_tool":6}')
-    assert agent_infer._function_tools['ctx_tool'].takes_ctx is True
+    assert agent_infer._function_toolset.tools['ctx_tool'].takes_ctx is True
 
 
 def test_repeat_tool_by_rename():
@@ -562,18 +605,44 @@ def test_repeat_tool():
     def bar(x: int, y: str) -> str:  # pragma: no cover
         return f'{x} {y}'
 
-    with pytest.raises(UserError, match=r"Tool name conflicts with existing tool: 'bar'."):
+    with pytest.raises(UserError, match="Tool name conflicts with previously renamed tool: 'bar'."):
         agent.run_sync('')
 
 
 def test_tool_return_conflict():
     # this is okay
-    Agent('test', tools=[ctx_tool], deps_type=int)
+    Agent('test', tools=[ctx_tool], deps_type=int).run_sync('', deps=0)
     # this is also okay
-    Agent('test', tools=[ctx_tool], deps_type=int, output_type=int)
+    Agent('test', tools=[ctx_tool], deps_type=int, output_type=int).run_sync('', deps=0)
     # this raises an error
-    with pytest.raises(UserError, match="Tool name conflicts with output tool name: 'ctx_tool'"):
-        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool'))
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "The agent defines a tool whose name conflicts with existing tool from the agent's output tools: 'ctx_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts."
+        ),
+    ):
+        Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool')).run_sync(
+            '', deps=0
+        )
+
+
+def test_tool_name_conflict_hint():
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "PrefixedToolset(FunctionToolset 'tool') defines a tool whose name conflicts with existing tool from the agent: 'foo_tool'. Change the `prefix` attribute to avoid name conflicts."
+        ),
+    ):
+
+        def tool(x: int) -> int:
+            return x + 1  # pragma: no cover
+
+        def foo_tool(x: str) -> str:
+            return x + 'foo'  # pragma: no cover
+
+        function_toolset = FunctionToolset([tool], id='tool')
+        prefixed_toolset = PrefixedToolset(function_toolset, 'foo')
+        Agent('test', tools=[foo_tool], toolsets=[prefixed_toolset]).run_sync('')
 
 
 def test_init_ctx_tool_invalid():
@@ -803,6 +872,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'outer_typed_dict_key': None,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -846,7 +916,7 @@ def test_enforce_parameter_descriptions_noraise() -> None:
     agent.tool(require_parameter_descriptions=True)(complete_parameter_descriptions_docstring)
 
 
-def test_json_schema_required_parameters(set_event_loop: None):
+def test_json_schema_required_parameters():
     agent = Agent(FunctionModel(get_json_schema))
 
     @agent.tool
@@ -862,34 +932,36 @@ def test_json_schema_required_parameters(set_event_loop: None):
     assert json_schema == snapshot(
         [
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'type': 'integer'}, 'b': {'default': 1, 'type': 'integer'}},
                     'required': ['a'],
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool_plain',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
                     'additionalProperties': False,
-                    'properties': {'a': {'type': 'integer'}, 'b': {'type': 'integer'}},
+                    'properties': {'a': {'default': 1, 'type': 'integer'}, 'b': {'type': 'integer'}},
                     'required': ['b'],
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
         ]
     )
 
 
-def test_call_tool_without_unrequired_parameters(set_event_loop: None):
+def test_call_tool_without_unrequired_parameters():
     async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
@@ -960,24 +1032,27 @@ def test_schema_generator():
     assert json_schema == snapshot(
         [
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool_1',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string'}},
+                    'additionalProperties': True,
+                    'properties': {'x': {'default': None, 'type': 'string'}},
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
             {
-                'description': '',
+                'description': None,
                 'name': 'my_tool_2',
                 'outer_typed_dict_key': None,
                 'parameters_json_schema': {
-                    'properties': {'x': {'type': 'string', 'title': 'X title'}},
+                    'properties': {'x': {'default': None, 'type': 'string', 'title': 'X title'}},
                     'type': 'object',
                 },
                 'strict': None,
+                'kind': 'function',
             },
         ]
     )
@@ -1002,7 +1077,6 @@ def test_tool_parameters_with_attribute_docstrings():
             'name': 'get_score',
             'description': None,
             'parameters_json_schema': {
-                'additionalProperties': False,
                 'properties': {
                     'a': {'description': 'The first parameter', 'type': 'integer'},
                     'b': {'description': 'The second parameter', 'type': 'integer'},
@@ -1013,6 +1087,7 @@ def test_tool_parameters_with_attribute_docstrings():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'kind': 'function',
         }
     )
 
@@ -1044,7 +1119,7 @@ def test_dynamic_tools_agent_wide():
     with agent.override(model=FunctionModel(get_json_schema)):
         result = agent.run_sync('', deps=21)
         json_schema = json.loads(result.output)
-        assert agent._function_tools['foobar'].strict is None
+        assert agent._function_toolset.tools['foobar'].strict is None
         assert json_schema['strict'] is True
 
     result = agent.run_sync('', deps=1)
@@ -1071,8 +1146,8 @@ def test_function_tool_consistent_with_schema():
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
-    assert agent._function_tools['foobar'].takes_ctx is False
-    assert agent._function_tools['foobar'].max_retries == 0
+    assert agent._function_toolset.tools['foobar'].takes_ctx is False
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
 
 
 def test_function_tool_inconsistent_with_schema():
@@ -1118,5 +1193,233 @@ def test_async_function_tool_consistent_with_schema():
     agent = Agent('test', tools=[pydantic_tool], retries=0)
     result = agent.run_sync('foobar')
     assert result.output == snapshot('{"foobar":"I like being called like this"}')
-    assert agent._function_tools['foobar'].takes_ctx is False
-    assert agent._function_tools['foobar'].max_retries == 0
+    assert agent._function_toolset.tools['foobar'].takes_ctx is False
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
+
+
+def test_tool_retries():
+    prepare_tools_retries: list[int] = []
+    prepare_retries: list[int] = []
+    call_retries: list[int] = []
+
+    async def prepare_tool_defs(
+        ctx: RunContext[None], tool_defs: list[ToolDefinition]
+    ) -> Union[list[ToolDefinition], None]:
+        nonlocal prepare_tools_retries
+        retry = ctx.retries.get('infinite_retry_tool', 0)
+        prepare_tools_retries.append(retry)
+        return tool_defs
+
+    agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
+
+    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        nonlocal prepare_retries
+        prepare_retries.append(ctx.retry)
+        return tool_def
+
+    @agent.tool(retries=5, prepare=prepare_tool_def)
+    def infinite_retry_tool(ctx: RunContext[None]) -> int:
+        nonlocal call_retries
+        call_retries.append(ctx.retry)
+        raise ModelRetry('Please try again.')
+
+    with pytest.raises(UnexpectedModelBehavior, match="Tool 'infinite_retry_tool' exceeded max retries count of 5"):
+        agent.run_sync('Begin infinite retry loop!')
+
+    assert prepare_tools_retries == snapshot([0, 1, 2, 3, 4, 5])
+    assert prepare_retries == snapshot([0, 1, 2, 3, 4, 5])
+    assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
+
+
+def test_deferred_tool():
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls], toolsets=[deferred_toolset])
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        DeferredToolCalls(
+            tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            tool_defs={
+                'my_tool': ToolDefinition(
+                    name='my_tool',
+                    description='',
+                    parameters_json_schema={
+                        'type': 'object',
+                        'properties': {'x': {'type': 'integer'}},
+                        'required': ['x'],
+                    },
+                    kind='deferred',
+                )
+            },
+        )
+    )
+
+
+def test_deferred_tool_with_output_type():
+    class MyModel(BaseModel):
+        foo: str
+
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolCalls], toolsets=[deferred_toolset])
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(MyModel(foo='a'))
+
+
+def test_deferred_tool_with_tool_output_type():
+    class MyModel(BaseModel):
+        foo: str
+
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(
+        TestModel(call_tools=[]),
+        output_type=[[ToolOutput(MyModel), ToolOutput(MyModel)], DeferredToolCalls],
+        toolsets=[deferred_toolset],
+    )
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(MyModel(foo='a'))
+
+
+async def test_deferred_tool_without_output_type():
+    deferred_toolset = DeferredToolset(
+        [
+            ToolDefinition(
+                name='my_tool',
+                description='',
+                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
+            ),
+        ]
+    )
+    agent = Agent(TestModel(), toolsets=[deferred_toolset])
+
+    msg = 'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
+
+    with pytest.raises(UserError, match=msg):
+        await agent.run('Hello')
+
+    with pytest.raises(UserError, match=msg):
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+
+
+def test_output_type_deferred_tool_calls_by_itself():
+    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolCalls`.'):
+        Agent(TestModel(), output_type=DeferredToolCalls)
+
+
+def test_output_type_empty():
+    with pytest.raises(UserError, match='At least one output type must be provided.'):
+        Agent(TestModel(), output_type=[])
+
+
+def test_parallel_tool_return():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[ToolCallPart('get_price', {'fruit': 'apple'}), ToolCallPart('get_price', {'fruit': 'banana'})]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_price(fruit: str) -> ToolReturn:
+        return ToolReturn(
+            return_value=10.0,
+            content=f'The price of {fruit} is 10.0',
+            metadata={'foo': 'bar'},
+        )
+
+    result = agent.run_sync('What do an apple and a banana cost?')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What do an apple and a banana cost?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'apple'},
+                        tool_call_id=IsStr(),
+                    ),
+                    ToolCallPart(
+                        tool_name='get_price',
+                        args={'fruit': 'banana'},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=58, output_tokens=10),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id=IsStr(),
+                        metadata={'foo': 'bar'},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of apple is 10.0',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of banana is 10.0',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=76, output_tokens=11),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )

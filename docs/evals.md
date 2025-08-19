@@ -313,7 +313,7 @@ _(This example is complete, it can be run "as is")_
 
 You can control concurrency during evaluation (this might be useful to prevent exceeding a rate limit):
 
-```python {title="parallel_evaluation_example.py" line_length="100"}
+```python {title="parallel_evaluation_example.py" line_length="100" test="skip"}
 import asyncio
 import time
 
@@ -732,7 +732,7 @@ This can be especially helpful when attempting to write evaluators that make use
 
 This allows you to write evaluations that depend on information about which code paths were executed during the call to
 the task function without needing to manually instrument the code being evaluated, as long as the code being evaluated
-is already adequately instrumented with OpenTelemetry. In the case of PydanticAI agents, for example, this can be used
+is already adequately instrumented with OpenTelemetry. In the case of Pydantic AI agents, for example, this can be used
 to ensure specific tools are (or are not) called during the execution of specific cases.
 
 Using OpenTelemetry in this way also means that all data used to evaluate the task executions will be accessible in

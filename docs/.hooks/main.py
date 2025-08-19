@@ -9,10 +9,14 @@ from jinja2 import Environment
 from mkdocs.config import Config
 from mkdocs.structure.files import Files
 from mkdocs.structure.pages import Page
+from snippets import inject_snippets
+
+DOCS_ROOT = Path(__file__).parent.parent
 
 
 def on_page_markdown(markdown: str, page: Page, config: Config, files: Files) -> str:
     """Called on each file after it is read and before it is converted to HTML."""
+    markdown = inject_snippets(markdown, (DOCS_ROOT / page.file.src_uri).parent)
     markdown = replace_uv_python_run(markdown)
     markdown = render_examples(markdown)
     markdown = render_video(markdown)

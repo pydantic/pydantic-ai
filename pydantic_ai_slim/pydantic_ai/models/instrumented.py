@@ -18,11 +18,8 @@ from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provide
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
-from ..messages import (
-    ModelMessage,
-    ModelRequest,
-    ModelResponse,
-)
+from .._run_context import RunContext
+from ..messages import ModelMessage, ModelRequest, ModelResponse
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
@@ -92,6 +89,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         event_logger_provider: EventLoggerProvider | None = None,
         include_binary_content: bool = True,
+        include_content: bool = True,
     ):
         """Create instrumentation options.
 
@@ -109,6 +107,8 @@ class InstrumentationSettings:
                 Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
                 This is only used if `event_mode='logs'`.
             include_binary_content: Whether to include binary content in the instrumentation events.
+            include_content: Whether to include prompts, completions, and tool call arguments and responses
+                in the instrumentation events.
         """
         from pydantic_ai import __version__
 
@@ -121,6 +121,7 @@ class InstrumentationSettings:
         self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
+        self.include_content = include_content
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -152,7 +153,12 @@ class InstrumentationSettings:
         events: list[Event] = []
         instructions = InstrumentedModel._get_instructions(messages)  # pyright: ignore [reportPrivateUsage]
         if instructions is not None:
-            events.append(Event('gen_ai.system.message', body={'content': instructions, 'role': 'system'}))
+            events.append(
+                Event(
+                    'gen_ai.system.message',
+                    body={**({'content': instructions} if self.include_content else {}), 'role': 'system'},
+                )
+            )
 
         for message_index, message in enumerate(messages):
             message_events: list[Event] = []
@@ -161,7 +167,7 @@ class InstrumentationSettings:
                     if hasattr(part, 'otel_event'):
                         message_events.append(part.otel_event(self))
             elif isinstance(message, ModelResponse):  # pragma: no branch
-                message_events = message.otel_events()
+                message_events = message.otel_events(self)
             for event in message_events:
                 event.attributes = {
                     'gen_ai.message.index': message_index,
@@ -178,15 +184,15 @@ GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
 
 
-@dataclass
+@dataclass(init=False)
 class InstrumentedModel(WrapperModel):
     """Model which wraps another model so that requests are instrumented with OpenTelemetry.
 
     See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
     """
 
-    settings: InstrumentationSettings
-    """Configuration for instrumenting requests."""
+    instrumentation_settings: InstrumentationSettings
+    """Instrumentation settings for this model."""
 
     def __init__(
         self,
@@ -194,7 +200,7 @@ class InstrumentedModel(WrapperModel):
         options: InstrumentationSettings | None = None,
     ) -> None:
         super().__init__(wrapped)
-        self.settings = options or InstrumentationSettings()
+        self.instrumentation_settings = options or InstrumentationSettings()
 
     async def request(
         self,
@@ -213,12 +219,13 @@ class InstrumentedModel(WrapperModel):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:
                 async with super().request_stream(
-                    messages, model_settings, model_request_parameters
+                    messages, model_settings, model_request_parameters, run_context
                 ) as response_stream:
                     yield response_stream
             finally:
@@ -256,7 +263,7 @@ class InstrumentedModel(WrapperModel):
 
         record_metrics: Callable[[], None] | None = None
         try:
-            with self.settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
+            with self.instrumentation_settings.tracer.start_as_current_span(span_name, attributes=attributes) as span:
 
                 def finish(response: ModelResponse):
                     # FallbackModel updates these span attributes.
@@ -273,14 +280,14 @@ class InstrumentedModel(WrapperModel):
                             'gen_ai.request.model': request_model,
                             'gen_ai.response.model': response_model,
                         }
-                        if response.usage.request_tokens:  # pragma: no branch
-                            self.settings.tokens_histogram.record(
-                                response.usage.request_tokens,
+                        if response.usage.input_tokens:  # pragma: no branch
+                            self.instrumentation_settings.tokens_histogram.record(
+                                response.usage.input_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'input'},
                             )
-                        if response.usage.response_tokens:  # pragma: no branch
-                            self.settings.tokens_histogram.record(
-                                response.usage.response_tokens,
+                        if response.usage.output_tokens:  # pragma: no branch
+                            self.instrumentation_settings.tokens_histogram.record(
+                                response.usage.output_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'output'},
                             )
 
@@ -290,8 +297,8 @@ class InstrumentedModel(WrapperModel):
                     if not span.is_recording():
                         return
 
-                    events = self.settings.messages_to_otel_events(messages)
-                    for event in self.settings.messages_to_otel_events([response]):
+                    events = self.instrumentation_settings.messages_to_otel_events(messages)
+                    for event in self.instrumentation_settings.messages_to_otel_events([response]):
                         events.append(
                             Event(
                                 'gen_ai.choice',
@@ -324,9 +331,9 @@ class InstrumentedModel(WrapperModel):
                 record_metrics()
 
     def _emit_events(self, span: Span, events: list[Event]) -> None:
-        if self.settings.event_mode == 'logs':
+        if self.instrumentation_settings.event_mode == 'logs':
             for event in events:
-                self.settings.event_logger.emit(event)
+                self.instrumentation_settings.event_logger.emit(event)
         else:
             attr_name = 'events'
             span.set_attributes(

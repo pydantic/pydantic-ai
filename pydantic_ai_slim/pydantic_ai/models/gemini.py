@@ -11,15 +11,16 @@ from uuid import uuid4
 import httpx
 import pydantic
 from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
-from typing_extensions import NotRequired, TypedDict, assert_never
-
-from pydantic_ai.providers import Provider, infer_provider
+from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
+from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -36,30 +37,16 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 LatestGeminiModelNames = Literal[
-    'gemini-1.5-flash',
-    'gemini-1.5-flash-8b',
-    'gemini-1.5-pro',
-    'gemini-1.0-pro',
     'gemini-2.0-flash',
-    'gemini-2.0-flash-lite-preview-02-05',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.5-flash-preview-05-20',
+    'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
-    'gemini-2.5-flash-lite-preview-06-17',
-    'gemini-2.5-pro-exp-03-25',
-    'gemini-2.5-pro-preview-05-06',
+    'gemini-2.5-flash-lite',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
@@ -74,10 +61,9 @@ See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#mo
 
 
 class GeminiModelSettings(ModelSettings, total=False):
-    """Settings used for a Gemini model request.
+    """Settings used for a Gemini model request."""
 
-    ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `gemini_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     gemini_safety_settings: list[GeminiSafetySettings]
     """Safety settings options for Gemini model request."""
@@ -100,16 +86,8 @@ class GeminiModelSettings(ModelSettings, total=False):
     See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
     """
 
-    gemini_thinking_config: ThinkingConfig
-    """Thinking is on by default in both the API and AI Studio.
 
-    Being on by default doesn't mean the model will send back thoughts. For that, you need to set `include_thoughts`
-    to `True`. If you want to turn it off, set `thinking_budget` to `0`.
-
-    See more about it on <https://ai.google.dev/gemini-api/docs/thinking>.
-    """
-
-
+@deprecated('Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details.')
 @dataclass(init=False)
 class GeminiModel(Model):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
@@ -123,10 +101,9 @@ class GeminiModel(Model):
     client: httpx.AsyncClient = field(repr=False)
 
     _model_name: GeminiModelName = field(repr=False)
-    _provider: Literal['google-gla', 'google-vertex'] | Provider[httpx.AsyncClient] | None = field(repr=False)
+    _provider: Provider[httpx.AsyncClient] = field(repr=False)
     _auth: AuthProtocol | None = field(repr=False)
     _url: str | None = field(repr=False)
-    _system: str = field(default='gemini', repr=False)
 
     def __init__(
         self,
@@ -134,6 +111,7 @@ class GeminiModel(Model):
         *,
         provider: Literal['google-gla', 'google-vertex'] | Provider[httpx.AsyncClient] = 'google-gla',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Gemini model.
 
@@ -143,21 +121,32 @@ class GeminiModel(Model):
                 'google-gla' or 'google-vertex' or an instance of `Provider[httpx.AsyncClient]`.
                 If not provided, a new provider will be created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
-        self._provider = provider
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
-        self._system = provider.name
+        self._provider = provider
         self.client = provider.client
         self._url = str(self.client.base_url)
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
         assert self._url is not None, 'URL not initialized'  # pragma: no cover
         return self._url  # pragma: no cover
+
+    @property
+    def model_name(self) -> GeminiModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -179,27 +168,16 @@ class GeminiModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         async with self._make_request(
             messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
-            yield await self._process_streamed_response(http_response)
-
-    @property
-    def model_name(self) -> GeminiModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
+            yield await self._process_streamed_response(http_response, model_request_parameters)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> _GeminiTools | None:
-        tools = [_function_from_abstract_tool(t) for t in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [_function_from_abstract_tool(t) for t in model_request_parameters.output_tools]
+        tools = [_function_from_abstract_tool(t) for t in model_request_parameters.tool_defs.values()]
         return _GeminiTools(function_declarations=tools) if tools else None
 
     def _get_tool_config(
@@ -250,7 +228,7 @@ class GeminiModel(Model):
             request_data['safetySettings'] = gemini_safety_settings
 
         if gemini_labels := model_settings.get('gemini_labels'):
-            if self._system == 'google-vertex':
+            if self._provider.name == 'google-vertex':
                 request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
@@ -291,7 +269,6 @@ class GeminiModel(Model):
         if finish_reason:
             vendor_details = {'finish_reason': finish_reason}
         usage = _metadata_as_usage(response)
-        usage.requests = 1
         return _process_response_from_parts(
             parts,
             response.get('model_version', self._model_name),
@@ -300,7 +277,9 @@ class GeminiModel(Model):
             vendor_details=vendor_details,
         )
 
-    async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, http_response: HTTPResponse, model_request_parameters: ModelRequestParameters
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         aiter_bytes = http_response.aiter_bytes()
         start_response: _GeminiResponse | None = None
@@ -321,7 +300,12 @@ class GeminiModel(Model):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
+        return GeminiStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _content=content,
+            _stream=aiter_bytes,
+        )
 
     async def _message_to_gemini_content(
         self, messages: list[ModelMessage]
@@ -381,11 +365,11 @@ class GeminiModel(Model):
                             inline_data={'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
                         )
                         content.append(inline_data)
-                    else:
+                    else:  # pragma: lax no cover
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
                 else:
-                    assert_never(item)
+                    assert_never(item)  # pragma: lax no cover
         return content
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
@@ -413,7 +397,7 @@ def _settings_to_generation_config(model_settings: GeminiModelSettings) -> _Gemi
     if (frequency_penalty := model_settings.get('frequency_penalty')) is not None:
         config['frequency_penalty'] = frequency_penalty
     if (thinkingConfig := model_settings.get('gemini_thinking_config')) is not None:
-        config['thinking_config'] = thinkingConfig  # pragma: lax no cover
+        config['thinking_config'] = thinkingConfig
     return config
 
 
@@ -453,7 +437,11 @@ class GeminiStreamedResponse(StreamedResponse):
                 if 'text' in gemini_part:
                     # Using vendor_part_id=None means we can produce multiple text parts if their deltas are sprinkled
                     # amongst the tool call deltas
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=None, content=gemini_part['text'])
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id=None, content=gemini_part['text']
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
                 elif 'function_call' in gemini_part:
                     # Here, we assume all function_call parts are complete and don't have deltas.
@@ -620,6 +608,9 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
+        elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+            # This is currently never returned from gemini
+            pass
         else:
             assert_never(item)
     return _GeminiContent(role='model', parts=parts)
@@ -672,7 +663,7 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 def _process_response_from_parts(
     parts: Sequence[_GeminiPartUnion],
     model_name: GeminiModelName,
-    usage: usage.Usage,
+    usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
@@ -692,7 +683,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, vendor_id=vendor_id, vendor_details=vendor_details
+        parts=items, usage=usage, model_name=model_name, provider_request_id=vendor_id, provider_details=vendor_details
     )
 
 
@@ -774,7 +765,7 @@ class _GeminiFunction(TypedDict):
 
 def _function_from_abstract_tool(tool: ToolDefinition) -> _GeminiFunction:
     json_schema = tool.parameters_json_schema
-    f = _GeminiFunction(name=tool.name, description=tool.description, parameters=json_schema)
+    f = _GeminiFunction(name=tool.name, description=tool.description or '', parameters=json_schema)
     return f
 
 
@@ -858,31 +849,45 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     ]
 
 
-def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
+def _metadata_as_usage(response: _GeminiResponse) -> usage.RequestUsage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return usage.Usage()  # pragma: no cover
+        return usage.RequestUsage()
     details: dict[str, int] = {}
-    if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
+    if cached_content_token_count := metadata.get('cached_content_token_count', 0):
+        details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := metadata.get('thoughts_token_count'):
+    if thoughts_token_count := metadata.get('thoughts_token_count', 0):
         details['thoughts_tokens'] = thoughts_token_count
 
-    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
-        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count', 0):
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
+    input_audio_tokens = 0
+    output_audio_tokens = 0
+    cache_audio_read_tokens = 0
     for key, metadata_details in metadata.items():
         if key.endswith('_details') and metadata_details:
             metadata_details = cast(list[_GeminiModalityTokenCount], metadata_details)
             suffix = key.removesuffix('_details')
             for detail in metadata_details:
-                details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
+                modality = detail['modality']
+                details[f'{modality.lower()}_{suffix}'] = value = detail.get('token_count', 0)
+                if value and modality == 'AUDIO':
+                    if key == 'prompt_tokens_details':
+                        input_audio_tokens = value
+                    elif key == 'candidates_tokens_details':
+                        output_audio_tokens = value
+                    elif key == 'cache_tokens_details':  # pragma: no branch
+                        cache_audio_read_tokens = value
 
-    return usage.Usage(
-        request_tokens=metadata.get('prompt_token_count', 0),
-        response_tokens=metadata.get('candidates_token_count', 0),
-        total_tokens=metadata.get('total_token_count', 0),
+    return usage.RequestUsage(
+        input_tokens=metadata.get('prompt_token_count', 0),
+        output_tokens=metadata.get('candidates_token_count', 0),
+        cache_read_tokens=cached_content_token_count,
+        input_audio_tokens=input_audio_tokens,
+        output_audio_tokens=output_audio_tokens,
+        cache_audio_read_tokens=cache_audio_read_tokens,
         details=details,
     )
 
@@ -922,10 +927,10 @@ def _ensure_decodeable(content: bytearray) -> bytearray:
 
     This is a temporary workaround until https://github.com/pydantic/pydantic-core/issues/1633 is resolved
     """
-    while True:
-        try:
-            content.decode()
-        except UnicodeDecodeError:
-            content = content[:-1]  # this will definitely succeed before we run out of bytes
-        else:
-            return content
+    try:
+        content.decode()
+    except UnicodeDecodeError as e:
+        # e.start marks the start of the invalid decoded bytes, so cut up to before the first invalid byte
+        return content[: e.start]
+    else:
+        return content

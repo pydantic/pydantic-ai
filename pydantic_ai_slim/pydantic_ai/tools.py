@@ -1,20 +1,15 @@
 from __future__ import annotations as _annotations
 
-import dataclasses
-import json
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Callable, Generic, Literal, Union
 
-from opentelemetry.trace import Tracer
-from pydantic import ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
-from . import _function_schema, _utils, messages as _messages
+from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, UnexpectedModelBehavior
 
 __all__ = (
     'AgentDepsT',
@@ -36,7 +31,7 @@ __all__ = (
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
-SystemPromptFunc = Union[
+SystemPromptFunc: TypeAlias = Union[
     Callable[[RunContext[AgentDepsT]], str],
     Callable[[RunContext[AgentDepsT]], Awaitable[str]],
     Callable[[], str],
@@ -47,17 +42,17 @@ SystemPromptFunc = Union[
 Usage `SystemPromptFunc[AgentDepsT]`.
 """
 
-ToolFuncContext = Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Any]
+ToolFuncContext: TypeAlias = Callable[Concatenate[RunContext[AgentDepsT], ToolParams], Any]
 """A tool function that takes `RunContext` as the first argument.
 
 Usage `ToolContextFunc[AgentDepsT, ToolParams]`.
 """
-ToolFuncPlain = Callable[ToolParams, Any]
+ToolFuncPlain: TypeAlias = Callable[ToolParams, Any]
 """A tool function that does not take `RunContext` as the first argument.
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither = Union[ToolFuncContext[AgentDepsT, ToolParams], ToolFuncPlain[ToolParams]]
+ToolFuncEither: TypeAlias = Union[ToolFuncContext[AgentDepsT, ToolParams], ToolFuncPlain[ToolParams]]
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
@@ -65,7 +60,7 @@ This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] a
 
 Usage `ToolFuncEither[AgentDepsT, ToolParams]`.
 """
-ToolPrepareFunc: TypeAlias = 'Callable[[RunContext[AgentDepsT], ToolDefinition], Awaitable[ToolDefinition | None]]'
+ToolPrepareFunc: TypeAlias = Callable[[RunContext[AgentDepsT], 'ToolDefinition'], Awaitable['ToolDefinition | None']]
 """Definition of a function that can prepare a tool definition at call time.
 
 See [tool docs](../tools.md#tool-prepare) for more information.
@@ -93,9 +88,9 @@ hitchhiker = Tool(hitchhiker, prepare=only_if_42)
 Usage `ToolPrepareFunc[AgentDepsT]`.
 """
 
-ToolsPrepareFunc: TypeAlias = (
-    'Callable[[RunContext[AgentDepsT], list[ToolDefinition]], Awaitable[list[ToolDefinition] | None]]'
-)
+ToolsPrepareFunc: TypeAlias = Callable[
+    [RunContext[AgentDepsT], list['ToolDefinition']], Awaitable['list[ToolDefinition] | None']
+]
 """Definition of a function that can prepare the tool definition of all tools for each step.
 This is useful if you want to customize the definition of multiple tools or you want to register
 a subset of tools for a given step.
@@ -123,8 +118,7 @@ agent = Agent('openai:gpt-4o', prepare_tools=turn_on_strict_if_openai)
 Usage `ToolsPrepareFunc[AgentDepsT]`.
 """
 
-
-DocstringFormat = Literal['google', 'numpy', 'sphinx', 'auto']
+DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 """Supported docstring formats.
 
 * `'google'` — [Google-style](https://google.github.io/styleguide/pyguide.html#381-docstrings) docstrings.
@@ -138,11 +132,19 @@ A = TypeVar('A')
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
     def typed_dict_schema(self, schema: core_schema.TypedDictSchema) -> JsonSchemaValue:
-        s = super().typed_dict_schema(schema)
-        total = schema.get('total')
-        if 'additionalProperties' not in s and (total is True or total is None):
-            s['additionalProperties'] = False
-        return s
+        json_schema = super().typed_dict_schema(schema)
+        # Workaround for https://github.com/pydantic/pydantic/issues/12123
+        if 'additionalProperties' not in json_schema:  # pragma: no branch
+            extra = schema.get('extra_behavior') or schema.get('config', {}).get('extra_fields_behavior')
+            if extra == 'allow':
+                extras_schema = schema.get('extras_schema', None)
+                if extras_schema is not None:
+                    json_schema['additionalProperties'] = self.generate_inner(extras_schema) or True
+                else:
+                    json_schema['additionalProperties'] = True  # pragma: no cover
+            elif extra == 'forbid':
+                json_schema['additionalProperties'] = False
+        return json_schema
 
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
         # Remove largely-useless property titles
@@ -160,7 +162,7 @@ class Tool(Generic[AgentDepsT]):
     takes_ctx: bool
     max_retries: int | None
     name: str
-    description: str
+    description: str | None
     prepare: ToolPrepareFunc[AgentDepsT] | None
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
@@ -171,12 +173,6 @@ class Tool(Generic[AgentDepsT]):
 
     This schema may be modified by the `prepare` function or by the Model class prior to including it in an API request.
     """
-
-    # TODO: Consider moving this current_retry state to live on something other than the tool.
-    #   We've worked around this for now by copying instances of the tool when creating new runs,
-    #   but this is a bit fragile. Moving the tool retry counts to live on the agent run state would likely clean things
-    #   up, though is also likely a larger effort to refactor.
-    current_retry: int = field(default=0, init=False)
 
     def __init__(
         self,
@@ -268,7 +264,7 @@ class Tool(Generic[AgentDepsT]):
         cls,
         function: Callable[..., Any],
         name: str,
-        description: str,
+        description: str | None,
         json_schema: JsonSchemaValue,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
@@ -302,6 +298,15 @@ class Tool(Generic[AgentDepsT]):
             function_schema=function_schema,
         )
 
+    @property
+    def tool_def(self):
+        return ToolDefinition(
+            name=self.name,
+            description=self.description,
+            parameters_json_schema=self.function_schema.json_schema,
+            strict=self.strict,
+        )
+
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
         """Get the tool definition.
 
@@ -311,96 +316,11 @@ class Tool(Generic[AgentDepsT]):
         Returns:
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
-        tool_def = ToolDefinition(
-            name=self.name,
-            description=self.description,
-            parameters_json_schema=self.function_schema.json_schema,
-            strict=self.strict,
-        )
+        base_tool_def = self.tool_def
         if self.prepare is not None:
-            return await self.prepare(ctx, tool_def)
+            return await self.prepare(ctx, base_tool_def)
         else:
-            return tool_def
-
-    async def run(
-        self,
-        message: _messages.ToolCallPart,
-        run_context: RunContext[AgentDepsT],
-        tracer: Tracer,
-    ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
-        """Run the tool function asynchronously.
-
-        This method wraps `_run` in an OpenTelemetry span.
-
-        See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>.
-        """
-        span_attributes = {
-            'gen_ai.tool.name': self.name,
-            # NOTE: this means `gen_ai.tool.call.id` will be included even if it was generated by pydantic-ai
-            'gen_ai.tool.call.id': message.tool_call_id,
-            'tool_arguments': message.args_as_json_str(),
-            'logfire.msg': f'running tool: {self.name}',
-            # add the JSON schema so these attributes are formatted nicely in Logfire
-            'logfire.json_schema': json.dumps(
-                {
-                    'type': 'object',
-                    'properties': {
-                        'tool_arguments': {'type': 'object'},
-                        'gen_ai.tool.name': {},
-                        'gen_ai.tool.call.id': {},
-                    },
-                }
-            ),
-        }
-        with tracer.start_as_current_span('running tool', attributes=span_attributes):
-            return await self._run(message, run_context)
-
-    async def _run(
-        self, message: _messages.ToolCallPart, run_context: RunContext[AgentDepsT]
-    ) -> _messages.ToolReturnPart | _messages.RetryPromptPart:
-        try:
-            validator = self.function_schema.validator
-            if isinstance(message.args, str):
-                args_dict = validator.validate_json(message.args or '{}')
-            else:
-                args_dict = validator.validate_python(message.args or {})
-        except ValidationError as e:
-            return self._on_error(e, message)
-
-        ctx = dataclasses.replace(
-            run_context,
-            retry=self.current_retry,
-            tool_name=message.tool_name,
-            tool_call_id=message.tool_call_id,
-        )
-        try:
-            response_content = await self.function_schema.call(args_dict, ctx)
-        except ModelRetry as e:
-            return self._on_error(e, message)
-
-        self.current_retry = 0
-        return _messages.ToolReturnPart(
-            tool_name=message.tool_name,
-            content=response_content,
-            tool_call_id=message.tool_call_id,
-        )
-
-    def _on_error(
-        self, exc: ValidationError | ModelRetry, call_message: _messages.ToolCallPart
-    ) -> _messages.RetryPromptPart:
-        self.current_retry += 1
-        if self.max_retries is None or self.current_retry > self.max_retries:
-            raise UnexpectedModelBehavior(f'Tool exceeded max retries count of {self.max_retries}') from exc
-        else:
-            if isinstance(exc, ValidationError):
-                content = exc.errors(include_url=False, include_context=False)
-            else:
-                content = exc.message
-            return _messages.RetryPromptPart(
-                tool_name=call_message.tool_name,
-                content=content,
-                tool_call_id=call_message.tool_call_id,
-            )
+            return base_tool_def
 
 
 ObjectJsonSchema: TypeAlias = dict[str, Any]
@@ -410,6 +330,9 @@ This type is used to define tools parameters (aka arguments) in [ToolDefinition]
 
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
+
+ToolKind: TypeAlias = Literal['function', 'output', 'deferred']
+"""Kind of tool."""
 
 
 @dataclass(repr=False)
@@ -422,11 +345,11 @@ class ToolDefinition:
     name: str
     """The name of the tool."""
 
-    description: str
-    """The description of the tool."""
-
-    parameters_json_schema: ObjectJsonSchema
+    parameters_json_schema: ObjectJsonSchema = field(default_factory=lambda: {'type': 'object', 'properties': {}})
     """The JSON schema for the tool's parameters."""
+
+    description: str | None = None
+    """The description of the tool."""
 
     outer_typed_dict_key: str | None = None
     """The key in the outer [TypedDict] that wraps an output tool.
@@ -444,6 +367,15 @@ class ToolDefinition:
     When `None` (the default), the value will be inferred based on the compatibility of the parameters_json_schema.
 
     Note: this is currently only supported by OpenAI models.
+    """
+
+    kind: ToolKind = field(default='function')
+    """The kind of tool:
+
+    - `'function'`: a tool that will be executed by Pydantic AI during an agent run and has its result returned to the model
+    - `'output'`: a tool that passes through an output value that ends the run
+    - `'deferred'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
+        When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
     """
 
     __repr__ = _utils.dataclasses_no_defaults_repr

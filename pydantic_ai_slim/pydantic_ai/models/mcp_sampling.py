@@ -3,9 +3,10 @@ from __future__ import annotations as _annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
-from .. import _mcp, exceptions, usage
+from .. import _mcp, exceptions
+from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -16,10 +17,9 @@ if TYPE_CHECKING:
 
 
 class MCPSamplingModelSettings(ModelSettings, total=False):
-    """Settings used for an MCP Sampling model request.
+    """Settings used for an MCP Sampling model request."""
 
-    ALL FIELDS MUST BE `mcp_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `mcp_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     mcp_model_preferences: ModelPreferences
     """Model preferences to use for MCP Sampling."""
@@ -63,7 +63,6 @@ class MCPSamplingModel(Model):
         if result.role == 'assistant':
             return ModelResponse(
                 parts=[_mcp.map_from_sampling_content(result.content)],
-                usage=usage.Usage(requests=1),
                 model_name=result.model,
             )
         else:
@@ -77,6 +76,7 @@ class MCPSamplingModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         raise NotImplementedError('MCP Sampling does not support streaming')
         yield

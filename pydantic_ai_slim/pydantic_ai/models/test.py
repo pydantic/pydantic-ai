@@ -12,7 +12,11 @@ import pydantic_core
 from typing_extensions import assert_never
 
 from .. import _utils
+from .._run_context import RunContext
+from ..exceptions import UserError
 from ..messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -24,9 +28,10 @@ from ..messages import (
     ToolCallPart,
     ToolReturnPart,
 )
+from ..profiles import ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 from . import Model, ModelRequestParameters, StreamedResponse
 from .function import _estimate_string_tokens, _estimate_usage  # pyright: ignore[reportPrivateUsage]
 
@@ -45,7 +50,7 @@ class _WrappedToolOutput:
     value: Any | None
 
 
-@dataclass
+@dataclass(init=False)
 class TestModel(Model):
     """A model specifically for testing purposes.
 
@@ -79,6 +84,26 @@ class TestModel(Model):
     _model_name: str = field(default='test', repr=False)
     _system: str = field(default='test', repr=False)
 
+    def __init__(
+        self,
+        *,
+        call_tools: list[str] | Literal['all'] = 'all',
+        custom_output_text: str | None = None,
+        custom_output_args: Any | None = None,
+        seed: int = 0,
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
+    ):
+        """Initialize TestModel with optional settings and profile."""
+        self.call_tools = call_tools
+        self.custom_output_text = custom_output_text
+        self.custom_output_args = custom_output_args
+        self.seed = seed
+        self.last_model_request_parameters = None
+        self._model_name = 'test'
+        self._system = 'test'
+        super().__init__(settings=settings, profile=profile)
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -88,7 +113,6 @@ class TestModel(Model):
         self.last_model_request_parameters = model_request_parameters
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -97,12 +121,16 @@ class TestModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         self.last_model_request_parameters = model_request_parameters
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(
-            _model_name=self._model_name, _structured_response=model_response, _messages=messages
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _structured_response=model_response,
+            _messages=messages,
         )
 
     @property
@@ -112,7 +140,7 @@ class TestModel(Model):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
+        """The model provider."""
         return self._system
 
     def gen_tool_args(self, tool_def: ToolDefinition) -> Any:
@@ -156,6 +184,9 @@ class TestModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        if model_request_parameters.builtin_tools:
+            raise UserError('TestModel does not support built-in tools')
+
         tool_calls = self._get_tool_calls(model_request_parameters)
         output_wrapper = self._get_output(model_request_parameters)
         output_tools = model_request_parameters.output_tools
@@ -248,14 +279,21 @@ class TestStreamedResponse(StreamedResponse):
                     mid = len(text) // 2
                     words = [text[:mid], text[mid:]]
                 self._usage += _get_string_usage('')
-                yield self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content='')
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
                 for word in words:
                     self._usage += _get_string_usage(word)
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=i, content=word)
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
             elif isinstance(part, ToolCallPart):
                 yield self._parts_manager.handle_tool_call_part(
                     vendor_part_id=i, tool_name=part.tool_name, args=part.args, tool_call_id=part.tool_call_id
                 )
+            elif isinstance(part, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                # NOTE: These parts are not generated by TestModel, but we need to handle them for type checking
+                assert False, f'Unexpected part type in TestModel: {type(part).__name__}'
             elif isinstance(part, ThinkingPart):  # pragma: no cover
                 # NOTE: There's no way to reach this part of the code, since we don't generate ThinkingPart on TestModel.
                 assert False, "This should be unreachable — we don't generate ThinkingPart on TestModel."
@@ -429,6 +467,6 @@ class _JsonSchemaTestData:
         return s
 
 
-def _get_string_usage(text: str) -> Usage:
+def _get_string_usage(text: str) -> RequestUsage:
     response_tokens = _estimate_string_tokens(text)
-    return Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+    return RequestUsage(output_tokens=response_tokens)

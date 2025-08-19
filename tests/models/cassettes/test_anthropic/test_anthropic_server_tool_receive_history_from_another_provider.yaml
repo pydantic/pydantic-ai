@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '137'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: How much is 3 * 12390?
+        role: user
+      generationConfig: {}
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1070'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=7214
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - executableCode:
+              code: |
+                print(3 * 12390)
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_OK
+              output: |
+                37170
+          - text: |
+              3 * 12390 is 37170.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: CMqdaODAKteEm9IPwI2-4Ac
+      usageMetadata:
+        candidatesTokenCount: 35
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 35
+        promptTokenCount: 13
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 13
+        toolUsePromptTokenCount: 31
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 31
+        totalTokenCount: 79
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '403'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How much is 3 * 12390?
+          type: text
+        role: user
+      - content:
+        - text: |
+            3 * 12390 is 37170.
+          type: text
+        role: assistant
+      - content:
+        - text: Multiplied by 12390
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1005'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      container:
+        expires_at: '2025-08-14T12:35:50.841325Z'
+        id: container_011CS7Xs5srnPx31UK6NgWbF
+      content:
+      - id: srvtoolu_01Loj5X7MicSSd1NAveX5s18
+        input:
+          code: |-
+            # Calculate 37170 * 12390
+            result = 37170 * 12390
+            print(f"37170 * 12390 = {result}")
+        name: code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            37170 * 12390 = 460536300
+          type: code_execution_result
+        tool_use_id: srvtoolu_01Loj5X7MicSSd1NAveX5s18
+        type: code_execution_tool_result
+      - text: 37170 multiplied by 12390 equals 460,536,300.
+        type: text
+      id: msg_01Dnx2rrdKpiaUQ5gDuuf6E6
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1683
+        output_tokens: 113
+        server_tool_use:
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

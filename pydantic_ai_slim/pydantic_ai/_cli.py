@@ -16,14 +16,15 @@ from typing_inspection.introspection import get_literal_values
 
 from . import __version__
 from ._run_context import AgentDepsT
-from .agent import Agent
+from .agent import AbstractAgent, Agent
 from .exceptions import UserError
-from .messages import ModelMessage
+from .messages import ModelMessage, TextPart
 from .models import KnownModelName, infer_model
 from .output import OutputDataT
 
 try:
     import argcomplete
+    import pyperclip
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, Suggestion
     from prompt_toolkit.buffer import Buffer
@@ -38,7 +39,7 @@ try:
     from rich.text import Text
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `rich`, `prompt-toolkit` and `argcomplete` to use the PydanticAI CLI, '
+        'Please install `rich`, `prompt-toolkit`, `pyperclip` and `argcomplete` to use the Pydantic AI CLI, '
         'you can use the `cli` optional group — `pip install "pydantic-ai-slim[cli]"`'
     ) from _import_error
 
@@ -47,7 +48,7 @@ __all__ = 'cli', 'cli_exit'
 
 
 PYDANTIC_AI_HOME = Path.home() / '.pydantic-ai'
-"""The home directory for PydanticAI CLI.
+"""The home directory for Pydantic AI CLI.
 
 This folder is used to store the prompt history and configuration.
 """
@@ -101,17 +102,20 @@ def cli_exit(prog_name: str = 'pai'):  # pragma: no cover
     sys.exit(cli(prog_name=prog_name))
 
 
-def cli(args_list: Sequence[str] | None = None, *, prog_name: str = 'pai') -> int:  # noqa: C901
+def cli(  # noqa: C901
+    args_list: Sequence[str] | None = None, *, prog_name: str = 'pai', default_model: str = 'openai:gpt-4.1'
+) -> int:
     """Run the CLI and return the exit code for the process."""
     parser = argparse.ArgumentParser(
         prog=prog_name,
         description=f"""\
-PydanticAI CLI v{__version__}\n\n
+Pydantic AI CLI v{__version__}\n\n
 
 Special prompts:
 * `/exit` - exit the interactive mode (ctrl-c and ctrl-d also work)
 * `/markdown` - show the last markdown output of the last question
 * `/multiline` - toggle multiline mode
+* `/cp` - copy the last response to clipboard
 """,
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -120,7 +124,7 @@ Special prompts:
         '-m',
         '--model',
         nargs='?',
-        help='Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4o" or "anthropic:claude-3-7-sonnet-latest". Defaults to "openai:gpt-4o".',
+        help=f'Model to use, in format "<provider>:<model>" e.g. "openai:gpt-4.1" or "anthropic:claude-sonnet-4-0". Defaults to "{default_model}".',
     )
     # we don't want to autocomplete or list models that don't include the provider,
     # e.g. we want to show `openai:gpt-4o` but not `gpt-4o`
@@ -151,7 +155,7 @@ Special prompts:
     args = parser.parse_args(args_list)
 
     console = Console()
-    name_version = f'[green]{prog_name} - PydanticAI CLI v{__version__}[/green]'
+    name_version = f'[green]{prog_name} - Pydantic AI CLI v{__version__}[/green]'
     if args.version:
         console.print(name_version, highlight=False)
         return 0
@@ -179,7 +183,7 @@ Special prompts:
     model_arg_set = args.model is not None
     if agent.model is None or model_arg_set:
         try:
-            agent.model = infer_model(args.model or 'openai:gpt-4o')
+            agent.model = infer_model(args.model or default_model)
         except UserError as e:
             console.print(f'Error initializing [magenta]{args.model}[/magenta]:\n[red]{e}[/red]')
             return 1
@@ -218,7 +222,7 @@ Special prompts:
 
 async def run_chat(
     stream: bool,
-    agent: Agent[AgentDepsT, OutputDataT],
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
     console: Console,
     code_theme: str,
     prog_name: str,
@@ -235,7 +239,7 @@ async def run_chat(
 
     while True:
         try:
-            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit'])
+            auto_suggest = CustomAutoSuggest(['/markdown', '/multiline', '/exit', '/cp'])
             text = await session.prompt_async(f'{prog_name} ➤ ', auto_suggest=auto_suggest, multiline=multiline)
         except (KeyboardInterrupt, EOFError):  # pragma: no cover
             return 0
@@ -261,7 +265,7 @@ async def run_chat(
 
 
 async def ask_agent(
-    agent: Agent[AgentDepsT, OutputDataT],
+    agent: AbstractAgent[AgentDepsT, OutputDataT],
     prompt: str,
     stream: bool,
     console: Console,
@@ -345,6 +349,19 @@ def handle_slash_command(
     elif ident_prompt == '/exit':
         console.print('[dim]Exiting…[/dim]')
         return 0, multiline
+    elif ident_prompt == '/cp':
+        try:
+            parts = messages[-1].parts
+        except IndexError:
+            console.print('[dim]No output available to copy.[/dim]')
+        else:
+            text_to_copy = '\n\n'.join(part.content for part in parts if isinstance(part, TextPart))
+            text_to_copy = text_to_copy.strip()
+            if text_to_copy:
+                pyperclip.copy(text_to_copy)
+                console.print('[dim]Copied last output to clipboard.[/dim]')
+            else:
+                console.print('[dim]No text content to copy.[/dim]')
     else:
         console.print(f'[red]Unknown command[/red] [magenta]`{ident_prompt}`[/magenta]')
     return None, multiline

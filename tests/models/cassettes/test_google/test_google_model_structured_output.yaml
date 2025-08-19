@@ -72,11 +72,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '776'
+      - '819'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=525
+      - gfet4t7; dur=779
       transfer-encoding:
       - chunked
       vary:
@@ -85,7 +85,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.020312656249318804
+      - avgLogprobs: -0.010357145752225603
         content:
           parts:
           - functionCall:
@@ -96,6 +96,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-1.5-flash
+      responseId: wVpeaPHCL5W1nvgP-O3vwQY
       usageMetadata:
         candidatesTokenCount: 14
         candidatesTokensDetails:
@@ -134,12 +135,12 @@ interactions:
             args:
               city: London
               date: '2022-01-01'
-            id: pyd_ai_24d0a36054d549d49feadf31d72660ea
+            id: pyd_ai_2155ddd4169345fa81a4f4f606f7b6e2
             name: temperature
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_24d0a36054d549d49feadf31d72660ea
+            id: pyd_ai_2155ddd4169345fa81a4f4f606f7b6e2
             name: temperature
             response:
               return_value: 30°C
@@ -197,11 +198,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '819'
+      - '862'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=541
+      - gfet4t7; dur=860
       transfer-encoding:
       - chunked
       vary:
@@ -210,7 +211,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.0004906803813009035
+      - avgLogprobs: -0.0004957949831372215
         content:
           parts:
           - functionCall:
@@ -222,6 +223,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-1.5-flash
+      responseId: wlpeaP6kI9OvnvgPgYfPiQY
       usageMetadata:
         candidatesTokenCount: 21
         candidatesTokensDetails:

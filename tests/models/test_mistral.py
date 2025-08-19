@@ -16,6 +16,7 @@ from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -28,7 +29,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -123,7 +124,7 @@ def completion_message(
     return MistralChatCompletionResponse(
         id='123',
         choices=[MistralChatCompletionChoice(finish_reason='stop', index=0, message=message)],
-        created=1704067200 if with_created else None,  # 2024-01-01
+        created=1704067200 if with_created else 0,  # 2024-01-01
         model='mistral-large-123',
         object='chat.completion',
         usage=usage or MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -142,7 +143,7 @@ def chunk(
                 MistralCompletionResponseStreamChoice(index=index, delta=delta, finish_reason=finish_reason)
                 for index, delta in enumerate(delta)
             ],
-            created=1704067200 if with_created else None,  # 2024-01-01
+            created=1704067200 if with_created else 0,  # 2024-01-01
             model='gpt-4',
             object='chat.completion.chunk',
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
@@ -188,11 +189,13 @@ def test_init():
 
 async def test_multiple_completions(allow_model_requests: None):
     completions = [
+        # First completion: created is "now" (simulate IsNow)
         completion_message(
             MistralAssistantMessage(content='world'),
             usage=MistralUsageInfo(prompt_tokens=1, completion_tokens=1, total_tokens=1),
             with_created=False,
         ),
+        # Second completion: created is fixed 2024-01-01 00:00:00 UTC
         completion_message(MistralAssistantMessage(content='hello again')),
     ]
     mock_client = MockMistralAI.create_mock(completions)
@@ -202,32 +205,30 @@ async def test_multiple_completions(allow_model_requests: None):
     result = await agent.run('hello')
 
     assert result.output == 'world'
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 1
-    assert result.usage().total_tokens == 1
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 1
 
     result = await agent.run('hello again', message_history=result.new_messages())
     assert result.output == 'hello again'
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 1
-    assert result.usage().total_tokens == 1
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsNow(tz=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -249,46 +250,43 @@ async def test_three_completions(allow_model_requests: None):
     result = await agent.run('hello')
 
     assert result.output == 'world'
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 1
-    assert result.usage().total_tokens == 1
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 1
 
     result = await agent.run('hello again', message_history=result.all_messages())
     assert result.output == 'hello again'
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 1
-    assert result.usage().total_tokens == 1
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 1
 
     result = await agent.run('final message', message_history=result.all_messages())
     assert result.output == 'final message'
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 1
-    assert result.usage().total_tokens == 1
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 1
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello again')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='final message')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -317,9 +315,8 @@ async def test_stream_text(allow_model_requests: None):
             ['hello ', 'hello world ', 'hello world welcome ', 'hello world welcome mistral']
         )
         assert result.is_complete
-        assert result.usage().request_tokens == 5
-        assert result.usage().response_tokens == 5
-        assert result.usage().total_tokens == 5
+        assert result.usage().input_tokens == 5
+        assert result.usage().output_tokens == 5
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -354,9 +351,8 @@ async def test_no_delta(allow_model_requests: None):
         assert not result.is_complete
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
-        assert result.usage().request_tokens == 3
-        assert result.usage().response_tokens == 3
-        assert result.usage().total_tokens == 3
+        assert result.usage().input_tokens == 3
+        assert result.usage().output_tokens == 3
 
 
 #####################
@@ -390,9 +386,8 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
     result = await agent.run('User prompt value')
 
     assert result.output == CityLocation(city='paris', country='france')
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 2
-    assert result.usage().total_tokens == 3
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 2
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
@@ -404,10 +399,10 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=2, total_tokens=3),
+                usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -450,10 +445,9 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
     result = await agent.run('User prompt value')
 
     assert result.output == CityLocation(city='paris', country='france')
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 1
-    assert result.usage().total_tokens == 1
-    assert result.usage().details is None
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 1
+    assert result.usage().details == {}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='User prompt value', timestamp=IsNow(tz=timezone.utc))]),
@@ -465,10 +459,10 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -505,10 +499,9 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
     result = await agent.run('User prompt value')
 
     assert result.output == 42
-    assert result.usage().request_tokens == 1
-    assert result.usage().response_tokens == 1
-    assert result.usage().total_tokens == 1
-    assert result.usage().details is None
+    assert result.usage().input_tokens == 1
+    assert result.usage().output_tokens == 1
+    assert result.usage().details == {}
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -525,10 +518,10 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -643,12 +636,11 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().request_tokens == 10
-        assert result.usage().response_tokens == 10
-        assert result.usage().total_tokens == 10
+        assert result.usage().input_tokens == 10
+        assert result.usage().output_tokens == 10
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == len(stream)
+        assert result.usage().output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_dict(allow_model_requests: None):
@@ -730,12 +722,11 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().request_tokens == 34
-        assert result.usage().response_tokens == 34
-        assert result.usage().total_tokens == 34
+        assert result.usage().input_tokens == 34
+        assert result.usage().output_tokens == 34
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == len(stream)
+        assert result.usage().output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_int(allow_model_requests: None):
@@ -760,12 +751,11 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
         v = [c async for c in result.stream(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
         assert result.is_complete
-        assert result.usage().request_tokens == 6
-        assert result.usage().response_tokens == 6
-        assert result.usage().total_tokens == 6
+        assert result.usage().input_tokens == 6
+        assert result.usage().output_tokens == 6
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == len(stream)
+        assert result.usage().output_tokens == len(stream)
 
 
 async def test_stream_result_type_primitif_array(allow_model_requests: None):
@@ -853,12 +843,11 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-        assert result.usage().request_tokens == 35
-        assert result.usage().response_tokens == 35
-        assert result.usage().total_tokens == 35
+        assert result.usage().input_tokens == 35
+        assert result.usage().output_tokens == 35
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == len(stream)
+        assert result.usage().output_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):
@@ -938,12 +927,11 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
             ]
         )
         assert result.is_complete
-        assert result.usage().request_tokens == 34
-        assert result.usage().response_tokens == 34
-        assert result.usage().total_tokens == 34
+        assert result.usage().input_tokens == 34
+        assert result.usage().output_tokens == 34
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == len(stream)
+        assert result.usage().output_tokens == len(stream)
 
 
 async def test_stream_result_type_basemodel_with_required_params(allow_model_requests: None):
@@ -1007,12 +995,11 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
             ]
         )
         assert result.is_complete
-        assert result.usage().request_tokens == 34
-        assert result.usage().response_tokens == 34
-        assert result.usage().total_tokens == 34
+        assert result.usage().input_tokens == 34
+        assert result.usage().output_tokens == 34
 
         # double check cost matches stream count
-        assert result.usage().response_tokens == len(stream)
+        assert result.usage().output_tokens == len(stream)
 
 
 #####################
@@ -1074,8 +1061,8 @@ async def test_request_tool_call(allow_model_requests: None):
     result = await agent.run('Hello')
 
     assert result.output == 'final response'
-    assert result.usage().request_tokens == 6
-    assert result.usage().response_tokens == 4
+    assert result.usage().input_tokens == 6
+    assert result.usage().output_tokens == 4
     assert result.usage().total_tokens == 10
     assert result.all_messages() == snapshot(
         [
@@ -1093,10 +1080,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1116,10 +1103,10 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
+                usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1133,10 +1120,10 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -1217,9 +1204,8 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
     result = await agent.run('Hello')
 
     assert result.output == {'lat': 51, 'lng': 0}
-    assert result.usage().request_tokens == 7
-    assert result.usage().response_tokens == 4
-    assert result.usage().total_tokens == 12
+    assert result.usage().input_tokens == 7
+    assert result.usage().output_tokens == 4
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -1236,10 +1222,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1259,10 +1245,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
+                usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1282,10 +1268,10 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_request_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1359,12 +1345,11 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert result.usage().request_tokens == 4
-        assert result.usage().response_tokens == 4
-        assert result.usage().total_tokens == 4
+        assert result.usage().input_tokens == 4
+        assert result.usage().output_tokens == 4
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == 4
+        assert result.usage().output_tokens == 4
 
     assert result.all_messages() == snapshot(
         [
@@ -1382,7 +1367,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
+                usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1398,7 +1383,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
-                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
+                usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1461,12 +1446,11 @@ async def test_stream_tool_call(allow_model_requests: None):
         assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert result.usage().request_tokens == 6
-        assert result.usage().response_tokens == 6
-        assert result.usage().total_tokens == 6
+        assert result.usage().input_tokens == 6
+        assert result.usage().output_tokens == 6
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == 6
+        assert result.usage().output_tokens == 6
 
     assert result.all_messages() == snapshot(
         [
@@ -1484,7 +1468,7 @@ async def test_stream_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
+                usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1500,7 +1484,7 @@ async def test_stream_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(request_tokens=4, response_tokens=4, total_tokens=4),
+                usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1566,12 +1550,11 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
         assert v == snapshot(['final ', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
-        assert result.usage().request_tokens == 7
-        assert result.usage().response_tokens == 7
-        assert result.usage().total_tokens == 7
+        assert result.usage().input_tokens == 7
+        assert result.usage().output_tokens == 7
 
         # double check usage matches stream count
-        assert result.usage().response_tokens == 7
+        assert result.usage().output_tokens == 7
 
     assert result.all_messages() == snapshot(
         [
@@ -1589,7 +1572,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(request_tokens=2, response_tokens=2, total_tokens=2),
+                usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1611,7 +1594,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1627,7 +1610,7 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(request_tokens=4, response_tokens=4, total_tokens=4),
+                usage=RequestUsage(input_tokens=4, output_tokens=4),
                 model_name='mistral-large-latest',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             ),
@@ -1801,10 +1784,10 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='utZJMAZN4')],
-                usage=Usage(requests=1, request_tokens=65, response_tokens=16, total_tokens=81),
+                usage=RequestUsage(input_tokens=65, output_tokens=16),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
-                vendor_id='fce6d16a4e5940edb24ae16dd0369947',
+                provider_request_id='fce6d16a4e5940edb24ae16dd0369947',
             ),
             ModelRequest(
                 parts=[
@@ -1829,10 +1812,10 @@ async def test_image_as_binary_content_tool_response(
                         content='The image you\'re referring to, labeled as "file 1c8566," shows a kiwi. Kiwis are small, brown, oval-shaped fruits with a bright green flesh inside that is dotted with tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=2931, response_tokens=70, total_tokens=3001),
+                usage=RequestUsage(input_tokens=2931, output_tokens=70),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
-                vendor_id='26e7de193646460e8904f8e604a60dc1',
+                provider_request_id='26e7de193646460e8904f8e604a60dc1',
             ),
         ]
     )
@@ -1867,10 +1850,10 @@ async def test_image_url_input(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -1900,13 +1883,94 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
+
+
+async def test_pdf_url_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(
+        [
+            'hello',
+            DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'),
+        ]
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=[
+                            'hello',
+                            DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'),
+                        ],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+                model_name='mistral-large-123',
+                timestamp=IsDatetime(),
+                provider_request_id='123',
+            ),
+        ]
+    )
+
+
+async def test_pdf_as_binary_content_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    base64_content = b'%PDF-1.\rtrailer<</Root<</Pages<</Kids[<</MediaBox[0 0 3 3]>>>>>>>>>'
+
+    result = await agent.run(['hello', BinaryContent(data=base64_content, media_type='application/pdf')])
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content=['hello', BinaryContent(data=base64_content, media_type='application/pdf')],
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
+                model_name='mistral-large-123',
+                timestamp=IsDatetime(),
+                provider_request_id='123',
+            ),
+        ]
+    )
+
+
+async def test_txt_url_input(allow_model_requests: None):
+    c = completion_message(MistralAssistantMessage(content='world', role='assistant'))
+    mock_client = MockMistralAI.create_mock(c)
+    m = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(RuntimeError, match='DocumentUrl other than PDF is not supported in Mistral.'):
+        await agent.run(
+            [
+                'hello',
+                DocumentUrl(url='https://examplefiles.org/files/documents/plaintext-example-file-download.txt'),
+            ]
+        )
 
 
 async def test_audio_as_binary_content_input(allow_model_requests: None):
@@ -1917,7 +1981,7 @@ async def test_audio_as_binary_content_input(allow_model_requests: None):
 
     base64_content = b'//uQZ'
 
-    with pytest.raises(RuntimeError, match='Only image binary content is supported for Mistral.'):
+    with pytest.raises(RuntimeError, match='BinaryContent other than image or PDF is not supported in Mistral.'):
         await agent.run(['hello', BinaryContent(data=base64_content, media_type='audio/wav')])
 
 
@@ -1961,10 +2025,10 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1, request_tokens=1, response_tokens=1, total_tokens=1),
+                usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
-                vendor_id='123',
+                provider_request_id='123',
             ),
         ]
     )
@@ -1982,21 +2046,16 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                     TextPart(content=IsStr()),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=1789,
-                    total_tokens=1802,
-                    details={'reasoning_tokens': 1344, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=13, output_tokens=1789, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+                provider_request_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
             ),
         ]
     )
@@ -2012,21 +2071,49 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    TextPart(content=IsStr()),
                     ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                     ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                     ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
                     ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    TextPart(
+                        content="""\
+I'm not a traffic safety expert, but here are some general guidelines that many people follow when crossing a street safely. Remember that local rules and conditions might vary, so always follow local traffic laws and pay close attention to your surroundings.
+
+1. Find a Designated Crossing Point
+ • Look for crosswalks, pedestrian signals, or marked intersections. These areas are designed for safe crossing.
+ • If no crosswalk is available, choose a spot where you have clear visibility of oncoming traffic in all directions.
+
+2. Stop at the Curb or Edge of the Road
+ • Before stepping off the curb, pause to assess the situation.
+ • Resist the urge to step into the street immediately—this helps you avoid unpredictable traffic behavior.
+
+3. Look and Listen
+ • Look left, then right, and left again. In some places, you might need to check right a second time depending on the flow of traffic.
+ • Pay attention to the sound of approaching vehicles or any signals that indicate vehicles may be turning into your path.
+ • Remove or lower distractions like headphones so you can be fully aware of your environment.
+
+4. Follow Pedestrian Signals (if available)
+ • If you're at an intersection with traffic signals, wait for the "Walk" signal.
+ • Even when the signal is in your favor, ensure that any turning vehicles (cars or bikes) see you and are stopping.
+
+5. Make Eye Contact
+ • If possible, make eye contact with drivers who might be turning. This can help ensure that they see you and are taking appropriate action.
+
+6. Cross Quickly and Carefully
+ • Once you've determined that it's safe, proceed at a steady pace.
+ • Continue to be alert while you cross, watching for any unexpected vehicle movements.
+
+7. Stay on the Sidewalk Once You've Crossed
+ • After reaching the other side, stick to areas designated for pedestrians rather than walking immediately back into the roadway.
+
+These suggestions are meant to help you think through pedestrian safety. Different regions may have additional rules or different signals, so if you're unsure, it might help to check local guidelines or ask someone familiar with the area. Stay safe!\
+"""
+                    ),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=1789,
-                    total_tokens=1802,
-                    details={'reasoning_tokens': 1344, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=13, output_tokens=1789, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+                provider_request_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
             ),
             ModelRequest(
                 parts=[
@@ -2038,10 +2125,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ),
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
-                usage=Usage(requests=1, request_tokens=1036, response_tokens=691, total_tokens=1727),
+                usage=RequestUsage(input_tokens=1036, output_tokens=691),
                 model_name='mistral-large-latest',
                 timestamp=IsDatetime(),
-                vendor_id='a088e80a476e44edaaa959a1ff08f358',
+                provider_request_id='a088e80a476e44edaaa959a1ff08f358',
             ),
         ]
     )

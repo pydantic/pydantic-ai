@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 from typing import Any, Protocol
 
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai.tools import Tool
+from pydantic_ai.toolsets.function import FunctionToolset
 
 
 class LangChainTool(Protocol):
@@ -23,17 +26,17 @@ class LangChainTool(Protocol):
     def run(self, *args: Any, **kwargs: Any) -> str: ...
 
 
-__all__ = ('tool_from_langchain',)
+__all__ = ('tool_from_langchain', 'LangChainToolset')
 
 
 def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
-    """Creates a Pydantic tool proxy from a LangChain tool.
+    """Creates a Pydantic AI tool proxy from a LangChain tool.
 
     Args:
         langchain_tool: The LangChain tool to wrap.
 
     Returns:
-        A Pydantic tool that corresponds to the LangChain tool.
+        A Pydantic AI tool that corresponds to the LangChain tool.
     """
     function_name = langchain_tool.name
     function_description = langchain_tool.description
@@ -59,3 +62,10 @@ def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
         description=function_description,
         json_schema=schema,
     )
+
+
+class LangChainToolset(FunctionToolset):
+    """A toolset that wraps LangChain tools."""
+
+    def __init__(self, tools: list[LangChainTool], *, id: str | None = None):
+        super().__init__([tool_from_langchain(tool) for tool in tools], id=id)

@@ -4,7 +4,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.session import ServerSessionT
 from mcp.shared.context import LifespanContextT, RequestT
 
-mcp = FastMCP('PydanticAI MCP Server')
+mcp = FastMCP('Pydantic AI MCP Server')
 
 
 @mcp.tool()

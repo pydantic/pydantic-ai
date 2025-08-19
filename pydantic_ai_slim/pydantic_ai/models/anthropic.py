@@ -10,10 +10,16 @@ from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._run_context import RunContext
 from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -40,9 +46,14 @@ try:
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
+        BetaCitationsDelta,
+        BetaCodeExecutionTool20250522Param,
+        BetaCodeExecutionToolResultBlock,
+        BetaCodeExecutionToolResultBlockParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaImageBlockParam,
+        BetaInputJSONDelta,
         BetaMessage,
         BetaMessageParam,
         BetaMetadataParam,
@@ -55,6 +66,8 @@ try:
         BetaRawMessageStopEvent,
         BetaRawMessageStreamEvent,
         BetaRedactedThinkingBlock,
+        BetaServerToolUseBlock,
+        BetaServerToolUseBlockParam,
         BetaSignatureDelta,
         BetaTextBlock,
         BetaTextBlockParam,
@@ -66,9 +79,14 @@ try:
         BetaToolChoiceParam,
         BetaToolParam,
         BetaToolResultBlockParam,
+        BetaToolUnionParam,
         BetaToolUseBlock,
         BetaToolUseBlockParam,
+        BetaWebSearchTool20250305Param,
+        BetaWebSearchToolResultBlock,
+        BetaWebSearchToolResultBlockParam,
     )
+    from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
     from anthropic.types.model_param import ModelParam
 
 except ImportError as _import_error:
@@ -90,10 +108,9 @@ See [the Anthropic docs](https://docs.anthropic.com/en/docs/about-claude/models)
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
-    """Settings used for an Anthropic model request.
+    """Settings used for an Anthropic model request."""
 
-    ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `anthropic_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     anthropic_metadata: BetaMetadataParam
     """An object describing metadata about the request.
@@ -120,7 +137,7 @@ class AnthropicModel(Model):
     client: AsyncAnthropic = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _system: str = field(default='anthropic', repr=False)
+    _provider: Provider[AsyncAnthropic] = field(repr=False)
 
     def __init__(
         self,
@@ -128,6 +145,7 @@ class AnthropicModel(Model):
         *,
         provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize an Anthropic model.
 
@@ -137,17 +155,30 @@ class AnthropicModel(Model):
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
                 instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Default model settings for this model instance.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> AnthropicModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -160,7 +191,6 @@ class AnthropicModel(Model):
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -169,23 +199,14 @@ class AnthropicModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._messages_create(
             messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response)
-
-    @property
-    def model_name(self) -> AnthropicModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     @overload
     async def _messages_create(
@@ -216,6 +237,9 @@ class AnthropicModel(Model):
     ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
         # standalone function to make it easier to override
         tools = self._get_tools(model_request_parameters)
+        builtin_tools, tool_headers = self._get_builtin_tools(model_request_parameters)
+        tools += builtin_tools
+
         tool_choice: BetaToolChoiceParam | None
 
         if not tools:
@@ -233,7 +257,10 @@ class AnthropicModel(Model):
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
+            for k, v in tool_headers.items():
+                extra_headers.setdefault(k, v)
             extra_headers.setdefault('User-Agent', get_user_agent())
+
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
                 system=system_prompt or NOT_GIVEN,
@@ -262,9 +289,27 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
+            elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
+                items.append(
+                    BuiltinToolReturnPart(
+                        provider_name='anthropic',
+                        tool_name=item.type,
+                        content=item.content,
+                        tool_call_id=item.tool_use_id,
+                    )
+                )
+            elif isinstance(item, BetaServerToolUseBlock):
+                items.append(
+                    BuiltinToolCallPart(
+                        provider_name='anthropic',
+                        tool_name=item.name,
+                        args=cast(dict[str, Any], item.input),
+                        tool_call_id=item.id,
+                    )
+                )
             elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
                 warnings.warn(
-                    'PydanticAI currently does not handle redacted thinking blocks. '
+                    'Pydantic AI currently does not handle redacted thinking blocks. '
                     'If you have a suggestion on how we should handle them, please open an issue.',
                     UserWarning,
                 )
@@ -280,9 +325,13 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, vendor_id=response.id)
+        return ModelResponse(
+            items, usage=_map_usage(response), model_name=response.model, provider_request_id=response.id
+        )
 
-    async def _process_streamed_response(self, response: AsyncStream[BetaRawMessageStreamEvent]) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
+    ) -> StreamedResponse:
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
@@ -291,14 +340,41 @@ class AnthropicModel(Model):
         # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
         timestamp = datetime.now(tz=timezone.utc)
         return AnthropicStreamedResponse(
-            _model_name=self._model_name, _response=peekable_response, _timestamp=timestamp
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _response=peekable_response,
+            _timestamp=timestamp,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    def _get_builtin_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> tuple[list[BetaToolUnionParam], dict[str, str]]:
+        tools: list[BetaToolUnionParam] = []
+        extra_headers: dict[str, str] = {}
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                user_location = UserLocation(type='approximate', **tool.user_location) if tool.user_location else None
+                tools.append(
+                    BetaWebSearchTool20250305Param(
+                        name='web_search',
+                        type='web_search_20250305',
+                        max_uses=tool.max_uses,
+                        allowed_domains=tool.allowed_domains,
+                        blocked_domains=tool.blocked_domains,
+                        user_location=user_location,
+                    )
+                )
+            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+                extra_headers['anthropic-beta'] = 'code-execution-2025-05-22'
+                tools.append(BetaCodeExecutionTool20250522Param(name='code_execution', type='code_execution_20250522'))
+            else:  # pragma: no cover
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `AnthropicModel`. If it should be, please file an issue.'
+                )
+        return tools, extra_headers
 
     async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
@@ -336,22 +412,19 @@ class AnthropicModel(Model):
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
             elif isinstance(m, ModelResponse):
-                assistant_content_params: list[BetaTextBlockParam | BetaToolUseBlockParam | BetaThinkingBlockParam] = []
+                assistant_content_params: list[
+                    BetaTextBlockParam
+                    | BetaToolUseBlockParam
+                    | BetaServerToolUseBlockParam
+                    | BetaWebSearchToolResultBlockParam
+                    | BetaCodeExecutionToolResultBlockParam
+                    | BetaThinkingBlockParam
+                ] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
-                        if response_part.content:  # Only add non-empty text
+                        if response_part.content:
                             assistant_content_params.append(BetaTextBlockParam(text=response_part.content, type='text'))
-                    elif isinstance(response_part, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # assert response_part.signature is not None, 'Thinking part must have a signature'
-                        # assistant_content_params.append(
-                        #     BetaThinkingBlockParam(
-                        #         thinking=response_part.content, signature=response_part.signature, type='thinking'
-                        #     )
-                        # )
-                        pass
-                    else:
+                    elif isinstance(response_part, ToolCallPart):
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),
                             type='tool_use',
@@ -359,6 +432,39 @@ class AnthropicModel(Model):
                             input=response_part.args_as_dict(),
                         )
                         assistant_content_params.append(tool_use_block_param)
+                    elif isinstance(response_part, ThinkingPart):
+                        # NOTE: We only send thinking part back for Anthropic, otherwise they raise an error.
+                        if response_part.signature is not None:  # pragma: no branch
+                            assistant_content_params.append(
+                                BetaThinkingBlockParam(
+                                    thinking=response_part.content, signature=response_part.signature, type='thinking'
+                                )
+                            )
+                    elif isinstance(response_part, BuiltinToolCallPart):
+                        if response_part.provider_name == 'anthropic':
+                            server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                id=_guard_tool_call_id(t=response_part),
+                                type='server_tool_use',
+                                name=cast(Literal['web_search', 'code_execution'], response_part.tool_name),
+                                input=response_part.args_as_dict(),
+                            )
+                            assistant_content_params.append(server_tool_use_block_param)
+                    elif isinstance(response_part, BuiltinToolReturnPart):
+                        if response_part.provider_name == 'anthropic':
+                            tool_use_id = _guard_tool_call_id(t=response_part)
+                            if response_part.tool_name == 'web_search_tool_result':
+                                server_tool_result_block_param = BetaWebSearchToolResultBlockParam(
+                                    tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
+                                )
+                            elif response_part.tool_name == 'code_execution_tool_result':
+                                server_tool_result_block_param = BetaCodeExecutionToolResultBlockParam(
+                                    tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
+                                )
+                            else:
+                                raise ValueError(f'Unsupported tool name: {response_part.tool_name}')
+                            assistant_content_params.append(server_tool_result_block_param)
+                    else:
+                        assert_never(response_part)
                 if len(assistant_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
@@ -419,12 +525,12 @@ class AnthropicModel(Model):
     def _map_tool_definition(f: ToolDefinition) -> BetaToolParam:
         return {
             'name': f.name,
-            'description': f.description,
+            'description': f.description or '',
             'input_schema': f.parameters_json_schema,
         }
 
 
-def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
+def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
@@ -437,7 +543,7 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
         # - RawContentBlockStartEvent
         # - RawContentBlockDeltaEvent
         # - RawContentBlockStopEvent
-        return usage.Usage()
+        return usage.RequestUsage()
 
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
@@ -448,17 +554,16 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
     # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence using `get`
     # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
     # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
-    request_tokens = (
-        details.get('input_tokens', 0)
-        + details.get('cache_creation_input_tokens', 0)
-        + details.get('cache_read_input_tokens', 0)
-    )
+    cache_write_tokens = details.get('cache_creation_input_tokens', 0)
+    cache_read_tokens = details.get('cache_read_input_tokens', 0)
+    request_tokens = details.get('input_tokens', 0) + cache_write_tokens + cache_read_tokens
 
-    return usage.Usage(
-        request_tokens=request_tokens or None,
-        response_tokens=response_usage.output_tokens,
-        total_tokens=request_tokens + response_usage.output_tokens,
-        details=details or None,
+    return usage.RequestUsage(
+        input_tokens=request_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        output_tokens=response_usage.output_tokens,
+        details=details,
     )
 
 
@@ -470,16 +575,23 @@ class AnthropicStreamedResponse(StreamedResponse):
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _timestamp: datetime
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
 
         async for event in self._response:
             self._usage += _map_usage(event)
 
-            if isinstance(event, BetaRawContentBlockStartEvent):
+            if isinstance(event, BetaRawMessageStartEvent):
+                pass
+
+            elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=current_block.text)
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id='content', content=current_block.text
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                 elif isinstance(current_block, BetaThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
@@ -495,10 +607,16 @@ class AnthropicStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif isinstance(current_block, BetaServerToolUseBlock):
+                    pass
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=event.delta.text)
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id='content', content=event.delta.text
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking', content=event.delta.thinking
@@ -520,8 +638,16 @@ class AnthropicStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif isinstance(event.delta, BetaInputJSONDelta):
+                    pass
+                # TODO(Marcelo): We need to handle citations.
+                elif isinstance(event.delta, BetaCitationsDelta):
+                    pass
 
-            elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):
+            elif isinstance(event, BetaRawMessageDeltaEvent):
+                pass
+
+            elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):  # pragma: no branch
                 current_block = None
 
     @property

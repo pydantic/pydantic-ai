@@ -4,8 +4,6 @@
 
 ::: pydantic_ai.providers.google
 
-::: pydantic_ai.providers.google_vertex
-
 ::: pydantic_ai.providers.openai
 
 ::: pydantic_ai.providers.deepseek
@@ -28,4 +26,14 @@
 
 ::: pydantic_ai.providers.heroku.HerokuProvider
 
+::: pydantic_ai.providers.github.GitHubProvider
+
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
+
+::: pydantic_ai.providers.vercel.VercelProvider
+
+::: pydantic_ai.providers.huggingface.HuggingFaceProvider
+
+::: pydantic_ai.providers.moonshotai.MoonshotAIProvider
+
+::: pydantic_ai.providers.ollama.OllamaProvider

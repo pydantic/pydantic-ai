@@ -5,4 +5,4 @@ from . import ModelProfile
 
 def deepseek_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a DeepSeek model."""
-    return None
+    return ModelProfile(ignore_streamed_leading_whitespace='r1' in model_name)

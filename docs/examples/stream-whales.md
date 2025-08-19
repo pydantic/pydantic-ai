@@ -21,6 +21,4 @@ Should give an output like this:
 
 ## Example Code
 
-```python {title="stream_whales.py"}
-#! examples/pydantic_ai_examples/stream_whales.py
-```
+```snippet {path="/examples/pydantic_ai_examples/stream_whales.py"}```

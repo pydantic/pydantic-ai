@@ -9,6 +9,7 @@ The following functions are available:
 - [`model_request`][pydantic_ai.direct.model_request]: Make a non-streamed async request to a model
 - [`model_request_sync`][pydantic_ai.direct.model_request_sync]: Make a non-streamed synchronous request to a model
 - [`model_request_stream`][pydantic_ai.direct.model_request_stream]: Make a streamed async request to a model
+- [`model_request_stream_sync`][pydantic_ai.direct.model_request_stream_sync]: Make a streamed sync request to a model
 
 ## Basic Example
 
@@ -25,9 +26,9 @@ model_response = model_request_sync(
 )
 
 print(model_response.parts[0].content)
-#> Paris
+#> The capital of France is Paris.
 print(model_response.usage)
-#> Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57)
+#> RequestUsage(input_tokens=56, output_tokens=7)
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -65,7 +66,7 @@ async def main():
             function_tools=[
                 ToolDefinition(
                     name=Divide.__name__.lower(),
-                    description=Divide.__doc__ or '',
+                    description=Divide.__doc__,
                     parameters_json_schema=Divide.model_json_schema(),
                 )
             ],
@@ -82,7 +83,7 @@ async def main():
                 tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
             )
         ],
-        usage=Usage(requests=1, request_tokens=55, response_tokens=7, total_tokens=62),
+        usage=RequestUsage(input_tokens=55, output_tokens=7),
         model_name='gpt-4.1-nano',
         timestamp=datetime.datetime(...),
     )
@@ -121,7 +122,7 @@ model_response = model_request_sync(
 )
 
 print(model_response.parts[0].content)
-#> Paris
+#> The capital of France is Paris.
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -144,7 +145,7 @@ model_response = model_request_sync(
 )
 
 print(model_response.parts[0].content)
-#> Paris
+#> The capital of France is Paris.
 ```
 
 See [Debugging and Monitoring](logfire.md) for more details, including how to instrument with plain OpenTelemetry without Logfire.

@@ -15,19 +15,22 @@ import sys
 import time
 import warnings
 from collections.abc import Awaitable, Mapping, Sequence
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any, Callable, Generic, Literal, Union, cast
 
 import anyio
 import logfire_api
 import yaml
+from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_serializer
 from pydantic._internal import _typing_extra
 from pydantic_core import to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
+from rich.progress import Progress
 from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_evals._utils import get_event_loop
@@ -35,12 +38,12 @@ from pydantic_evals._utils import get_event_loop
 from ._utils import get_unwrapped_function_name, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._run_evaluator import run_evaluator
-from .evaluators._spec import EvaluatorSpec
 from .evaluators.common import DEFAULT_EVALUATORS
 from .evaluators.context import EvaluatorContext
+from .evaluators.spec import EvaluatorSpec
 from .otel import SpanTree
 from .otel._context_subtree import context_subtree
-from .reporting import EvaluationReport, ReportCase
+from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
@@ -78,6 +81,10 @@ DEFAULT_DATASET_PATH = './test_cases.yaml'
 DEFAULT_SCHEMA_PATH_TEMPLATE = './{stem}_schema.json'
 """Default template for schema file paths, where {stem} is replaced with the dataset filename stem."""
 _YAML_SCHEMA_LINE_PREFIX = '# yaml-language-server: $schema='
+
+
+_REPORT_CASES_ADAPTER = TypeAdapter(list[ReportCase])
+_REPORT_CASE_AGGREGATE_ADAPTER = TypeAdapter(ReportCaseAggregate)
 
 
 class _CaseModel(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid'):
@@ -251,8 +258,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         )
 
     async def evaluate(
-        self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
-    ) -> EvaluationReport:
+        self,
+        task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        name: str | None = None,
+        max_concurrency: int | None = None,
+        progress: bool = True,
+    ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
         This method runs the task on each case in the dataset, applies evaluators,
@@ -265,18 +276,26 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
+            progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
 
         Returns:
             A report containing the results of the evaluation.
         """
         name = name or get_unwrapped_function_name(task)
+        total_cases = len(self.cases)
+        progress_bar = Progress() if progress else None
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
-        with _logfire.span('evaluate {name}', name=name) as eval_span:
+
+        with _logfire.span('evaluate {name}', name=name) as eval_span, progress_bar or nullcontext():
+            task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    return await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators)
+                    if progress_bar and task_id is not None:  # pragma: no branch
+                        progress_bar.update(task_id, advance=1)
+                    return result
 
             report = EvaluationReport(
                 name=name,
@@ -288,15 +307,18 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 ),
             )
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
-            eval_span.set_attribute('cases', report.cases)
+            eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))
             # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            eval_span.set_attribute('averages', report.averages())
-
+            eval_span.set_attribute('averages', _REPORT_CASE_AGGREGATE_ADAPTER.dump_python(report.averages()))
         return report
 
     def evaluate_sync(
-        self, task: Callable[[InputsT], Awaitable[OutputT]], name: str | None = None, max_concurrency: int | None = None
-    ) -> EvaluationReport:
+        self,
+        task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
+        name: str | None = None,
+        max_concurrency: int | None = None,
+        progress: bool = True,
+    ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
         This is a synchronous wrapper around [`evaluate`][pydantic_evals.Dataset.evaluate] provided for convenience.
@@ -308,11 +330,14 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 If omitted, the name of the task function will be used.
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
+            progress: Whether to show a progress bar for the evaluation. Defaults to True.
 
         Returns:
             A report containing the results of the evaluation.
         """
-        return get_event_loop().run_until_complete(self.evaluate(task, name=name, max_concurrency=max_concurrency))
+        return get_event_loop().run_until_complete(
+            self.evaluate(task, name=name, max_concurrency=max_concurrency, progress=progress)
+        )
 
     def add_case(
         self,
@@ -792,7 +817,7 @@ class _TaskRun:
 
 
 async def _run_task(
-    task: Callable[[InputsT], Awaitable[OutputT]], case: Case[InputsT, OutputT, MetadataT]
+    task: Callable[[InputsT], Awaitable[OutputT] | OutputT], case: Case[InputsT, OutputT, MetadataT]
 ) -> EvaluatorContext[InputsT, OutputT, MetadataT]:
     """Run a task on a case and return the context for evaluators.
 
@@ -817,7 +842,10 @@ async def _run_task(
         with _logfire.span('execute {task}', task=get_unwrapped_function_name(task)) as task_span:
             with context_subtree() as span_tree:
                 t0 = time.perf_counter()
-                task_output = await task(case.inputs)
+                if iscoroutinefunction(task):
+                    task_output = cast(OutputT, await task(case.inputs))
+                else:
+                    task_output = cast(OutputT, await to_thread.run_sync(task, case.inputs))
                 fallback_duration = time.perf_counter() - t0
     finally:
         _CURRENT_TASK_RUN.reset(token)
@@ -854,11 +882,11 @@ async def _run_task(
 
 
 async def _run_task_and_evaluators(
-    task: Callable[[InputsT], Awaitable[OutputT]],
+    task: Callable[[InputsT], Awaitable[OutputT]] | Callable[[InputsT], OutputT],
     case: Case[InputsT, OutputT, MetadataT],
     report_case_name: str,
     dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
-) -> ReportCase:
+) -> ReportCase[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
     Args:
@@ -908,7 +936,7 @@ async def _run_task_and_evaluators(
             span_id = f'{context.span_id:016x}'
         fallback_duration = time.time() - t0
 
-    return ReportCase(
+    return ReportCase[InputsT, OutputT, MetadataT](
         name=report_case_name,
         inputs=case.inputs,
         metadata=case.metadata,
@@ -1010,7 +1038,7 @@ def _get_span_duration(span: logfire_api.LogfireSpan, fallback: float) -> float:
     """
     try:
         return (span.end_time - span.start_time) / 1_000_000_000  # type: ignore
-    except (AttributeError, TypeError):  # pragma: no cover
+    except (AttributeError, TypeError):  # pragma: lax no cover
         return fallback
 
 

@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '477'
+      - '526'
       content-type:
       - application/json
       host:
@@ -22,6 +22,9 @@ interactions:
       generationConfig: {}
       toolConfig:
         functionCallingConfig:
+          allowedFunctionNames:
+          - bar
+          - final_result
           mode: ANY
       tools:
       - functionDeclarations:
@@ -45,11 +48,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '721'
+      - '720'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=720
+      - gfet4t7; dur=442
       transfer-encoding:
       - chunked
       vary:
@@ -58,7 +61,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: 2.094004230457358e-05
+      - avgLogprobs: 2.5814981199800968e-05
         content:
           parts:
           - functionCall:
@@ -67,7 +70,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: Ba1QaMKCL-qm1PIPwJSz4AI
+      responseId: LFteaOOfMaPG1PIPi5qVEA
       usageMetadata:
         candidatesTokenCount: 1
         candidatesTokensDetails:
@@ -90,7 +93,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '759'
+      - '808'
       content-type:
       - application/json
       host:
@@ -104,12 +107,12 @@ interactions:
       - parts:
         - functionCall:
             args: {}
-            id: pyd_ai_4809c3117a3d4ed398851cb98f8ec303
+            id: pyd_ai_e3268c26ec6340bf82ce92c8342ddad2
             name: bar
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_4809c3117a3d4ed398851cb98f8ec303
+            id: pyd_ai_e3268c26ec6340bf82ce92c8342ddad2
             name: bar
             response:
               return_value: hello
@@ -117,6 +120,9 @@ interactions:
       generationConfig: {}
       toolConfig:
         functionCallingConfig:
+          allowedFunctionNames:
+          - bar
+          - final_result
           mode: ANY
       tools:
       - functionDeclarations:
@@ -140,11 +146,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '776'
+      - '775'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=589
+      - gfet4t7; dur=402
       transfer-encoding:
       - chunked
       vary:
@@ -153,7 +159,7 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.002446441538631916
+      - avgLogprobs: -0.039950957894325255
         content:
           parts:
           - functionCall:
@@ -163,7 +169,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: Bq1QaNCkF5SF_NUPqYHxmAg
+      responseId: LVteaNDWD5-Yx_APw-Pt8Ao
       usageMetadata:
         candidatesTokenCount: 5
         candidatesTokensDetails:

@@ -1,25 +1,30 @@
 # Function Tools
 
-Function tools provide a mechanism for models to retrieve extra information to help them generate a response.
+Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.
 
-They're useful when you want to enable the model to take some action and use the result, when it is impractical or impossible to put all the context an agent might need into the system prompt, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
+They're useful when you want to enable the model to take some action and use the result, when it is impractical or impossible to put all the context an agent might need into the instructions, or when you want to make agents' behavior more deterministic or reliable by deferring some of the logic required to generate a response to another (not necessarily AI-powered) tool.
 
 If you want a model to be able to call a function as its final action, without the result being sent back to the model, you can use an [output function](output.md#output-functions) instead.
+
+There are a number of ways to register tools with an agent:
+
+- via the [`@agent.tool`][pydantic_ai.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
+- via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
+- via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
+
+For more advanced use cases, the [toolsets](toolsets.md) feature lets you manage collections of tools (built by you or provided by an [MCP server](mcp/client.md) or other [third party](#third-party-tools)) and register them with an agent in one go via the [`toolsets`][pydantic_ai.Agent.__init__] keyword argument to `Agent`. Internally, all `tools` and `toolsets` are gathered into a single [combined toolset](toolsets.md#combining-toolsets) that's made available to the model.
 
 !!! info "Function tools vs. RAG"
     Function tools are basically the "R" of RAG (Retrieval-Augmented Generation) — they augment what the model can do by letting it request extra information.
 
-    The main semantic difference between PydanticAI Tools and RAG is RAG is synonymous with vector search, while PydanticAI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
+    The main semantic difference between Pydantic AI Tools and RAG is RAG is synonymous with vector search, while Pydantic AI tools are more general-purpose. (Note: we may add support for vector search functionality in the future, particularly an API for generating embeddings. See [#58](https://github.com/pydantic/pydantic-ai/issues/58))
 
-There are a number of ways to register tools with an agent:
+!!! info "Function Tools vs. Structured Outputs"
+    As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for [structured output](output.md) when using the default [tool output mode](output.md#tool-output), thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
 
-* via the [`@agent.tool`][pydantic_ai.Agent.tool] decorator — for tools that need access to the agent [context][pydantic_ai.tools.RunContext]
-* via the [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator — for tools that do not need access to the agent [context][pydantic_ai.tools.RunContext]
-* via the [`tools`][pydantic_ai.Agent.__init__] keyword argument to `Agent` which can take either plain functions, or instances of [`Tool`][pydantic_ai.tools.Tool]
+## Registering via Decorator {#registering-function-tools-via-decorator}
 
-## Registering Function Tools via Decorator
-
-`@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent context.
+`@agent.tool` is considered the default decorator since in the majority of cases tools will need access to the agent [context][pydantic_ai.tools.RunContext].
 
 Here's an example using both:
 
@@ -58,7 +63,7 @@ print(dice_result.output)
 
 1. This is a pretty simple task, so we can use the fast and cheap Gemini flash model.
 2. We pass the user's name as the dependency, to keep things simple we use just the name as a string as the dependency.
-3. This tool doesn't need any context, it just returns a random number. You could probably use a dynamic system prompt in this case.
+3. This tool doesn't need any context, it just returns a random number. You could probably use dynamic instructions in this case.
 4. This tool needs the player's name, so it uses `RunContext` to access dependencies which are just the player's name in this case.
 5. Run the agent, passing the player's name as the dependency.
 
@@ -90,7 +95,7 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(requests=1, request_tokens=90, response_tokens=2, total_tokens=92),
+        usage=RequestUsage(input_tokens=90, output_tokens=2),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
     ),
@@ -110,7 +115,7 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(requests=1, request_tokens=91, response_tokens=4, total_tokens=95),
+        usage=RequestUsage(input_tokens=91, output_tokens=4),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
     ),
@@ -130,9 +135,7 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=Usage(
-            requests=1, request_tokens=92, response_tokens=12, total_tokens=104
-        ),
+        usage=RequestUsage(input_tokens=92, output_tokens=12),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
     ),
@@ -176,7 +179,7 @@ sequenceDiagram
     Note over Agent: Game session complete
 ```
 
-## Registering Function Tools via Agent Argument
+## Registering via Agent Argument {#registering-function-tools-via-agent-argument}
 
 As well as using the decorators, we can register tools via the `tools` argument to the [`Agent` constructor][pydantic_ai.Agent.__init__]. This is useful when you want to reuse tools, and can also give more fine-grained control over the tools.
 
@@ -232,7 +235,7 @@ print(dice_result['b'].output)
 
 _(This example is complete, it can be run "as is")_
 
-## Function Tool Output
+## Tool Output {#function-tool-output}
 
 Tools can return anything that Pydantic can serialize to JSON, as well as audio, video, image or document content depending on the types of [multi-modal input](input.md) the model supports:
 
@@ -289,21 +292,78 @@ result = agent.run_sync('What is the main content of the document?')
 print(result.output)
 #> The document contains just the text "Dummy PDF file."
 ```
+
 _(This example is complete, it can be run "as is")_
 
 Some models (e.g. Gemini) natively support semi-structured return values, while some expect text (OpenAI) but seem to be just as good at extracting meaning from the data. If a Python object is returned and the model expects a string, the value will be serialized to JSON.
 
-## Function Tools vs. Structured Outputs
+### Advanced Tool Returns
 
-As the name suggests, function tools use the model's "tools" or "functions" API to let the model know what is available to call. Tools or functions are also used to define the schema(s) for structured responses, thus a model might have access to many tools, some of which call function tools while others end the run and produce a final output.
+For scenarios where you need more control over both the tool's return value and the content sent to the model, you can use [`ToolReturn`][pydantic_ai.messages.ToolReturn]. This is particularly useful when you want to:
 
-## Function tools and schema
+- Provide rich multi-modal content (images, documents, etc.) to the model as context
+- Separate the programmatic return value from the model's context
+- Include additional metadata that shouldn't be sent to the LLM
+
+Here's an example of a computer automation tool that captures screenshots and provides visual feedback:
+
+```python {title="advanced_tool_return.py" test="skip" lint="skip"}
+import time
+from pydantic_ai import Agent
+from pydantic_ai.messages import ToolReturn, BinaryContent
+
+agent = Agent('openai:gpt-4o')
+
+@agent.tool_plain
+def click_and_capture(x: int, y: int) -> ToolReturn:
+    """Click at coordinates and show before/after screenshots."""
+    # Take screenshot before action
+    before_screenshot = capture_screen()
+
+    # Perform click operation
+    perform_click(x, y)
+    time.sleep(0.5)  # Wait for UI to update
+
+    # Take screenshot after action
+    after_screenshot = capture_screen()
+
+    return ToolReturn(
+        return_value=f"Successfully clicked at ({x}, {y})",
+        content=[
+            f"Clicked at coordinates ({x}, {y}). Here's the comparison:",
+            "Before:",
+            BinaryContent(data=before_screenshot, media_type="image/png"),
+            "After:",
+            BinaryContent(data=after_screenshot, media_type="image/png"),
+            "Please analyze the changes and suggest next steps."
+        ],
+        metadata={
+            "coordinates": {"x": x, "y": y},
+            "action_type": "click_and_capture",
+            "timestamp": time.time()
+        }
+    )
+
+# The model receives the rich visual content for analysis
+# while your application can access the structured return_value and metadata
+result = agent.run_sync("Click on the submit button and tell me what happened")
+print(result.output)
+# The model can analyze the screenshots and provide detailed feedback
+```
+
+- **`return_value`**: The actual return value used in the tool response. This is what gets serialized and sent back to the model as the tool's result.
+- **`content`**: A sequence of content (text, images, documents, etc.) that provides additional context to the model. This appears as a separate user message.
+- **`metadata`**: Optional metadata that your application can access but is not sent to the LLM. Useful for logging, debugging, or additional processing. Some other AI frameworks call this feature "artifacts".
+
+This separation allows you to provide rich context to the model while maintaining clean, structured return values for your application logic.
+
+## Tool Schema {#function-tools-and-schema}
 
 Function parameters are extracted from the function signature, and all parameters except `RunContext` are used to build the schema for that tool call.
 
-Even better, PydanticAI extracts the docstring from functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
+Even better, Pydantic AI extracts the docstring from functions and (thanks to [griffe](https://mkdocstrings.github.io/griffe/)) extracts parameter descriptions from the docstring and adds them to the schema.
 
-[Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. PydanticAI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
+[Griffe supports](https://mkdocstrings.github.io/griffe/reference/docstrings/#docstrings) extracting parameter descriptions from `google`, `numpy`, and `sphinx` style docstrings. Pydantic AI will infer the format to use based on the docstring, but you can explicitly set it using [`docstring_format`][pydantic_ai.tools.DocstringFormat]. You can also enforce parameter requirements by setting `require_parameter_descriptions=True`. This will raise a [`UserError`][pydantic_ai.exceptions.UserError] if a parameter description is missing.
 
 To demonstrate a tool's schema, here we use [`FunctionModel`][pydantic_ai.models.function.FunctionModel] to print the schema a model would receive:
 
@@ -391,7 +451,6 @@ print(test_model.last_model_request_parameters.function_tools)
 [
     ToolDefinition(
         name='foobar',
-        description='This is a Foobar',
         parameters_json_schema={
             'properties': {
                 'x': {'type': 'integer'},
@@ -402,6 +461,7 @@ print(test_model.last_model_request_parameters.function_tools)
             'title': 'Foobar',
             'type': 'object',
         },
+        description='This is a Foobar',
     )
 ]
 """
@@ -409,7 +469,9 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
-If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of *args or **kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the `Tool.from_schema` function. With this you provide the name, description and JSON schema for the function directly:
+### Custom Tool Schema
+
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description and JSON schema for the function directly:
 
 ```python
 from pydantic_ai import Agent, Tool
@@ -442,19 +504,18 @@ print(result.output)
 #> {"sum":0}
 ```
 
-
 Please note that validation of the tool arguments will not be performed, and this will pass all arguments as keyword arguments.
 
-## Dynamic Function tools {#tool-prepare}
+## Dynamic Tools {#tool-prepare}
 
 Tools can optionally be defined with another function: `prepare`, which is called at each step of a run to
 customize the definition of the tool passed to the model, or omit the tool completely from that step.
 
 A `prepare` method can be registered via the `prepare` kwarg to any of the tool registration mechanisms:
 
-* [`@agent.tool`][pydantic_ai.Agent.tool] decorator
-* [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator
-* [`Tool`][pydantic_ai.tools.Tool] dataclass
+- [`@agent.tool`][pydantic_ai.Agent.tool] decorator
+- [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain] decorator
+- [`Tool`][pydantic_ai.tools.Tool] dataclass
 
 The `prepare` method, should be of type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc], a function which takes [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and should either return that `ToolDefinition` with or without modifying it, return a new `ToolDefinition`, or return `None` to indicate this tools should not be registered for that step.
 
@@ -531,7 +592,6 @@ print(test_model.last_model_request_parameters.function_tools)
 [
     ToolDefinition(
         name='greet',
-        description='',
         parameters_json_schema={
             'additionalProperties': False,
             'properties': {
@@ -547,14 +607,15 @@ print(test_model.last_model_request_parameters.function_tools)
 
 _(This example is complete, it can be run "as is")_
 
-## Agent-wide Dynamic Tool Preparation {#prepare-tools}
+### Agent-wide Dynamic Tools {#prepare-tools}
 
 In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step of a run and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
 
 The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns a new list of tool definitions (or `None` to disable all tools for that step).
 
 !!! note
-    The list of tool definitions passed to `prepare_tools` includes both regular tools and tools from any MCP servers attached to the agent.
+    The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
+To modify output tools, you can set a `prepare_output_tools` function instead.
 
 Here's an example that makes all tools strict if the model is an OpenAI model:
 
@@ -641,7 +702,6 @@ You can use `prepare_tools` to:
 
 If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool `prepare` is applied first to each tool, and then `prepare_tools` is called with the resulting list of tool definitions.
 
-
 ## Tool Execution and Retries {#tool-retries}
 
 When a tool is executed, its arguments (provided by the LLM) are first validated against the function's signature using Pydantic. If validation fails (e.g., due to incorrect types or missing required arguments), a `ValidationError` is raised, and the framework automatically generates a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart] containing the validation details. This prompt is sent back to the LLM, informing it of the error and allowing it to correct the parameters and retry the tool call.
@@ -659,13 +719,28 @@ def my_flaky_tool(query: str) -> str:
     # ... process query ...
     return 'Success!'
 ```
+
 Raising `ModelRetry` also generates a `RetryPromptPart` containing the exception message, which is sent back to the LLM to guide its next attempt. Both `ValidationError` and `ModelRetry` respect the `retries` setting configured on the `Tool` or `Agent`.
 
-## Use LangChain Tools {#langchain-tools}
+### Parallel tool calls & concurrency
 
-If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with PydanticAI, you can use the `pydancic_ai.ext.langchain.tool_from_langchain` convenience method. Note that PydanticAI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
+When a model returns multiple tool calls in one response, Pydantic AI schedules them concurrently using `asyncio.create_task`.
 
-Here is how you can use it to augment model responses using a LangChain web search tool. This tool will need you to install the `langchain-community` and `duckduckgo-search` dependencies to work properly.
+Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
+
+## Third-Party Tools
+
+### MCP Tools {#mcp-tools}
+
+See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI as [toolsets](toolsets.md).
+
+### LangChain Tools {#langchain-tools}
+
+If you'd like to use a tool from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`tool_from_langchain`][pydantic_ai.ext.langchain.tool_from_langchain] convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
+
+You will need to install the `langchain-community` package and any others required by the tool in question.
+
+Here is how you can use the LangChain `DuckDuckGoSearchRun` tool, which requires the `ddgs` package:
 
 ```python {test="skip"}
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -673,19 +748,86 @@ from langchain_community.tools import DuckDuckGoSearchRun
 from pydantic_ai import Agent
 from pydantic_ai.ext.langchain import tool_from_langchain
 
+
 search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
 
 agent = Agent(
-    'google-gla:gemini-2.0-flash',  # (1)!
+    'google-gla:gemini-2.0-flash',
     tools=[search_tool],
 )
 
-result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (2)!
+result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (1)!
 print(result.output)
 #> Elden Ring Nightreign is planned to be released on May 30, 2025.
 ```
 
+1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
 
-1. While this task is simple Gemini 1.5 didn't want to use the provided tool. Gemini 2.0 is still fast and cheap.
-2. The release date of this game is the 30th of May 2025, which was confirmed after the knowledge cutoff for Gemini 2.0 (August 2024).
+If you'd like to use multiple LangChain tools or a LangChain [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits), you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] [toolset](toolsets.md) which takes a list of LangChain tools:
+
+```python {test="skip"}
+from langchain_community.agent_toolkits import SlackToolkit
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.langchain import LangChainToolset
+
+
+toolkit = SlackToolkit()
+toolset = LangChainToolset(toolkit.get_tools())
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+# ...
+```
+
+### ACI.dev Tools {#aci-tools}
+
+If you'd like to use a tool from the [ACI.dev tool library](https://www.aci.dev/tools) with Pydantic AI, you can use the [`tool_from_aci`][pydantic_ai.ext.aci.tool_from_aci] convenience method. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the ACI tool, and up to the ACI tool to raise an error if the arguments are invalid.
+
+You will need to install the `aci-sdk` package, set your ACI API key in the `ACI_API_KEY` environment variable, and pass your ACI "linked account owner ID" to the function.
+
+Here is how you can use the ACI.dev `TAVILY__SEARCH` tool:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.aci import tool_from_aci
+
+
+tavily_search = tool_from_aci(
+    'TAVILY__SEARCH',
+    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
+)
+
+agent = Agent(
+    'google-gla:gemini-2.0-flash',
+    tools=[tavily_search],
+)
+
+result = agent.run_sync('What is the release date of Elden Ring Nightreign?')  # (1)!
+print(result.output)
+#> Elden Ring Nightreign is planned to be released on May 30, 2025.
+```
+
+1. The release date of this game is the 30th of May 2025, which is after the knowledge cutoff for Gemini 2.0 (August 2024).
+
+If you'd like to use multiple ACI.dev tools, you can use the [`ACIToolset`][pydantic_ai.ext.aci.ACIToolset] [toolset](toolsets.md) which takes a list of ACI tool names as well as the `linked_account_owner_id`:
+
+```python {test="skip"}
+import os
+
+from pydantic_ai import Agent
+from pydantic_ai.ext.aci import ACIToolset
+
+
+toolset = ACIToolset(
+    [
+        'OPEN_WEATHER_MAP__CURRENT_WEATHER',
+        'OPEN_WEATHER_MAP__FORECAST',
+    ],
+    linked_account_owner_id=os.getenv('LINKED_ACCOUNT_OWNER_ID'),
+)
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+```

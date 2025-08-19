@@ -10,6 +10,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry
+from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
@@ -23,7 +25,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, raise_if_exception, try_import
 
@@ -102,27 +104,25 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -148,11 +148,10 @@ async def test_request_simple_usage(allow_model_requests: None):
     result = await agent.run('Hello')
     assert result.output == 'world'
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=1,
-            response_tokens=1,
-            total_tokens=2,
+            input_tokens=1,
+            output_tokens=1,
             details={
                 'input_tokens': 1,
                 'output_tokens': 1,
@@ -192,7 +191,6 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -279,7 +277,6 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(requests=1, total_tokens=0, details={}),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -301,13 +298,7 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=5,
-                    response_tokens=3,
-                    total_tokens=8,
-                    details={'input_tokens': 4, 'output_tokens': 2},
-                ),
+                usage=RequestUsage(input_tokens=5, output_tokens=3, details={'input_tokens': 4, 'output_tokens': 2}),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -323,18 +314,16 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(requests=1),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
             ),
         ]
     )
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=3,
-            request_tokens=5,
-            response_tokens=3,
-            total_tokens=8,
+            input_tokens=5,
+            output_tokens=3,
             details={'input_tokens': 4, 'output_tokens': 2},
         )
     )
@@ -401,12 +390,8 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                         content="The capital of France is Paris. It is the country's largest city and serves as the economic, cultural, and political center of France. Paris is known for its rich history, iconic landmarks such as the Eiffel Tower and the Louvre Museum, and its significant influence on fashion, cuisine, and the arts."
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=542,
-                    response_tokens=63,
-                    total_tokens=605,
-                    details={'input_tokens': 13, 'output_tokens': 61},
+                usage=RequestUsage(
+                    input_tokens=542, output_tokens=63, details={'input_tokens': 13, 'output_tokens': 61}
                 ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
@@ -441,21 +426,16 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
                     IsInstance(TextPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=1909,
-                    total_tokens=1922,
-                    details={'reasoning_tokens': 1472, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=13, output_tokens=1909, details={'reasoning_tokens': 1472}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+                provider_request_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
         ]
     )
@@ -470,21 +450,16 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
+                    IsInstance(ThinkingPart),
                     IsInstance(TextPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                 ],
-                usage=Usage(
-                    request_tokens=13,
-                    response_tokens=1909,
-                    total_tokens=1922,
-                    details={'reasoning_tokens': 1472, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=13, output_tokens=1909, details={'reasoning_tokens': 1472}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
-                vendor_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+                provider_request_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
             ModelRequest(
                 parts=[
@@ -495,52 +470,19 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ]
             ),
             ModelResponse(
-                parts=[
-                    TextPart(
-                        content="""\
-Crossing a river can be a different challenge compared to crossing a street, and the approach to safety and navigation will vary. Here are some considerations and steps to help you cross a river safely:
-
-1. **Determine the River's Characteristics:**
-   - **Width and Depth:** Measure or estimate the width of the river. Very wide rivers may require a boat or bridge for safe crossing. Also, assess the depth; shallow areas might be safe to wade through, while deeper sections may require a different method.
-   - **Current and Flow:** Understand the river's current. Strong currents can make swimming dangerous and may carry debris. Always check the flow rate and direction before attempting to cross.
-   - **Hazards:** Look for potential hazards like rocks, logs, or underwater obstacles that could cause injury or damage to equipment.
-
-2. **Choose a Safe Crossing Method:**
-   - **Fording:** If the river is shallow and the current is gentle, you might be able to ford the river. This involves walking through the water, often with the help of a sturdy stick or pole for balance and support. Always test the depth and current before attempting to ford.
-   - **Swimming:** Swimming across a river is a challenging and potentially dangerous option. It requires strong swimming skills, endurance, and knowledge of river currents. Always swim with a buddy and be aware of your surroundings.
-   - **Boat or Raft:** Using a boat, raft, or even an inflatable tube can be a safe and efficient way to cross. Ensure the boat is sturdy, properly equipped, and that you have the necessary safety gear, such as life jackets and a first-aid kit.
-   - **Bridge or Ferry:** If available, use a bridge or a ferry service. These are typically the safest and most reliable methods for crossing a river.
-
-3. **Prepare and Pack Essential Items:**
-   - **Life Jacket/Personal Flotation Device (PFD):** Always wear a life jacket or PFD when crossing a river, especially if swimming or using a boat.
-   - **First-Aid Kit:** Carry a basic first-aid kit to handle any minor injuries that might occur during the crossing.
-   - **Map and Compass:** Navigate the river and its surroundings with the help of a map and compass, especially if you're in an unfamiliar area.
-   - **Communication Device:** Have a means of communication, such as a satellite phone or a personal locator beacon, especially in remote areas.
-   - **Dry Clothing and Shelter:** Pack extra dry clothing and a waterproof shelter (like a tarp or tent) in case you get wet or need to wait out bad weather.
-
-4. **Follow River Safety Guidelines:**
-   - **Stay on Marked Paths:** If there are designated river paths or trails, use them. These routes are often designed to be safer and less prone to hazards.
-   - **Avoid Hazards:** Be cautious of slippery rocks, strong currents, and hidden underwater obstacles. Never swim or ford in areas with known dangers.
-   - **Group Safety:** If crossing with others, stay together. It's easier to keep an eye on each other and provide assistance if needed.
-
-5. **Be Prepared for Emergencies:**
-   - **Know Emergency Procedures:** Familiarize yourself with river rescue techniques and procedures. Learn how to signal for help and basic survival skills.
-   - **Carry Emergency Supplies:** Pack emergency supplies, including a whistle, a bright-colored cloth to signal, and a signal mirror (if available).
-   - **Leave a Plan:** Inform someone on the riverbank about your crossing plans, including your expected time of return. This person can raise the alarm if you don't return as scheduled.
-
-Remember, crossing a river can be a challenging and potentially dangerous endeavor. Always prioritize safety, and if in doubt, seek professional guidance or assistance from experienced river guides or local authorities. It's better to be over-prepared than caught off guard in a river crossing situation.\
-"""
-                    )
-                ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=1457,
-                    response_tokens=807,
-                    total_tokens=2264,
-                    details={'input_tokens': 954, 'output_tokens': 805},
+                parts=[IsInstance(TextPart)],
+                usage=RequestUsage(
+                    input_tokens=1457, output_tokens=807, details={'input_tokens': 954, 'output_tokens': 805}
                 ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
             ),
         ]
     )
+
+
+async def test_cohere_model_builtin_tools(allow_model_requests: None, co_api_key: str):
+    m = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+    with pytest.raises(UserError, match='Cohere does not support built-in tools'):
+        await agent.run('Hello')

@@ -1,4 +1,4 @@
-site_name: PydanticAI
+site_name: Pydantic AI
 site_description: Agent Framework / shim to use Pydantic with LLMs
 strict: true
 site_url: https://ai.pydantic.dev
@@ -22,15 +22,15 @@ nav:
           - models/index.md
           - models/openai.md
           - models/anthropic.md
-          - models/gemini.md
           - models/google.md
           - models/bedrock.md
           - models/cohere.md
           - models/groq.md
           - models/mistral.md
+          - models/huggingface.md
       - dependencies.md
       - tools.md
-      - common-tools.md
+      - toolsets.md
       - output.md
       - message-history.md
       - testing.md
@@ -41,15 +41,21 @@ nav:
       - input.md
       - thinking.md
       - direct.md
+      - builtin-tools.md
+      - common-tools.md
+      - retries.md
+      - temporal.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
           - mcp/server.md
           - mcp/run-python.md
       - A2A: a2a.md
+      - AG-UI: ag-ui.md
       - cli.md
   - Examples:
       - examples/index.md
+      - examples/ag-ui.md
       - examples/pydantic-model.md
       - examples/weather-agent.md
       - examples/bank-support.md
@@ -60,10 +66,17 @@ nav:
       - examples/stream-whales.md
       - examples/chat-app.md
       - examples/question-graph.md
+      - examples/slack-lead-qualifier.md
+      - examples/data-analyst.md
+
   - API Reference:
+      - api/ag_ui.md
       - api/agent.md
       - api/tools.md
+      - api/toolsets.md
+      - api/builtin_tools.md
       - api/common_tools.md
+      - api/durable_exec.md
       - api/output.md
       - api/result.md
       - api/messages.md
@@ -71,16 +84,17 @@ nav:
       - api/settings.md
       - api/usage.md
       - api/mcp.md
-      - api/format_as_xml.md
+      - api/format_prompt.md
       - api/direct.md
+      - api/ext.md
       - api/models/base.md
       - api/models/openai.md
       - api/models/anthropic.md
       - api/models/bedrock.md
       - api/models/cohere.md
-      - api/models/gemini.md
       - api/models/google.md
       - api/models/groq.md
+      - api/models/huggingface.md
       - api/models/instrumented.md
       - api/models/mistral.md
       - api/models/test.md
@@ -90,6 +104,7 @@ nav:
       - api/models/mcp-sampling.md
       - api/profiles.md
       - api/providers.md
+      - api/retries.md
       - api/pydantic_graph/graph.md
       - api/pydantic_graph/nodes.md
       - api/pydantic_graph/persistence.md
@@ -216,6 +231,10 @@ plugins:
             group_by_category: false
             # 3 because docs are in pages with an H2 just above them
             heading_level: 3
+            extensions:
+              - griffe_warnings_deprecated:
+                  kind: warning
+                  title: Deprecated
           import:
             - url: https://logfire.pydantic.dev/docs/objects.inv
             - url: https://docs.python.org/3/objects.inv
@@ -229,7 +248,7 @@ plugins:
       enabled: !ENV [CI, false]
       full_output: llms-full.txt
       markdown_description: |-
-        PydanticAI is a Python agent framework designed to make it less painful to build production grade
+        Pydantic AI is a Python agent framework designed to make it less painful to build production grade
         applications with Generative AI.
       sections:
         Concepts documentation:

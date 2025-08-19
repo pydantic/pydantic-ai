@@ -5,16 +5,20 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
-from .._utils import guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from .._run_context import RunContext
+from .._thinking_part import split_content_into_text_and_thinking
+from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
+from ..builtin_tools import WebSearchTool
+from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -30,7 +34,8 @@ from ..messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
+from ..profiles.groq import GroqModelProfile
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -79,6 +84,7 @@ PreviewGroqModelNames = Literal[
     'llama-3.2-3b-preview',
     'llama-3.2-11b-vision-preview',
     'llama-3.2-90b-vision-preview',
+    'moonshotai/kimi-k2-instruct',
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
@@ -93,10 +99,9 @@ See <https://console.groq.com/docs/models> for an up to date date list of models
 
 
 class GroqModelSettings(ModelSettings, total=False):
-    """Settings used for a Groq model request.
+    """Settings used for a Groq model request."""
 
-    ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-    """
+    # ALL FIELDS MUST BE `groq_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     groq_reasoning_format: Literal['hidden', 'raw', 'parsed']
 
@@ -113,7 +118,7 @@ class GroqModel(Model):
     client: AsyncGroq = field(repr=False)
 
     _model_name: GroqModelName = field(repr=False)
-    _system: str = field(default='groq', repr=False)
+    _provider: Provider[AsyncGroq] = field(repr=False)
 
     def __init__(
         self,
@@ -121,6 +126,7 @@ class GroqModel(Model):
         *,
         provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Groq model.
 
@@ -131,17 +137,30 @@ class GroqModel(Model):
                 'groq' or an instance of `Provider[AsyncGroq]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
-        self._profile = profile or provider.model_profile
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> GroqModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -154,7 +173,6 @@ class GroqModel(Model):
             messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -163,23 +181,14 @@ class GroqModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
             messages, True, cast(GroqModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
-            yield await self._process_streamed_response(response)
-
-    @property
-    def model_name(self) -> GroqModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
+            yield await self._process_streamed_response(response, model_request_parameters)
 
     @overload
     async def _completions_create(
@@ -209,7 +218,7 @@ class GroqModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
-        # standalone function to make it easier to override
+        tools += self._get_builtin_tools(model_request_parameters)
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
         elif not model_request_parameters.allow_text_output:
@@ -223,7 +232,7 @@ class GroqModel(Model):
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
             return await self.client.chat.completions.create(
-                model=str(self._model_name),
+                model=self._model_name,
                 messages=groq_messages,
                 n=1,
                 parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
@@ -253,20 +262,39 @@ class GroqModel(Model):
         timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+        if choice.message.executed_tools:
+            for tool in choice.message.executed_tools:
+                tool_call_id = generate_tool_call_id()
+                items.append(
+                    BuiltinToolCallPart(
+                        tool_name=tool.type, args=tool.arguments, provider_name='groq', tool_call_id=tool_call_id
+                    )
+                )
+                items.append(
+                    BuiltinToolReturnPart(
+                        provider_name='groq', tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id
+                    )
+                )
         # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
         if choice.message.reasoning is not None:
             items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.content is not None:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
-            items.extend(split_content_into_text_and_thinking(choice.message.content))
+            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
         return ModelResponse(
-            items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            timestamp=timestamp,
+            provider_request_id=response.id,
         )
 
-    async def _process_streamed_response(self, response: AsyncStream[chat.ChatCompletionChunk]) -> GroqStreamedResponse:
+    async def _process_streamed_response(
+        self, response: AsyncStream[chat.ChatCompletionChunk], model_request_parameters: ModelRequestParameters
+    ) -> GroqStreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response = _utils.PeekableAsyncStream(response)
         first_chunk = await peekable_response.peek()
@@ -276,15 +304,28 @@ class GroqModel(Model):
             )
 
         return GroqStreamedResponse(
+            model_request_parameters=model_request_parameters,
             _response=peekable_response,
             _model_name=self._model_name,
+            _model_profile=self.profile,
             _timestamp=number_to_datetime(first_chunk.created),
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    def _get_builtin_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionToolParam]:
+        tools: list[chat.ChatCompletionToolParam] = []
+        for tool in model_request_parameters.builtin_tools:
+            if isinstance(tool, WebSearchTool):
+                if not GroqModelProfile.from_profile(self.profile).groq_always_has_web_search_builtin_tool:
+                    raise UserError('`WebSearchTool` is not supported by Groq')  # pragma: no cover
+            else:
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `GroqModel`. If it should be, please file an issue.'
+                )
         return tools
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
@@ -304,6 +345,9 @@ class GroqModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Skip thinking parts when mapping to Groq messages
                         continue
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                        # This is currently never returned from groq
+                        pass
                     else:
                         assert_never(item)
                 message_param = chat.ChatCompletionAssistantMessageParam(role='assistant')
@@ -334,7 +378,7 @@ class GroqModel(Model):
             'type': 'function',
             'function': {
                 'name': f.name,
-                'description': f.description,
+                'description': f.description or '',
                 'parameters': f.parameters_json_schema,
             },
         }
@@ -397,6 +441,7 @@ class GroqStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Groq models."""
 
     _model_name: GroqModelName
+    _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
 
@@ -412,7 +457,14 @@ class GroqStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content is not None:
-                yield self._parts_manager.handle_text_delta(vendor_part_id='content', content=content)
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id='content',
+                    content=content,
+                    thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                )
+                if maybe_event is not None:  # pragma: no branch
+                    yield maybe_event
 
             # Handle the tool calls
             for dtc in choice.delta.tool_calls or []:
@@ -436,18 +488,17 @@ class GroqStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> usage.Usage:
+def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> usage.RequestUsage:
     response_usage = None
     if isinstance(completion, chat.ChatCompletion):
         response_usage = completion.usage
     elif completion.x_groq is not None:
-        response_usage = completion.x_groq.usage  # pragma: no cover
+        response_usage = completion.x_groq.usage
 
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
 
-    return usage.Usage(
-        request_tokens=response_usage.prompt_tokens,
-        response_tokens=response_usage.completion_tokens,
-        total_tokens=response_usage.total_tokens,
+    return usage.RequestUsage(
+        input_tokens=response_usage.prompt_tokens,
+        output_tokens=response_usage.completion_tokens,
     )

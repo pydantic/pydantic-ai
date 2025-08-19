@@ -1,6 +1,7 @@
 from importlib.metadata import version as _metadata_version
 
 from .agent import Agent, CallToolsNode, EndStrategy, ModelRequestNode, UserPromptNode, capture_run_messages
+from .builtin_tools import CodeExecutionTool, WebSearchTool, WebSearchUserLocation
 from .exceptions import (
     AgentRunError,
     FallbackExceptionGroup,
@@ -12,7 +13,7 @@ from .exceptions import (
 )
 from .format_prompt import format_as_xml
 from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
-from .output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .tools import RunContext, Tool
 
 __all__ = (
@@ -41,11 +42,16 @@ __all__ = (
     # tools
     'Tool',
     'RunContext',
+    # builtin_tools
+    'WebSearchTool',
+    'WebSearchUserLocation',
+    'CodeExecutionTool',
     # output
     'ToolOutput',
     'NativeOutput',
     'PromptedOutput',
     'TextOutput',
+    'StructuredDict',
     # format_prompt
     'format_as_xml',
 )

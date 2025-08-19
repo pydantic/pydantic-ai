@@ -4,8 +4,10 @@ import asyncio
 import functools
 import inspect
 import re
+import sys
 import time
 import uuid
+import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
@@ -29,7 +31,9 @@ from typing_extensions import (
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan
+from pydantic_graph._utils import AbstractSpan, get_event_loop
+
+from . import exceptions
 
 AbstractSpan = AbstractSpan
 
@@ -58,7 +62,12 @@ def is_model_like(type_: Any) -> bool:
     return (
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
-        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))  # pyright: ignore[reportUnknownArgumentType]
+        and (
+            issubclass(type_, BaseModel)
+            or is_dataclass(type_)  # pyright: ignore[reportUnknownArgumentType]
+            or is_typeddict(type_)  # pyright: ignore[reportUnknownArgumentType]
+            or getattr(type_, '__is_model_like__', False)  # pyright: ignore[reportUnknownArgumentType]
+        )
     )
 
 
@@ -218,7 +227,13 @@ def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def guard_tool_call_id(t: _messages.ToolCallPart | _messages.ToolReturnPart | _messages.RetryPromptPart) -> str:
+def guard_tool_call_id(
+    t: _messages.ToolCallPart
+    | _messages.ToolReturnPart
+    | _messages.RetryPromptPart
+    | _messages.BuiltinToolCallPart
+    | _messages.BuiltinToolReturnPart,
+) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()
 
@@ -313,8 +328,11 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
+_datetime_ta = TypeAdapter(datetime)
+
+
 def number_to_datetime(x: int | float) -> datetime:
-    return TypeAdapter(datetime).validate_python(x)
+    return _datetime_ta.validate_python(x)
 
 
 AwaitableCallable = Callable[..., Awaitable[T]]
@@ -415,6 +433,20 @@ def merge_json_schema_defs(schemas: list[dict[str, Any]]) -> tuple[list[dict[str
     return rewritten_schemas, all_defs
 
 
+def validate_empty_kwargs(_kwargs: dict[str, Any]) -> None:
+    """Validate that no unknown kwargs remain after processing.
+
+    Args:
+        _kwargs: Dictionary of remaining kwargs after specific ones have been processed.
+
+    Raises:
+        UserError: If any unknown kwargs remain.
+    """
+    if _kwargs:
+        unknown_kwargs = ', '.join(f'`{k}`' for k in _kwargs.keys())
+        raise exceptions.UserError(f'Unknown keyword arguments: {unknown_kwargs}')
+
+
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
@@ -437,3 +469,18 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return get_args(tp)
     else:
         return ()
+
+
+# The `asyncio.Lock` `loop` argument was deprecated in 3.8 and removed in 3.10,
+# but 3.9 still needs it to have the intended behavior.
+
+if sys.version_info < (3, 10):
+
+    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            return asyncio.Lock(loop=get_event_loop())
+else:
+
+    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
+        return asyncio.Lock()
