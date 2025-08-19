@@ -141,8 +141,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    # TODO (Qian): do we always want to wrap it in a workflow? Maybe yes.
-    @DBOS.workflow()
     async def run(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
@@ -193,28 +191,55 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        # TODO (Qian): do we really need to check if we're in a workflow here?
-        # if DBOS.workflow_id and event_stream_handler is not None:
-        #     raise UserError(
-        #         'Event stream handler cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
-        #     )
 
-        print(f'Running DBOSAgent.run with step config: {self._step_config}, {model}')
-        with self._dbos_overrides():
-            return await super().run(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
-                **_deprecated_kwargs,
-            )
+        # TODO (Qian): do we always want to wrap it in a workflow? Maybe yes.
+        # Tag this method as a DBOS workflow with the name of the agent.
+        @DBOS.workflow(name=f'{self._name}.run')
+        async def wrapped_run(
+            user_prompt: str | Sequence[_messages.UserContent] | None = None,
+            *,
+            output_type: OutputSpec[RunOutputDataT] | None = None,
+            message_history: list[_messages.ModelMessage] | None = None,
+            model: models.Model | models.KnownModelName | str | None = None,
+            deps: AgentDepsT,
+            model_settings: ModelSettings | None = None,
+            usage_limits: _usage.UsageLimits | None = None,
+            usage: _usage.RunUsage | None = None,
+            infer_name: bool = True,
+            toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+            event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+            **_deprecated_kwargs: Never,
+        ) -> AgentRunResult[Any]:
+            with self._dbos_overrides():
+                return await super(WrapperAgent, self).run(
+                    user_prompt,
+                    output_type=output_type,
+                    message_history=message_history,
+                    model=model,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    infer_name=infer_name,
+                    toolsets=toolsets,
+                    event_stream_handler=event_stream_handler,
+                    **_deprecated_kwargs,
+                )
+
+        return await wrapped_run(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            **_deprecated_kwargs,
+        )
 
     @overload
     def run_sync(

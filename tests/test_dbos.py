@@ -79,7 +79,7 @@ DBOS_CONFIG: DBOSConfig = {
 
 @pytest.fixture()
 def dbos() -> Generator[DBOS, Any, None]:
-    dbos = DBOS(config=DBOS_CONFIG)
+    dbos = DBOS(config=DBOS_CONFIG, conductor_key=os.environ.get('DBOS_CONDUCTOR_KEY'))
     DBOS.launch()
     yield dbos
     DBOS.destroy()
@@ -87,6 +87,7 @@ def dbos() -> Generator[DBOS, Any, None]:
 
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
     """Test that a simple agent can run in a DBOS workflow."""
+
     model = OpenAIModel(
         'gpt-4o',
         provider=OpenAIProvider(
@@ -97,6 +98,10 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
 
     simple_agent = Agent(model, name='simple_agent')
     simple_dbos_agent = DBOSAgent(simple_agent)
+
+    # Add 20 second sleep to let test hang
+    # import asyncio
+    # await asyncio.sleep(20)
 
     result = await simple_dbos_agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
