@@ -536,6 +536,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
 
     messages = [
         ModelRequest(
+            instructions='instructions',
             parts=[
                 SystemPromptPart('system_prompt'),
                 UserPromptPart('user_prompt'),
@@ -543,7 +544,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                 RetryPromptPart('retry_prompt1', tool_name='tool4', tool_call_id='tool_call_4'),
                 RetryPromptPart('retry_prompt2'),
                 {},  # test unexpected parts  # type: ignore
-            ]
+            ],
         ),
         ModelResponse(parts=[TextPart('text3')]),
     ]
@@ -589,6 +590,12 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
                         'events': [
+                            {
+                                'content': 'instructions',
+                                'role': 'system',
+                                'gen_ai.system': 'my_system',
+                                'event.name': 'gen_ai.system.message',
+                            },
                             {
                                 'event.name': 'gen_ai.system.message',
                                 'content': 'system_prompt',
@@ -761,6 +768,7 @@ Fix the errors and try again.\
                             }
                         ],
                         'gen_ai.response.model': 'my_model_123',
+                        'gen_ai.system_instructions': 'instructions',
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
                         'logfire.json_schema': {
