@@ -5,7 +5,8 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import Any, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
-from typing_extensions import Never, TypedDict
+from pydantic_core import PydanticSerializationError
+from typing_extensions import Never
 
 from pydantic_ai import (
     _utils,
@@ -26,14 +27,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset
 
-
-class StepConfig(TypedDict, total=False):
-    """Configuration for a step in the DBOS workflow."""
-
-    retries_allowed: bool
-    interval_seconds: float
-    max_attempts: int
-    backoff_rate: float
+from ._model import DBOSModel, StepConfig
 
 
 @DBOS.dbos_class()
@@ -69,7 +63,19 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         # TODO (Qian): DBOS-ify those configurations
         self._step_config = step_config or {}
         self._model_step_config = model_step_config or {}
-        self._model = wrapped.model
+
+        if not isinstance(wrapped.model, Model):
+            raise UserError(
+                'An agent needs to have a `model` in order to be used with DBOS, it cannot be set at agent run time.'
+            )
+
+        dbos_model = DBOSModel(
+            wrapped.model,
+            step_name_prefix=self._name,
+            step_config=self._model_step_config,
+            event_stream_handler=event_stream_handler or wrapped.event_stream_handler,
+        )
+        self._model = dbos_model
         DBOSConfiguredInstance.__init__(self, self._name)
         print(
             f'DBOSAgent initialized with name: {self._name}, step_config: {self._step_config}, model_step_config: {self._model_step_config}'
@@ -86,12 +92,20 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         )
 
     @property
-    def model(self) -> Model | str | None:
+    def model(self) -> Model:
         return self._model
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         return super().toolsets
+
+    @contextmanager
+    def _dbos_overrides(self) -> Iterator[None]:
+        with super().override(model=self._model):
+            try:
+                yield
+            except PydanticSerializationError as e:
+                raise UserError('Serialization error. DBOS requires all outputs are JSON pickleable.') from e
 
     @overload
     async def run(
@@ -185,20 +199,22 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         #         'Event stream handler cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
         #     )
 
-        return await super().run(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            event_stream_handler=event_stream_handler,
-            **_deprecated_kwargs,
-        )
+        print(f'Running DBOSAgent.run with step config: {self._step_config}, {model}')
+        with self._dbos_overrides():
+            return await super().run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                **_deprecated_kwargs,
+            )
 
     @overload
     def run_sync(
@@ -285,20 +301,21 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        return super().run_sync(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            event_stream_handler=event_stream_handler,
-            **_deprecated_kwargs,
-        )
+        with self._dbos_overrides():
+            return super().run_sync(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                **_deprecated_kwargs,
+            )
 
     @overload
     def run_stream(
@@ -538,20 +555,21 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         #         'Please file an issue if this is not sufficient for your use case.'
         #     )
 
-        async with super().iter(
-            user_prompt=user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            **_deprecated_kwargs,
-        ) as run:
-            yield run
+        with self._dbos_overrides():
+            async with super().iter(
+                user_prompt=user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                **_deprecated_kwargs,
+            ) as run:
+                yield run
 
     @contextmanager
     def override(
