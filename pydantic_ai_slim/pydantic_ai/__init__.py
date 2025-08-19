@@ -1,7 +1,7 @@
 from importlib.metadata import version as _metadata_version
 
 from .agent import Agent, CallToolsNode, EndStrategy, ModelRequestNode, UserPromptNode, capture_run_messages
-from .builtin_tools import CodeExecutionTool, WebSearchTool, WebSearchUserLocation
+from .builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool, WebSearchUserLocation
 from .exceptions import (
     AgentRunError,
     FallbackExceptionGroup,
@@ -45,6 +45,7 @@ __all__ = (
     # builtin_tools
     'WebSearchTool',
     'WebSearchUserLocation',
+    'UrlContextTool',
     'CodeExecutionTool',
     # output
     'ToolOutput',
