@@ -22,11 +22,11 @@ where:
   the Python standard library and packages
 - `--node-modules-dir=auto` tells deno to use a local `node_modules` directory
 - `stdio` runs the server with the
-  [Stdio MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) —
+  [Stdio MCP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#stdio) —
   suitable for running the process as a subprocess locally
 - `streamable_http` runs the server with the [Streamable HTTP MCP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) - suitable for running the server as an HTTP server to connect locally or remotely
 - `sse` runs the server with the
-  [SSE MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) — suitable for running the server as an HTTP server to connect locally or remotely
+  [SSE MCP transport](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#http-with-sse) — suitable for running the server as an HTTP server to connect locally or remotely
 - `warmup` will run a minimal Python script to download and cache the Python standard library. This is also useful to
   check the server is running correctly.
 
