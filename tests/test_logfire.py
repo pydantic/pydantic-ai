@@ -348,15 +348,24 @@ def test_logfire(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-def test_instructions_with_structured_output(get_logfire_summary: Callable[[], LogfireSummary]) -> None:
+@pytest.mark.parametrize(
+    'instrument',
+    [
+        InstrumentationSettings(version=1),
+        InstrumentationSettings(version=2),
+    ],
+)
+def test_instructions_with_structured_output(
+    get_logfire_summary: Callable[[], LogfireSummary], instrument: InstrumentationSettings
+) -> None:
     @dataclass
     class MyOutput:
         content: str
 
-    my_agent = Agent(model=TestModel(), instructions='Here are some instructions', instrument=True)
+    my_agent = Agent(model=TestModel(), instructions='Here are some instructions', instrument=instrument)
 
     result = my_agent.run_sync('Hello', output_type=MyOutput)
-    assert result.output == snapshot(MyOutput(content='a'))
+    assert result.output == MyOutput(content='a')
 
     summary = get_logfire_summary()
     assert summary.attributes[0] == snapshot(
@@ -416,8 +425,8 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
         }
     )
     chat_span_attributes = summary.attributes[1]
-    assert chat_span_attributes['events'] == snapshot(
-        IsJson(
+    if instrument.version == 1:
+        assert chat_span_attributes['events'] == IsJson(
             snapshot(
                 [
                     {
@@ -451,7 +460,27 @@ def test_instructions_with_structured_output(get_logfire_summary: Callable[[], L
                 ]
             )
         )
-    )
+    else:
+        assert chat_span_attributes['gen_ai.input.messages'] == IsJson(
+            snapshot([{'role': 'user', 'parts': [{'type': 'text', 'content': 'Hello'}]}])
+        )
+        assert chat_span_attributes['gen_ai.output.messages'] == IsJson(
+            snapshot(
+                [
+                    {
+                        'role': 'assistant',
+                        'parts': [
+                            {
+                                'type': 'tool_call',
+                                'id': IsStr(),
+                                'name': 'final_result',
+                                'arguments': {'content': 'a'},
+                            }
+                        ],
+                    }
+                ]
+            )
+        )
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
