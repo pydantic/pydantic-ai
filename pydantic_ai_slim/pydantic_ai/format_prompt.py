@@ -110,17 +110,16 @@ class _ToXml:
                 element = self._create_element(self._element_names[path], path)
             self._mapping_to_xml(element, value, path)  # pyright: ignore[reportUnknownArgumentType]
         elif is_dataclass(value) and not isinstance(value, type):
-            self._init_element_names()
+            self._init_structure_info()
             if tag is None:
                 element = self._create_element(value.__class__.__name__, path)
             self._mapping_to_xml(element, asdict(value), path)
         elif isinstance(value, BaseModel):
-            # before serializing the model and losing all the metadata of other data structures contained in it,
-            # we extract all the fields info and class names
-            self._init_fields_info()
-            self._init_element_names()
+            self._init_structure_info()
             if tag is None:
                 element = self._create_element(value.__class__.__name__, path)
+            # by dumping the model we loose all metadata in nested data structures,
+            # but we have collected it when called _init_structure_info
             self._mapping_to_xml(element, value.model_dump(mode='python'), path)
         elif isinstance(value, Iterable):
             for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
@@ -140,15 +139,13 @@ class _ToXml:
                 self._included_fields.add(field_repr)
         return element
 
-    def _init_fields_info(self):
-        if self.include_field_info and self._fields is None:
-            self._fields = {}
-            self._parse_data_structures(self.data, fields_map=self._fields)
-
-    def _init_element_names(self):
+    def _init_structure_info(self):
+        """Create maps with all data information (fields info and class names), if not already created."""
         if self._element_names is None:
             self._element_names = {}
-            self._parse_data_structures(self.data, element_names=self._element_names)
+            if self.include_field_info and self._fields is None:
+                self._fields = {}
+            self._parse_data_structures(self.data, fields_map=self._fields, element_names=self._element_names)
 
     def _mapping_to_xml(
         self,
