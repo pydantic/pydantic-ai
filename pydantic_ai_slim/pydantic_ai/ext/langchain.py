@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any, Protocol
 
 from pydantic.json_schema import JsonSchemaValue
@@ -65,5 +67,5 @@ def tool_from_langchain(langchain_tool: LangChainTool) -> Tool:
 class LangChainToolset(FunctionToolset):
     """A toolset that wraps LangChain tools."""
 
-    def __init__(self, tools: list[LangChainTool]):
-        super().__init__([tool_from_langchain(tool) for tool in tools])
+    def __init__(self, tools: list[LangChainTool], *, id: str | None = None):
+        super().__init__([tool_from_langchain(tool) for tool in tools], id=id)

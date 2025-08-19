@@ -1,0 +1,273 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '106'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What day is today?
+        role: user
+      model: compound-beta
+      n: 1
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '13044'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: The current day is Tuesday.
+          executed_tools:
+          - arguments: '{"query": "What is the current date?"}'
+            index: 0
+            output: |+
+              Title: Today's Date - Find Out Quickly What's The Date Today ️
+              URL: https://calendarhours.com/todays-date/
+              Content: The current date in RFC 2822 Format with shortened day of week, numerical date, three-letter month abbreviation, year, time, and time zone is: Tue, 13 May 2025 06:07:56 -0400; The current date in Unix Epoch Format with number of seconds that have elapsed since January 1, 1970 (midnight UTC/GMT) is:
+              Score: 0.8299
+
+              Title: Today's Date | Current date now - MaxTables
+              URL: https://maxtables.com/tools/todays-date.html
+              Content: The current date, including day of the week, month, day, and year. The exact time, down to seconds. Details on the time zone, its location, and its GMT difference. A tool to select the present date. A visual calendar chart. Why would I need to check Today's Date on this platform instead of my device?
+              Score: 0.7223
+
+              Title: Current Time and Date - Exact Time!
+              URL: https://time-and-calendar.com/
+              Content: The actual time is: Mon May 12 2025 22:14:39 GMT-0700 (Pacific Daylight Time) Your computer time is: 22:14:38 The time of your computer is synchronized with our web server. This mean that it is synchronizing in real time with our server clock.
+              Score: 0.6799
+
+              Title: Today's Date - CalendarDate.com
+              URL: https://www.calendardate.com/todays.htm
+              Content: Details about today's date with count of days, weeks, and months, Sun and Moon cycles, Zodiac signs and holidays. Monday May 12, 2025 . Home; Calendars. 2025 Calendar; ... Current Season Today: Spring with 40 days until the start of Summer. S. Hemisphere flip seasons - i.e. Winter is Summer.
+              Score: 0.6416
+
+              Title: What is the date today | Today's Date
+              URL: https://www.datetoday.info/
+              Content: Master time tracking with Today's Date. Stay updated with real-time information on current date, time, day of the week, days left in the week, current day and remaining days of the year. Explore time in globally accepted formats. Keep up with the current week and month, along with the remaining weeks and months for the year. Embrace efficient time tracking with Today's Date.
+              Score: 0.6282
+
+              Title: Explore Today's Date, Time Zones, Holidays & More
+              URL: https://whatdateis.today/
+              Content: Check what date and time it is today (May 8, 2025). View current time across different time zones, upcoming holidays, and use our date calculator. Your one-stop destination for all date and time information.
+              Score: 0.6181
+
+              Title: Today's Date and Time - Date and Time Tools
+              URL: https://todaysdatetime.com/
+              Content: Discover today's exact date and time, learn about time zones, date formats, and explore our comprehensive collection of date and time tools including calculators, converters, and calendars. ... Get the exact current date and time, along with powerful calculation tools for all your scheduling needs. 12h. Today. Day 76 of year (366) Yesterday
+              Score: 0.5456
+
+              Title: Current Time Now - What time is it? - RapidTables.com
+              URL: https://www.rapidtables.com/tools/current-time.html
+              Content: This page includes the following information: Current time: hours, minutes, seconds. Today's date: day of week, month, day, year. Time zone with location and GMT offset.
+              Score: 0.4255
+
+              Title: Current Time
+              URL: https://www.timeanddate.com/
+              Content: Welcome to the world's top site for time, time zones, and astronomy. Organize your life with free online info and tools you can rely on. No sign-up needed. Sign in. News. News Home; Astronomy News; ... Current Time. Monday May 12, 2025 Roanoke Rapids, North Carolina, USA. Set home location. 11:27: 03 pm. World Clock.
+              Score: 0.3876
+
+              Title: Current local time in the United States - World clock
+              URL: https://dateandtime.info/country.php?code=US
+              Content: Time and Date of DST Change Time Change; DST started: Sunday, March 9, 2025 at 2:00 AM: The clocks were put forward an hour to 3:00 AM. DST ends: Sunday, November 2, 2025 at 2:00 AM: The clocks will be put back an hour to 1:00 AM. DST starts: Sunday, March 8, 2026 at 2:00 AM: The clocks will be put forward an hour to 3:00 AM.
+              Score: 0.3042
+
+              Title: Time.is - exact time, any time zone
+              URL: https://time.is/
+              Content: 7 million locations, 58 languages, synchronized with atomic clock time. Time.is. Get Time.is Ad-free! Exact time now: 05:08:45. Tuesday, 13 May, 2025, week 20. Sun: ↑ 05:09 ↓ 20:45 (15h 36m) - More info - Make London time default - Remove from favorite locations
+              Score: 0.2796
+
+              Title: Time in United States now
+              URL: https://time.is/United_States
+              Content: Exact time now, time zone, time difference, sunrise/sunset time and key facts for United States. Time.is. Get Time.is Ad-free! Time in United States now . 11:17:42 PM. Monday, May 12, 2025. United States (incl. dependent territories) has 11 time zones. The time zone for the capital Washington, D.C. is used here.
+              Score: 0.2726
+
+              Title: Current Local Time in the United States - timeanddate.com
+              URL: https://www.timeanddate.com/worldclock/usa
+              Content: United States time now. USA time zones and time zone map with current time in each state.
+              Score: 0.2519
+
+              Title: Current local time in United States - World Time Clock & Map
+              URL: https://24timezones.com/United-States/time
+              Content: Check the current time in United States and time zone information, the UTC offset and daylight saving time dates in 2025.
+              Score: 0.2221
+
+              Title: The World Clock — Worldwide - timeanddate.com
+              URL: https://www.timeanddate.com/worldclock/
+              Content: World time and date for cities in all time zones. International time right now. Takes into account all DST clock changes.
+              Score: 0.2134
+
+            type: search
+          reasoning: |2-
+
+            To determine the current day, I need to access real-time information. I will use the search tool to find out the current date.
+
+            <tool>
+            search(What is the current date?)
+            </tool>
+            <output>Title: Today's Date - Find Out Quickly What's The Date Today ️
+            URL: https://calendarhours.com/todays-date/
+            Content: The current date in RFC 2822 Format with shortened day of week, numerical date, three-letter month abbreviation, year, time, and time zone is: Tue, 13 May 2025 06:07:56 -0400; The current date in Unix Epoch Format with number of seconds that have elapsed since January 1, 1970 (midnight UTC/GMT) is:
+            Score: 0.8299
+
+            Title: Today's Date | Current date now - MaxTables
+            URL: https://maxtables.com/tools/todays-date.html
+            Content: The current date, including day of the week, month, day, and year. The exact time, down to seconds. Details on the time zone, its location, and its GMT difference. A tool to select the present date. A visual calendar chart. Why would I need to check Today's Date on this platform instead of my device?
+            Score: 0.7223
+
+            Title: Current Time and Date - Exact Time!
+            URL: https://time-and-calendar.com/
+            Content: The actual time is: Mon May 12 2025 22:14:39 GMT-0700 (Pacific Daylight Time) Your computer time is: 22:14:38 The time of your computer is synchronized with our web server. This mean that it is synchronizing in real time with our server clock.
+            Score: 0.6799
+
+            Title: Today's Date - CalendarDate.com
+            URL: https://www.calendardate.com/todays.htm
+            Content: Details about today's date with count of days, weeks, and months, Sun and Moon cycles, Zodiac signs and holidays. Monday May 12, 2025 . Home; Calendars. 2025 Calendar; ... Current Season Today: Spring with 40 days until the start of Summer. S. Hemisphere flip seasons - i.e. Winter is Summer.
+            Score: 0.6416
+
+            Title: What is the date today | Today's Date
+            URL: https://www.datetoday.info/
+            Content: Master time tracking with Today's Date. Stay updated with real-time information on current date, time, day of the week, days left in the week, current day and remaining days of the year. Explore time in globally accepted formats. Keep up with the current week and month, along with the remaining weeks and months for the year. Embrace efficient time tracking with Today's Date.
+            Score: 0.6282
+
+            Title: Explore Today's Date, Time Zones, Holidays & More
+            URL: https://whatdateis.today/
+            Content: Check what date and time it is today (May 8, 2025). View current time across different time zones, upcoming holidays, and use our date calculator. Your one-stop destination for all date and time information.
+            Score: 0.6181
+
+            Title: Today's Date and Time - Date and Time Tools
+            URL: https://todaysdatetime.com/
+            Content: Discover today's exact date and time, learn about time zones, date formats, and explore our comprehensive collection of date and time tools including calculators, converters, and calendars. ... Get the exact current date and time, along with powerful calculation tools for all your scheduling needs. 12h. Today. Day 76 of year (366) Yesterday
+            Score: 0.5456
+
+            Title: Current Time Now - What time is it? - RapidTables.com
+            URL: https://www.rapidtables.com/tools/current-time.html
+            Content: This page includes the following information: Current time: hours, minutes, seconds. Today's date: day of week, month, day, year. Time zone with location and GMT offset.
+            Score: 0.4255
+
+            Title: Current Time
+            URL: https://www.timeanddate.com/
+            Content: Welcome to the world's top site for time, time zones, and astronomy. Organize your life with free online info and tools you can rely on. No sign-up needed. Sign in. News. News Home; Astronomy News; ... Current Time. Monday May 12, 2025 Roanoke Rapids, North Carolina, USA. Set home location. 11:27: 03 pm. World Clock.
+            Score: 0.3876
+
+            Title: Current local time in the United States - World clock
+            URL: https://dateandtime.info/country.php?code=US
+            Content: Time and Date of DST Change Time Change; DST started: Sunday, March 9, 2025 at 2:00 AM: The clocks were put forward an hour to 3:00 AM. DST ends: Sunday, November 2, 2025 at 2:00 AM: The clocks will be put back an hour to 1:00 AM. DST starts: Sunday, March 8, 2026 at 2:00 AM: The clocks will be put forward an hour to 3:00 AM.
+            Score: 0.3042
+
+            Title: Time.is - exact time, any time zone
+            URL: https://time.is/
+            Content: 7 million locations, 58 languages, synchronized with atomic clock time. Time.is. Get Time.is Ad-free! Exact time now: 05:08:45. Tuesday, 13 May, 2025, week 20. Sun: ↑ 05:09 ↓ 20:45 (15h 36m) - More info - Make London time default - Remove from favorite locations
+            Score: 0.2796
+
+            Title: Time in United States now
+            URL: https://time.is/United_States
+            Content: Exact time now, time zone, time difference, sunrise/sunset time and key facts for United States. Time.is. Get Time.is Ad-free! Time in United States now . 11:17:42 PM. Monday, May 12, 2025. United States (incl. dependent territories) has 11 time zones. The time zone for the capital Washington, D.C. is used here.
+            Score: 0.2726
+
+            Title: Current Local Time in the United States - timeanddate.com
+            URL: https://www.timeanddate.com/worldclock/usa
+            Content: United States time now. USA time zones and time zone map with current time in each state.
+            Score: 0.2519
+
+            Title: Current local time in United States - World Time Clock & Map
+            URL: https://24timezones.com/United-States/time
+            Content: Check the current time in United States and time zone information, the UTC offset and daylight saving time dates in 2025.
+            Score: 0.2221
+
+            Title: The World Clock — Worldwide - timeanddate.com
+            URL: https://www.timeanddate.com/worldclock/
+            Content: World time and date for cities in all time zones. International time right now. Takes into account all DST clock changes.
+            Score: 0.2134
+
+            </output>
+            The current date is Tuesday, May 13, 2025.
+
+
+
+            The current day is Tuesday.
+          role: assistant
+      created: 1747232793
+      id: stub
+      model: compound-beta
+      object: chat.completion
+      system_fingerprint: null
+      usage:
+        completion_time: 0.312814
+        completion_tokens: 117
+        prompt_time: 0.737839
+        prompt_tokens: 4287
+        queue_time: 1.687734
+        total_time: 1.050655
+        total_tokens: 4404
+      usage_breakdown:
+        models:
+        - model: llama-3.3-70b-versatile
+          usage:
+            completion_time: 0.033092212
+            completion_tokens: 4
+            prompt_time: 0.008749282
+            prompt_tokens: 134
+            queue_time: 0.251916212
+            total_time: 0.041841494
+            total_tokens: 138
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.198660413
+            completion_tokens: 82
+            prompt_time: 0.026323206
+            prompt_tokens: 491
+            queue_time: 0.556546565
+            total_time: 0.224983619
+            total_tokens: 573
+        - model: meta-llama/llama-4-scout-17b-16e-instruct
+          usage:
+            completion_time: 0.047136438
+            completion_tokens: 24
+            prompt_time: 0.077990192
+            prompt_tokens: 1926
+            queue_time: 0.619169638
+            total_time: 0.12512663
+            total_tokens: 1950
+        - model: llama-3.3-70b-versatile
+          usage:
+            completion_time: 0.033926045
+            completion_tokens: 7
+            prompt_time: 0.624777225
+            prompt_tokens: 1736
+            queue_time: 0.26010064499999996
+            total_time: 0.65870327
+            total_tokens: 1743
+      x_groq:
+        id: stub
+    status:
+      code: 200
+      message: OK
+version: 1

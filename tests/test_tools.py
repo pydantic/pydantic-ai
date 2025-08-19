@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Callable, Literal, Union
 
@@ -30,7 +31,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.deferred import DeferredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
 
@@ -616,7 +617,9 @@ def test_tool_return_conflict():
     # this raises an error
     with pytest.raises(
         UserError,
-        match="Function toolset defines a tool whose name conflicts with existing tool from Output toolset: 'ctx_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.",
+        match=re.escape(
+            "The agent defines a tool whose name conflicts with existing tool from the agent's output tools: 'ctx_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts."
+        ),
     ):
         Agent('test', tools=[ctx_tool], deps_type=int, output_type=ToolOutput(int, name='ctx_tool')).run_sync(
             '', deps=0
@@ -626,7 +629,9 @@ def test_tool_return_conflict():
 def test_tool_name_conflict_hint():
     with pytest.raises(
         UserError,
-        match="Prefixed toolset defines a tool whose name conflicts with existing tool from Function toolset: 'foo_tool'. Rename the tool or wrap the toolset in a `PrefixedToolset` to avoid name conflicts.",
+        match=re.escape(
+            "PrefixedToolset(FunctionToolset 'tool') defines a tool whose name conflicts with existing tool from the agent: 'foo_tool'. Change the `prefix` attribute to avoid name conflicts."
+        ),
     ):
 
         def tool(x: int) -> int:
@@ -635,7 +640,7 @@ def test_tool_name_conflict_hint():
         def foo_tool(x: str) -> str:
             return x + 'foo'  # pragma: no cover
 
-        function_toolset = FunctionToolset([tool])
+        function_toolset = FunctionToolset([tool], id='tool')
         prefixed_toolset = PrefixedToolset(function_toolset, 'foo')
         Agent('test', tools=[foo_tool], toolsets=[prefixed_toolset]).run_sync('')
 
@@ -1221,10 +1226,9 @@ def test_tool_retries():
     with pytest.raises(UnexpectedModelBehavior, match="Tool 'infinite_retry_tool' exceeded max retries count of 5"):
         agent.run_sync('Begin infinite retry loop!')
 
-    # There are extra 0s here because the toolset is prepared once ahead of the graph run, before the user prompt part is added in.
-    assert prepare_tools_retries == [0, 0, 1, 2, 3, 4, 5]
-    assert prepare_retries == [0, 0, 1, 2, 3, 4, 5]
-    assert call_retries == [0, 1, 2, 3, 4, 5]
+    assert prepare_tools_retries == snapshot([0, 1, 2, 3, 4, 5])
+    assert prepare_retries == snapshot([0, 1, 2, 3, 4, 5])
+    assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
 
 
 def test_deferred_tool():
@@ -1381,7 +1385,7 @@ def test_parallel_tool_return():
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=58, response_tokens=10, total_tokens=68),
+                usage=RequestUsage(input_tokens=58, output_tokens=10),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1413,7 +1417,7 @@ def test_parallel_tool_return():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=Usage(requests=1, request_tokens=76, response_tokens=11, total_tokens=87),
+                usage=RequestUsage(input_tokens=76, output_tokens=11),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

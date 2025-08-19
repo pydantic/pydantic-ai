@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import TypeVar
+from typing import Any, TypeVar
 from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import Self
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
@@ -15,26 +16,29 @@ from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBe
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
-from pydantic_ai.usage import Usage
+from pydantic_ai.toolsets.wrapper import WrapperToolset
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
 T = TypeVar('T')
 
 
-def build_run_context(deps: T) -> RunContext[T]:
+def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
-        usage=Usage(),
+        usage=RunUsage(),
         prompt=None,
         messages=[],
-        run_step=0,
+        run_step=run_step,
     )
 
 
@@ -57,7 +61,7 @@ async def test_function_toolset():
         return a + b
 
     no_prefix_context = build_run_context(PrefixDeps())
-    no_prefix_toolset = await ToolManager[PrefixDeps].build(toolset, no_prefix_context)
+    no_prefix_toolset = await ToolManager[PrefixDeps](toolset).for_run_step(no_prefix_context)
     assert no_prefix_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -75,7 +79,7 @@ async def test_function_toolset():
     assert await no_prefix_toolset.handle_call(ToolCallPart(tool_name='add', args={'a': 1, 'b': 2})) == 3
 
     foo_context = build_run_context(PrefixDeps(prefix='foo'))
-    foo_toolset = await ToolManager[PrefixDeps].build(toolset, foo_context)
+    foo_toolset = await ToolManager[PrefixDeps](toolset).for_run_step(foo_context)
     assert foo_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -98,7 +102,7 @@ async def test_function_toolset():
         return a - b  # pragma: lax no cover
 
     bar_context = build_run_context(PrefixDeps(prefix='bar'))
-    bar_toolset = await ToolManager[PrefixDeps].build(toolset, bar_context)
+    bar_toolset = await ToolManager[PrefixDeps](toolset).for_run_step(bar_context)
     assert bar_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -158,7 +162,7 @@ async def test_prepared_toolset_user_error_add_new_tools():
             'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
         ),
     ):
-        await ToolManager[None].build(prepared_toolset, context)
+        await ToolManager[None](prepared_toolset).for_run_step(context)
 
 
 async def test_prepared_toolset_user_error_change_tool_names():
@@ -194,7 +198,7 @@ async def test_prepared_toolset_user_error_change_tool_names():
             'Prepare function cannot add or rename tools. Use `FunctionToolset.add_function()` or `RenamedToolset` instead.'
         ),
     ):
-        await ToolManager[None].build(prepared_toolset, context)
+        await ToolManager[None](prepared_toolset).for_run_step(context)
 
 
 async def test_comprehensive_toolset_composition():
@@ -281,7 +285,7 @@ async def test_comprehensive_toolset_composition():
     # Test with regular user context
     regular_deps = TestDeps(user_role='user', enable_advanced=True)
     regular_context = build_run_context(regular_deps)
-    final_toolset = await ToolManager[TestDeps].build(prepared_toolset, regular_context)
+    final_toolset = await ToolManager[TestDeps](prepared_toolset).for_run_step(regular_context)
     # Tool definitions should have role annotation
     assert final_toolset.tool_defs == snapshot(
         [
@@ -334,7 +338,7 @@ async def test_comprehensive_toolset_composition():
     # Test with admin user context (should have string tools)
     admin_deps = TestDeps(user_role='admin', enable_advanced=True)
     admin_context = build_run_context(admin_deps)
-    admin_final_toolset = await ToolManager[TestDeps].build(prepared_toolset, admin_context)
+    admin_final_toolset = await ToolManager[TestDeps](prepared_toolset).for_run_step(admin_context)
     assert admin_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -417,7 +421,7 @@ async def test_comprehensive_toolset_composition():
     # Test with advanced features disabled
     basic_deps = TestDeps(user_role='user', enable_advanced=False)
     basic_context = build_run_context(basic_deps)
-    basic_final_toolset = await ToolManager[TestDeps].build(prepared_toolset, basic_context)
+    basic_final_toolset = await ToolManager[TestDeps](prepared_toolset).for_run_step(basic_context)
     assert basic_final_toolset.tool_defs == snapshot(
         [
             ToolDefinition(
@@ -497,6 +501,24 @@ async def test_context_manager_failed_initialization():
     assert server1.is_running is False
 
 
+async def test_tool_manager_reuse_self():
+    """Test the retry logic with failed_tools and for_run_step method."""
+
+    run_context = build_run_context(None, run_step=1)
+
+    tool_manager = await ToolManager[None](FunctionToolset()).for_run_step(run_context)
+
+    same_tool_manager = await tool_manager.for_run_step(ctx=run_context)
+
+    assert tool_manager is same_tool_manager
+
+    step_2_context = build_run_context(None, run_step=2)
+
+    updated_tool_manager = await tool_manager.for_run_step(ctx=step_2_context)
+
+    assert tool_manager != updated_tool_manager
+
+
 async def test_tool_manager_retry_logic():
     """Test the retry logic with failed_tools and for_run_step method."""
 
@@ -522,7 +544,7 @@ async def test_tool_manager_retry_logic():
 
     # Create initial context and tool manager
     initial_context = build_run_context(TestDeps())
-    tool_manager = await ToolManager[TestDeps].build(toolset, initial_context)
+    tool_manager = await ToolManager[TestDeps](toolset).for_run_step(initial_context)
 
     # Initially no failed tools
     assert tool_manager.failed_tools == set()
@@ -542,10 +564,11 @@ async def test_tool_manager_retry_logic():
     assert call_count['other_tool'] == 1
 
     # Test for_run_step - should create new tool manager with updated retry counts
-    new_context = build_run_context(TestDeps())
+    new_context = build_run_context(TestDeps(), run_step=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
     # The new tool manager should have retry count for the failed tool
+    assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'failing_tool': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
@@ -565,10 +588,11 @@ async def test_tool_manager_retry_logic():
     assert call_count['failing_tool'] == 4
 
     # Create another run step
-    another_context = build_run_context(TestDeps())
+    another_context = build_run_context(TestDeps(), run_step=2)
     another_tool_manager = await new_tool_manager.for_run_step(another_context)
 
     # Should now have retry count of 2 for failing_tool
+    assert another_tool_manager.ctx is not None
     assert another_tool_manager.ctx.retries == {'failing_tool': 2}
     assert another_tool_manager.failed_tools == set()
 
@@ -603,7 +627,7 @@ async def test_tool_manager_multiple_failed_tools():
 
     # Create tool manager
     context = build_run_context(TestDeps())
-    tool_manager = await ToolManager[TestDeps].build(toolset, context)
+    tool_manager = await ToolManager[TestDeps](toolset).for_run_step(context)
 
     # Call tool_a - should fail and be added to failed_tools
     with pytest.raises(ToolRetryError):
@@ -621,8 +645,130 @@ async def test_tool_manager_multiple_failed_tools():
     assert tool_manager.failed_tools == {'tool_a', 'tool_b'}  # unchanged
 
     # Create next run step - should have retry counts for both failed tools
-    new_context = build_run_context(TestDeps())
+    new_context = build_run_context(TestDeps(), run_step=1)
     new_tool_manager = await tool_manager.for_run_step(new_context)
 
+    assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
+
+
+async def test_visit_and_replace():
+    toolset1 = FunctionToolset(id='toolset1')
+    toolset2 = FunctionToolset(id='toolset2')
+
+    active_dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: toolset2)
+    await active_dynamic_toolset.get_tools(build_run_context(None))
+    assert active_dynamic_toolset._toolset is toolset2  # pyright: ignore[reportPrivateUsage]
+
+    inactive_dynamic_toolset = DynamicToolset(toolset_func=lambda ctx: FunctionToolset())
+
+    toolset = CombinedToolset(
+        [
+            WrapperToolset(toolset1),
+            active_dynamic_toolset,
+            inactive_dynamic_toolset,
+        ]
+    )
+    visited_toolset = toolset.visit_and_replace(lambda toolset: WrapperToolset(toolset))
+    assert visited_toolset == CombinedToolset(
+        [
+            WrapperToolset(WrapperToolset(toolset1)),
+            DynamicToolset(
+                toolset_func=active_dynamic_toolset.toolset_func,
+                per_run_step=active_dynamic_toolset.per_run_step,
+                _toolset=WrapperToolset(toolset2),
+                _run_step=active_dynamic_toolset._run_step,  # pyright: ignore[reportPrivateUsage]
+            ),
+            WrapperToolset(inactive_dynamic_toolset),
+        ]
+    )
+
+
+async def test_dynamic_toolset():
+    class EnterableToolset(AbstractToolset[None]):
+        entered_count = 0
+        exited_count = 0
+
+        @property
+        def id(self) -> str | None:
+            return None  # pragma: no cover
+
+        @property
+        def depth_count(self) -> int:
+            return self.entered_count - self.exited_count
+
+        async def __aenter__(self) -> Self:
+            self.entered_count += 1
+            return self
+
+        async def __aexit__(self, *args: Any) -> bool | None:
+            self.exited_count += 1
+            return None
+
+        async def get_tools(self, ctx: RunContext[None]) -> dict[str, ToolsetTool[None]]:
+            return {}
+
+        async def call_tool(
+            self, name: str, tool_args: dict[str, Any], ctx: RunContext[None], tool: ToolsetTool[None]
+        ) -> Any:
+            return None  # pragma: no cover
+
+    def toolset_factory(ctx: RunContext[None]) -> AbstractToolset[None]:
+        return EnterableToolset()
+
+    toolset = DynamicToolset[None](toolset_func=toolset_factory)
+
+    def get_inner_toolset(toolset: DynamicToolset[None] | None) -> EnterableToolset | None:
+        assert toolset is not None
+        inner_toolset = toolset._toolset  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(inner_toolset, EnterableToolset) or inner_toolset is None
+        return inner_toolset
+
+    run_context = build_run_context(None)
+
+    async with toolset:
+        assert not toolset._toolset  # pyright: ignore[reportPrivateUsage]
+
+        # Test that calling get_tools initializes the toolset
+        tools = await toolset.get_tools(run_context)
+
+        assert (inner_toolset := get_inner_toolset(toolset))
+        assert inner_toolset.depth_count == 1
+
+        # Test that the visitor applies when the toolset is initialized
+        def initialized_visitor(toolset: AbstractToolset[None]) -> None:
+            assert toolset is inner_toolset
+
+        toolset.apply(initialized_visitor)
+
+    assert get_inner_toolset(toolset) is None
+
+    def uninitialized_visitor(visited_toolset: AbstractToolset[None]) -> None:
+        assert visited_toolset is toolset
+
+    toolset.apply(uninitialized_visitor)
+
+    assert tools == {}
+
+
+async def test_dynamic_toolset_empty():
+    def no_toolset_func(ctx: RunContext[None]) -> None:
+        return None
+
+    toolset = DynamicToolset[None](toolset_func=no_toolset_func)
+
+    run_context = build_run_context(None)
+
+    tools = await toolset.get_tools(run_context)
+
+    assert tools == {}
+
+    async with toolset:
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+        tools = await toolset.get_tools(run_context)
+
+        assert tools == {}
+
+        assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]

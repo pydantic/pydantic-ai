@@ -109,7 +109,7 @@ class _ContextInMemorySpanExporter(SpanExporter):
 
     def export(self, spans: typing.Sequence[ReadableSpan]) -> SpanExportResult:
         """Stores a list of spans in memory."""
-        if self._stopped:  # pragma: no cover
+        if self._stopped:
             return SpanExportResult.FAILURE
         with self._lock:
             context_id = _EXPORTER_CONTEXT_ID.get()

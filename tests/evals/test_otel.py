@@ -336,9 +336,6 @@ async def test_span_node_repr(span_tree: SpanTree):
 
 async def test_span_tree_ancestors_methods():
     """Test the ancestor traversal methods in SpanNode."""
-    # Configure logfire
-    logfire.configure()
-
     # Create spans with a deep structure for testing ancestor methods
     with context_subtree() as tree:
         with logfire.span('root', depth=0):
@@ -398,9 +395,6 @@ async def test_span_tree_ancestors_methods():
 
 async def test_span_tree_descendants_methods():
     """Test the descendant traversal methods in SpanNode."""
-    # Configure logfire
-    logfire.configure()
-
     # Create spans with a deep structure for testing descendant methods
     with context_subtree() as tree:
         with logfire.span('root', depth=0):
@@ -488,9 +482,6 @@ async def test_span_tree_descendants_methods():
 
 async def test_log_levels_and_exceptions():
     """Test recording different log levels and exceptions in spans."""
-    # Configure logfire
-    logfire.configure()
-
     with context_subtree() as tree:
         # Test different log levels
         with logfire.span('parent_span'):
@@ -891,7 +882,6 @@ async def test_context_subtree_not_configured(mocker: MockerFixture):
     """Test that context_subtree correctly records spans in independent async contexts."""
     from opentelemetry.trace import ProxyTracerProvider
 
-    # from opentelemetry.sdk.trace import TracerProvider
     mocker.patch(
         'pydantic_evals.otel._context_in_memory_span_exporter.get_tracer_provider', return_value=ProxyTracerProvider()
     )

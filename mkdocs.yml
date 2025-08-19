@@ -41,8 +41,10 @@ nav:
       - input.md
       - thinking.md
       - direct.md
+      - builtin-tools.md
       - common-tools.md
       - retries.md
+      - temporal.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
@@ -72,7 +74,9 @@ nav:
       - api/agent.md
       - api/tools.md
       - api/toolsets.md
+      - api/builtin_tools.md
       - api/common_tools.md
+      - api/durable_exec.md
       - api/output.md
       - api/result.md
       - api/messages.md
@@ -118,29 +122,29 @@ extra:
   generator: false
 
 theme:
-  name: 'material'
+  name: "material"
   custom_dir: docs/.overrides
   palette:
-    - media: '(prefers-color-scheme)'
+    - media: "(prefers-color-scheme)"
       primary: pink
       accent: pink
       toggle:
         icon: material/brightness-auto
-        name: 'Switch to light mode'
-    - media: '(prefers-color-scheme: light)'
+        name: "Switch to light mode"
+    - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: pink
       accent: pink
       toggle:
         icon: material/brightness-7
-        name: 'Switch to dark mode'
-    - media: '(prefers-color-scheme: dark)'
+        name: "Switch to dark mode"
+    - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: pink
       accent: pink
       toggle:
         icon: material/brightness-4
-        name: 'Switch to system preference'
+        name: "Switch to system preference"
   features:
     - search.suggest
     - search.highlight
@@ -153,8 +157,8 @@ theme:
     - navigation.sections
     - navigation.tracking
     - toc.follow
-  logo: 'img/logo-white.svg'
-  favicon: 'favicon.ico'
+  logo: "img/logo-white.svg"
+  favicon: "favicon.ico"
 
 # https://www.mkdocs.org/user-guide/configuration/#validation
 validation:
@@ -164,13 +168,13 @@ validation:
   anchors: warn
 
 extra_css:
-  - 'extra/tweaks.css'
+  - "extra/tweaks.css"
 # used for analytics
 extra_javascript:
-  - '/flarelytics/client.js'
-  - 'https://cdn.jsdelivr.net/npm/algoliasearch@5.20.0/dist/lite/builds/browser.umd.js'
-  - 'https://cdn.jsdelivr.net/npm/instantsearch.js@4.77.3/dist/instantsearch.production.min.js'
-  - '/javascripts/algolia-search.js'
+  - "/flarelytics/client.js"
+  - "https://cdn.jsdelivr.net/npm/algoliasearch@5.20.0/dist/lite/builds/browser.umd.js"
+  - "https://cdn.jsdelivr.net/npm/instantsearch.js@4.77.3/dist/instantsearch.production.min.js"
+  - "/javascripts/algolia-search.js"
 
 markdown_extensions:
   - tables
@@ -272,5 +276,5 @@ plugins:
           - examples/*.md
 
 hooks:
-  - 'docs/.hooks/main.py'
-  - 'docs/.hooks/algolia.py'
+  - "docs/.hooks/main.py"
+  - "docs/.hooks/algolia.py"

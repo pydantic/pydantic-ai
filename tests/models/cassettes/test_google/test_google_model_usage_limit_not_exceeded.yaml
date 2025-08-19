@@ -1,0 +1,115 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '100'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: The quick brown fox jumps over the lazydog.
+        role: user
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:countTokens
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '117'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=191
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 12
+      totalTokens: 12
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '124'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: The quick brown fox jumps over the lazydog.
+        role: user
+      generationConfig: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '979'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4808
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |-
+              That's a classic! It's famously known as a **pangram**, which means it's a sentence that contains every letter of the alphabet.
+
+              It's often used for:
+              *   **Typing practice:** To ensure all keys are hit.
+              *   **Displaying font samples:** Because it showcases every character.
+
+              Just a small note, it's typically written as "lazy dog" (two words) and usually ends with a period:
+
+              **The quick brown fox jumps over the lazy dog.**
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: ZwudaISALoquqtsP9uCG6Qw
+      usageMetadata:
+        candidatesTokenCount: 109
+        promptTokenCount: 12
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 12
+        thoughtsTokenCount: 806
+        totalTokenCount: 927
+    status:
+      code: 200
+      message: OK
+version: 1

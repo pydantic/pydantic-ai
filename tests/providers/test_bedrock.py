@@ -79,9 +79,10 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     cohere_model_profile_mock.assert_called_with('command-text')
     assert cohere_profile is None
 
-    deepseek_profile = provider.model_profile('deepseek.deepseek-coder-v2')
-    deepseek_model_profile_mock.assert_called_with('deepseek-coder')
-    assert deepseek_profile is None
+    deepseek_profile = provider.model_profile('deepseek.deepseek-r1')
+    deepseek_model_profile_mock.assert_called_with('deepseek-r1')
+    assert deepseek_profile is not None
+    assert deepseek_profile.ignore_streamed_leading_whitespace is True
 
     amazon_profile = provider.model_profile('amazon.titan-text-express-v1')
     amazon_model_profile_mock.assert_called_with('titan-text-express')

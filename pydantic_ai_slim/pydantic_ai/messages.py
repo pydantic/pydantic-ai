@@ -19,7 +19,7 @@ from ._utils import (
     now_utc as _now_utc,
 )
 from .exceptions import UnexpectedModelBehavior
-from .usage import Usage
+from .usage import RequestUsage
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
@@ -490,8 +490,8 @@ _video_format_lookup: dict[str, VideoFormat] = {
 class UserPromptPart:
     """A user prompt, generally written by the end user.
 
-    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.Agent.run],
-    [`Agent.run_sync`][pydantic_ai.Agent.run_sync], and [`Agent.run_stream`][pydantic_ai.Agent.run_stream].
+    Content comes from the `user_prompt` parameter of [`Agent.run`][pydantic_ai.agent.AbstractAgent.run],
+    [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync], and [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
     """
 
     content: str | Sequence[UserContent]
@@ -532,8 +532,8 @@ tool_return_ta: pydantic.TypeAdapter[Any] = pydantic.TypeAdapter(
 
 
 @dataclass(repr=False)
-class ToolReturnPart:
-    """A tool return message, this encodes the result of running a tool."""
+class BaseToolReturnPart:
+    """Base class for tool return parts."""
 
     tool_name: str
     """The name of the "tool" was called."""
@@ -549,9 +549,6 @@ class ToolReturnPart:
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp, when the tool returned."""
-
-    part_kind: Literal['tool-return'] = 'tool-return'
-    """Part type identifier, this is available on all parts as a discriminator."""
 
     def model_response_str(self) -> str:
         """Return a string representation of the content for the model."""
@@ -579,7 +576,30 @@ class ToolReturnPart:
             },
         )
 
+    def has_content(self) -> bool:
+        """Return `True` if the tool return has content."""
+        return self.content is not None  # pragma: no cover
+
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class ToolReturnPart(BaseToolReturnPart):
+    """A tool return message, this encodes the result of running a tool."""
+
+    part_kind: Literal['tool-return'] = 'tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolReturnPart(BaseToolReturnPart):
+    """A tool return message from a built-in tool."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
+
+    part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
+    """Part type identifier, this is available on all parts as a discriminator."""
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -723,7 +743,7 @@ class ThinkingPart:
 
 
 @dataclass(repr=False)
-class ToolCallPart:
+class BaseToolCallPart:
     """A tool call from a model."""
 
     tool_name: str
@@ -740,9 +760,6 @@ class ToolCallPart:
 
     In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
     """
-
-    part_kind: Literal['tool-call'] = 'tool-call'
-    """Part type identifier, this is available on all parts as a discriminator."""
 
     def args_as_dict(self) -> dict[str, Any]:
         """Return the arguments as a Python dictionary.
@@ -780,7 +797,29 @@ class ToolCallPart:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelResponsePart = Annotated[Union[TextPart, ToolCallPart, ThinkingPart], pydantic.Discriminator('part_kind')]
+@dataclass(repr=False)
+class ToolCallPart(BaseToolCallPart):
+    """A tool call from a model."""
+
+    part_kind: Literal['tool-call'] = 'tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolCallPart(BaseToolCallPart):
+    """A tool call to a built-in tool."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response."""
+
+    part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+
+ModelResponsePart = Annotated[
+    Union[TextPart, ToolCallPart, BuiltinToolCallPart, BuiltinToolReturnPart, ThinkingPart],
+    pydantic.Discriminator('part_kind'),
+]
 """A message part returned by a model."""
 
 
@@ -791,7 +830,7 @@ class ModelResponse:
     parts: list[ModelResponsePart]
     """The parts of the model message."""
 
-    usage: Usage = field(default_factory=Usage)
+    usage: RequestUsage = field(default_factory=RequestUsage)
     """Usage information for the request.
 
     This has a default to make tests easier, and to support loading old messages where usage will be missing.
@@ -809,15 +848,15 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
-    vendor_details: dict[str, Any] | None = field(default=None)
-    """Additional vendor-specific details in a serializable format.
+    provider_details: dict[str, Any] | None = field(default=None)
+    """Additional provider-specific details in a serializable format.
 
     This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    vendor_id: str | None = None
-    """Vendor ID as specified by the model provider. This can be used to track the specific request to the model."""
+    provider_request_id: str | None = None
+    """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
@@ -854,6 +893,16 @@ class ModelResponse:
                 body['content'] = text_content
 
         return result
+
+    @property
+    @deprecated('`vendor_details` is deprecated, use `provider_details` instead')
+    def vendor_details(self) -> dict[str, Any] | None:
+        return self.provider_details
+
+    @property
+    @deprecated('`vendor_id` is deprecated, use `provider_request_id` instead')
+    def vendor_id(self) -> str | None:
+        return self.provider_request_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1172,6 +1221,29 @@ class FunctionToolResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass(repr=False)
+class BuiltinToolCallEvent:
+    """An event indicating the start to a call to a built-in tool."""
+
+    part: BuiltinToolCallPart
+    """The built-in tool call to make."""
+
+    event_kind: Literal['builtin_tool_call'] = 'builtin_tool_call'
+    """Event type identifier, used as a discriminator."""
+
+
+@dataclass(repr=False)
+class BuiltinToolResultEvent:
+    """An event indicating the result of a built-in tool call."""
+
+    result: BuiltinToolReturnPart
+    """The result of the call to the built-in tool."""
+
+    event_kind: Literal['builtin_tool_result'] = 'builtin_tool_result'
+    """Event type identifier, used as a discriminator."""
+
+
 HandleResponseEvent = Annotated[
-    Union[FunctionToolCallEvent, FunctionToolResultEvent], pydantic.Discriminator('event_kind')
+    Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
+    pydantic.Discriminator('event_kind'),
 ]

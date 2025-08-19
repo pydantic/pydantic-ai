@@ -1,0 +1,131 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '315'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the current temperature?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+        user_location:
+          city: Salvador
+          region: BRLO
+          type: approximate
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2769'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '5556'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1754568948
+      error: null
+      id: resp_689498f4519481a384a50f2cf0271f950b1cd027447c523f
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - action:
+          query: current temperature
+          type: search
+        id: ws_689498f52d8c81a3b02694a1a734a2fb0b1cd027447c523f
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations:
+          - end_index: 436
+            start_index: 342
+            title: Salvador, Brazil Weather Forecast | AerisWeather
+            type: url_citation
+            url: https://www.aerisweather.com/weather/local/br/salvador?utm_source=openai
+          logprobs: []
+          text: "As of 12:15 PM on Thursday, August 7, 2025, in Salvador, Brazil, the current weather conditions are:\n\n-
+            **Temperature:** 84°F (29°C)\n- **Feels Like:** 88°F (31°C)\n- **Condition:** Sunny\n- **Wind:** East at 16 mph
+            (25 km/h)\n- **Humidity:** 65%\n- **Dew Point:** 71°F (22°C)\n- **Pressure:** 29.88 in (1012 mb)\n- **Visibility:**
+            8 miles (13 km)\n\n([aerisweather.com](https://www.aerisweather.com/weather/local/br/salvador?utm_source=openai))\n\nThe
+            forecast for today indicates partly cloudy skies with temperatures remaining around 84°F (29°C) this afternoon. "
+          type: output_text
+        id: msg_689498f73d6c81a3b1a202c5cf0b34f90b1cd027447c523f
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: null
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+        user_location:
+          city: Salvador
+          country: null
+          region: BRLO
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 317
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 180
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 497
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

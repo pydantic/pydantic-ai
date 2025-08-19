@@ -19,3 +19,4 @@ node_modules/
 **.idea/
 .coverage*
 /test_tmp/
+.mcp.json

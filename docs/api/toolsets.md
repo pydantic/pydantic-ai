@@ -12,3 +12,4 @@
         - RenamedToolset
         - PreparedToolset
         - WrapperToolset
+        - ToolsetFunc

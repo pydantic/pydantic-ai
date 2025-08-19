@@ -115,14 +115,14 @@ You can supply a custom `GoogleProvider` instance using the `provider` argument 
 This is useful if you're using a custom-compatible endpoint with the Google Generative Language API.
 
 ```python
-from google import genai
+from google.genai import Client
 from google.genai.types import HttpOptions
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-client = genai.Client(
+client = Client(
     api_key='gemini-custom-api-key',
     http_options=HttpOptions(base_url='gemini-custom-base-url'),
 )

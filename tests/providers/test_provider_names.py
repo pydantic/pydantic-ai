@@ -27,6 +27,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
+    from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.together import TogetherProvider
@@ -50,6 +51,7 @@ with try_import() as imports_successful:
         ('together', TogetherProvider, 'TOGETHER_API_KEY'),
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
         ('github', GitHubProvider, 'GITHUB_API_KEY'),
+        ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
     ]
 
 if not imports_successful():

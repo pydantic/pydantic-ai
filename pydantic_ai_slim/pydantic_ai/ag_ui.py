@@ -25,7 +25,7 @@ from typing import (
 from pydantic import BaseModel, ValidationError
 
 from ._agent_graph import CallToolsNode, ModelRequestNode
-from .agent import Agent, AgentRun
+from .agent import AbstractAgent, AgentRun
 from .exceptions import UserError
 from .messages import (
     AgentStreamEvent,
@@ -51,7 +51,7 @@ from .settings import ModelSettings
 from .tools import AgentDepsT, ToolDefinition
 from .toolsets import AbstractToolset
 from .toolsets.deferred import DeferredToolset
-from .usage import Usage, UsageLimits
+from .usage import RunUsage, UsageLimits
 
 try:
     from ag_ui.core import (
@@ -72,6 +72,7 @@ try:
         ThinkingTextMessageContentEvent,
         ThinkingTextMessageEndEvent,
         ThinkingTextMessageStartEvent,
+        Tool as AGUITool,
         ToolCallArgsEvent,
         ToolCallEndEvent,
         ToolCallResultEvent,
@@ -99,6 +100,7 @@ except ImportError as e:  # pragma: no cover
         'you can use the `ag-ui` optional group — `pip install "pydantic-ai-slim[ag-ui]"`'
     ) from e
 
+
 __all__ = [
     'SSE_CONTENT_TYPE',
     'StateDeps',
@@ -117,7 +119,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
     def __init__(
         self,
-        agent: Agent[AgentDepsT, OutputDataT],
+        agent: AbstractAgent[AgentDepsT, OutputDataT],
         *,
         # Agent.iter parameters.
         output_type: OutputSpec[Any] | None = None,
@@ -125,7 +127,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
-        usage: Usage | None = None,
+        usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         # Starlette parameters.
@@ -206,7 +208,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
 
 
 async def handle_ag_ui_request(
-    agent: Agent[AgentDepsT, Any],
+    agent: AbstractAgent[AgentDepsT, Any],
     request: Request,
     *,
     output_type: OutputSpec[Any] | None = None,
@@ -214,7 +216,7 @@ async def handle_ag_ui_request(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    usage: Usage | None = None,
+    usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> Response:
@@ -266,7 +268,7 @@ async def handle_ag_ui_request(
 
 
 async def run_ag_ui(
-    agent: Agent[AgentDepsT, Any],
+    agent: AbstractAgent[AgentDepsT, Any],
     run_input: RunAgentInput,
     accept: str = SSE_CONTENT_TYPE,
     *,
@@ -275,7 +277,7 @@ async def run_ag_ui(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    usage: Usage | None = None,
+    usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> AsyncIterator[str]:
@@ -304,16 +306,7 @@ async def run_ag_ui(
         # AG-UI tools can't be prefixed as that would result in a mismatch between the tool names in the
         # Pydantic AI events and actual AG-UI tool names, preventing the tool from being called. If any
         # conflicts arise, the AG-UI tool should be renamed or a `PrefixedToolset` used for local toolsets.
-        toolset = DeferredToolset[AgentDepsT](
-            [
-                ToolDefinition(
-                    name=tool.name,
-                    description=tool.description,
-                    parameters_json_schema=tool.parameters,
-                )
-                for tool in run_input.tools
-            ]
-        )
+        toolset = _AGUIFrontendToolset[AgentDepsT](run_input.tools)
         toolsets = [*toolsets, toolset] if toolsets else [toolset]
 
     try:
@@ -686,3 +679,21 @@ class _ToolCallNotFoundError(_RunError, ValueError):
             message=f'Tool call with ID {tool_call_id} not found in the history.',
             code='tool_call_not_found',
         )
+
+
+class _AGUIFrontendToolset(DeferredToolset[AgentDepsT]):
+    def __init__(self, tools: list[AGUITool]):
+        super().__init__(
+            [
+                ToolDefinition(
+                    name=tool.name,
+                    description=tool.description,
+                    parameters_json_schema=tool.parameters,
+                )
+                for tool in tools
+            ]
+        )
+
+    @property
+    def label(self) -> str:
+        return 'the AG-UI frontend tools'  # pragma: no cover

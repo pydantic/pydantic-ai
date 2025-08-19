@@ -17,6 +17,7 @@ from pydantic_ai.direct import (
     model_request_sync,
 )
 from pydantic_ai.messages import (
+    FinalResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,7 +31,7 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsNow, IsStr
 
@@ -44,7 +45,7 @@ async def test_model_request():
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
-            usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
         )
     )
 
@@ -63,7 +64,7 @@ async def test_model_request_tool_call():
             parts=[ToolCallPart(tool_name='tool_name', args={}, tool_call_id=IsStr(regex='pyd_ai_.*'))],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
-            usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
+            usage=RequestUsage(input_tokens=51, output_tokens=2),
         )
     )
 
@@ -75,7 +76,7 @@ def test_model_request_sync():
             parts=[TextPart(content='success (no tool calls)')],
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
-            usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+            usage=RequestUsage(input_tokens=51, output_tokens=4),
         )
     )
 
@@ -86,6 +87,7 @@ def test_model_request_stream_sync():
         assert chunks == snapshot(
             [
                 PartStartEvent(index=0, part=TextPart(content='')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='success ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),
@@ -104,6 +106,7 @@ async def test_model_request_stream():
     assert chunks == snapshot(
         [
             PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='success ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='(no ')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='tool ')),

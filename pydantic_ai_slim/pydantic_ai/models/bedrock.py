@@ -15,9 +15,13 @@ import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, usage
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -186,17 +190,7 @@ class BedrockConverseModel(Model):
     client: BedrockRuntimeClient
 
     _model_name: BedrockModelName = field(repr=False)
-    _system: str = field(default='bedrock', repr=False)
-
-    @property
-    def model_name(self) -> str:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider, ex: openai."""
-        return self._system
+    _provider: Provider[BaseClient] = field(repr=False)
 
     def __init__(
         self,
@@ -222,15 +216,27 @@ class BedrockConverseModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
+    @property
+    def base_url(self) -> str:
+        return str(self.client.meta.endpoint_url)
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
+
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
@@ -244,10 +250,6 @@ class BedrockConverseModel(Model):
 
         return {'toolSpec': tool_spec}
 
-    @property
-    def base_url(self) -> str:
-        return str(self.client.meta.endpoint_url)
-
     async def request(
         self,
         messages: list[ModelMessage],
@@ -257,7 +259,6 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -266,10 +267,15 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
+        yield BedrockStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self.model_name,
+            _event_stream=response,
+        )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
@@ -293,13 +299,12 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        u = usage.Usage(
-            request_tokens=response['usage']['inputTokens'],
-            response_tokens=response['usage']['outputTokens'],
-            total_tokens=response['usage']['totalTokens'],
+        u = usage.RequestUsage(
+            input_tokens=response['usage']['inputTokens'],
+            output_tokens=response['usage']['outputTokens'],
         )
         vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, vendor_id=vendor_id)
+        return ModelResponse(items, usage=u, model_name=self.model_name, provider_request_id=vendor_id)
 
     @overload
     async def _messages_create(
@@ -341,6 +346,9 @@ class BedrockConverseModel(Model):
         tool_config = self._map_tool_config(model_request_parameters)
         if tool_config:
             params['toolConfig'] = tool_config
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Bedrock does not support built-in tools')
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -478,6 +486,8 @@ class BedrockConverseModel(Model):
                         else:
                             # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
                             pass
+                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                        pass
                     else:
                         assert isinstance(item, ToolCallPart)
                         content.append(self._map_tool_call(item))
@@ -637,7 +647,7 @@ class BedrockStreamedResponse(StreamedResponse):
                         )
                 if 'text' in delta:
                     maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 if 'toolUse' in delta:
                     tool_use = delta['toolUse']
@@ -659,11 +669,10 @@ class BedrockStreamedResponse(StreamedResponse):
         """Get the model name of the response."""
         return self._model_name
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.Usage:
-        return usage.Usage(
-            request_tokens=metadata['usage']['inputTokens'],
-            response_tokens=metadata['usage']['outputTokens'],
-            total_tokens=metadata['usage']['totalTokens'],
+    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        return usage.RequestUsage(
+            input_tokens=metadata['usage']['inputTokens'],
+            output_tokens=metadata['usage']['outputTokens'],
         )
 
 

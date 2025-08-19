@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any, Callable, overload
 
 from pydantic.json_schema import GenerateJsonSchema
@@ -20,36 +20,50 @@ from .abstract import AbstractToolset, ToolsetTool
 
 
 @dataclass
-class _FunctionToolsetTool(ToolsetTool[AgentDepsT]):
+class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a function toolset tool that keeps track of the function to call."""
 
     call_func: Callable[[dict[str, Any], RunContext[AgentDepsT]], Awaitable[Any]]
+    is_async: bool
 
 
-@dataclass(init=False)
 class FunctionToolset(AbstractToolset[AgentDepsT]):
     """A toolset that lets Python functions be used as tools.
 
     See [toolset docs](../toolsets.md#function-toolset) for more information.
     """
 
-    max_retries: int = field(default=1)
-    tools: dict[str, Tool[Any]] = field(default_factory=dict)
+    max_retries: int
+    tools: dict[str, Tool[Any]]
+    _id: str | None
 
-    def __init__(self, tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [], max_retries: int = 1):
+    def __init__(
+        self,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
+        max_retries: int = 1,
+        *,
+        id: str | None = None,
+    ):
         """Build a new function toolset.
 
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
+            id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
         """
         self.max_retries = max_retries
+        self._id = id
+
         self.tools = {}
         for tool in tools:
             if isinstance(tool, Tool):
                 self.add_tool(tool)
             else:
                 self.add_function(tool)
+
+    @property
+    def id(self) -> str | None:
+        return self._id
 
     @overload
     def tool(self, func: ToolFuncEither[AgentDepsT, ToolParams], /) -> ToolFuncEither[AgentDepsT, ToolParams]: ...
@@ -222,17 +236,18 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 else:
                     raise UserError(f'Tool name conflicts with previously renamed tool: {new_name!r}.')
 
-            tools[new_name] = _FunctionToolsetTool(
+            tools[new_name] = FunctionToolsetTool(
                 toolset=self,
                 tool_def=tool_def,
                 max_retries=tool.max_retries if tool.max_retries is not None else self.max_retries,
                 args_validator=tool.function_schema.validator,
                 call_func=tool.function_schema.call,
+                is_async=tool.function_schema.is_async,
             )
         return tools
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        assert isinstance(tool, _FunctionToolsetTool)
+        assert isinstance(tool, FunctionToolsetTool)
         return await tool.call_func(tool_args, ctx)

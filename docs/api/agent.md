@@ -4,9 +4,12 @@
     options:
         members:
             - Agent
+            - AbstractAgent
+            - WrapperAgent
             - AgentRun
             - AgentRunResult
             - EndStrategy
             - RunOutputDataT
             - capture_run_messages
             - InstrumentationSettings
+            - EventStreamHandler

@@ -1,3 +1,0 @@
-reviewer:
-  external_link_validation:
-    ignore_url_keywords: ["deno"]

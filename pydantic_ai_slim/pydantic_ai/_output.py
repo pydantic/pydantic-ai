@@ -977,6 +977,14 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         self.max_retries = max_retries
         self.output_validators = output_validators or []
 
+    @property
+    def id(self) -> str | None:
+        return '<output>'  # pragma: no cover
+
+    @property
+    def label(self) -> str:
+        return "the agent's output tools"
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return {
             tool_def.name: ToolsetTool(

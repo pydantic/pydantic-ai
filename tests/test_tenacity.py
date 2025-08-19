@@ -553,7 +553,7 @@ class TestIntegration:
 
         controller = Retrying(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
-            wait=wait_retry_after(max_wait=2),  # Cap at 2 seconds for tests
+            wait=wait_retry_after(max_wait=0.1),  # Cap at 0.1 seconds for tests
             stop=stop_after_attempt(3),
             reraise=True,
         )
@@ -568,5 +568,6 @@ class TestIntegration:
 
         assert result is mock_response_success
         assert mock_transport.handle_request.call_count == 2
-        # Should have waited approximately 2 seconds (capped by max_wait)
-        assert 1.8 <= (end_time - start_time) <= 3.0
+        # Should have waited approximately 0.2 seconds (capped by max_wait)
+        duration = end_time - start_time
+        assert 0.1 <= duration <= 0.2

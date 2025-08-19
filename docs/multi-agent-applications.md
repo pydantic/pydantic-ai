@@ -16,7 +16,7 @@ If you want to hand off control to another agent completely, without coming back
 
 Since agents are stateless and designed to be global, you do not need to include the agent itself in agent [dependencies](dependencies.md).
 
-You'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.Agent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
+You'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the [`usage`][pydantic_ai.agent.AbstractAgent.run] keyword argument of the delegate agent run so usage within that run counts towards the total usage of the parent agent run.
 
 !!! note "Multiple models"
     Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] to avoid unexpected costs.
@@ -53,7 +53,7 @@ result = joke_selection_agent.run_sync(
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 print(result.usage())
-#> Usage(requests=3, request_tokens=204, response_tokens=24, total_tokens=228)
+#> RunUsage(input_tokens=204, output_tokens=24, requests=3)
 ```
 
 1. The "parent" or controlling agent.
@@ -144,7 +144,7 @@ async def main():
         print(result.output)
         #> Did you hear about the toothpaste scandal? They called it Colgate.
         print(result.usage())  # (6)!
-        #> Usage(requests=4, request_tokens=309, response_tokens=32, total_tokens=341)
+        #> RunUsage(input_tokens=309, output_tokens=32, requests=4)
 ```
 
 1. Define a dataclass to hold the client and API key dependencies.
@@ -188,7 +188,7 @@ from rich.prompt import Prompt
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.usage import Usage, UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 
 class FlightDetails(BaseModel):
@@ -221,7 +221,7 @@ async def flight_search(
 usage_limits = UsageLimits(request_limit=15)  # (3)!
 
 
-async def find_flight(usage: Usage) -> Union[FlightDetails, None]:  # (4)!
+async def find_flight(usage: RunUsage) -> Union[FlightDetails, None]:  # (4)!
     message_history: Union[list[ModelMessage], None] = None
     for _ in range(3):
         prompt = Prompt.ask(
@@ -259,7 +259,7 @@ seat_preference_agent = Agent[None, Union[SeatPreference, Failed]](  # (5)!
 )
 
 
-async def find_seat(usage: Usage) -> SeatPreference:  # (6)!
+async def find_seat(usage: RunUsage) -> SeatPreference:  # (6)!
     message_history: Union[list[ModelMessage], None] = None
     while True:
         answer = Prompt.ask('What seat would you like?')
@@ -278,7 +278,7 @@ async def find_seat(usage: Usage) -> SeatPreference:  # (6)!
 
 
 async def main():  # (7)!
-    usage: Usage = Usage()
+    usage: RunUsage = RunUsage()
 
     opt_flight_details = await find_flight(usage)
     if opt_flight_details is not None:

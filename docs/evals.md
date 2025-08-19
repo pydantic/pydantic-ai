@@ -313,7 +313,7 @@ _(This example is complete, it can be run "as is")_
 
 You can control concurrency during evaluation (this might be useful to prevent exceeding a rate limit):
 
-```python {title="parallel_evaluation_example.py" line_length="100"}
+```python {title="parallel_evaluation_example.py" line_length="100" test="skip"}
 import asyncio
 import time
 

@@ -23,7 +23,7 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     @property
     def name(self) -> str:
-        return 'openai'  # pragma: no cover
+        return 'openai'
 
     @property
     def base_url(self) -> str:

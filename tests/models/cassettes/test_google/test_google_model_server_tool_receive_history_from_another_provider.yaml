@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '250'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: How much is 3 * 12390?
+          type: text
+        role: user
+      model: claude-sonnet-4-0
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - name: code_execution
+        type: code_execution_20250522
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '920'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      container:
+        expires_at: '2025-08-07T12:34:48.926660+00:00'
+        id: container_011CRtH8FB5LEPVqMkqupkTy
+      content:
+      - text: I'll calculate 3 * 12390 for you.
+        type: text
+      - id: srvtoolu_01PxRfGz768wdcfze4RwVAjw
+        input:
+          code: |-
+            result = 3 * 12390
+            print(f"3 * 12390 = {result}")
+        name: code_execution
+        type: server_tool_use
+      - content:
+          content: []
+          return_code: 0
+          stderr: ''
+          stdout: |
+            3 * 12390 = 37170
+          type: code_execution_result
+        tool_use_id: srvtoolu_01PxRfGz768wdcfze4RwVAjw
+        type: code_execution_tool_result
+      - text: 3 * 12390 = 37,170
+        type: text
+      id: msg_017vUE35gAsm2NEEH2fNLDAx
+      model: claude-sonnet-4-20250514
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 1630
+        output_tokens: 109
+        server_tool_use:
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '308'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: How much is 3 * 12390?
+        role: user
+      - parts:
+        - text: I'll calculate 3 * 12390 for you.
+        - text: 3 * 12390 = 37,170
+        role: model
+      - parts:
+        - text: Multiplied by 12390
+        role: user
+      generationConfig: {}
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '1378'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=7224
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: |+
+              Okay, I understand. You want to calculate the result of 3 * 12390, and then multiply that result by 12390 again.  In other words, you want to calculate (3 * 12390) * 12390. I'll calculate that for you.
+
+          - executableCode:
+              code: |
+                result = (3 * 12390) * 12390
+                print(result)
+              language: PYTHON
+          - codeExecutionResult:
+              outcome: OUTCOME_OK
+              output: |
+                460536300
+          - text: |
+              So, (3 * 12390) * 12390 = 460,536,300.
+          role: model
+        finishReason: STOP
+      modelVersion: gemini-2.0-flash
+      responseId: Wo-UaOCoENSLqsMPw_iTgAw
+      usageMetadata:
+        candidatesTokenCount: 141
+        candidatesTokensDetails:
+        - modality: TEXT
+          tokenCount: 141
+        promptTokenCount: 54
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 54
+        toolUsePromptTokenCount: 161
+        toolUsePromptTokensDetails:
+        - modality: TEXT
+          tokenCount: 161
+        totalTokenCount: 356
+    status:
+      code: 200
+      message: OK
+version: 1

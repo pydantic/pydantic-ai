@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from typing_extensions import Self
@@ -17,6 +17,14 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
     """
 
     wrapped: AbstractToolset[AgentDepsT]
+
+    @property
+    def id(self) -> str | None:
+        return None  # pragma: no cover
+
+    @property
+    def label(self) -> str:
+        return f'{self.__class__.__name__}({self.wrapped.label})'
 
     async def __aenter__(self) -> Self:
         await self.wrapped.__aenter__()
@@ -35,3 +43,8 @@ class WrapperToolset(AbstractToolset[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         self.wrapped.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
+    ) -> AbstractToolset[AgentDepsT]:
+        return replace(self, wrapped=self.wrapped.visit_and_replace(visitor))

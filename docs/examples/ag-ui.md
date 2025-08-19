@@ -59,7 +59,7 @@ Next run the AG-UI Dojo example frontend.
 This demonstrates a basic agent interaction including Pydantic AI server side
 tools and AG-UI client side tools.
 
-View the [Agentic Chat example](http://localhost:3000/pydantic-ai/feature/agentic_chat).
+If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/agentic_chat>.
 
 #### Agent Tools
 
@@ -95,7 +95,7 @@ Perform the following steps, waiting for the response of each step before contin
 Demonstrates a long running task where the agent sends updates to the frontend
 to let the user know what's happening.
 
-View the [Agentic Generative UI example](http://localhost:3000/pydantic-ai/feature/agentic_generative_ui).
+If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/agentic_generative_ui>.
 
 #### Plan Prompts
 
@@ -132,7 +132,7 @@ Demonstrates how to use the predictive state updates feature to update the state
 of the UI based on agent responses, including user interaction via user
 confirmation.
 
-View the [Predictive State Updates example](http://localhost:3000/pydantic-ai/feature/predictive_state_updates).
+If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/predictive_state_updates>.
 
 #### Story Tools
 
@@ -168,7 +168,7 @@ State sent to the agent is detected by a function based instruction. This then
 validates the data using a custom pydantic model before using to create the
 instructions for the agent to follow and send to the client using a AG-UI tool.
 
-View the [Shared State example](http://localhost:3000/pydantic-ai/feature/shared_state).
+If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/shared_state>.
 
 #### Recipe Tools
 
@@ -187,7 +187,7 @@ View the [Shared State example](http://localhost:3000/pydantic-ai/feature/shared
 
 Demonstrates customised rendering for tool output with used confirmation.
 
-View the [Tool Based Generative UI example](http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui).
+If you've [run the example](#running-the-example), you can view it at <http://localhost:3000/pydantic-ai/feature/tool_based_generative_ui>.
 
 #### Haiku Tools
 

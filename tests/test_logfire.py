@@ -298,6 +298,7 @@ def test_logfire(
                                 'kind': 'function',
                             }
                         ],
+                        'builtin_tools': [],
                         'output_mode': 'text',
                         'output_tools': [],
                         'output_object': None,
@@ -557,10 +558,7 @@ def test_instrument_all():
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.anyio
 async def test_feedback(capfire: CaptureLogfire) -> None:
-    try:
-        from logfire.experimental.annotations import record_feedback
-    except ImportError:  # pragma: lax no cover
-        pytest.skip('Requires recent version of logfire')
+    from logfire.experimental.annotations import record_feedback
 
     my_agent = Agent(model=TestModel(), instrument=True)
 
@@ -586,14 +584,44 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'test',
                     'gen_ai.request.model': 'test',
-                    'model_request_parameters': '{"function_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
+                    'model_request_parameters': IsJson(
+                        {
+                            'function_tools': [],
+                            'builtin_tools': [],
+                            'output_mode': 'text',
+                            'output_object': None,
+                            'output_tools': [],
+                            'allow_text_output': True,
+                        }
+                    ),
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',
                     'gen_ai.usage.input_tokens': 51,
                     'gen_ai.usage.output_tokens': 4,
                     'gen_ai.response.model': 'test',
-                    'events': '[{"content": "Hello", "role": "user", "gen_ai.system": "test", "gen_ai.message.index": 0, "event.name": "gen_ai.user.message"}, {"index": 0, "message": {"role": "assistant", "content": "success (no tool calls)"}, "gen_ai.system": "test", "event.name": "gen_ai.choice"}]',
-                    'logfire.json_schema': '{"type": "object", "properties": {"events": {"type": "array"}, "model_request_parameters": {"type": "object"}}}',
+                    'events': IsJson(
+                        [
+                            {
+                                'content': 'Hello',
+                                'role': 'user',
+                                'gen_ai.system': 'test',
+                                'gen_ai.message.index': 0,
+                                'event.name': 'gen_ai.user.message',
+                            },
+                            {
+                                'index': 0,
+                                'message': {'role': 'assistant', 'content': 'success (no tool calls)'},
+                                'gen_ai.system': 'test',
+                                'event.name': 'gen_ai.choice',
+                            },
+                        ]
+                    ),
+                    'logfire.json_schema': IsJson(
+                        {
+                            'type': 'object',
+                            'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
+                        }
+                    ),
                 },
             },
             {
