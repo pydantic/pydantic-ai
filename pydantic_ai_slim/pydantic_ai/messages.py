@@ -423,7 +423,18 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
+@dataclass(repr=False)
+class UploadedFile:
+    """File uploaded to the LLM provider."""
+
+    file: Any
+    """A provider-specific file object, e.g. a file ID or a file URL."""
+
+    kind: Literal['uploaded-file'] = 'uploaded-file'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+
+UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile'
 
 
 @dataclass(repr=False)
