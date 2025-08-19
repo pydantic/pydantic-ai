@@ -48,7 +48,7 @@ from .otel._context_subtree import context_subtree
 from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, ReportCaseFailure
 
 if TYPE_CHECKING:
-    from tenacity import AsyncRetrying
+    from pydantic_ai.retries import RetryConfig
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
@@ -264,7 +264,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         name: str | None = None,
         max_concurrency: int | None = None,
         progress: bool = True,
-        retry: AsyncRetrying | None = None,
+        retry_task: RetryConfig | None = None,
+        retry_evaluators: RetryConfig | None = None,
     ) -> EvaluationReport[InputsT, OutputT, MetadataT]:
         """Evaluates the test cases in the dataset using the given task.
 
@@ -279,7 +280,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             max_concurrency: The maximum number of concurrent evaluations of the task to allow.
                 If None, all cases will be evaluated concurrently.
             progress: Whether to show a progress bar for the evaluation. Defaults to `True`.
-            retry: Optional retry configuration for the task execution.
+            retry_task: Optional retry configuration for the task execution.
+            retry_evaluators: Optional retry configuration for evaluator execution.
 
         Returns:
             A report containing the results of the evaluation.
@@ -295,7 +297,9 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
                 async with limiter:
-                    result = await _run_task_and_evaluators(task, case, report_case_name, self.evaluators, retry)
+                    result = await _run_task_and_evaluators(
+                        task, case, report_case_name, self.evaluators, retry_task, retry_evaluators
+                    )
                     if progress_bar and task_id is not None:  # pragma: no branch
                         progress_bar.update(task_id, advance=1)
                     return result
@@ -828,14 +832,14 @@ class _TaskRun:
 async def _run_task(
     task: Callable[[InputsT], Awaitable[OutputT] | OutputT],
     case: Case[InputsT, OutputT, MetadataT],
-    retry: AsyncRetrying | None = None,
+    retry: RetryConfig | None = None,
 ) -> EvaluatorContext[InputsT, OutputT, MetadataT]:
     """Run a task on a case and return the context for evaluators.
 
     Args:
         task: The task to run.
         case: The case to run the task on.
-        retry: The retry strategy to use.
+        retry: The retry config to use.
 
     Returns:
         An EvaluatorContext containing the inputs, actual output, expected output, and metadata.
@@ -868,11 +872,10 @@ async def _run_task(
 
     async def _run_with_retries():
         if retry:
-            async for attempt in retry:
-                with attempt:
-                    return await _run_once()
-        # Note: the following line will be unreachable if retry is not None
-        return await _run_once()
+            return await retry.decorator(_run_once)()
+        else:
+            # Note: the following line will be unreachable if retry is not None
+            return await _run_once()
 
     task_run, task_output, duration, span_tree = await _run_with_retries()
 
@@ -913,7 +916,8 @@ async def _run_task_and_evaluators(
     case: Case[InputsT, OutputT, MetadataT],
     report_case_name: str,
     dataset_evaluators: list[Evaluator[InputsT, OutputT, MetadataT]],
-    retry: AsyncRetrying | None,
+    retry_task: RetryConfig | None,
+    retry_evaluators: RetryConfig | None,
 ) -> ReportCase[InputsT, OutputT, MetadataT] | ReportCaseFailure[InputsT, OutputT, MetadataT]:
     """Run a task on a case and evaluate the results.
 
@@ -922,7 +926,7 @@ async def _run_task_and_evaluators(
         case: The case to run the task on.
         report_case_name: The name to use for this case in the report.
         dataset_evaluators: Evaluators from the dataset to apply to this case.
-        retry: The retry strategy to use for running the task.
+        retry_task: The retry config to use for running the task.
 
     Returns:
         A ReportCase containing the evaluation results.
@@ -944,7 +948,7 @@ async def _run_task_and_evaluators(
                 span_id = f'{context.span_id:016x}'
 
             t0 = time.time()
-            scoring_context = await _run_task(task, case, retry)
+            scoring_context = await _run_task(task, case, retry_task)
 
             case_span.set_attribute('output', scoring_context.output)
             case_span.set_attribute('task_duration', scoring_context.duration)
@@ -956,7 +960,7 @@ async def _run_task_and_evaluators(
             evaluator_failures: list[EvaluatorFailure] = []
             if evaluators:
                 evaluator_outputs_by_task = await task_group_gather(
-                    [lambda ev=ev: run_evaluator(ev, scoring_context) for ev in evaluators]
+                    [lambda ev=ev: run_evaluator(ev, scoring_context, retry_evaluators) for ev in evaluators]
                 )
                 for outputs in evaluator_outputs_by_task:
                     if isinstance(outputs, EvaluatorFailure):

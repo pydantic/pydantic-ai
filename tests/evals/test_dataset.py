@@ -316,7 +316,7 @@ async def test_evaluate_with_retried_task_failure(
             return TaskOutput(answer='Paris')
         return TaskOutput(answer='Unknown')  # pragma: no cover
 
-    report = await example_dataset.evaluate(mock_async_task, retry=AsyncRetrying(stop=stop_after_attempt(3)))
+    report = await example_dataset.evaluate(mock_async_task, retry_task=AsyncRetrying(stop=stop_after_attempt(3)))
 
     assert attempt == 3
 

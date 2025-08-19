@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import logfire_api
 from pydantic import (
@@ -20,6 +20,12 @@ from .evaluator import (
     EvaluatorFailure,
     EvaluatorOutput,
 )
+
+if TYPE_CHECKING:
+    # TODO: pydantic_evals should not import from pydantic_ai...
+    #   Need to figure out a good way to sneak retry behavior into the evaluators..
+    # Well, the problem is that we probably want to use the retry stuff in both pydantic_ai and pydantic_evals ... ugh.
+    from pydantic_ai.retries import RetryConfig
 
 # while waiting for https://github.com/pydantic/logfire/issues/745
 try:
@@ -40,7 +46,9 @@ _logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 
 
 async def run_evaluator(
-    evaluator: Evaluator[InputsT, OutputT, MetadataT], ctx: EvaluatorContext[InputsT, OutputT, MetadataT]
+    evaluator: Evaluator[InputsT, OutputT, MetadataT],
+    ctx: EvaluatorContext[InputsT, OutputT, MetadataT],
+    retry: RetryConfig | None = None,
 ) -> list[EvaluationResult] | EvaluatorFailure:
     """Run an evaluator and return the results.
 
@@ -50,6 +58,7 @@ async def run_evaluator(
     Args:
         evaluator: The evaluator to run.
         ctx: The context containing the inputs, outputs, and metadata for evaluation.
+        retry: The retry configuration to use for running the evaluator.
 
     Returns:
         A list of evaluation results, or an evaluator failure if an exception is raised during its execution.
@@ -57,12 +66,16 @@ async def run_evaluator(
     Raises:
         ValueError: If the evaluator returns a value of an invalid type.
     """
+    evaluate = evaluator.evaluate_async
+    if retry is not None:
+        evaluate = retry.tenacity_decorator(evaluate)
+
     try:
         with _logfire.span(
             'evaluator: {evaluator_name}',
             evaluator_name=evaluator.get_default_evaluation_name(),
         ):
-            raw_results = await evaluator.evaluate_async(ctx)
+            raw_results = await evaluate(ctx)
 
             try:
                 results = _EVALUATOR_OUTPUT_ADAPTER.validate_python(raw_results)

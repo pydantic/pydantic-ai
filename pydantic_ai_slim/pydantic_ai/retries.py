@@ -13,25 +13,85 @@ The module includes:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from httpx import AsyncBaseTransport, AsyncHTTPTransport, BaseTransport, HTTPTransport, Request, Response
+from pydantic_core import PydanticUndefinedType as Undefined
 
 try:
-    from tenacity import AsyncRetrying, Retrying
+    from tenacity import AsyncRetrying, Retrying, WrappedFn
 except ImportError as _import_error:
     raise ImportError(
         'Please install `tenacity` to use the retries utilities, '
         'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
     ) from _import_error
 
-
-__all__ = ['TenacityTransport', 'AsyncTenacityTransport', 'wait_retry_after']
-
+from collections.abc import Awaitable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from httpx import HTTPStatusError
-from tenacity import RetryCallState, wait_exponential
+from tenacity import RetryCallState, RetryError, retry, wait_exponential
+
+if TYPE_CHECKING:
+    from tenacity.asyncio.retry import RetryBaseT
+    from tenacity.retry import RetryBaseT as SyncRetryBaseT
+    from tenacity.stop import StopBaseT
+    from tenacity.wait import WaitBaseT
+
+__all__ = ['RetryConfig', 'TenacityTransport', 'AsyncTenacityTransport', 'wait_retry_after']
+
+UNDEFINED = Undefined()
+
+
+@dataclass
+class RetryConfig:
+    """These are the arguments to the tenacity retry function and AsyncRetrying/Retrying classes."""
+
+    # The following arguments cannot be None in tenacity but have private default values, so we use None as a sentinel
+    sleep: Callable[[int | float], None | Awaitable[None]] | None = None
+    stop: StopBaseT | None = None
+    wait: WaitBaseT | None = None
+    retry: SyncRetryBaseT | RetryBaseT | None = None
+    before: Callable[[RetryCallState], None | Awaitable[None]] | None = None
+    after: Callable[[RetryCallState], None | Awaitable[None]] | None = None
+
+    # The following have public types and default values in tenacity, so we just repeat them verbatim here
+    before_sleep: Callable[[RetryCallState], None | Awaitable[None]] | None = None
+    reraise: bool = False
+    retry_error_cls: type[RetryError] = RetryError
+    retry_error_callback: Callable[[RetryCallState], Any | Awaitable[Any]] | None = None
+
+    def tenacity_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            'before_sleep': self.before_sleep,
+            'reraise': self.reraise,
+            'retry_error_cls': self.retry_error_cls,
+            'retry_error_callback': self.retry_error_callback,
+        }
+        if self.sleep is not None:
+            kwargs['sleep'] = self.sleep
+        if self.stop is not None:
+            kwargs['stop'] = self.stop
+        if self.wait is not None:
+            kwargs['wait'] = self.wait
+        if self.retry is not None:
+            kwargs['retry'] = self.retry
+        if self.before is not None:
+            kwargs['before'] = self.before
+        if self.after is not None:
+            kwargs['after'] = self.after
+
+        return kwargs
+
+    def tenacity_decorator(self, function: WrappedFn) -> WrappedFn:
+        """Wrap the provided function using this config to populate the tenacity `retry` decorator.
+
+        Returns:
+            A wrapped version of the function that will use this configuration for tenacity-based retrying when called.
+        """
+        return retry(**self.tenacity_kwargs())(function)
 
 
 class TenacityTransport(BaseTransport):
@@ -76,7 +136,7 @@ class TenacityTransport(BaseTransport):
 
     def __init__(
         self,
-        controller: Retrying,
+        controller: RetryConfig | Retrying,
         wrapped: BaseTransport | None = None,
         validate_response: Callable[[Response], None] | None = None,
     ):
@@ -97,7 +157,10 @@ class TenacityTransport(BaseTransport):
             RuntimeError: If the retry controller did not make any attempts.
             Exception: Any exception raised by the wrapped transport or validation function.
         """
-        for attempt in self.controller:
+        controller = (
+            self.controller if isinstance(self.controller, Retrying) else Retrying(**self.controller.tenacity_kwargs())
+        )
+        for attempt in controller:
             with attempt:
                 response = self.wrapped.handle_request(request)
                 if self.validate_response:
@@ -147,7 +210,7 @@ class AsyncTenacityTransport(AsyncBaseTransport):
 
     def __init__(
         self,
-        controller: AsyncRetrying,
+        controller: RetryConfig | AsyncRetrying,
         wrapped: AsyncBaseTransport | None = None,
         validate_response: Callable[[Response], None] | None = None,
     ):
@@ -168,7 +231,12 @@ class AsyncTenacityTransport(AsyncBaseTransport):
             RuntimeError: If the retry controller did not make any attempts.
             Exception: Any exception raised by the wrapped transport or validation function.
         """
-        async for attempt in self.controller:
+        controller = (
+            self.controller
+            if isinstance(self.controller, AsyncRetrying)
+            else AsyncRetrying(**self.controller.tenacity_kwargs())
+        )
+        async for attempt in controller:
             with attempt:
                 response = await self.wrapped.handle_async_request(request)
                 if self.validate_response:
