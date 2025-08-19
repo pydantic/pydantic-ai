@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
+from openai.types import FileObject
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
 
@@ -36,6 +37,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -697,6 +699,16 @@ class OpenAIModel(Model):
                     content.append(file)
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
+                elif isinstance(item, UploadedFile):
+                    if not isinstance(item.file, FileObject):
+                        raise UserError('UploadedFile.file_object must be an OpenAI FileObject')
+                    file = File(
+                        file=FileFile(
+                            file_id=item.file.id,
+                        ),
+                        type='file',
+                    )
+                    content.append(file)
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
