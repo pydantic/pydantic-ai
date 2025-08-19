@@ -1,0 +1,85 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '206'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content:
+        - text: Give me a short description of this image
+          type: text
+        - file:
+            file_id: file-7yEHnJNSSBeUYfkLq6G8KG
+          type: file
+        role: user
+      model: gpt-4o
+      stream: false
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '974'
+      content-type:
+      - application/json
+      openai-organization:
+      - coplane
+      openai-processing-ms:
+      - '4261'
+      openai-project:
+      - proj_KGkpeAYM2vPXvZOVtXfnuZ9r
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The image is a simple design of a classic yellow smiley face. It features a bright yellow circle with two
+            black dots for eyes and a curved black line for a smiling mouth.
+          refusal: null
+          role: assistant
+      created: 1755630898
+      id: chatcmpl-C6M5KUA0T23RWuMTuAopnIc4ygeJb
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_80956533cb
+      usage:
+        completion_tokens: 36
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 312
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 348
+    status:
+      code: 200
+      message: OK
+version: 1

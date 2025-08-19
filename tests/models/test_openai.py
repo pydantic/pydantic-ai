@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -52,7 +53,7 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI
-    from openai.types import chat
+    from openai.types import FileObject, chat
     from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
@@ -2926,3 +2927,35 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
 
     result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
     assert result.output == snapshot('Paris.')
+
+
+async def test_uploaded_file_input(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIModel('gpt-4o', provider=provider)
+    # VCR recording breaks when dealing with openai file upload request due to
+    # binary contents. For that reason, we have manually run once the upload
+    # and rebuild the FileObject manually (from the print command output).
+    # with open('tests/assets/smiley.pdf', 'rb') as f:
+    #     file_bytes = f.read()
+    # openai_file = await provider.client.files.create(
+    #     file=('image.pdf', file_bytes, 'application/pdf'),
+    #     purpose='user_data',
+    # )
+    # print(openai_file)
+    openai_file = FileObject(
+        id='file-7yEHnJNSSBeUYfkLq6G8KG',
+        bytes=5930,
+        created_at=1755612061,
+        filename='image.pdf',  # OpenAI file upload API only accepts pdf
+        object='file',
+        purpose='user_data',
+        status='processed',
+        expires_at=None,
+        status_details=None,
+    )
+    agent = Agent(m)
+
+    result = await agent.run(['Give me a short description of this image', UploadedFile(file=openai_file)])
+    assert result.output == snapshot(
+        'The image is a simple design of a classic yellow smiley face. It features a bright yellow circle with two black dots for eyes and a curved black line for a smiling mouth.'
+    )
