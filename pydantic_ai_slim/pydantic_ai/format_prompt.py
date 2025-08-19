@@ -200,11 +200,11 @@ class _ToXml:
     @classmethod
     def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo) -> dict[str, str]:
         attributes: dict[str, str] = {}
-        for attr in cls._FIELD_ATTRIBUTES:
-            attr_value = getattr(info, attr, None)
-            if attr_value is not None:
-                attributes[attr] = str(attr_value)
-        return attributes
+        return {
+            attr: str(value)
+            for attr in cls._FIELD_ATTRIBUTES
+            if (value := getattr(info, attr, None)) is not None
+        }
 
 
 def _rootless_xml_elements(root: ElementTree.Element, indent: str | None) -> Iterator[str]:
