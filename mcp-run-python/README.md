@@ -12,7 +12,7 @@ The server can be run with `deno` installed using:
 ```bash
 deno run \
   -N -R=node_modules -W=node_modules --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
+  jsr:@pydantic/mcp-run-python [stdio|sse|warmup] [--mount local_path:pyodide_path]
 ```
 
 where:
@@ -29,6 +29,9 @@ where:
   running the server as an HTTP server to connect locally or remotely
 - `warmup` will run a minimal Python script to download and cache the Python standard library. This is also useful to
   check the server is running correctly.
+- `--mount local_path:pyodide_path` (optional) mounts a local filesystem directory to the Pyodide filesystem, allowing
+  Python code to read and write files. Files are automatically synced back to the local filesystem after successful
+  execution.
 
 Here's an example of using `@pydantic/mcp-run-python` with Pydantic AI:
 
