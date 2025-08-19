@@ -84,6 +84,7 @@ class MyModel(Model):
             ],
             usage=RequestUsage(input_tokens=100, output_tokens=200),
             model_name='my_model_123',
+            provider_details=dict(finish_reason='stop', foo='bar'),
         )
 
     @asynccontextmanager
@@ -756,6 +757,7 @@ Fix the errors and try again.\
                                     },
                                     {'type': 'text', 'content': 'text2'},
                                 ],
+                                'finish_reason': 'stop',
                             }
                         ],
                         'gen_ai.response.model': 'my_model_123',
