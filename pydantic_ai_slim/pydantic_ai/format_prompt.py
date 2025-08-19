@@ -109,17 +109,17 @@ class _ToXml:
             element.text = value.isoformat()
         elif isinstance(value, Mapping):
             if tag is None and self._element_names and path in self._element_names:
-                element = self._create_element(self._element_names[path], path)
+                element.tag = self._element_names[path]
             self._mapping_to_xml(element, value, path)  # pyright: ignore[reportUnknownArgumentType]
         elif is_dataclass(value) and not isinstance(value, type):
             self._init_structure_info()
             if tag is None:
-                element = self._create_element(value.__class__.__name__, path)
+                element.tag = value.__class__.__name__
             self._mapping_to_xml(element, asdict(value), path)
         elif isinstance(value, BaseModel):
             self._init_structure_info()
             if tag is None:
-                element = self._create_element(value.__class__.__name__, path)
+                element.tag = value.__class__.__name__
             # by dumping the model we loose all metadata in nested data structures,
             # but we have collected it when called _init_structure_info
             self._mapping_to_xml(element, value.model_dump(mode='python'), path)
