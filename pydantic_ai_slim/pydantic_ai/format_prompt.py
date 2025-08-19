@@ -92,10 +92,10 @@ class _ToXml:
     _is_info_extracted: bool = False
     _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
 
-    def to_xml(self, tag: str | None) -> ElementTree.Element:
-        return self._to_xml(self.data, tag)
+    def to_xml(self, tag: str | None = None) -> ElementTree.Element:
+        return self._to_xml(value=self.data, path='', tag=tag)
 
-    def _to_xml(self, value: Any, tag: str | None, path: str = '') -> ElementTree.Element:
+    def _to_xml(self, value: Any, path: str, tag: str | None = None) -> ElementTree.Element:
         element = self._create_element(self.item_tag if tag is None else tag, path)
         if value is None:
             element.text = self.none_str
@@ -125,7 +125,7 @@ class _ToXml:
             self._mapping_to_xml(element, value.model_dump(mode='python'), path)
         elif isinstance(value, Iterable):
             for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-                element.append(self._to_xml(item, None, f'{path}.[{n}]' if path else f'[{n}]'))
+                element.append(self._to_xml(value=item, path=f'{path}.[{n}]' if path else f'[{n}]'))
         else:
             raise TypeError(f'Unsupported type for XML formatting: {type(value)}')
         return element
@@ -158,7 +158,7 @@ class _ToXml:
                 key = str(key)
             elif not isinstance(key, str):
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
-            element.append(self._to_xml(value, key, f'{path}.{key}' if path else key))
+            element.append(self._to_xml(value=value, path=f'{path}.{key}' if path else key, tag=key))
 
     def _parse_data_structures(
         self,
