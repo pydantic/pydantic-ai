@@ -85,7 +85,7 @@ class _ToXml:
     # a map of Pydantic Field paths to their metadata: a field unique string representation and its class
     _fields: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] | None = None
     # keep track of fields we have extracted attributes from
-    _parsed_fields: set[str] = field(default_factory=set)
+    _included_fields: set[str] = field(default_factory=set)
     # keep track of class names for dataclasses and Pydantic models, that occur in lists
     _element_names: dict[str, str] | None = None
     _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
@@ -133,11 +133,11 @@ class _ToXml:
         element = ElementTree.Element(tag)
         if self._fields and path in self._fields:
             field_repr, field_info = self._fields[path]
-            if self.repeat_field_info or field_repr not in self._parsed_fields:
+            if self.repeat_field_info or field_repr not in self._included_fields:
                 field_attributes = self._extract_attributes(field_info)
                 for k, v in field_attributes.items():
                     element.set(k, v)
-                self._parsed_fields.add(field_repr)
+                self._included_fields.add(field_repr)
         return element
 
     def _init_fields_info(self):
@@ -199,12 +199,7 @@ class _ToXml:
 
     @classmethod
     def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo) -> dict[str, str]:
-        attributes: dict[str, str] = {}
-        return {
-            attr: str(value)
-            for attr in cls._FIELD_ATTRIBUTES
-            if (value := getattr(info, attr, None)) is not None
-        }
+        return {attr: str(value) for attr in cls._FIELD_ATTRIBUTES if (value := getattr(info, attr, None)) is not None}
 
 
 def _rootless_xml_elements(root: ElementTree.Element, indent: str | None) -> Iterator[str]:
