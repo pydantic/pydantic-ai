@@ -83,11 +83,13 @@ class _ToXml:
     include_field_info: bool
     repeat_field_info: bool
     # a map of Pydantic Field paths to their metadata: a field unique string representation and its class
-    _fields: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] | None = None
+    _fields: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] = field(default_factory=dict)
     # keep track of fields we have extracted attributes from
     _included_fields: set[str] = field(default_factory=set)
     # keep track of class names for dataclasses and Pydantic models, that occur in lists
-    _element_names: dict[str, str] | None = None
+    _element_names: dict[str, str] = field(default_factory=dict)
+    # flag parsing dataclasses and Pydantic models once
+    _is_parsed: bool = False
     _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
 
     def to_xml(self, tag: str | None) -> ElementTree.Element:
@@ -141,11 +143,9 @@ class _ToXml:
 
     def _init_structure_info(self):
         """Create maps with all data information (fields info and class names), if not already created."""
-        if self._element_names is None:
-            self._element_names = {}
-            if self.include_field_info and self._fields is None:
-                self._fields = {}
-            self._parse_data_structures(self.data, fields_map=self._fields, element_names=self._element_names)
+        if not self._is_parsed:
+            self._parse_data_structures(self.data)
+            self._is_parsed = True
 
     def _mapping_to_xml(
         self,
@@ -160,12 +160,9 @@ class _ToXml:
                 raise TypeError(f'Unsupported key type for XML formatting: {type(key)}, only str and int are allowed')
             element.append(self._to_xml(value, key, f'{path}.{key}' if path else key))
 
-    @classmethod
     def _parse_data_structures(
-        cls,
+        self,
         value: Any,
-        element_names: dict[str, str] | None = None,
-        fields_map: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] | None = None,
         path: str = '',
     ):
         """Parse data structures as dataclasses or Pydantic models to extract element names and attributes."""
@@ -173,26 +170,24 @@ class _ToXml:
             return
         elif isinstance(value, Mapping):
             for k, v in value.items():  # pyright: ignore[reportUnknownVariableType]
-                cls._parse_data_structures(v, element_names, fields_map, f'{path}.{k}' if path else f'{k}')
+                self._parse_data_structures(v, f'{path}.{k}' if path else f'{k}')
         elif is_dataclass(value) and not isinstance(value, type):
-            if element_names is not None:
-                element_names[path] = value.__class__.__name__
+            self._element_names[path] = value.__class__.__name__
             for k, v in asdict(value).items():
-                cls._parse_data_structures(v, element_names, fields_map, f'{path}.{k}' if path else f'{k}')
+                self._parse_data_structures(v, f'{path}.{k}' if path else f'{k}')
         elif isinstance(value, BaseModel):
-            if element_names is not None:
-                element_names[path] = value.__class__.__name__
+            self._element_names[path] = value.__class__.__name__
             for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
                 for field, info in model_fields.items():
                     new_path = f'{path}.{field}' if path else field
                     field_repr = f'{value.__class__.__name__}.{field}'
-                    if (fields_map is not None) and (isinstance(info, ComputedFieldInfo) or not info.exclude):
-                        fields_map[new_path] = (field_repr, info)
-                    cls._parse_data_structures(getattr(value, field), element_names, fields_map, new_path)
+                    if self.include_field_info and (isinstance(info, ComputedFieldInfo) or not info.exclude):
+                        self._fields[new_path] = (field_repr, info)
+                    self._parse_data_structures(getattr(value, field), new_path)
         elif isinstance(value, Iterable):
             for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
                 new_path = f'{path}.[{n}]' if path else f'[{n}]'
-                cls._parse_data_structures(item, element_names, fields_map, new_path)
+                self._parse_data_structures(item, new_path)
 
     @classmethod
     def _extract_attributes(cls, info: FieldInfo | ComputedFieldInfo) -> dict[str, str]:
