@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
+from httpx import URL
 from openai.types import FileObject
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
@@ -625,7 +626,7 @@ class OpenAIModel(Model):
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield await self._map_user_prompt(part)
+                yield await self._map_user_prompt(part, self._provider)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -647,7 +648,7 @@ class OpenAIModel(Model):
                 assert_never(part)
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+    async def _map_user_prompt(part: UserPromptPart, provider: Provider[Any]) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -700,15 +701,8 @@ class OpenAIModel(Model):
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 elif isinstance(item, UploadedFile):
-                    if not isinstance(item.file, FileObject):
-                        raise UserError('UploadedFile.file_object must be an OpenAI FileObject')
-                    file = File(
-                        file=FileFile(
-                            file_id=item.file.id,
-                        ),
-                        type='file',
-                    )
-                    content.append(file)
+                    file = _map_uploaded_file(item, provider)
+                    content.append(File(file=FileFile(file_id=file.id), type='file'))
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
@@ -996,7 +990,7 @@ class OpenAIResponsesModel(Model):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
-                        openai_messages.append(await self._map_user_prompt(part))
+                        openai_messages.append(await self._map_user_prompt(part, self._provider))
                     elif isinstance(part, ToolReturnPart):
                         openai_messages.append(
                             FunctionCallOutput(
@@ -1078,7 +1072,7 @@ class OpenAIResponsesModel(Model):
         return response_format_param
 
     @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:
+    async def _map_user_prompt(part: UserPromptPart, provider: Provider[Any]) -> responses.EasyInputMessageParam:
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1136,6 +1130,9 @@ class OpenAIResponsesModel(Model):
                     )
                 elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI.')
+                elif isinstance(item, UploadedFile):
+                    file = _map_uploaded_file(item, provider)
+                    content.append(responses.ResponseInputFileParam(file_id=file.id, type='input_file'))
                 else:
                     assert_never(item)
         return responses.EasyInputMessageParam(role='user', content=content)
@@ -1370,3 +1367,19 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             u.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens or 0
             u.cache_read_tokens = response_usage.prompt_tokens_details.cached_tokens or 0
         return u
+
+
+def _map_openai_uploaded_file(item: UploadedFile) -> FileObject:
+    if not isinstance(item.file, FileObject):
+        raise UserError('UploadedFile.file must be an openai.types.FileObject')
+    return item.file
+
+
+def _map_uploaded_file(uploaded_file: UploadedFile, provider: Provider[Any]) -> FileObject:
+    """Map an UploadedFile to a File object."""
+    url = URL(provider.base_url)
+
+    if url.host == 'api.openai.com':
+        return _map_openai_uploaded_file(uploaded_file)
+    else:
+        raise UserError(f'UploadedFile is not supported for `{provider.name}` with base_url {provider.base_url}.')
