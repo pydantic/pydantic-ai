@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.models import cached_async_http_client
 
 try:
     from dbos import DBOS, DBOSConfig
+
+    from pydantic_ai.durable_exec.dbos import DBOSAgent
 except ImportError:  # pragma: lax no cover
     import pytest
 
@@ -75,22 +78,14 @@ DBOS_CONFIG: DBOSConfig = {
 
 
 @pytest.fixture()
-async def dbos() -> AsyncGenerator[DBOS, None]:
-    DBOS.destroy(destroy_registry=True)
-
-    # This launches for test convenience.
-    #    Tests add to running DBOS and then call stuff without adding
-    #     launch themselves.
-    # If your test is tricky and has a problem with this, use a different
-    #   fixture that does not launch.
+def dbos() -> Generator[DBOS, Any, None]:
     dbos = DBOS(config=DBOS_CONFIG)
     DBOS.launch()
-
     yield dbos
-    DBOS.destroy(destroy_registry=True)
+    DBOS.destroy()
 
 
-async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str):
+async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
     """Test that a simple agent can run in a DBOS workflow."""
     model = OpenAIModel(
         'gpt-4o',
@@ -101,6 +96,7 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
     )
 
     simple_agent = Agent(model, name='simple_agent')
+    simple_dbos_agent = DBOSAgent(simple_agent)
 
-    result = await simple_agent.run('What is the capital of Mexico?')
+    result = await simple_dbos_agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
