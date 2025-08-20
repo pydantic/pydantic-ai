@@ -863,7 +863,10 @@ class ModelResponse:
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def price(self) -> genai_types.PriceCalculation:
-        """Calculate the price of the usage."""
+        """Calculate the price of the usage.
+        
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
+        """
         assert self.model_name, 'Model name is required to calculate price'
         return calc_price(
             self.usage,
