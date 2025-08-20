@@ -151,13 +151,18 @@ def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str
 
 
 def completion_message(
-    message: ChatCompletionMessage, *, usage: CompletionUsage | None = None, logprobs: ChoiceLogprobs | None = None
+    message: ChatCompletionMessage,
+    *,
+    usage: CompletionUsage | None = None,
+    logprobs: ChoiceLogprobs | None = None,
+    response_id: str = '123',
+    finish_reason: str = 'stop'
 ) -> chat.ChatCompletion:
-    choices = [Choice(finish_reason='stop', index=0, message=message)]
+    choices = [Choice(finish_reason=finish_reason, index=0, message=message)]
     if logprobs:
-        choices = [Choice(finish_reason='stop', index=0, message=message, logprobs=logprobs)]
+        choices = [Choice(finish_reason=finish_reason, index=0, message=message, logprobs=logprobs)]
     return chat.ChatCompletion(
-        id='123',
+        id=response_id,
         choices=choices,
         created=1704067200,  # 2024-01-01
         model='gpt-4o-123',
@@ -192,6 +197,8 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_request_id='123',
+                id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -199,6 +206,8 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='gpt-4o-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_request_id='123',
+                id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -240,6 +249,36 @@ async def test_request_simple_usage(allow_model_requests: None):
             output_tokens=1,
         )
     )
+
+
+async def test_id_and_finish_reason_fields(allow_model_requests: None):
+    """Test that id and finish_reason fields are properly populated in ModelResponse."""
+    # Test with different finish reasons
+    test_cases = [
+        ('stop', 'response-id-1'),
+        ('length', 'response-id-2'),
+        ('tool_calls', 'response-id-3'),
+    ]
+
+    for finish_reason, response_id in test_cases:
+        c = completion_message(
+            ChatCompletionMessage(content='test response', role='assistant'),
+            response_id=response_id,
+            finish_reason=finish_reason,
+        )
+        mock_client = MockOpenAI.create_mock(c)
+        m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+        agent = Agent(m)
+
+        result = await agent.run('test')
+        assert result.output == 'test response'
+
+        # Check that the ModelResponse contains the correct id and finish_reason
+        messages = result.all_messages()
+        model_response = messages[1]  # Second message should be the model response
+        assert isinstance(model_response, ModelResponse)
+        assert model_response.id == response_id
+        assert model_response.finish_reason == finish_reason
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -422,9 +461,9 @@ async def test_request_tool_call(allow_model_requests: None):
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
 
 
-def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
+def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None, chunk_id: str = 'x') -> chat.ChatCompletionChunk:
     return chat.ChatCompletionChunk(
-        id='x',
+        id=chunk_id,
         choices=[
             ChunkChoice(index=index, delta=delta, finish_reason=finish_reason) for index, delta in enumerate(delta)
         ],
@@ -435,8 +474,8 @@ def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None) -
     )
 
 
-def text_chunk(text: str, finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
-    return chunk([ChoiceDelta(content=text, role='assistant')], finish_reason=finish_reason)
+def text_chunk(text: str, finish_reason: FinishReason | None = None, chunk_id: str = 'x') -> chat.ChatCompletionChunk:
+    return chunk([ChoiceDelta(content=text, role='assistant')], finish_reason=finish_reason, chunk_id=chunk_id)
 
 
 async def test_stream_text(allow_model_requests: None):
@@ -550,6 +589,55 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
             ]
         )
         assert result.is_complete
+
+
+async def test_stream_id_and_finish_reason_fields(allow_model_requests: None):
+    """Test that streaming responses properly track id and finish_reason fields."""
+    # Test streaming text response
+    stream = [
+        text_chunk('hello ', chunk_id='stream-response-123'),
+        text_chunk('world', chunk_id='stream-response-123'),
+        text_chunk('!', finish_reason='stop', chunk_id='stream-response-123'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('test') as result:
+        assert not result.is_complete
+        text_chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert text_chunks == ['hello ', 'hello world', 'hello world!']
+        assert result.is_complete
+
+        # Get the final messages and check the ModelResponse
+        messages = result.all_messages()
+        model_response = messages[1]  # Second message should be the model response
+        assert isinstance(model_response, ModelResponse)
+        assert model_response.id == 'stream-response-123'
+        assert model_response.finish_reason == 'stop'
+
+    # Test streaming with structured output and different finish reason
+    stream = [
+        struc_chunk('final_result', None),
+        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=ChoiceDeltaToolCallFunction(name=None, arguments='{"first": "Test"'))])], chunk_id='struct-response-456'),
+        chunk([ChoiceDelta(tool_calls=[ChoiceDeltaToolCall(index=0, function=ChoiceDeltaToolCallFunction(name=None, arguments='}'))])], finish_reason='length', chunk_id='struct-response-456'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m, output_type=MyTypedDict)
+
+    async with agent.run_stream('test') as result:
+        assert not result.is_complete
+        structured_chunks = [dict(c) async for c in result.stream(debounce_by=None)]
+        assert structured_chunks == [{'first': 'Test'}, {'first': 'Test'}]
+        assert result.is_complete
+
+        # Get the final messages and check the ModelResponse
+        messages = result.all_messages()
+        model_response = messages[1]  # Second message should be the model response
+        assert isinstance(model_response, ModelResponse)
+        assert model_response.id == 'struct-response-456'
+        assert model_response.finish_reason == 'length'
 
 
 async def test_stream_native_output(allow_model_requests: None):
