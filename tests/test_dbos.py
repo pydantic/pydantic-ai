@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -17,6 +18,8 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     HandleResponseEvent,
+    ModelMessage,
+    ModelRequest,
     PartDeltaEvent,
     PartStartEvent,
     ToolCallPart,
@@ -753,3 +756,43 @@ async def test_dbos_agent_override_tools_in_workflow(allow_model_requests: None,
 
     output = await run_with_tools()
     assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_dbos_agent_override_deps_in_workflow(allow_model_requests: None, dbos: DBOS):
+    # This is allowed
+    @DBOS.workflow()
+    async def run_with_deps():
+        with simple_dbos_agent.override(deps=None):
+            result = await simple_dbos_agent.run('What is the capital of the country?')
+            return result.output
+
+    output = await run_with_deps()
+    assert output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_dbos_agent_sync_tool_activity_disabled():
+    # Not a valid test for DBOS, as we don't control whether the tool is a step or not.
+    pass
+
+
+async def test_dbos_agent_mcp_server_activity_disabled():
+    # Not a valid test for DBOS, as we don't control whether the MCP server is a step or not.
+    pass
+
+
+async def test_dbos_model_stream_direct(allow_model_requests: None, dbos: DBOS):
+    @DBOS.workflow()
+    async def run_model_stream():
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the capital of Mexico?')]
+        async with model_request_stream(complex_dbos_agent.model, messages) as stream:
+            async for _ in stream:
+                pass
+        return 'done'
+
+    with workflow_raises(
+        AssertionError,
+        snapshot(
+            'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+        ),
+    ):
+        await run_model_stream()

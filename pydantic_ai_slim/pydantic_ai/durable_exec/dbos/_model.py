@@ -110,7 +110,6 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
                 yield streamed_response
                 return
 
-        # TODO (Qian): this might not be the right way to handle stream.
         @DBOS.step(
             name=f'{self._step_name_prefix}__model.request_stream',
             retries_allowed=self.step_config.get('retries_allowed', False),
@@ -121,16 +120,14 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any] | None = None,
         ) -> ModelResponse:
-            # TODO(Qian): do we need to check event stream handler here?
-            # assert self.event_stream_handler is not None, (
-            #     'Event stream handler must be set for streamed requests when using DBOS model.'
-            # )
-            assert run_context is not None, 'Run context must be provided for streamed requests when using DBOS model.'
-
             async with super(DBOSModel, self).request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
                 if self.event_stream_handler is not None:
+                    print(self.event_stream_handler)
+                    assert run_context is not None, (
+                        'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
+                    )
                     await self.event_stream_handler(run_context, streamed_response)
 
                 async for _ in streamed_response:
