@@ -102,8 +102,8 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        # If not in a workflow, just call the wrapped request_stream method.
-        if DBOS.workflow_id is None:
+        # If not in a workflow (could be in a step), just call the wrapped request_stream method.
+        if DBOS.workflow_id is None or DBOS.step_id is not None:
             async with super().request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
