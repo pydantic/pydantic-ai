@@ -24,9 +24,10 @@ except ImportError:  # pragma: lax no cover
 
 try:
     import logfire
+
     # from logfire import Logfire
     # from logfire._internal.tracer import _ProxyTracer
-    # from logfire.testing import CaptureLogfire
+    from logfire.testing import CaptureLogfire
     # from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
     import pytest
@@ -171,7 +172,9 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
+async def test_complex_agent_run_in_workflow(
+    allow_model_requests: None, dbos: DBOS, openai_api_key: str, capfire: CaptureLogfire
+) -> None:
     """Test that a simple agent can run in a DBOS workflow."""
 
     model = OpenAIModel(
@@ -209,3 +212,39 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
             ]
         )
     )
+
+    exporter = capfire.exporter
+
+    spans = exporter.exported_spans_as_dict()
+    basic_spans_by_id = {
+        span['context']['span_id']: BasicSpan(
+            parent_id=span['parent']['span_id'] if span['parent'] else None,
+            content=attributes.get('event') or attributes['logfire.msg'],
+        )
+        for span in spans
+        if (attributes := span.get('attributes'))
+    }
+
+    # TODO (Qian): update test to check spans
+    assert len(basic_spans_by_id) > 0, 'No spans were exported'
+    # Debug: print all spans and their relationships
+    # print("All spans:")
+    # for span_id, basic_span in basic_spans_by_id.items():
+    #     print(f"  {span_id} -> parent: {basic_span.parent_id}, content: {basic_span.content}")
+
+    # root_span = None
+    # for basic_span in basic_spans_by_id.values():
+    #     if basic_span.parent_id is None:
+    #         root_span = basic_span
+    #     else:
+    #         parent_id = basic_span.parent_id
+    #         # Check if parent exists before accessing
+    #         if parent_id in basic_spans_by_id:
+    #             parent_span = basic_spans_by_id[parent_id]
+    #             parent_span.children.append(basic_span)
+    #         else:
+    #             print(f"Warning: Parent span {parent_id} not found for span with content: {basic_span.content}")
+    #             # Treat as root span if parent is missing
+    #             if root_span is None:
+    #                 root_span = basic_span
+    # print(root_span)
