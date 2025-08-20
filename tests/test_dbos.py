@@ -126,19 +126,21 @@ def dbos() -> Generator[DBOS, Any, None]:
     DBOS.destroy()
 
 
+model = OpenAIModel(
+    'gpt-4o',
+    provider=OpenAIProvider(
+        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
+        http_client=http_client,
+    ),
+)
+
+# Not necessarily need to define it outside of the function. DBOS just requires workflows to be statically defined so recovery would be able to find those workflows. It's nice to reuse it in multiple tests.
+simple_agent = Agent(model, name='simple_agent')
+simple_dbos_agent = DBOSAgent(simple_agent)
+
+
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
     """Test that a simple agent can run in a DBOS workflow."""
-
-    model = OpenAIModel(
-        'gpt-4o',
-        provider=OpenAIProvider(
-            api_key=openai_api_key,
-            http_client=http_client,
-        ),
-    )
-
-    simple_agent = Agent(model, name='simple_agent')
-    simple_dbos_agent = DBOSAgent(simple_agent)
 
     result = await simple_dbos_agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
@@ -185,14 +187,6 @@ class BasicSpan:
     parent_id: int | None = field(repr=False, compare=False, default=None)
 
 
-model = OpenAIModel(
-    'gpt-4o',
-    provider=OpenAIProvider(
-        api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
-        http_client=http_client,
-    ),
-)
-
 complex_agent = Agent(
     model,
     deps_type=Deps,
@@ -210,7 +204,7 @@ complex_dbos_agent = DBOSAgent(complex_agent)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
-    """Test that a simple agent can run in a DBOS workflow."""
+    """Test that a complex agent can run in a DBOS workflow."""
 
     result = await complex_dbos_agent.run(
         'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
@@ -239,30 +233,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
 
     # TODO (Qian): update test to check spans
     assert len(basic_spans_by_id) > 0, 'No spans were exported'
-    # Debug: print all spans and their relationships
-    # print("All spans:")
-    # for span_id, basic_span in basic_spans_by_id.items():
-    #     print(f"  {span_id} -> parent: {basic_span.parent_id}, content: {basic_span.content}")
-
-    # root_span = None
-    # for basic_span in basic_spans_by_id.values():
-    #     if basic_span.parent_id is None:
-    #         root_span = basic_span
-    #     else:
-    #         parent_id = basic_span.parent_id
-    #         # Check if parent exists before accessing
-    #         if parent_id in basic_spans_by_id:
-    #             parent_span = basic_spans_by_id[parent_id]
-    #             parent_span.children.append(basic_span)
-    #         else:
-    #             print(f"Warning: Parent span {parent_id} not found for span with content: {basic_span.content}")
-    #             # Treat as root span if parent is missing
-    #             if root_span is None:
-    #                 root_span = basic_span
-    # print(root_span)
 
 
-# Note (Qian): since we wrap the agent run in a DBOS workflow, we cannot just use a DBOS agent without DBOS. This test shows we can use a complex agent with DBOS decorated tools.
+# Note (Qian): since we wrap the agent run in a DBOS workflow, we cannot just use a DBOS agent without DBOS. This test shows we can use a complex agent with DBOS decorated tools. Without DBOS workflows, those steps are just normal functions.
 async def test_complex_agent_run(allow_model_requests: None) -> None:
     events: list[AgentStreamEvent | HandleResponseEvent] = []
 
@@ -527,4 +500,25 @@ async def test_complex_agent_run(allow_model_requests: None) -> None:
                 index=0, delta=ToolCallPartDelta(args_delta=']}', tool_call_id='call_CCGIWaMeYWmxOQ91orkmTvzn')
             ),
         ]
+    )
+
+
+async def test_multiple_agents(allow_model_requests: None, dbos: DBOS):
+    """Test that multiple agents can run in a DBOS workflow."""
+    # This is just a smoke test to ensure that multiple agents can run in a DBOS workflow.
+    # We don't need to check the output as it's already tested in the individual agent tests.
+    result = await simple_dbos_agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+    result = await complex_dbos_agent.run(
+        'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+    )
+    assert result.output == snapshot(
+        Response(
+            answers=[
+                Answer(label='Capital of the Country', answer='Mexico City'),
+                Answer(label='Weather in Mexico City', answer='Sunny'),
+                Answer(label='Product Name', answer='Pydantic AI'),
+            ]
+        )
     )
