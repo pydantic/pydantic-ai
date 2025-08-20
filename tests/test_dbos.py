@@ -30,7 +30,7 @@ from .conftest import IsDatetime
 try:
     from dbos import DBOS, DBOSConfig
 
-    from pydantic_ai.durable_exec.dbos import DBOSAgent
+    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSModel
 except ImportError:  # pragma: lax no cover
     import pytest
 
@@ -549,5 +549,36 @@ async def test_agent_without_model():
 
 
 async def test_toolset_without_id():
-    # Note: this is allowed in DBOS because we don't wrap the tools automatically in a workflow. It's up to the user to define the tools as DBOS steps if they want to use them in a workflow.
+    # Note: this is allowed in DBOS because we don't wrap the tools automatically in a workflow. It's up to the user to define the tools as DBOS steps if they want to use them as steps in a workflow.
     DBOSAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
+
+
+async def test_dbos_agent():
+    assert isinstance(complex_dbos_agent.model, DBOSModel)
+    assert complex_dbos_agent.model.wrapped == complex_agent.model
+
+    # DBOS doesn't wrap the toolsets in a workflow, so we can access the wrapped tools directly.
+    assert complex_dbos_agent.toolsets == complex_agent.toolsets
+    toolsets = complex_dbos_agent.toolsets
+    assert len(toolsets) == 4
+
+    # Function toolset for the agent's own tools
+    assert isinstance(toolsets[0], FunctionToolset)
+    assert toolsets[0].id == '<agent>'
+    assert toolsets[0].tools.keys() == {'get_weather'}
+
+    # Wrapped 'country' toolset
+    assert isinstance(toolsets[1], FunctionToolset)
+    assert toolsets[1].id == 'country'
+    assert toolsets[1].tools.keys() == {'get_country'}
+
+    # Wrapped 'mcp' MCP server
+    # TODO (Qian): Use DBOS MCP server
+    assert isinstance(toolsets[2], MCPServerStdio)
+    assert toolsets[2].id == 'mcp'
+    assert toolsets[2] == complex_agent.toolsets[2]
+
+    # Unwrapped 'deferred' toolset
+    assert isinstance(toolsets[3], DeferredToolset)
+    assert toolsets[3].id == 'deferred'
+    assert toolsets[3] == complex_agent.toolsets[3]
