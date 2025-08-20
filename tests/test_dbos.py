@@ -141,8 +141,13 @@ simple_dbos_agent = DBOSAgent(simple_agent)
 async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
     """Test that a simple agent can run in a DBOS workflow."""
 
-    result = await simple_dbos_agent.run('What is the capital of Mexico?')
-    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+    @DBOS.workflow()
+    async def run_simple_agent() -> str:
+        result = await simple_dbos_agent.run('What is the capital of Mexico?')
+        return result.output
+
+    output = await run_simple_agent()
+    assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
 class Deps(BaseModel):
@@ -203,8 +208,7 @@ complex_dbos_agent = DBOSAgent(complex_agent)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
-    """Test that a complex agent can run in a DBOS workflow."""
-
+    # DBOSAgent already wraps the `run` function as a DBOS workflow, so we can just call it directly.
     result = await complex_dbos_agent.run(
         'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
     )
