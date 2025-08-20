@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -796,3 +797,30 @@ async def test_dbos_model_stream_direct(allow_model_requests: None, dbos: DBOS):
         ),
     ):
         await run_model_stream()
+
+
+@dataclass
+class UnserializableDeps:
+    client: AsyncClient
+
+
+unserializable_deps_agent = Agent(model, name='unserializable_deps_agent', deps_type=UnserializableDeps)
+
+
+@unserializable_deps_agent.tool
+async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
+    print('This tool should not be called')
+    return ctx.deps.client.max_redirects  # pragma: no cover
+
+
+async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
+    unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)
+    # TODO(Qian): This error is not great and should be improved in DBOS. This actually means the `client` is not serializable, but the error message is about the object proxy.
+    with pytest.raises(
+        NotImplementedError,
+        match='object proxy must define __reduce_ex__()',
+    ):
+        async with AsyncClient() as client:
+            # This will trigger the client to be unserializable
+            logfire.instrument_httpx(client, capture_all=True)
+            await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
