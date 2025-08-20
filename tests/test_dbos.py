@@ -719,3 +719,37 @@ async def test_dbos_agent_run_in_workflow_with_toolsets(allow_model_requests: No
     # Since DBOS does not automatically wrap the tools in a workflow, and allows dynamic steps, we can pass in toolsets directly.
     result = await simple_dbos_agent.run('What is the capital of Mexico?', toolsets=[FunctionToolset()])
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_dbos_agent_override_model_in_workflow(allow_model_requests: None, dbos: DBOS):
+    # We cannot override the model to a non-DBOS one in a DBOS workflow.
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Non-DBOS model cannot be contextually overridden inside a DBOS workflow, it must be set at agent creation time.'
+        ),
+    ):
+        with simple_dbos_agent.override(model=model):
+            pass
+
+
+async def test_dbos_agent_override_toolsets_in_workflow(allow_model_requests: None, dbos: DBOS):
+    # Since DBOS does not automatically wrap the tools in a workflow, and allows dynamic steps, we can override toolsets directly.
+    @DBOS.workflow()
+    async def run_with_toolsets():
+        with simple_dbos_agent.override(toolsets=[FunctionToolset()]):
+            pass
+
+    await run_with_toolsets()
+
+
+async def test_dbos_agent_override_tools_in_workflow(allow_model_requests: None, dbos: DBOS):
+    # Since DBOS does not automatically wrap the tools in a workflow, and allows dynamic steps, we can override tools directly.
+    @DBOS.workflow()
+    async def run_with_tools():
+        with simple_dbos_agent.override(tools=[get_weather]):
+            result = await simple_dbos_agent.run('What is the capital of Mexico?')
+            return result.output
+
+    output = await run_with_tools()
+    assert output == snapshot('The capital of Mexico is Mexico City.')

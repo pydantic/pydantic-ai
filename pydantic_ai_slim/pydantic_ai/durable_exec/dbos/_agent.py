@@ -590,5 +590,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             tools: The tools to use instead of the tools registered with the agent.
         """
         # TODO (Qian): do we need to check if we're in a workflow here?
+        if _utils.is_set(model) and not isinstance(model, (DBOSModel)):
+            raise UserError(
+                'Non-DBOS model cannot be contextually overridden inside a DBOS workflow, it must be set at agent creation time.'
+            )
+
         with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
             yield
