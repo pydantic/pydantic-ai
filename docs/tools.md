@@ -471,7 +471,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Custom Tool Schema
 
-If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description and JSON schema for the function directly:
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description, JSON schema, and whether the function takes a `RunContext` for the function directly:
 
 ```python
 from pydantic_ai import Agent, Tool
@@ -493,7 +493,8 @@ tool = Tool.from_schema(
         },
         'required': ['a', 'b'],
         'type': 'object',
-    }
+    },
+    takes_ctx=False,
 )
 
 test_model = TestModel()
