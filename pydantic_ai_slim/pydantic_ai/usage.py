@@ -292,7 +292,7 @@ class UsageLimits:
 
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
-            raise UsageLimitExceeded(
+            raise UsageLimitExceeded(  # pragma: lax no cover
                 f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
             )
 

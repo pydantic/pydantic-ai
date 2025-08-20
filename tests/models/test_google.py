@@ -1670,7 +1670,9 @@ Just a small note, it's typically written as "lazy dog" (two words) and usually 
 """)
 
 
-async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_model_usage_limit_exceeded(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
 
     agent = Agent(model, system_prompt='You are a chatbot.')
