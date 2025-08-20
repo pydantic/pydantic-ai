@@ -682,8 +682,35 @@ async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBO
         return output
 
     output = await run_iter_workflow()
+    # If called in a workflow, the output is a single concatenated string.
     assert output == snapshot(
         [
             'The capital of Mexico is Mexico City.',
         ]
     )
+
+
+async def simple_event_stream_handler(
+    ctx: RunContext[None],
+    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+):
+    pass
+
+
+async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_requests: None, dbos: DBOS) -> None:
+    # DBOS workflow input must be serializable, so we cannot use a function as a dependency.
+    # Therefore, we cannot pass in an event stream handler as an argument.
+    with workflow_raises(TypeError, snapshot('Serialized data item should not be a function')):
+        await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
+
+
+async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
+    # DBOS workflow input must be serializable, so we cannot use a model as a dependency.
+    # Therefore, we cannot pass in a model as an argument.
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
+        ),
+    ):
+        await simple_dbos_agent.run('What is the capital of Mexico?', model=model)

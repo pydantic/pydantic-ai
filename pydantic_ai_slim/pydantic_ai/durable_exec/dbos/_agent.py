@@ -548,6 +548,11 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         #         'Please file an issue if this is not sufficient for your use case.'
         #     )
 
+        if model is not None and not isinstance(model, (DBOSModel)):
+            raise UserError(
+                'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
+            )
+
         with self._dbos_overrides():
             async with super().iter(
                 user_prompt=user_prompt,
