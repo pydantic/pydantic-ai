@@ -297,13 +297,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         progress_bar.update(task_id, advance=1)
                     return result
 
-            if (span_context := eval_span.get_span_context()) is not None:
-                from opentelemetry.trace import format_span_id, format_trace_id
-
-                span_id = format_span_id(span_context.span_id)
-                trace_id = format_trace_id(span_context.trace_id)
+            if (context := eval_span.context) is None:  # pragma: no cover
+                trace_id = None
+                span_id = None
             else:
-                span_id, trace_id = None, None
+                trace_id = f'{context.trace_id:032x}'
+                span_id = f'{context.span_id:016x}'
             report = EvaluationReport(
                 name=name,
                 cases=await task_group_gather(
@@ -938,8 +937,8 @@ async def _run_task_and_evaluators(
 
         context = case_span.context
         if context is None:  # pragma: no cover
-            trace_id = ''
-            span_id = ''
+            trace_id = None
+            span_id = None
         else:
             trace_id = f'{context.trace_id:032x}'
             span_id = f'{context.span_id:016x}'

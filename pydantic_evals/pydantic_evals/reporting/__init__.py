@@ -68,8 +68,8 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     total_duration: float  # includes evaluator execution time
 
     # TODO(DavidM): Drop these once we can reference child spans in details panel:
-    trace_id: str
-    span_id: str
+    trace_id: str | None
+    span_id: str | None
 
 
 ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
