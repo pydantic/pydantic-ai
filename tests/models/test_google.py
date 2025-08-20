@@ -12,7 +12,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import UsageLimitExceeded
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -598,6 +598,19 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
 
     result = await agent.run('What day is today in Utrecht?')
     assert result.output == snapshot('Today is Wednesday, May 28, 2025, in Utrecht.\n')
+
+
+async def test_google_model_url_context_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[UrlContextTool()])
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+
+    assert result.output == snapshot(
+        'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
+    )
 
 
 async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
@@ -1657,7 +1670,9 @@ Just a small note, it's typically written as "lazy dog" (two words) and usually 
 """)
 
 
-async def test_google_vertexai_model_usage_limit_exceeded(allow_model_requests: None, vertex_provider: GoogleProvider):
+async def test_google_vertexai_model_usage_limit_exceeded(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
     model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
 
     agent = Agent(model, system_prompt='You are a chatbot.')

@@ -12,7 +12,7 @@ The server can be run with `deno` installed using:
 ```bash
 deno run \
   -N -R=node_modules -W=node_modules --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python [stdio|sse|warmup]
+  jsr:@pydantic/mcp-run-python [stdio|streamable_http|sse|warmup]
 ```
 
 where:
@@ -22,11 +22,17 @@ where:
   the Python standard library and packages
 - `--node-modules-dir=auto` tells deno to use a local `node_modules` directory
 - `stdio` runs the server with the
-  [Stdio MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) —
-  suitable for running the process as a subprocess locally
+  [Stdio MCP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#stdio) — suitable for
+  running the process as a subprocess locally
+- `streamable_http` runs the server with the
+  [Streamable HTTP MCP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http) -
+  suitable for running the server as an HTTP server to connect locally or remotely. This supports stateful requests, but
+  does not require the client to hold a stateful connection like SSE
 - `sse` runs the server with the
-  [SSE MCP transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) —
-  running the server as an HTTP server to connect locally or remotely
+  [SSE MCP transport](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports#http-with-sse) —
+  suitable for running the server as an HTTP server to connect locally or remotely. Note that the SSE transport has been
+  [deprecated in newer MCP protocol versions](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#backwards-compatibility)
+  and is there to maintain backwards compatibility.
 - `warmup` will run a minimal Python script to download and cache the Python standard library. This is also useful to
   check the server is running correctly.
 
