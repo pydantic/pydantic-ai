@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -72,6 +72,7 @@ try:
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
+        UrlContextDict,
     )
 
     from ..providers.google import GoogleProvider
@@ -270,6 +271,8 @@ class GoogleModel(Model):
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 tools.append(ToolDict(google_search=GoogleSearchDict()))
+            elif isinstance(tool, UrlContextTool):
+                tools.append(ToolDict(url_context=UrlContextDict()))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
             else:  # pragma: no cover
