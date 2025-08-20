@@ -219,7 +219,7 @@ class GoogleModel(Model):
         )
         if self._provider.name != 'google-gla':
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
-            config.update(
+            config.update(  # pragma: lax no cover
                 system_instruction=generation_config.get('system_instruction'),
                 tools=cast(list[ToolDict], generation_config.get('tools')),
                 # Annoyingly, GenerationConfigDict has fewer fields than GenerateContentConfigDict, and no extra fields are allowed.
@@ -535,9 +535,8 @@ class GeminiStreamedResponse(StreamedResponse):
                     raise UnexpectedModelBehavior('Safety settings triggered', str(chunk))
                 else:  # pragma: no cover
                     raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
-
-            assert candidate.content.parts is not None
-            for part in candidate.content.parts:
+            parts = candidate.content.parts or []
+            for part in parts:
                 if part.text is not None:
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
