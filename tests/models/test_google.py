@@ -112,6 +112,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -177,6 +178,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -201,6 +203,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -256,6 +259,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -279,6 +283,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -552,6 +557,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -671,6 +677,7 @@ print(f'{day_of_week=}')
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -729,6 +736,7 @@ print(f'{day_of_week=}')
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
@@ -777,6 +785,7 @@ print(f'{day_of_week=}')
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -930,6 +939,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -1167,6 +1177,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1192,6 +1203,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1252,6 +1264,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1277,6 +1290,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1327,6 +1341,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1346,6 +1361,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -1409,6 +1425,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -1462,6 +1479,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -1504,6 +1522,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -1552,6 +1571,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1578,6 +1598,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
@@ -1630,6 +1651,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
+                provider_request_id=IsStr(),
             ),
         ]
     )
