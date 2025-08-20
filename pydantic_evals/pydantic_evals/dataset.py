@@ -297,6 +297,13 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         progress_bar.update(task_id, advance=1)
                     return result
 
+            if (span_context := eval_span.get_span_context()) is not None:
+                from opentelemetry.trace import format_span_id, format_trace_id
+
+                span_id = format_span_id(span_context.span_id)
+                trace_id = format_trace_id(span_context.trace_id)
+            else:
+                span_id, trace_id = None, None
             report = EvaluationReport(
                 name=name,
                 cases=await task_group_gather(
@@ -305,6 +312,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         for i, case in enumerate(self.cases, 1)
                     ]
                 ),
+                span_id=span_id,
+                trace_id=trace_id,
             )
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
             eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))

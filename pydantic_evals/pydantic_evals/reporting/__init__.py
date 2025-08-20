@@ -158,8 +158,15 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
 
     name: str
     """The name of the report."""
+
     cases: list[ReportCase[InputsT, OutputT, MetadataT]]
     """The cases in the report."""
+
+    span_id: str | None = None
+    """The span ID of the evaluation."""
+
+    trace_id: str | None = None
+    """The trace ID of the evaluation."""
 
     def averages(self) -> ReportCaseAggregate:
         return ReportCaseAggregate.average(self.cases)
