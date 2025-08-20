@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Generator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel
+
 from pydantic_ai import Agent
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.messages import AgentStreamEvent, HandleResponseEvent
 from pydantic_ai.models import cached_async_http_client
 
 try:
@@ -18,6 +23,25 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
 try:
+    import logfire
+    # from logfire import Logfire
+    # from logfire._internal.tracer import _ProxyTracer
+    # from logfire.testing import CaptureLogfire
+    # from opentelemetry.trace import ProxyTracer
+except ImportError:  # pragma: lax no cover
+    import pytest
+
+    pytest.skip('logfire not installed', allow_module_level=True)
+
+try:
+    from pydantic_ai.mcp import MCPServerStdio
+except ImportError:  # pragma: lax no cover
+    import pytest
+
+    pytest.skip('mcp not installed', allow_module_level=True)
+
+
+try:
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
@@ -27,6 +51,9 @@ except ImportError:  # pragma: lax no cover
 
 import pytest
 from inline_snapshot import snapshot
+
+from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import DeferredToolset, FunctionToolset
 
 pytestmark = [
     pytest.mark.anyio,
@@ -99,9 +126,86 @@ async def test_simple_agent_run_in_workflow(allow_model_requests: None, dbos: DB
     simple_agent = Agent(model, name='simple_agent')
     simple_dbos_agent = DBOSAgent(simple_agent)
 
-    # Add 20 second sleep to let test hang
-    # import asyncio
-    # await asyncio.sleep(20)
-
     result = await simple_dbos_agent.run('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+class Deps(BaseModel):
+    country: str
+
+
+async def event_stream_handler(
+    ctx: RunContext[Deps],
+    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+):
+    logfire.info(f'{ctx.run_step=}')
+    async for event in stream:
+        logfire.info('event', event=event)
+
+
+# Do not run it as a step
+async def get_country(ctx: RunContext[Deps]) -> str:
+    return ctx.deps.country
+
+
+@DBOS.step()
+def get_weather(city: str) -> str:
+    return 'sunny'
+
+
+@dataclass
+class Answer:
+    label: str
+    answer: str
+
+
+@dataclass
+class Response:
+    answers: list[Answer]
+
+
+@dataclass
+class BasicSpan:
+    content: str
+    children: list[BasicSpan] = field(default_factory=list)
+    parent_id: int | None = field(repr=False, compare=False, default=None)
+
+
+async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, openai_api_key: str) -> None:
+    """Test that a simple agent can run in a DBOS workflow."""
+
+    model = OpenAIModel(
+        'gpt-4o',
+        provider=OpenAIProvider(
+            api_key=openai_api_key,
+            http_client=http_client,
+        ),
+    )
+
+    complex_agent = Agent(
+        model,
+        deps_type=Deps,
+        output_type=Response,
+        toolsets=[
+            FunctionToolset[Deps](tools=[get_country], id='country'),
+            MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
+            DeferredToolset(tool_defs=[ToolDefinition(name='deferred')], id='deferred'),
+        ],
+        tools=[get_weather],
+        event_stream_handler=event_stream_handler,
+        name='complex_agent',
+    )
+    complex_dbos_agent = DBOSAgent(complex_agent)
+
+    result = await complex_dbos_agent.run(
+        'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+    )
+    assert result.output == snapshot(
+        Response(
+            answers=[
+                Answer(label='Capital of the country', answer='Mexico City'),
+                Answer(label='Weather in the capital', answer='Sunny'),
+                Answer(label='Product Name', answer='Pydantic AI'),
+            ]
+        )
+    )

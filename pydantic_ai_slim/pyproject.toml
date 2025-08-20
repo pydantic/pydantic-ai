@@ -96,7 +96,7 @@ retries = ["tenacity>=8.2.3"]
 # Temporal
 temporal = ["temporalio==1.15.0"]
 # DBOS
-dbos = ["dbos>=1.11.0"]
+dbos = ["dbos>=1.12.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
