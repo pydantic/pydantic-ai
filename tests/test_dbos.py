@@ -666,3 +666,24 @@ async def test_dbos_agent_run_stream_in_workflow(allow_model_requests: None, dbo
         ),
     ):
         await run_stream_workflow()
+
+
+async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):
+    # DBOS allows calling `iter` inside a workflow as a step.
+    @DBOS.workflow()
+    async def run_iter_workflow():
+        output: list[str] = []
+        async with simple_dbos_agent.iter('What is the capital of Mexico?') as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx) as stream:
+                        async for chunk in stream.stream_text(debounce_by=None):
+                            output.append(chunk)
+        return output
+
+    output = await run_iter_workflow()
+    assert output == snapshot(
+        [
+            'The capital of Mexico is Mexico City.',
+        ]
+    )

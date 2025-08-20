@@ -121,15 +121,17 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any] | None = None,
         ) -> ModelResponse:
-            assert self.event_stream_handler is not None, (
-                'Event stream handler must be set for streamed requests when using DBOS model.'
-            )
+            # TODO(Qian): do we need to check event stream handler here?
+            # assert self.event_stream_handler is not None, (
+            #     'Event stream handler must be set for streamed requests when using DBOS model.'
+            # )
             assert run_context is not None, 'Run context must be provided for streamed requests when using DBOS model.'
 
             async with super(DBOSModel, self).request_stream(
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
-                await self.event_stream_handler(run_context, streamed_response)
+                if self.event_stream_handler is not None:
+                    await self.event_stream_handler(run_context, streamed_response)
 
                 async for _ in streamed_response:
                     pass

@@ -540,7 +540,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        # TODO (Qian): do we really need to check if we're in a workflow here?
+        # TODO (Qian): do we really need to check if we're in a workflow here? Why not just allow it?
         # if DBOS.workflow_id is not None and DBOS.step_id is None:
         #     raise UserError(
         #         '`agent.iter()` cannot currently be used inside a DBOS workflow. '
