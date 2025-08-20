@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -522,3 +523,31 @@ async def test_multiple_agents(allow_model_requests: None, dbos: DBOS):
             ]
         )
     )
+
+
+async def test_agent_name_collision(allow_model_requests: None, dbos: DBOS):
+    with pytest.raises(
+        Exception, match="Duplicate instance registration for class 'DBOSModel' instance 'simple_agent__model'"
+    ):
+        DBOSAgent(simple_agent)
+
+
+async def test_agent_without_name():
+    with pytest.raises(
+        UserError,
+        match="An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps.",
+    ):
+        DBOSAgent(Agent())
+
+
+async def test_agent_without_model():
+    with pytest.raises(
+        UserError,
+        match='An agent needs to have a `model` in order to be used with DBOS, it cannot be set at agent run time.',
+    ):
+        DBOSAgent(Agent(name='test_agent'))
+
+
+async def test_toolset_without_id():
+    # Note: this is allowed in DBOS because we don't wrap the tools automatically in a workflow. It's up to the user to define the tools as DBOS steps if they want to use them in a workflow.
+    DBOSAgent(Agent(model=model, name='test_agent', toolsets=[FunctionToolset()]))
