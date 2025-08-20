@@ -4,7 +4,7 @@ Builtin tools are native tools provided by LLM providers that can be used to enh
 
 ## Overview
 
-PydanticAI supports three types of builtin tools:
+PydanticAI supports the following builtin tools:
 
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
