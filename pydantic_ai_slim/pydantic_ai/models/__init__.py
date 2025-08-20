@@ -42,7 +42,7 @@ from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -194,6 +194,13 @@ KnownModelName = TypeAliasType(
         'gpt-4o-mini-search-preview-2025-03-11',
         'gpt-4o-search-preview',
         'gpt-4o-search-preview-2025-03-11',
+        'gpt-5',
+        'gpt-5-2025-08-07',
+        'gpt-5-chat-latest',
+        'gpt-5-mini',
+        'gpt-5-mini-2025-08-07',
+        'gpt-5-nano',
+        'gpt-5-nano-2025-08-07',
         'grok:grok-4',
         'grok:grok-4-0709',
         'grok:grok-3',
@@ -313,11 +320,18 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-mini-search-preview-2025-03-11',
         'openai:gpt-4o-search-preview',
         'openai:gpt-4o-search-preview-2025-03-11',
+        'openai:gpt-5',
+        'openai:gpt-5-2025-08-07',
         'openai:o1',
+        'openai:gpt-5-chat-latest',
         'openai:o1-2024-12-17',
+        'openai:gpt-5-mini',
         'openai:o1-mini',
+        'openai:gpt-5-mini-2025-08-07',
         'openai:o1-mini-2024-09-12',
+        'openai:gpt-5-nano',
         'openai:o1-preview',
+        'openai:gpt-5-nano-2025-08-07',
         'openai:o1-preview-2024-09-12',
         'openai:o1-pro',
         'openai:o1-pro-2025-03-19',
@@ -399,6 +413,16 @@ class Model(ABC):
         """Make a request to the model."""
         raise NotImplementedError()
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        """Make a request to the model for counting tokens."""
+        # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
+        raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
+
     @asynccontextmanager
     async def request_stream(
         self,
@@ -456,7 +480,7 @@ class Model(ABC):
     @property
     @abstractmethod
     def system(self) -> str:
-        """The system / model provider, ex: openai.
+        """The model provider, ex: openai.
 
         Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
         so should use well-known values listed in
@@ -523,7 +547,7 @@ class StreamedResponse(ABC):
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
-    _usage: Usage = field(default_factory=Usage, init=False)
+    _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream the response as an async iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
@@ -576,7 +600,7 @@ class StreamedResponse(ABC):
             usage=self.usage(),
         )
 
-    def usage(self) -> Usage:
+    def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
 
@@ -679,6 +703,10 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         from .openai import OpenAIModel
 
         return OpenAIModel(model_name, provider=provider)
+    elif provider == 'openai-responses':
+        from .openai import OpenAIResponsesModel
+
+        return OpenAIResponsesModel(model_name, provider='openai')
     elif provider in ('google-gla', 'google-vertex'):
         from .google import GoogleModel
 

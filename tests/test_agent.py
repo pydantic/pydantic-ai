@@ -3,7 +3,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -46,17 +46,17 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import StructuredDict, ToolOutput
+from pydantic_ai.output import DeferredToolCalls, StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.result import Usage
+from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
-from pydantic_ai.toolsets.prepared import PreparedToolset
+from pydantic_ai.usage import RequestUsage
 
-from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv
+from .conftest import IsDatetime, IsNow, IsStr, TestEnv
 
 pytestmark = pytest.mark.anyio
 
@@ -113,7 +113,7 @@ def test_result_pydantic_model_retry():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": "wrong", "b": "foo"}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58),
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -136,7 +136,7 @@ def test_result_pydantic_model_retry():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=87, response_tokens=14, total_tokens=101),
+                usage=RequestUsage(input_tokens=87, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -236,7 +236,7 @@ def test_output_validator():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 41, "b": "foo"}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58),
+                usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -252,7 +252,7 @@ def test_output_validator():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"a": 42, "b": "foo"}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=63, response_tokens=14, total_tokens=77),
+                usage=RequestUsage(input_tokens=63, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -294,7 +294,7 @@ def test_plain_response_then_tuple():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -311,7 +311,7 @@ def test_plain_response_then_tuple():
                 parts=[
                     ToolCallPart(tool_name='final_result', args='{"response": ["foo", "bar"]}', tool_call_id=IsStr())
                 ],
-                usage=Usage(requests=1, request_tokens=74, response_tokens=8, total_tokens=82),
+                usage=RequestUsage(input_tokens=74, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -857,7 +857,7 @@ def test_output_type_function_with_retry():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=7, total_tokens=60),
+                usage=RequestUsage(input_tokens=53, output_tokens=7),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -879,7 +879,7 @@ def test_output_type_function_with_retry():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=68, response_tokens=13, total_tokens=81),
+                usage=RequestUsage(input_tokens=68, output_tokens=13),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -933,7 +933,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='New York City')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=3, total_tokens=56),
+                usage=RequestUsage(input_tokens=53, output_tokens=3),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -948,7 +948,7 @@ def test_output_type_text_output_function_with_retry():
             ),
             ModelResponse(
                 parts=[TextPart(content='Mexico City')],
-                usage=Usage(requests=1, request_tokens=70, response_tokens=5, total_tokens=75),
+                usage=RequestUsage(input_tokens=70, output_tokens=5),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1121,7 +1121,7 @@ def test_output_type_text_output_function():
             ),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=1, total_tokens=52),
+                usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:say_world:',
                 timestamp=IsDatetime(),
             ),
@@ -1181,7 +1181,7 @@ def test_output_type_handoff_to_agent():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=6, total_tokens=58),
+                usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='function:call_handoff_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1216,7 +1216,7 @@ def test_output_type_handoff_to_agent():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=57, response_tokens=6, total_tokens=63),
+                usage=RequestUsage(input_tokens=57, output_tokens=6),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1429,7 +1429,7 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
-                usage=Usage(requests=1, request_tokens=56, response_tokens=7, total_tokens=63),
+                usage=RequestUsage(input_tokens=56, output_tokens=7),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
             ),
@@ -1468,7 +1468,7 @@ Gimme some JSON:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"bar":"baz"}')],
-                usage=Usage(requests=1, request_tokens=56, response_tokens=4, total_tokens=60),
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='function:return_foo:',
                 timestamp=IsDatetime(),
             ),
@@ -1542,7 +1542,7 @@ Don't include any text or Markdown fencing before or after.\
                         content='{"result": {"kind": "FooBar", "data": {"foo": {"foo": "foo"}, "bar": {"bar": "bar"}}}}'
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=17, total_tokens=70),
+                usage=RequestUsage(input_tokens=53, output_tokens=17),
                 model_name='function:return_foo_bar:',
                 timestamp=IsDatetime(),
             ),
@@ -1583,7 +1583,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=Usage(requests=1, request_tokens=56, response_tokens=5, total_tokens=61),
+                usage=RequestUsage(input_tokens=56, output_tokens=5),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
             ),
@@ -1605,7 +1605,7 @@ def test_native_output():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
-                usage=Usage(requests=1, request_tokens=85, response_tokens=12, total_tokens=97),
+                usage=RequestUsage(input_tokens=85, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
             ),
@@ -1666,7 +1666,7 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "New York City"}')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=6, total_tokens=59),
+                usage=RequestUsage(input_tokens=53, output_tokens=6),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1681,7 +1681,7 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City"}')],
-                usage=Usage(requests=1, request_tokens=70, response_tokens=11, total_tokens=81),
+                usage=RequestUsage(input_tokens=70, output_tokens=11),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
             ),
@@ -1709,7 +1709,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1722,7 +1722,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1741,7 +1741,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1754,14 +1754,14 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68),
+                usage=RequestUsage(input_tokens=55, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1770,9 +1770,7 @@ def test_run_with_history_new():
     assert result2._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
     assert result2.output == snapshot('{"ret_a":"a-apple"}')
     assert result2._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
-    assert result2.usage() == snapshot(
-        Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
-    )
+    assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
     assert new_msg_part_kinds == snapshot(
         [
@@ -1800,7 +1798,7 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1813,14 +1811,14 @@ def test_run_with_history_new():
             ),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
             ModelRequest(parts=[UserPromptPart(content='Hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                usage=Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68),
+                usage=RequestUsage(input_tokens=55, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1829,9 +1827,7 @@ def test_run_with_history_new():
     assert result3._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
     assert result3.output == snapshot('{"ret_a":"a-apple"}')
     assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
-    assert result3.usage() == snapshot(
-        Usage(requests=1, request_tokens=55, response_tokens=13, total_tokens=68, details=None)
-    )
+    assert result3.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
 
 
 def test_run_with_history_new_structured():
@@ -1857,7 +1853,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1876,7 +1872,7 @@ def test_run_with_history_new_structured():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1904,7 +1900,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=5, total_tokens=57),
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1917,7 +1913,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=9, total_tokens=62),
+                usage=RequestUsage(input_tokens=53, output_tokens=9),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1939,7 +1935,7 @@ def test_run_with_history_new_structured():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'a': 0}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72),
+                usage=RequestUsage(input_tokens=59, output_tokens=13),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -1958,9 +1954,7 @@ def test_run_with_history_new_structured():
     assert result2.output == snapshot(Response(a=0))
     assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
     assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
-    assert result2.usage() == snapshot(
-        Usage(requests=1, request_tokens=59, response_tokens=13, total_tokens=72, details=None)
-    )
+    assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13))
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
     assert new_msg_part_kinds == snapshot(
         [
@@ -1977,7 +1971,7 @@ def test_run_with_history_new_structured():
     assert result2.new_messages_json().startswith(b'[{"parts":[{"content":"Hello again",')
 
 
-def test_run_with_history_and_no_user_prompt():
+def test_run_with_history_ending_on_model_request_and_no_user_prompt():
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Original instructions'),
     ]
@@ -1999,8 +1993,113 @@ def test_run_with_history_and_no_user_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
+    """Test that an agent run with message_history ending on ModelResponse starts with CallToolsNode."""
+
+    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Final response')])
+
+    agent = Agent(FunctionModel(simple_response))
+
+    @agent.tool_plain
+    def test_tool() -> str:
+        return 'Test response'
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')]),
+    ]
+
+    result = agent.run_sync(message_history=message_history)
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='test_tool',
+                        content='Test response',
+                        tool_call_id='call_123',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Final response')],
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
+                model_name='function:simple_response:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prompt():
+    """Test that an agent run raises error when message_history ends on ModelResponse with tool calls and there's a new prompt."""
+
+    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(simple_response))
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='test_tool', args='{}', tool_call_id='call_123')]),
+    ]
+
+    with pytest.raises(
+        UserError,
+        match='Cannot provide a new user prompt when the message history ends with a model response containing unprocessed tool calls',
+    ):
+        agent.run_sync(user_prompt='New question', message_history=message_history)
+
+
+def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_prompt():
+    """Test that an agent run raises error when message_history ends on ModelResponse without tool calls or a new prompt."""
+
+    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
+
+    agent = Agent(FunctionModel(simple_response))
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart('world')]),
+    ]
+
+    result = agent.run_sync(message_history=message_history)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='world')],
                 timestamp=IsDatetime(),
             ),
         ]
@@ -2031,7 +2130,7 @@ def test_unknown_tool():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2047,7 +2146,7 @@ def test_unknown_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=65, response_tokens=4, total_tokens=69),
+                usage=RequestUsage(input_tokens=65, output_tokens=4),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2071,7 +2170,7 @@ def test_unknown_tool_fix():
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=2, total_tokens=53),
+                usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2087,7 +2186,7 @@ def test_unknown_tool_fix():
             ),
             ModelResponse(
                 parts=[TextPart(content='success')],
-                usage=Usage(requests=1, request_tokens=65, response_tokens=3, total_tokens=68),
+                usage=RequestUsage(input_tokens=65, output_tokens=3),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2358,7 +2457,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
-                    usage=Usage(requests=1, request_tokens=53, response_tokens=23, total_tokens=76),
+                    usage=RequestUsage(input_tokens=53, output_tokens=23),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -2447,7 +2546,7 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
                     ],
-                    usage=Usage(requests=1, request_tokens=58, response_tokens=18, total_tokens=76),
+                    usage=RequestUsage(input_tokens=58, output_tokens=18),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -2599,7 +2698,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                     TextPart(content='foo'),
                     ToolCallPart(tool_name='get_location', args={'loc_name': 'London'}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=6, total_tokens=57),
+                usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2615,7 +2714,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(requests=1, request_tokens=56, response_tokens=8, total_tokens=64),
+                usage=RequestUsage(input_tokens=56, output_tokens=8),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2639,7 +2738,7 @@ def test_nested_capture_run_messages() -> None:
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2662,7 +2761,7 @@ def test_double_capture_run_messages() -> None:
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=4, total_tokens=55),
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2712,7 +2811,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -2740,7 +2839,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -2751,7 +2850,7 @@ def test_dynamic_false_no_reevaluate():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=8, total_tokens=62),
+                usage=RequestUsage(input_tokens=54, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -2793,7 +2892,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -2822,7 +2921,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=4, total_tokens=57),
+                usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -2833,7 +2932,7 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)', part_kind='text')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=8, total_tokens=62),
+                usage=RequestUsage(input_tokens=54, output_tokens=8),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 kind='response',
@@ -2860,7 +2959,7 @@ def test_capture_run_messages_tool_agent() -> None:
             ModelRequest(parts=[UserPromptPart(content='foobar', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args={'x': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2876,7 +2975,7 @@ def test_capture_run_messages_tool_agent() -> None:
             ),
             ModelResponse(
                 parts=[TextPart(content='{"foobar":"inner agent result"}')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=11, total_tokens=65),
+                usage=RequestUsage(input_tokens=54, output_tokens=11),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -2953,17 +3052,20 @@ def test_binary_content_serializable():
             {
                 'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
                 'usage': {
-                    'requests': 1,
-                    'request_tokens': 56,
-                    'response_tokens': 4,
-                    'total_tokens': 60,
-                    'details': None,
+                    'input_tokens': 56,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 4,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
                 },
                 'model_name': 'test',
-                'vendor_id': None,
+                'provider_details': None,
+                'provider_request_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
-                'vendor_details': None,
             },
         ]
     )
@@ -3004,17 +3106,20 @@ def test_image_url_serializable():
             {
                 'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
                 'usage': {
-                    'requests': 1,
-                    'request_tokens': 51,
-                    'response_tokens': 4,
-                    'total_tokens': 55,
-                    'details': None,
+                    'input_tokens': 51,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 4,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
                 },
                 'model_name': 'test',
                 'timestamp': IsStr(),
+                'provider_details': None,
+                'provider_request_id': None,
                 'kind': 'response',
-                'vendor_details': None,
-                'vendor_id': None,
             },
         ]
     )
@@ -3216,7 +3321,7 @@ def test_instructions_with_message_history():
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=Usage(requests=1, request_tokens=56, response_tokens=4, total_tokens=60),
+                usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3271,7 +3376,7 @@ def test_empty_final_response():
                     TextPart(content='foo'),
                     ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3287,7 +3392,7 @@ def test_empty_final_response():
                     TextPart(content='bar'),
                     ToolCallPart(tool_name='my_tool', args={'x': 2}, tool_call_id=IsStr()),
                 ],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=10, total_tokens=62),
+                usage=RequestUsage(input_tokens=52, output_tokens=10),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3300,7 +3405,7 @@ def test_empty_final_response():
             ),
             ModelResponse(
                 parts=[],
-                usage=Usage(requests=1, request_tokens=53, response_tokens=10, total_tokens=63),
+                usage=RequestUsage(input_tokens=53, output_tokens=10),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3439,7 +3544,7 @@ def test_multimodal_tool_response():
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3464,7 +3569,7 @@ def test_multimodal_tool_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
-                usage=Usage(requests=1, request_tokens=70, response_tokens=6, total_tokens=76),
+                usage=RequestUsage(input_tokens=70, output_tokens=6),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3514,7 +3619,7 @@ def test_plain_tool_response():
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3531,7 +3636,7 @@ def test_plain_tool_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
-                usage=Usage(requests=1, request_tokens=58, response_tokens=6, total_tokens=64),
+                usage=RequestUsage(input_tokens=58, output_tokens=6),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -3769,11 +3874,7 @@ def test_toolset_factory():
     assert run_result._state.run_step == 3  # pyright: ignore[reportPrivateUsage]
     assert len(available_tools) == 3
     assert toolset_creation_counts == snapshot(
-        {
-            'via_toolsets_arg': 4,
-            'via_toolset_decorator': 4,
-            'via_toolset_decorator_for_entire_run': 1,
-        }
+        defaultdict(int, {'via_toolsets_arg': 3, 'via_toolset_decorator': 3, 'via_toolset_decorator_for_entire_run': 1})
     )
 
 
@@ -3811,7 +3912,7 @@ def test_adding_tools_during_run():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='add_foo_tool', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=57, response_tokens=2, total_tokens=59),
+                usage=RequestUsage(input_tokens=57, output_tokens=2),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
             ),
@@ -3827,7 +3928,7 @@ def test_adding_tools_during_run():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foo', tool_call_id=IsStr())],
-                usage=Usage(requests=1, request_tokens=60, response_tokens=4, total_tokens=64),
+                usage=RequestUsage(input_tokens=60, output_tokens=4),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
             ),
@@ -3843,7 +3944,7 @@ def test_adding_tools_during_run():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done')],
-                usage=Usage(requests=1, request_tokens=63, response_tokens=5, total_tokens=68),
+                usage=RequestUsage(input_tokens=63, output_tokens=5),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
             ),
@@ -3902,7 +4003,7 @@ def test_prepare_output_tools():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=51, response_tokens=5, total_tokens=56),
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='test',
                 timestamp=IsDatetime(),
             ),
@@ -3924,7 +4025,7 @@ def test_prepare_output_tools():
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=52, response_tokens=12, total_tokens=64),
+                usage=RequestUsage(input_tokens=52, output_tokens=12),
                 model_name='test',
                 timestamp=IsDatetime(),
             ),
@@ -3973,9 +4074,7 @@ async def test_implicit_context_manager():
     toolset = CombinedToolset([server1, PrefixedToolset(server2, 'prefix')])
     agent = Agent('test', toolsets=[toolset])
 
-    async with agent.iter(
-        user_prompt='Hello',
-    ):
+    async with agent.iter(user_prompt='Hello'):
         assert server1.is_running
         assert server2.is_running
 
@@ -4047,11 +4146,10 @@ def test_toolsets():
     agent = Agent('test', toolsets=[toolset])
     assert toolset in agent.toolsets
 
-    async def prepare_tools(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
-        return tool_defs  # pragma: no cover
-
-    agent = Agent('test', toolsets=[toolset], prepare_tools=prepare_tools)
-    assert agent.toolsets == [IsInstance(PreparedToolset)]
+    other_toolset = FunctionToolset()
+    with agent.override(toolsets=[other_toolset]):
+        assert other_toolset in agent.toolsets
+        assert toolset not in agent.toolsets
 
 
 async def test_wrapper_agent():
@@ -4093,3 +4191,212 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+async def test_thinking_only_response_retry():
+    """Test that thinking-only responses trigger a retry mechanism."""
+    from pydantic_ai.messages import ThinkingPart
+    from pydantic_ai.models.function import FunctionModel
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # First call: return thinking-only response
+            return ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                model_name='thinking-test-model',
+            )
+        else:
+            # Second call: return proper response
+            return ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                model_name='thinking-test-model',
+            )
+
+    model = FunctionModel(model_function)
+    agent = Agent(model, system_prompt='You are a helpful assistant.')
+
+    result = await agent.run('Hello')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[ThinkingPart(content='Let me think about this...')],
+                usage=RequestUsage(input_tokens=57, output_tokens=6),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Responses without text or tool calls are not permitted.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Final answer')],
+                usage=RequestUsage(input_tokens=75, output_tokens=8),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_hitl_tool_approval():
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ]
+            )
+        else:
+            return ModelResponse(parts=[TextPart('OK')])
+
+    model = FunctionModel(model_function)
+
+    @dataclass
+    class ApprovableToolsDeps:
+        tool_call_results: dict[str, Union[bool, str]] = field(default_factory=dict)
+
+    agent = Agent(model, output_type=[str, DeferredToolCalls], deps_type=ApprovableToolsDeps)
+
+    async def defer_unless_approved(
+        ctx: RunContext[ApprovableToolsDeps], tool_def: ToolDefinition
+    ) -> Union[ToolDefinition, None]:
+        # When restarting a run with message history ending on `ModelResponse`, run_step will be 0
+        return tool_def if ctx.run_step == 0 else replace(tool_def, kind='deferred')
+
+    @agent.tool(prepare=defer_unless_approved)
+    def delete_file(ctx: RunContext[ApprovableToolsDeps], path: str) -> str:
+        assert ctx.tool_call_id is not None
+        assert ctx.tool_call_id in ctx.deps.tool_call_results
+        response = ctx.deps.tool_call_results[ctx.tool_call_id]
+        if response is not True:
+            raise ModelRetry(f'File {path!r} was not deleted: {response}')
+
+        return f'File {path!r} deleted'
+
+    result = await agent.run('Delete files ok_to_delete.py and never_delete.py', deps=ApprovableToolsDeps())
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete files ok_to_delete.py and never_delete.py',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=57, output_tokens=12),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolCalls(
+            tool_calls=[
+                ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
+                ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
+            ],
+            tool_defs={
+                'delete_file': ToolDefinition(
+                    name='delete_file',
+                    parameters_json_schema={
+                        'additionalProperties': False,
+                        'properties': {'path': {'type': 'string'}},
+                        'required': ['path'],
+                        'type': 'object',
+                    },
+                    kind='deferred',
+                )
+            },
+        )
+    )
+
+    results = {'ok_to_delete': True, 'never_delete': 'Please stop!'}
+
+    result = await agent.run(message_history=messages, deps=ApprovableToolsDeps(tool_call_results=results))
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete files ok_to_delete.py and never_delete.py',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=57, output_tokens=12),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content="File 'ok_to_delete.py' deleted",
+                        tool_call_id='ok_to_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content="File 'never_delete.py' was not deleted: Please stop!",
+                        tool_name='delete_file',
+                        tool_call_id='never_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='OK')],
+                usage=RequestUsage(input_tokens=76, output_tokens=13),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('OK')

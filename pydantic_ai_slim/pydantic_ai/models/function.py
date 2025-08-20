@@ -138,7 +138,6 @@ class FunctionModel(Model):
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
             response.usage = _estimate_usage(chain(messages, [response]))
-            response.usage.requests = 1
         return response
 
     @asynccontextmanager
@@ -270,7 +269,7 @@ class FunctionStreamedResponse(StreamedResponse):
         async for item in self._iter:
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
-                self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                self._usage += usage.RequestUsage(output_tokens=response_tokens)
                 maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -279,7 +278,7 @@ class FunctionStreamedResponse(StreamedResponse):
                     if isinstance(delta, DeltaThinkingPart):
                         if delta.content:  # pragma: no branch
                             response_tokens = _estimate_string_tokens(delta.content)
-                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_thinking_delta(
                             vendor_part_id=dtc_index,
                             content=delta.content,
@@ -288,7 +287,7 @@ class FunctionStreamedResponse(StreamedResponse):
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
-                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=dtc_index,
                             tool_name=delta.name,
@@ -311,7 +310,7 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -349,10 +348,9 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                     assert_never(part)
         else:
             assert_never(message)
-    return usage.Usage(
-        request_tokens=request_tokens,
-        response_tokens=response_tokens,
-        total_tokens=request_tokens + response_tokens,
+    return usage.RequestUsage(
+        input_tokens=request_tokens,
+        output_tokens=response_tokens,
     )
 
 

@@ -1104,18 +1104,7 @@ async def test_request_with_state() -> None:
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
-    assert seen_states == snapshot(
-        [
-            41,  # run msg_1, prepare_tools call 1
-            42,  # run msg_1, prepare_tools call 2
-            0,  # run msg_2, prepare_tools call 1
-            1,  # run msg_2, prepare_tools call 2
-            0,  # run msg_3, prepare_tools call 1
-            1,  # run msg_3, prepare_tools call 2
-            42,  # run msg_4, prepare_tools call 1
-            43,  # run msg_4, prepare_tools call 2
-        ]
-    )
+    assert seen_states == snapshot([41, 0, 0, 42])
 
 
 async def test_request_with_state_without_handler() -> None:

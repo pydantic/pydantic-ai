@@ -15,7 +15,7 @@ interactions:
       - api.anthropic.com
     method: POST
     parsed_body:
-      max_tokens: 1024
+      max_tokens: 4096
       messages:
       - content:
         - text: How much is 3 * 12390?
@@ -34,7 +34,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '927'
+      - '994'
       content-type:
       - application/json
       strict-transport-security:
@@ -43,12 +43,12 @@ interactions:
       - chunked
     parsed_body:
       container:
-        expires_at: '2025-05-26T13:30:45.703429+00:00'
-        id: container_011CPW9LpfbF8dmXMvVNCiQJ
+        expires_at: '2025-08-14T12:35:01.802902Z'
+        id: container_011CS7XodG8mEYj1PnST46H5
       content:
       - text: I'll calculate 3 * 12390 for you.
         type: text
-      - id: srvtoolu_01CPfaeVC7ju4VsdzxjSLDrY
+      - id: srvtoolu_01PZTDQyDyxVNeVikBoNo2fb
         input:
           code: |-
             result = 3 * 12390
@@ -62,21 +62,24 @@ interactions:
           stdout: |
             3 * 12390 = 37170
           type: code_execution_result
-        tool_use_id: srvtoolu_01CPfaeVC7ju4VsdzxjSLDrY
+        tool_use_id: srvtoolu_01PZTDQyDyxVNeVikBoNo2fb
         type: code_execution_tool_result
-      - text: The answer is **37,170**.
+      - text: 3 * 12390 = 37,170
         type: text
-      id: msg_015H6Emn2T8vZhE52mU2jF1U
+      id: msg_01RJnbK7VMxvS2SyvtyJAQVU
       model: claude-sonnet-4-20250514
       role: assistant
       stop_reason: end_turn
       stop_sequence: null
       type: message
       usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
         cache_creation_input_tokens: 0
         cache_read_input_tokens: 0
         input_tokens: 1630
-        output_tokens: 105
+        output_tokens: 109
         server_tool_use:
           web_search_requests: 0
         service_tier: standard

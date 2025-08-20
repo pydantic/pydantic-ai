@@ -47,12 +47,12 @@ requires-python = ">=3.9"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,evals,ag-ui,retries]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,google,groq,anthropic,mistral,cohere,bedrock,huggingface,cli,mcp,evals,ag-ui,retries,temporal]=={{ version }}",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 examples = ["pydantic-ai-examples=={{ version }}"]
-logfire = ["logfire>=3.11.0"]
+logfire = ["logfire>=3.14.1"]
 a2a = ["fasta2a>=0.4.1"]
 
 [project.urls]
@@ -81,8 +81,31 @@ members = [
     "examples",
 ]
 
+[tool.uv]
+default-groups = ["dev", "lint", "docs"]
+
 [dependency-groups]
-# dev dependencies are defined in `pydantic-ai-slim/pyproject.toml` to allow for minimal testing
+dev = [
+    "anyio>=4.5.0",
+    "asgi-lifespan>=2.1.0",
+    "devtools>=0.12.2",
+    "coverage[toml]>=7.10.3",
+    "dirty-equals>=0.9.0",
+    "duckduckgo-search>=7.0.0",
+    "inline-snapshot>=0.19.3",
+    "pytest>=8.3.3",
+    "pytest-examples>=0.0.18",
+    "pytest-mock>=3.14.0",
+    "pytest-pretty>=1.3.0",
+    "pytest-recording>=0.13.2",
+    "diff-cover>=9.2.0",
+    "boto3-stubs[bedrock-runtime]",
+    "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
+    "pytest-xdist>=3.6.1",
+    # Needed for PyCharm users
+    "pip>=25.2",
+    "genai-prices>=0.0.22",
+]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
     "pydantic-ai[a2a]",
@@ -216,7 +239,7 @@ filterwarnings = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
 [tool.coverage.run]
-parallel = true
+patch = ["subprocess"]
 concurrency = ["multiprocessing", "thread"]
 # We use a subdirectory for coverage data to avoid noisy coverage data files.
 data_file = ".coverage/.coverage"

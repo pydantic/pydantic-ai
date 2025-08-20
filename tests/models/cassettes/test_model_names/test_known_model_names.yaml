@@ -4,8 +4,6 @@ interactions:
     headers:
       accept:
       - '*/*'
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
       host:
@@ -20,6 +18,10 @@ interactions:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      expires:
+      - '0'
+      pragma:
+      - no-cache
       strict-transport-security:
       - max-age=63072000
     parsed_body:

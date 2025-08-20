@@ -82,6 +82,7 @@ __all__ = (
     'InstrumentationSettings',
     'WrapperAgent',
     'AbstractAgent',
+    'EventStreamHandler',
 )
 
 
@@ -242,7 +243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Create an agent.
 
         Args:
-            model: The default model to use for this agent, if not provide,
+            model: The default model to use for this agent, if not provided,
                 you must provide the model when calling it. We allow `str` here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
@@ -402,6 +403,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = value
 
     @property
+    def deps_type(self) -> type:
+        """The type of dependencies used by the agent."""
+        return self._deps_type
+
+    @property
     def output_type(self) -> OutputSpec[OutputDataT]:
         """The type of data output by agent runs, used to validate the data returned by the model, defaults to `str`."""
         return self._output_type
@@ -425,7 +431,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -441,7 +447,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -457,7 +463,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -508,9 +514,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=Usage(
-                            requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                        ),
+                        usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                     )
@@ -560,6 +564,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if output_toolset:
                 output_toolset.max_retries = self._max_result_retries
                 output_toolset.output_validators = output_validators
+        toolset = self._get_toolset(output_toolset=output_toolset, additional_toolsets=toolsets)
+        tool_manager = ToolManager[AgentDepsT](toolset)
 
         # Build the graph
         graph: Graph[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any], FinalResult[Any]] = (
@@ -567,13 +573,34 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # Build the initial state
-        usage = usage or _usage.Usage()
+        usage = usage or _usage.RunUsage()
         state = _agent_graph.GraphAgentState(
             message_history=message_history[:] if message_history else [],
             usage=usage,
             retries=0,
             run_step=0,
         )
+
+        # Merge model settings in order of precedence: run > agent > model
+        merged_settings = merge_model_settings(model_used.settings, self.model_settings)
+        model_settings = merge_model_settings(merged_settings, model_settings)
+        usage_limits = usage_limits or _usage.UsageLimits()
+
+        async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
+            parts = [
+                self._instructions,
+                *[await func.run(run_context) for func in self._instructions_functions],
+            ]
+
+            model_profile = model_used.profile
+            if isinstance(output_schema, _output.PromptedOutputSchema):
+                instructions = output_schema.instructions(model_profile.prompted_output_template)
+                parts.append(instructions)
+
+            parts = [p for p in parts if p]
+            if not parts:
+                return None
+            return '\n\n'.join(parts).strip()
 
         if isinstance(model_used, InstrumentedModel):
             instrumentation_settings = model_used.instrumentation_settings
@@ -582,86 +609,45 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        run_context = RunContext[AgentDepsT](
-            deps=deps,
-            model=model_used,
-            usage=usage,
+        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+            user_deps=deps,
             prompt=user_prompt,
-            messages=state.message_history,
+            new_message_index=new_message_index,
+            model=model_used,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            max_result_retries=self._max_result_retries,
+            end_strategy=self.end_strategy,
+            output_schema=output_schema,
+            output_validators=output_validators,
+            history_processors=self.history_processors,
+            builtin_tools=list(self._builtin_tools),
+            tool_manager=tool_manager,
             tracer=tracer,
-            trace_include_content=instrumentation_settings is not None and instrumentation_settings.include_content,
-            run_step=state.run_step,
+            get_instructions=get_instructions,
+            instrumentation_settings=instrumentation_settings,
+        )
+        start_node = _agent_graph.UserPromptNode[AgentDepsT](
+            user_prompt=user_prompt,
+            instructions=self._instructions,
+            instructions_functions=self._instructions_functions,
+            system_prompts=self._system_prompts,
+            system_prompt_functions=self._system_prompt_functions,
+            system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
 
-        toolset = self._get_toolset(additional=toolsets)
+        agent_name = self.name or 'agent'
+        run_span = tracer.start_span(
+            'agent run',
+            attributes={
+                'model_name': model_used.model_name if model_used else 'no-model',
+                'agent_name': agent_name,
+                'logfire.msg': f'{agent_name} run',
+            },
+        )
 
-        if output_toolset is not None:
-            if self._prepare_output_tools:
-                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
-            toolset = CombinedToolset([output_toolset, toolset])
-
-        async with toolset:
-            # This will raise errors for any name conflicts
-            tool_manager = await ToolManager[AgentDepsT].build(toolset, run_context)
-
-            # Merge model settings in order of precedence: run > agent > model
-            merged_settings = merge_model_settings(model_used.settings, self.model_settings)
-            model_settings = merge_model_settings(merged_settings, model_settings)
-            usage_limits = usage_limits or _usage.UsageLimits()
-            agent_name = self.name or 'agent'
-            run_span = tracer.start_span(
-                'agent run',
-                attributes={
-                    'model_name': model_used.model_name if model_used else 'no-model',
-                    'agent_name': agent_name,
-                    'logfire.msg': f'{agent_name} run',
-                },
-            )
-
-            async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-                parts = [
-                    self._instructions,
-                    *[await func.run(run_context) for func in self._instructions_functions],
-                ]
-
-                model_profile = model_used.profile
-                if isinstance(output_schema, _output.PromptedOutputSchema):
-                    instructions = output_schema.instructions(model_profile.prompted_output_template)
-                    parts.append(instructions)
-
-                parts = [p for p in parts if p]
-                if not parts:
-                    return None
-                return '\n\n'.join(parts).strip()
-
-            graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
-                user_deps=deps,
-                prompt=user_prompt,
-                new_message_index=new_message_index,
-                model=model_used,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                max_result_retries=self._max_result_retries,
-                end_strategy=self.end_strategy,
-                output_schema=output_schema,
-                output_validators=output_validators,
-                history_processors=self.history_processors,
-                builtin_tools=list(self._builtin_tools),
-                tool_manager=tool_manager,
-                tracer=tracer,
-                get_instructions=get_instructions,
-                instrumentation_settings=instrumentation_settings,
-            )
-            start_node = _agent_graph.UserPromptNode[AgentDepsT](
-                user_prompt=user_prompt,
-                instructions=self._instructions,
-                instructions_functions=self._instructions_functions,
-                system_prompts=self._system_prompts,
-                system_prompt_functions=self._system_prompt_functions,
-                system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
-            )
-
-            try:
+        try:
+            async with toolset:
                 async with graph.iter(
                     start_node,
                     state=state,
@@ -681,15 +667,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                     else json.dumps(InstrumentedModel.serialize_any(final_result.output))
                                 ),
                             )
+        finally:
+            try:
+                if instrumentation_settings and run_span.is_recording():
+                    run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
             finally:
-                try:
-                    if instrumentation_settings and run_span.is_recording():
-                        run_span.set_attributes(self._run_span_end_attributes(state, usage, instrumentation_settings))
-                finally:
-                    run_span.end()
+                run_span.end()
 
     def _run_span_end_attributes(
-        self, state: _agent_graph.GraphAgentState, usage: _usage.Usage, settings: InstrumentationSettings
+        self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
     ):
         return {
             **usage.opentelemetry_attributes(),
@@ -1240,32 +1226,40 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return deps
 
     def _get_toolset(
-        self, additional: Sequence[AbstractToolset[AgentDepsT]] | None = None
+        self,
+        output_toolset: AbstractToolset[AgentDepsT] | None | _utils.Unset = _utils.UNSET,
+        additional_toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractToolset[AgentDepsT]:
-        """Get the combined toolset containing function tools registered directly to the agent and user-provided toolsets including MCP servers.
+        """Get the complete toolset.
 
         Args:
-            additional: Additional toolsets to add.
+            output_toolset: The output toolset to use instead of the one built at agent construction time.
+            additional_toolsets: Additional toolsets to add, unless toolsets have been overridden.
         """
-        if some_tools := self._override_tools.get():
-            function_toolset = _AgentFunctionToolset(some_tools.value, max_retries=self._max_tool_retries)
-        else:
-            function_toolset = self._function_toolset
+        toolsets = self.toolsets
+        # Don't add additional toolsets if the toolsets have been overridden
+        if additional_toolsets and self._override_toolsets.get() is None:
+            toolsets = [*toolsets, *additional_toolsets]
 
-        if some_user_toolsets := self._override_toolsets.get():
-            user_toolsets = some_user_toolsets.value
-        else:
-            # Copy the dynamic toolsets to ensure each run has its own instances
-            dynamic_toolsets = [dataclasses.replace(toolset) for toolset in self._dynamic_toolsets]
-            user_toolsets = [*self._user_toolsets, *dynamic_toolsets, *(additional or [])]
+        toolset = CombinedToolset(toolsets)
 
-        if user_toolsets:
-            toolset = CombinedToolset([function_toolset, *user_toolsets])
-        else:
-            toolset = function_toolset
+        # Copy the dynamic toolsets to ensure each run has its own instances
+        def copy_dynamic_toolsets(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            if isinstance(toolset, DynamicToolset):
+                return dataclasses.replace(toolset)
+            else:
+                return toolset
+
+        toolset = toolset.visit_and_replace(copy_dynamic_toolsets)
 
         if self._prepare_tools:
             toolset = PreparedToolset(toolset, self._prepare_tools)
+
+        output_toolset = output_toolset if _utils.is_set(output_toolset) else self._output_toolset
+        if output_toolset is not None:
+            if self._prepare_output_tools:
+                output_toolset = PreparedToolset(output_toolset, self._prepare_output_tools)
+            toolset = CombinedToolset([output_toolset, toolset])
 
         return toolset
 
@@ -1273,15 +1267,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
         """All toolsets registered on the agent, including a function toolset holding tools that were registered on the agent directly.
 
-        If a `prepare_tools` function was configured on the agent, this will contain just a `PreparedToolset` wrapping the original toolsets.
-
         Output tools are not included.
         """
-        toolset = self._get_toolset()
-        if isinstance(toolset, CombinedToolset):
-            return toolset.toolsets
+        toolsets: list[AbstractToolset[AgentDepsT]] = []
+
+        if some_tools := self._override_tools.get():
+            function_toolset = _AgentFunctionToolset(some_tools.value, max_retries=self._max_tool_retries)
         else:
-            return [toolset]
+            function_toolset = self._function_toolset
+        toolsets.append(function_toolset)
+
+        if some_user_toolsets := self._override_toolsets.get():
+            user_toolsets = some_user_toolsets.value
+        else:
+            user_toolsets = [*self._user_toolsets, *self._dynamic_toolsets]
+        toolsets.extend(user_toolsets)
+
+        return toolsets
 
     def _prepare_output_schema(
         self, output_type: OutputSpec[RunOutputDataT] | None, model_profile: ModelProfile
@@ -1369,7 +1371,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def id(self) -> str:
-        return '<agent>'  # pragma: no cover
+        return '<agent>'
 
     @property
     def label(self) -> str:

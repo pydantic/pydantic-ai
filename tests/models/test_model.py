@@ -44,7 +44,7 @@ TEST_CASES = [
         'MISTRAL_API_KEY',
         'mistral:mistral-small-latest',
         'mistral-small-latest',
-        'mistral_ai',
+        'mistral',
         'mistral',
         'MistralModel',
     ),
@@ -95,6 +95,14 @@ TEST_CASES = [
         'grok',
         'grok',
         'OpenAIModel',
+    ),
+    (
+        'OPENAI_API_KEY',
+        'openai-responses:gpt-4o',
+        'gpt-4o',
+        'openai',
+        'openai',
+        'OpenAIResponsesModel',
     ),
 ]
 

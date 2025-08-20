@@ -1,5 +1,6 @@
 import os
 from collections.abc import Iterator
+from functools import partial
 from typing import Any
 
 import httpx
@@ -28,10 +29,22 @@ pytestmark = [
 ]
 
 
+def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict[str, Any]:  # pragma: lax no cover
+    for header in response['headers'].copy():
+        assert isinstance(header, str)
+        if header.lower() in filter_headers:
+            del response['headers'][header]
+    return response
+
+
 @pytest.fixture(scope='module')
 def vcr_config():  # pragma: lax no cover
     if not os.getenv('CI'):
-        return {'record_mode': 'rewrite'}
+        return {
+            'record_mode': 'rewrite',
+            'filter_headers': ['accept-encoding'],
+            'before_record_response': partial(modify_response, filter_headers=['cache-control']),
+        }
     return {'record_mode': 'none'}
 
 

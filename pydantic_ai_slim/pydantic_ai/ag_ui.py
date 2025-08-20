@@ -51,7 +51,7 @@ from .settings import ModelSettings
 from .tools import AgentDepsT, ToolDefinition
 from .toolsets import AbstractToolset
 from .toolsets.deferred import DeferredToolset
-from .usage import Usage, UsageLimits
+from .usage import RunUsage, UsageLimits
 
 try:
     from ag_ui.core import (
@@ -127,7 +127,7 @@ class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: UsageLimits | None = None,
-        usage: Usage | None = None,
+        usage: RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         # Starlette parameters.
@@ -216,7 +216,7 @@ async def handle_ag_ui_request(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    usage: Usage | None = None,
+    usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> Response:
@@ -277,7 +277,7 @@ async def run_ag_ui(
     deps: AgentDepsT = None,
     model_settings: ModelSettings | None = None,
     usage_limits: UsageLimits | None = None,
-    usage: Usage | None = None,
+    usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
 ) -> AsyncIterator[str]:

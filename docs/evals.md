@@ -313,7 +313,7 @@ _(This example is complete, it can be run "as is")_
 
 You can control concurrency during evaluation (this might be useful to prevent exceeding a rate limit):
 
-```python {title="parallel_evaluation_example.py" line_length="100"}
+```python {title="parallel_evaluation_example.py" line_length="100" test="skip"}
 import asyncio
 import time
 
@@ -341,8 +341,8 @@ async def double_number(input_value: int) -> int:
 # Run evaluation with unlimited concurrency
 t0 = time.time()
 report_default = dataset.evaluate_sync(double_number)
-print(f'Evaluation took less than 1s: {time.time() - t0 < 1}')
-#> Evaluation took less than 1s: True
+print(f'Evaluation took less than 0.5s: {time.time() - t0 < 0.5}')
+#> Evaluation took less than 0.5s: True
 
 report_default.print(include_input=True, include_output=True, include_durations=False)  # (1)!
 """

@@ -6,7 +6,7 @@ from typing import Literal
 
 from typing_extensions import TypedDict
 
-__all__ = ('AbstractBuiltinTool', 'WebSearchTool', 'WebSearchUserLocation', 'CodeExecutionTool')
+__all__ = ('AbstractBuiltinTool', 'WebSearchTool', 'WebSearchUserLocation', 'CodeExecutionTool', 'UrlContextTool')
 
 
 @dataclass
@@ -101,5 +101,13 @@ class CodeExecutionTool(AbstractBuiltinTool):
     Supported by:
     * Anthropic
     * OpenAI
+    * Google
+    """
+
+
+class UrlContextTool(AbstractBuiltinTool):
+    """Allows your agent to access contents from URLs.
+
+    Supported by:
     * Google
     """

@@ -58,7 +58,7 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -126,7 +126,7 @@ async def main():
                         content='Did you hear about the toothpaste scandal? They called it Colgate.'
                     )
                 ],
-                usage=Usage(request_tokens=50, response_tokens=12, total_tokens=62),
+                usage=RequestUsage(input_tokens=50, output_tokens=12),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),
@@ -180,7 +180,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -198,7 +198,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
+        usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -299,7 +299,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -317,7 +317,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
+        usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
     ),
@@ -333,6 +333,10 @@ custom processing logic.
 
 Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
 the message history before each model request.
+
+!!! warning "History processors replace the message history"
+    History processors replace the message history in the state with the processed messages, including the new user prompt part.
+    This means that if you want to keep the original message history, you need to make a copy of it.
 
 ### Usage
 
@@ -388,6 +392,9 @@ agent = Agent('openai:gpt-4o', history_processors=[keep_recent_messages])
 long_conversation_history: list[ModelMessage] = []  # Your long conversation history here
 # result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
+
+!!! warning "Be careful when slicing the message history"
+    When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
 
 #### `RunContext` parameter
 
@@ -448,6 +455,9 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
 
 agent = Agent('openai:gpt-4o', history_processors=[summarize_old_messages])
 ```
+
+!!! warning "Be careful when summarizing the message history"
+    When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
 
 ### Testing History Processors
 

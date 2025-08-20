@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any, Literal, Union, cast, overload
 
 from pydantic import ValidationError
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -40,7 +40,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import OpenAIModelProfile
+from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -59,6 +59,11 @@ try:
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
+    from openai.types.chat.chat_completion_message_custom_tool_call import ChatCompletionMessageCustomToolCall
+    from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
+    from openai.types.chat.chat_completion_message_function_tool_call_param import (
+        ChatCompletionMessageFunctionToolCallParam,
+    )
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
@@ -94,8 +99,6 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
-
-OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 class OpenAIModelSettings(ModelSettings, total=False):
@@ -172,6 +175,14 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
         middle of the conversation.
     """
 
+    openai_text_verbosity: Literal['low', 'medium', 'high']
+    """Constrains the verbosity of the model's text response.
+
+    Lower values will result in more concise responses, while higher values will
+    result in more verbose responses. Currently supported values are `low`,
+    `medium`, and `high`.
+    """
+
 
 @dataclass(init=False)
 class OpenAIModel(Model):
@@ -183,10 +194,59 @@ class OpenAIModel(Model):
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None, repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str = field(default='openai', repr=False)
+    _provider: Provider[AsyncOpenAI] = field(repr=False)
+
+    @overload
+    def __init__(
+        self,
+        model_name: OpenAIModelName,
+        *,
+        provider: Literal[
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'moonshotai',
+            'vercel',
+            'grok',
+            'fireworks',
+            'together',
+            'heroku',
+            'github',
+            'ollama',
+        ]
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
+    ) -> None: ...
+
+    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
+    @overload
+    def __init__(
+        self,
+        model_name: OpenAIModelName,
+        *,
+        provider: Literal[
+            'openai',
+            'deepseek',
+            'azure',
+            'openrouter',
+            'moonshotai',
+            'vercel',
+            'grok',
+            'fireworks',
+            'together',
+            'heroku',
+            'github',
+            'ollama',
+        ]
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
+        system_prompt_role: OpenAISystemPromptRole | None = None,
+        settings: ModelSettings | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
@@ -204,6 +264,7 @@ class OpenAIModel(Model):
             'together',
             'heroku',
             'github',
+            'ollama',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -226,15 +287,32 @@ class OpenAIModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
-        self.system_prompt_role = system_prompt_role
-
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+        if system_prompt_role is not None:
+            self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
 
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> OpenAIModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
+
+    @property
+    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
+    def system_prompt_role(self) -> OpenAISystemPromptRole | None:
+        return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
     async def request(
         self,
@@ -247,7 +325,6 @@ class OpenAIModel(Model):
             messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -264,16 +341,6 @@ class OpenAIModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> OpenAIModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
@@ -416,7 +483,14 @@ class OpenAIModel(Model):
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
-                part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                if isinstance(c, ChatCompletionMessageFunctionToolCall):
+                    part = ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id)
+                elif isinstance(c, ChatCompletionMessageCustomToolCall):  # pragma: no cover
+                    # NOTE: Custom tool calls are not supported.
+                    # See <https://github.com/pydantic/pydantic-ai/issues/2513> for more details.
+                    raise RuntimeError('Custom tool calls are not supported')
+                else:
+                    assert_never(c)
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
@@ -424,8 +498,8 @@ class OpenAIModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            vendor_details=vendor_details,
-            vendor_id=response.id,
+            provider_details=vendor_details,
+            provider_request_id=response.id,
         )
 
     async def _process_streamed_response(
@@ -462,8 +536,10 @@ class OpenAIModel(Model):
                         ),
                     )
                 return WebSearchOptions(search_context_size=tool.search_context_size)
-            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
-                raise UserError('`CodeExecutionTool` is not supported by OpenAI')
+            else:
+                raise UserError(
+                    f'`{tool.__class__.__name__}` is not supported by `OpenAIModel`. If it should be, please file an issue.'
+                )
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
@@ -474,7 +550,7 @@ class OpenAIModel(Model):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
-                tool_calls: list[chat.ChatCompletionMessageToolCallParam] = []
+                tool_calls: list[ChatCompletionMessageFunctionToolCallParam] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
@@ -505,8 +581,8 @@ class OpenAIModel(Model):
         return openai_messages
 
     @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> chat.ChatCompletionMessageToolCallParam:
-        return chat.ChatCompletionMessageToolCallParam(
+    def _map_tool_call(t: ToolCallPart) -> ChatCompletionMessageFunctionToolCallParam:
+        return ChatCompletionMessageFunctionToolCallParam(
             id=_guard_tool_call_id(t=t),
             type='function',
             function={'name': t.tool_name, 'arguments': t.args_as_json_str()},
@@ -539,9 +615,10 @@ class OpenAIModel(Model):
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                if self.system_prompt_role == 'developer':
+                system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
+                if system_prompt_role == 'developer':
                     yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
-                elif self.system_prompt_role == 'user':
+                elif system_prompt_role == 'user':
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
@@ -632,23 +709,14 @@ class OpenAIResponsesModel(Model):
     The [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses) is the
     new API for OpenAI models.
 
-    The Responses API has built-in tools, that you can use instead of building your own:
-
-    - [Web search](https://platform.openai.com/docs/guides/tools-web-search)
-    - [File search](https://platform.openai.com/docs/guides/tools-file-search)
-    - [Computer use](https://platform.openai.com/docs/guides/tools-computer-use)
-
-    Use the `openai_builtin_tools` setting to add these tools to your model.
-
     If you are interested in the differences between the Responses API and the Chat Completions API,
     see the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str = field(default='openai', repr=False)
+    _provider: Provider[AsyncOpenAI] = field(repr=False)
 
     def __init__(
         self,
@@ -671,6 +739,7 @@ class OpenAIResponsesModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -682,8 +751,8 @@ class OpenAIResponsesModel(Model):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
-        return self._system
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -732,7 +801,7 @@ class OpenAIResponsesModel(Model):
             items,
             usage=_map_usage(response),
             model_name=response.model,
-            vendor_id=response.id,
+            provider_request_id=response.id,
             timestamp=timestamp,
         )
 
@@ -780,8 +849,11 @@ class OpenAIResponsesModel(Model):
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> responses.Response | AsyncStream[responses.ResponseStreamEvent]:
-        tools = self._get_tools(model_request_parameters)
-        tools = self._get_builtin_tools(model_request_parameters) + tools
+        tools = (
+            self._get_builtin_tools(model_request_parameters)
+            + list(model_settings.get('openai_builtin_tools', []))
+            + self._get_tools(model_request_parameters)
+        )
 
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
@@ -809,6 +881,10 @@ class OpenAIResponsesModel(Model):
             assert isinstance(instructions, str)
             openai_messages.insert(0, responses.EasyInputMessageParam(role='system', content=instructions))
             instructions = NOT_GIVEN
+
+        if verbosity := model_settings.get('openai_text_verbosity'):
+            text = text or {}
+            text['verbosity'] = verbosity
 
         sampling_settings = (
             model_settings
@@ -880,6 +956,10 @@ class OpenAIResponsesModel(Model):
                 tools.append(web_search_tool)
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+            else:
+                raise UserError(  # pragma: no cover
+                    f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
+                )
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
@@ -1069,11 +1149,12 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content:
+            if content is not None:
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1238,10 +1319,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.Usage:
+def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
     elif isinstance(response_usage, responses.ResponseUsage):
         details: dict[str, int] = {
             key: value
@@ -1251,29 +1332,29 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             if isinstance(value, int)
         }
         details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
-        details['cached_tokens'] = response_usage.input_tokens_details.cached_tokens
-        return usage.Usage(
-            request_tokens=response_usage.input_tokens,
-            response_tokens=response_usage.output_tokens,
-            total_tokens=response_usage.total_tokens,
+        return usage.RequestUsage(
+            input_tokens=response_usage.input_tokens,
+            output_tokens=response_usage.output_tokens,
+            cache_read_tokens=response_usage.input_tokens_details.cached_tokens,
             details=details,
         )
     else:
         details = {
             key: value
             for key, value in response_usage.model_dump(
-                exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
+                exclude_none=True, exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
             ).items()
             if isinstance(value, int)
         }
-        if response_usage.completion_tokens_details is not None:
-            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
-        if response_usage.prompt_tokens_details is not None:
-            details.update(response_usage.prompt_tokens_details.model_dump(exclude_none=True))
-        return usage.Usage(
-            requests=1,
-            request_tokens=response_usage.prompt_tokens,
-            response_tokens=response_usage.completion_tokens,
-            total_tokens=response_usage.total_tokens,
+        u = usage.RequestUsage(
+            input_tokens=response_usage.prompt_tokens,
+            output_tokens=response_usage.completion_tokens,
             details=details,
         )
+        if response_usage.completion_tokens_details is not None:
+            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+            u.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens or 0
+        if response_usage.prompt_tokens_details is not None:
+            u.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens or 0
+            u.cache_read_tokens = response_usage.prompt_tokens_details.cached_tokens or 0
+        return u

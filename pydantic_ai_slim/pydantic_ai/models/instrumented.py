@@ -280,14 +280,14 @@ class InstrumentedModel(WrapperModel):
                             'gen_ai.request.model': request_model,
                             'gen_ai.response.model': response_model,
                         }
-                        if response.usage.request_tokens:  # pragma: no branch
+                        if response.usage.input_tokens:  # pragma: no branch
                             self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.request_tokens,
+                                response.usage.input_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'input'},
                             )
-                        if response.usage.response_tokens:  # pragma: no branch
+                        if response.usage.output_tokens:  # pragma: no branch
                             self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.response_tokens,
+                                response.usage.output_tokens,
                                 {**metric_attributes, 'gen_ai.token.type': 'output'},
                             )
 
