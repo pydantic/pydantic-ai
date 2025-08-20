@@ -582,3 +582,32 @@ async def test_dbos_agent():
     assert isinstance(toolsets[3], DeferredToolset)
     assert toolsets[3].id == 'deferred'
     assert toolsets[3] == complex_agent.toolsets[3]
+
+
+async def test_dbos_agent_run(allow_model_requests: None, dbos: DBOS):
+    # Note: this runs as a DBOS workflow because we automatically wrap the run function.
+    result = await simple_dbos_agent.run('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+def test_dbos_agent_run_sync(allow_model_requests: None, dbos: DBOS):
+    # Note: this runs as a DBOS workflow because we automatically wrap the run_sync function.
+    result = simple_dbos_agent.run_sync('What is the capital of Mexico?')
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
+
+
+async def test_dbos_agent_run_stream(allow_model_requests: None):
+    # Run stream is not a DBOS workflow, so we can use it directly.
+    async with simple_dbos_agent.run_stream('What is the capital of Mexico?') as result:
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(
+            [
+                'The',
+                'The capital',
+                'The capital of',
+                'The capital of Mexico',
+                'The capital of Mexico is',
+                'The capital of Mexico is Mexico',
+                'The capital of Mexico is Mexico City',
+                'The capital of Mexico is Mexico City.',
+            ]
+        )
