@@ -864,7 +864,6 @@ class ModelResponse:
 
     def price(self) -> genai_types.PriceCalculation:
         """Calculate the price of the usage.
-        
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """
         assert self.model_name, 'Model name is required to calculate price'
