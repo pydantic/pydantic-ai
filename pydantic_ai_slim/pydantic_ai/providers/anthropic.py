@@ -60,11 +60,6 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         Args:
             api_key: The API key to use for authentication, if not provided, the `ANTHROPIC_API_KEY` environment variable
                 will be used if available.
-            aws_secret_key: AWS secret access key for Bedrock authentication.
-            aws_access_key: AWS access key ID for Bedrock authentication.
-            aws_region: AWS region for Bedrock service.
-            aws_profile: AWS profile name for Bedrock authentication.
-            aws_session_token: AWS session token for temporary credentials.
             anthropic_client: An existing [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python)
                 client to use. If provided, the `api_key` and `http_client` arguments will be ignored.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
