@@ -104,10 +104,8 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
     """Helper for asserting that a DBOS workflow fails with the expected error."""
     with pytest.raises(Exception) as exc_info:
         yield
-    assert isinstance(exc_info.value.__cause__, Exception)
-    # TODO (Qian): check if this is the right way to check the cause
-    assert exc_info.value.__cause__.__class__.__name__ == exc_type.__name__
-    assert exc_info.value.__cause__ == exc_message
+    assert isinstance(exc_info.value, Exception)
+    assert str(exc_info.value) == exc_message
 
 
 DBOS_DATABASE_URL = os.environ.get('DBOS_DATABASE_URL', 'postgresql://postgres:dbos@localhost:5432/postgres')
@@ -592,6 +590,7 @@ async def test_dbos_agent_run(allow_model_requests: None, dbos: DBOS):
 
 def test_dbos_agent_run_sync(allow_model_requests: None, dbos: DBOS):
     # Note: this runs as a DBOS workflow because we automatically wrap the run_sync function.
+    # This is equivalent to test_dbos_agent_run_sync_in_workflow
     result = simple_dbos_agent.run_sync('What is the capital of Mexico?')
     assert result.output == snapshot('The capital of Mexico is Mexico City.')
 
@@ -611,3 +610,55 @@ async def test_dbos_agent_run_stream(allow_model_requests: None):
                 'The capital of Mexico is Mexico City.',
             ]
         )
+
+
+async def test_dbos_agent_iter(allow_model_requests: None):
+    output: list[str] = []
+    async with simple_dbos_agent.iter('What is the capital of Mexico?') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for chunk in stream.stream_text(debounce_by=None):
+                        output.append(chunk)
+    assert output == snapshot(
+        [
+            'The',
+            'The capital',
+            'The capital of',
+            'The capital of Mexico',
+            'The capital of Mexico is',
+            'The capital of Mexico is Mexico',
+            'The capital of Mexico is Mexico City',
+            'The capital of Mexico is Mexico City.',
+        ]
+    )
+
+
+def test_dbos_agent_run_sync_in_workflow(allow_model_requests: None, dbos: DBOS):
+    # DBOS allows calling `run_sync` inside a workflow as a child workflow.
+    @DBOS.workflow()
+    def run_sync_workflow():
+        result = simple_dbos_agent.run_sync('What is the capital of Mexico?')
+        return result.output
+
+    output = run_sync_workflow()
+    assert output == snapshot('The capital of Mexico is Mexico City.')
+    pass
+
+
+async def test_dbos_agent_run_stream_in_workflow(allow_model_requests: None, dbos: DBOS):
+    @DBOS.workflow()
+    async def run_stream_workflow():
+        async with simple_dbos_agent.run_stream('What is the capital of Mexico?') as result:
+            pass
+        return await result.get_output()
+
+    with workflow_raises(
+        UserError,
+        snapshot(
+            '`agent.run_stream()` cannot currently be used inside a DBOS workflow. '
+            'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
+            'Please file an issue if this is not sufficient for your use case.'
+        ),
+    ):
+        await run_stream_workflow()
