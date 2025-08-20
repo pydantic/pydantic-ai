@@ -705,8 +705,7 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
-    # DBOS workflow input must be serializable, so we cannot use a model as a dependency.
-    # Therefore, we cannot pass in a model as an argument.
+    # A non-DBOS model is not wrapped as steps so it's not deterministic and cannot be used in a DBOS workflow.
     with workflow_raises(
         UserError,
         snapshot(
@@ -714,3 +713,9 @@ async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None,
         ),
     ):
         await simple_dbos_agent.run('What is the capital of Mexico?', model=model)
+
+
+async def test_dbos_agent_run_in_workflow_with_toolsets(allow_model_requests: None, dbos: DBOS):
+    # Since DBOS does not automatically wrap the tools in a workflow, and allows dynamic steps, we can pass in toolsets directly.
+    result = await simple_dbos_agent.run('What is the capital of Mexico?', toolsets=[FunctionToolset()])
+    assert result.output == snapshot('The capital of Mexico is Mexico City.')
