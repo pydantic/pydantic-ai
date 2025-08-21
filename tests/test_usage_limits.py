@@ -115,6 +115,7 @@ async def test_streamed_text_limits() -> None:
                     requests=2,
                     input_tokens=103,
                     output_tokens=5,
+                    tool_calls=1,
                 )
             )
             succeeded = True
@@ -146,13 +147,13 @@ async def test_multi_agent_usage_no_incr():
         delegate_result = await delegate_agent.run(sentence)
         delegate_usage = delegate_result.usage()
         run_1_usages.append(delegate_usage)
-        assert delegate_usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4))
+        assert delegate_usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4, tool_calls=1))
         return delegate_result.output
 
     result1 = await controller_agent1.run('foobar')
     assert result1.output == snapshot('{"delegate_to_other_agent1":0}')
     run_1_usages.append(result1.usage())
-    assert result1.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=13))
+    assert result1.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=13, tool_calls=1))
 
     controller_agent2 = Agent(TestModel())
 
@@ -160,12 +161,12 @@ async def test_multi_agent_usage_no_incr():
     async def delegate_to_other_agent2(ctx: RunContext[None], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage()
-        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9))
+        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9, tool_calls=2))
         return delegate_result.output
 
     result2 = await controller_agent2.run('foobar')
     assert result2.output == snapshot('{"delegate_to_other_agent2":0}')
-    assert result2.usage() == snapshot(RunUsage(requests=3, input_tokens=154, output_tokens=17))
+    assert result2.usage() == snapshot(RunUsage(requests=3, input_tokens=154, output_tokens=17, tool_calls=2))
 
     # confirm the usage from result2 is the sum of the usage from result1
     assert result2.usage() == functools.reduce(operator.add, run_1_usages)
@@ -192,7 +193,7 @@ async def test_multi_agent_usage_sync():
 
     result = await controller_agent.run('foobar')
     assert result.output == snapshot('{"delegate_to_other_agent":0}')
-    assert result.usage() == snapshot(RunUsage(requests=7, input_tokens=105, output_tokens=16))
+    assert result.usage() == snapshot(RunUsage(requests=7, input_tokens=105, output_tokens=16, tool_calls=1))
 
 
 def test_request_usage_basics():
@@ -210,6 +211,7 @@ def test_add_usages():
         cache_write_tokens=40,
         input_audio_tokens=50,
         cache_audio_read_tokens=60,
+        tool_calls=3,
         details={
             'custom1': 10,
             'custom2': 20,
@@ -224,11 +226,28 @@ def test_add_usages():
             cache_read_tokens=60,
             input_audio_tokens=100,
             cache_audio_read_tokens=120,
+            tool_calls=6,
             details={'custom1': 20, 'custom2': 40},
         )
     )
     assert usage + RunUsage() == usage
     assert RunUsage() + RunUsage() == RunUsage()
+
+
+async def test_tool_call_limit() -> None:
+    test_agent = Agent(TestModel())
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('The next tool call would exceed the tool_calls_limit of 0 (tool_calls=0)')
+    ):
+        await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=0))
+
+    result = await test_agent.run('Hello', usage_limits=UsageLimits(tool_calls_limit=1))
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
 
 
 def test_deprecated_usage_limits():

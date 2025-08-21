@@ -667,7 +667,11 @@ async def test_stream_structured(allow_model_requests: None):
                 requests=2,
                 input_tokens=20,
                 output_tokens=5,
-                details={'input_tokens': 20, 'output_tokens': 5},
+                tool_calls=1,
+                details={
+                    'input_tokens': 20,
+                    'output_tokens': 5,
+                },
             )
         )
         assert tool_called
