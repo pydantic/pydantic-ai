@@ -531,7 +531,10 @@ class GeminiStreamedResponse(StreamedResponse):
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
             if candidate.content is None or candidate.content.parts is None:
-                if candidate.finish_reason == 'SAFETY':  # pragma: no cover
+                if candidate.finish_reason == 'STOP':  # pragma: no cover
+                    # Normal completion - skip this chunk
+                    continue
+                elif candidate.finish_reason == 'SAFETY':  # pragma: no cover
                     raise UnexpectedModelBehavior('Safety settings triggered', str(chunk))
                 else:  # pragma: no cover
                     raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
