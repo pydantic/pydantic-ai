@@ -215,6 +215,7 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
                 }
             },
             'attributes': {'error': 'Division by zero'},
+            'evaluator_failures': [],
             'expected_output': {'answer': 'Error'},
             'inputs': {'query': 'What is 1/0?'},
             'labels': {},

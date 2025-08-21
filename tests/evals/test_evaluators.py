@@ -12,7 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     import logfire
@@ -32,7 +32,9 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.evaluator import (
         EvaluationReason,
+        EvaluationResult,
         Evaluator,
+        EvaluatorFailure,
         EvaluatorOutput,
     )
     from pydantic_evals.evaluators.spec import EvaluatorSpec
@@ -158,11 +160,14 @@ async def test_evaluator_call(test_context: EvaluatorContext[TaskInput, TaskOutp
     evaluator = ExampleEvaluator()
     results = await run_evaluator(evaluator, test_context)
 
+    assert not isinstance(results, EvaluatorFailure)
     assert len(results) == 1
-    assert results[0].name == 'result'
-    assert results[0].value == 'passed'
-    assert results[0].reason is None
-    assert results[0].source == EvaluatorSpec(name='ExampleEvaluator', arguments=None)
+    first_result = results[0]
+    assert isinstance(first_result, EvaluationResult)
+    assert first_result.name == 'result'
+    assert first_result.value == 'passed'
+    assert first_result.reason is None
+    assert first_result.source == EvaluatorSpec(name='ExampleEvaluator', arguments=None)
 
 
 async def test_is_instance_evaluator():
@@ -289,8 +294,13 @@ async def test_evaluator_error_handling(test_context: EvaluatorContext[TaskInput
     evaluator = FailingEvaluator()
 
     # When called directly, it should raise an error
-    with pytest.raises(ValueError, match='Simulated error'):
-        await run_evaluator(evaluator, test_context)
+    result = await run_evaluator(evaluator, test_context)
+    assert result == EvaluatorFailure(
+        name='FailingEvaluator',
+        error_message='ValueError: Simulated error',
+        error_stacktrace=IsStr(),
+        source=FailingEvaluator().as_spec(),
+    )
 
 
 async def test_evaluator_with_null_values():
