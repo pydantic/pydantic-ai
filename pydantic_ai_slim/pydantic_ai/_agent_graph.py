@@ -646,6 +646,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
         tool_call_approved=ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None,
+        usage_limits=ctx.deps.usage_limits,
     )
 
 

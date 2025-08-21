@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic
@@ -28,6 +29,9 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
+
+    _tool_calls_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    """Lock to serialize usage limit checks and increments for tool call counting."""
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -120,6 +124,11 @@ class ToolManager(Generic[AgentDepsT]):
                 args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
+
+            async with self._tool_calls_lock:
+                if self.ctx.usage_limits is not None:
+                    self.ctx.usage_limits.check_before_tool_call(self.ctx.usage)
+                self.ctx.usage.tool_calls += 1
 
             return await self.toolset.call_tool(name, args_dict, ctx, tool)
         except (ValidationError, ModelRetry) as e:
