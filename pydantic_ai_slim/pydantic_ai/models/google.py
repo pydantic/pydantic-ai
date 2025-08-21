@@ -395,6 +395,7 @@ class GoogleModel(Model):
         return _process_response_from_parts(
             parts,
             response.model_version or self._model_name,
+            self._provider.name,
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
@@ -414,6 +415,7 @@ class GoogleModel(Model):
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
+            _provider_name=self._provider.name,
         )
 
     async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
@@ -523,6 +525,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -565,6 +568,11 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -599,6 +607,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
 def _process_response_from_parts(
     parts: list[Part],
     model_name: GoogleModelName,
+    provider_name: str,
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
@@ -636,7 +645,12 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, model_name=model_name, usage=usage, provider_request_id=vendor_id, provider_details=vendor_details
+        parts=items,
+        model_name=model_name,
+        usage=usage,
+        provider_request_id=vendor_id,
+        provider_details=vendor_details,
+        provider_name=provider_name,
     )
 
 

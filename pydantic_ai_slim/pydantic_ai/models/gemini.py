@@ -305,6 +305,7 @@ class GeminiModel(Model):
             _model_name=self._model_name,
             _content=content,
             _stream=aiter_bytes,
+            _provider_name=self._provider.name,
         )
 
     async def _message_to_gemini_content(
@@ -425,6 +426,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GeminiModelName
     _content: bytearray
     _stream: AsyncIterator[bytes]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -494,6 +496,11 @@ class GeminiStreamedResponse(StreamedResponse):
     def model_name(self) -> GeminiModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

@@ -119,12 +119,14 @@ async def test_request_simple_success(allow_model_requests: None):
                 parts=[TextPart(content='world')],
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='cohere',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='cohere',
             ),
         ]
     )
@@ -193,6 +195,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 ],
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='cohere',
             ),
             ModelRequest(
                 parts=[
@@ -279,6 +282,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 ],
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='cohere',
             ),
             ModelRequest(
                 parts=[
@@ -301,6 +305,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=5, output_tokens=3, details={'input_tokens': 4, 'output_tokens': 2}),
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='cohere',
             ),
             ModelRequest(
                 parts=[
@@ -316,6 +321,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='cohere',
             ),
         ]
     )
@@ -395,6 +401,7 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
+                provider_name='cohere',
             ),
         ]
     )
@@ -435,6 +442,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 usage=RequestUsage(input_tokens=13, output_tokens=1909, details={'reasoning_tokens': 1472}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                provider_name='openai',
                 provider_request_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
         ]
@@ -459,6 +467,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 usage=RequestUsage(input_tokens=13, output_tokens=1909, details={'reasoning_tokens': 1472}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                provider_name='openai',
                 provider_request_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
             ModelRequest(
@@ -476,6 +485,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ),
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
+                provider_name='cohere',
             ),
         ]
     )
