@@ -327,7 +327,11 @@ class AnthropicModel(Model):
                 )
 
         return ModelResponse(
-            items, usage=_map_usage(response), model_name=response.model, provider_request_id=response.id
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -345,6 +349,7 @@ class AnthropicModel(Model):
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=timestamp,
+            _provider_name=self._provider.name,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
@@ -575,6 +580,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     _model_name: AnthropicModelName
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
@@ -655,6 +661,11 @@ class AnthropicStreamedResponse(StreamedResponse):
     def model_name(self) -> AnthropicModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

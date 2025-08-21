@@ -305,6 +305,11 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
+    def provider_name(self) -> None:
+        """Get the provider name."""
+        return None
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp

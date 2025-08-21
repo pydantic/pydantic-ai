@@ -112,6 +112,10 @@ class MyResponseStream(StreamedResponse):
         return 'my_model_123'
 
     @property
+    def provider_name(self) -> str:
+        return 'my_provider'
+
+    @property
     def timestamp(self) -> datetime:
         return datetime(2022, 1, 1)
 
