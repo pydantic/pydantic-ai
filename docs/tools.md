@@ -1036,6 +1036,9 @@ When a model returns multiple tool calls in one response, Pydantic AI schedules 
 
 Async functions are run on the event loop, while sync functions are offloaded to threads. To get the best performance, _always_ use an async function _unless_ you're doing blocking I/O (and there's no way to use a non-blocking library instead) or CPU-bound work (like `numpy` or `scikit-learn` operations), so that simple functions are not offloaded to threads unnecessarily.
 
+!!! note "Limiting exact tool executions"
+    You can cap the exact number of tool executions within a run using `UsageLimits(tool_calls_limit=...)`. The counter increments immediately before each actual tool invocation (after successful argument validation), and concurrent calls are counted safely.
+
 ## Third-Party Tools
 
 ### MCP Tools {#mcp-tools}
