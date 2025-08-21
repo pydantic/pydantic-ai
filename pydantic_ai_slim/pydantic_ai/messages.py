@@ -509,6 +509,9 @@ class UserPromptPart:
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
         content = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
+        for part in content:
+            if part['kind'] == 'binary' and 'content' in part:
+                part['binary_content'] = part.pop('content')
         content = [
             part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
         ]
@@ -534,7 +537,7 @@ class UserPromptPart:
             elif isinstance(part, BinaryContent):
                 converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
                 if settings.include_content and settings.include_binary_content:
-                    converted_part['binary_content'] = base64.b64encode(part.data).decode()
+                    converted_part['content'] = base64.b64encode(part.data).decode()
                 parts.append(converted_part)
             else:
                 parts.append({'type': part.kind})  # pragma: no cover

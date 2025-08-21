@@ -1017,7 +1017,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
                     {
                         'type': 'binary',
                         'media_type': 'application/pdf',
-                        'binary_content': IsStr(),
+                        'content': IsStr(),
                     },
                 ],
             },

@@ -33,7 +33,7 @@ class MediaUrlPart(TypedDict):
 class BinaryDataPart(TypedDict):
     type: Literal['binary']
     media_type: str
-    binary_content: NotRequired[str]
+    content: NotRequired[str]
 
 
 class ThinkingPart(TypedDict):
