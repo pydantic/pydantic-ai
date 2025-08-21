@@ -944,6 +944,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -960,6 +961,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -1028,6 +1030,7 @@ async def test_stream_text_heterogeneous(get_gemini_client: GetGeminiClient):
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
+                provider_name='google-gla',
             ),
             ModelRequest(
                 parts=[
@@ -1487,6 +1490,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                provider_name='openai',
                 provider_request_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
         ]
@@ -1513,6 +1517,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
+                provider_name='openai',
                 provider_request_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
             ModelRequest(

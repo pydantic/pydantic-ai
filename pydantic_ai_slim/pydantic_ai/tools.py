@@ -266,6 +266,7 @@ class Tool(Generic[AgentDepsT]):
         name: str,
         description: str | None,
         json_schema: JsonSchemaValue,
+        takes_ctx: bool = False,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -277,6 +278,8 @@ class Tool(Generic[AgentDepsT]):
             description: Used to tell the model how/when/why to use the tool.
                 You can provide few-shot examples as a part of the description.
             json_schema: The schema for the function arguments
+            takes_ctx: An optional boolean parameter indicating whether the function
+                accepts the context object as an argument.
 
         Returns:
             A Pydantic tool that calls the function
@@ -286,13 +289,13 @@ class Tool(Generic[AgentDepsT]):
             description=description,
             validator=SchemaValidator(schema=core_schema.any_schema()),
             json_schema=json_schema,
-            takes_ctx=False,
+            takes_ctx=takes_ctx,
             is_async=_utils.is_async_callable(function),
         )
 
         return cls(
             function,
-            takes_ctx=False,
+            takes_ctx=takes_ctx,
             name=name,
             description=description,
             function_schema=function_schema,
