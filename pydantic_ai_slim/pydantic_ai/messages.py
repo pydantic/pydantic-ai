@@ -99,6 +99,14 @@ class FileUrl(ABC):
     * If False, the URL is sent directly to the model and no download is performed.
     """
 
+    identifier: str | None = None
+    """Identifier for the file URL, such as a unique ID.
+
+    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument, and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+    This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool. If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier, e.g. "This is file <identifier>:" preceding the `FileUrl`.
+    """
+
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
 
@@ -112,12 +120,14 @@ class FileUrl(ABC):
         self,
         url: str,
         force_download: bool = False,
+        identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
     ) -> None:
         self.url = url
-        self.vendor_metadata = vendor_metadata
         self.force_download = force_download
+        self.identifier = identifier
+        self.vendor_metadata = vendor_metadata
         self._media_type = media_type
 
     @property
@@ -153,11 +163,18 @@ class VideoUrl(FileUrl):
         self,
         url: str,
         force_download: bool = False,
+        identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['video-url'] = 'video-url',
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            identifier=identifier,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> VideoMediaType:
@@ -216,11 +233,18 @@ class AudioUrl(FileUrl):
         self,
         url: str,
         force_download: bool = False,
+        identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['audio-url'] = 'audio-url',
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            identifier=identifier,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> AudioMediaType:
@@ -266,11 +290,18 @@ class ImageUrl(FileUrl):
         self,
         url: str,
         force_download: bool = False,
+        identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['image-url'] = 'image-url',
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            identifier=identifier,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> ImageMediaType:
@@ -311,11 +342,18 @@ class DocumentUrl(FileUrl):
         self,
         url: str,
         force_download: bool = False,
+        identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['document-url'] = 'document-url',
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            identifier=identifier,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> str:

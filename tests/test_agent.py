@@ -28,7 +28,9 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    AudioUrl,
     BinaryContent,
+    DocumentUrl,
     HandleResponseEvent,
     ImageUrl,
     ModelMessage,
@@ -43,6 +45,7 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -3078,7 +3081,7 @@ def test_binary_content_serializable():
 def test_image_url_serializable():
     agent = Agent('test')
 
-    content = ImageUrl('https://example.com/chart', media_type='image/jpeg')
+    content = ImageUrl('https://example.com/chart', media_type='image/jpeg', identifier='url_id1')
     result = agent.run_sync(['Hello', content])
 
     serialized = result.all_messages_json()
@@ -3092,6 +3095,7 @@ def test_image_url_serializable():
                             {
                                 'url': 'https://example.com/chart',
                                 'force_download': False,
+                                'identifier': 'url_id1',
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
                             },
@@ -3208,6 +3212,72 @@ def test_tool_returning_binary_content_with_identifier():
                             media_type='image/png',
                             identifier='image_id_1',
                         ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+    )
+
+
+def test_tool_returning_file_url_with_identifier():
+    """Test that a tool returning FileUrl subclasses with identifiers works correctly."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_files', {})])
+        else:
+            return ModelResponse(parts=[TextPart('Files received')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_files():
+        """Return various file URLs with custom identifiers."""
+        from pydantic_ai.messages import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
+
+        return [
+            ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
+            VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),
+            AudioUrl(url='https://example.com/audio.mp3', identifier='aud_003'),
+            DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
+        ]
+
+    result = agent.run_sync('Get some files')
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_files',
+                    content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content=[
+                        'This is file img_001:',
+                        ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content=[
+                        'This is file vid_002:',
+                        VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content=[
+                        'This is file aud_003:',
+                        AudioUrl(url='https://example.com/audio.mp3', identifier='aud_003'),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content=[
+                        'This is file doc_004:',
+                        DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
