@@ -1,3 +1,8 @@
+"""Type definitions of OpenTelemetry GenAI spec message parts.
+
+Based on https://github.com/lmolkova/semantic-conventions/blob/eccd1f806e426a32c98271c3ce77585492d26de2/docs/gen-ai/non-normative/models.ipynb
+"""
+
 from __future__ import annotations
 
 from typing import Literal
