@@ -79,7 +79,7 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
         # Wrap the request in a DBOS step.
         @DBOS.step(
             name=f'{self._step_name_prefix}__model.request',
-            retries_allowed=self.step_config.get('retries_allowed', False),
+            **self.step_config,
         )
         async def wrapped_request_step(
             messages: list[ModelMessage],
@@ -108,7 +108,7 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
 
         @DBOS.step(
             name=f'{self._step_name_prefix}__model.request_stream',
-            retries_allowed=self.step_config.get('retries_allowed', False),
+            **self.step_config,
         )
         async def wrapped_request_stream_step(
             messages: list[ModelMessage],

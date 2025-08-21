@@ -234,7 +234,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     assert len(basic_spans_by_id) > 0, 'No spans were exported'
 
 
-# Note (Qian): since we wrap the agent run in a DBOS workflow, we cannot just use a DBOS agent without DBOS. This test shows we can use a complex agent with DBOS decorated tools. Without DBOS workflows, those steps are just normal functions.
+# Note: since we wrap the agent run in a DBOS workflow, we cannot just use a DBOS agent without DBOS. This test shows we can use a complex agent with DBOS decorated tools. Without DBOS workflows, those steps are just normal functions.
 async def test_complex_agent_run(allow_model_requests: None) -> None:
     events: list[AgentStreamEvent | HandleResponseEvent] = []
 

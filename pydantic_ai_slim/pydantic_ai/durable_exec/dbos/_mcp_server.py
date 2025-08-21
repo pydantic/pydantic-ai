@@ -54,7 +54,7 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC, DBOSConfiguredInstance):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         @DBOS.step(
             name=f'{self._name}.get_tools',
-            retries_allowed=self._step_config.get('retries_allowed', False),
+            **self._step_config,
         )
         async def wrapped_get_tools_step(
             ctx: RunContext[AgentDepsT],
@@ -72,7 +72,7 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC, DBOSConfiguredInstance):
     ) -> ToolResult:
         @DBOS.step(
             name=f'{self._name}.call_tool',
-            retries_allowed=self._step_config.get('retries_allowed', False),
+            **self._step_config,
         )
         async def wrapped_call_tool_step(
             name: str,

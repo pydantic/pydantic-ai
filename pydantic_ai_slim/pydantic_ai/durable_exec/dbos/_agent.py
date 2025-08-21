@@ -53,7 +53,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             name: Optional unique agent name to use as the DBOS configured instance name. If not provided, the agent's `name` will be used.
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
             mcp_step_config: The base DBOS step config to use for MCP server steps. If no config is provided, use the default settings of DBOS.
-            model_step_config: The DBOS step config to use for model request steps. This is merged with the base step config.
+            model_step_config: The DBOS step config to use for model request steps. If no config is provided, use the default settings of DBOS.
         """
         super().__init__(wrapped)
 
@@ -63,7 +63,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
             )
 
-        # TODO (Qian): DBOS-ify those configurations
+        # Merge the config with the default DBOS config
         self._mcp_step_config = mcp_step_config or {}
         self._model_step_config = model_step_config or {}
 
@@ -162,7 +162,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    # TODO (Qian): do we always want to wrap it in a workflow? Maybe yes.
     @DBOS.workflow()
     async def run(
         self,
@@ -264,7 +263,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    # TODO (Qian): do we always want to wrap it in a workflow? Maybe yes.
     @DBOS.workflow()
     def run_sync(
         self,
@@ -561,14 +559,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        # TODO (Qian): do we really need to check if we're in a workflow here? Why not just allow it?
-        # if DBOS.workflow_id is not None and DBOS.step_id is None:
-        #     raise UserError(
-        #         '`agent.iter()` cannot currently be used inside a DBOS workflow. '
-        #         'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
-        #         'Please file an issue if this is not sufficient for your use case.'
-        #     )
-
         if model is not None and not isinstance(model, (DBOSModel)):
             raise UserError(
                 'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
@@ -610,7 +600,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
         """
-        # TODO (Qian): do we need to check if we're in a workflow here?
         if _utils.is_set(model) and not isinstance(model, (DBOSModel)):
             raise UserError(
                 'Non-DBOS model cannot be contextually overridden inside a DBOS workflow, it must be set at agent creation time.'
