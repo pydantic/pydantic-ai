@@ -272,6 +272,7 @@ class HuggingFaceModel(Model):
             model_name=response.model,
             timestamp=timestamp,
             provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -291,6 +292,7 @@ class HuggingFaceModel(Model):
             _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _provider_name=self._provider.name,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -437,6 +439,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -473,6 +476,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

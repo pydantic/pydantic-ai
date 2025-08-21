@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
 
 import pydantic
 import pydantic_core
+from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
 from typing_extensions import TypeAlias, deprecated
 
-from . import _utils
+from . import _otel_messages, _utils
 from ._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     now_utc as _now_utc,
@@ -81,6 +82,9 @@ class SystemPromptPart:
             'gen_ai.system.message',
             body={'role': 'system', **({'content': self.content} if settings.include_content else {})},
         )
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        return [_otel_messages.TextPart(type='text', **{'content': self.content} if settings.include_content else {})]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -504,24 +508,40 @@ class UserPromptPart:
     """Part type identifier, this is available on all parts as a discriminator."""
 
     def otel_event(self, settings: InstrumentationSettings) -> Event:
-        content: str | list[dict[str, Any] | str] | dict[str, Any]
-        if isinstance(self.content, str):
-            content = self.content if settings.include_content else {'kind': 'text'}
-        else:
-            content = []
-            for part in self.content:
-                if isinstance(part, str):
-                    content.append(part if settings.include_content else {'kind': 'text'})
-                elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
-                    content.append({'kind': part.kind, **({'url': part.url} if settings.include_content else {})})
-                elif isinstance(part, BinaryContent):
-                    converted_part = {'kind': part.kind, 'media_type': part.media_type}
-                    if settings.include_content and settings.include_binary_content:
-                        converted_part['binary_content'] = base64.b64encode(part.data).decode()
-                    content.append(converted_part)
-                else:
-                    content.append({'kind': part.kind})  # pragma: no cover
+        content = [{'kind': part.pop('type'), **part} for part in self.otel_message_parts(settings)]
+        for part in content:
+            if part['kind'] == 'binary' and 'content' in part:
+                part['binary_content'] = part.pop('content')
+        content = [
+            part['content'] if part == {'kind': 'text', 'content': part.get('content')} else part for part in content
+        ]
+        if content in ([{'kind': 'text'}], [self.content]):
+            content = content[0]
         return Event('gen_ai.user.message', body={'content': content, 'role': 'user'})
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        parts: list[_otel_messages.MessagePart] = []
+        content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
+        for part in content:
+            if isinstance(part, str):
+                parts.append(
+                    _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
+                )
+            elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+                parts.append(
+                    _otel_messages.MediaUrlPart(
+                        type=part.kind,
+                        **{'url': part.url} if settings.include_content else {},
+                    )
+                )
+            elif isinstance(part, BinaryContent):
+                converted_part = _otel_messages.BinaryDataPart(type='binary', media_type=part.media_type)
+                if settings.include_content and settings.include_binary_content:
+                    converted_part['content'] = base64.b64encode(part.data).decode()
+                parts.append(converted_part)
+            else:
+                parts.append({'type': part.kind})  # pragma: no cover
+        return parts
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -575,6 +595,18 @@ class BaseToolReturnPart:
                 'name': self.tool_name,
             },
         )
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        from .models.instrumented import InstrumentedModel
+
+        return [
+            _otel_messages.ToolCallResponsePart(
+                type='tool_call_response',
+                id=self.tool_call_id,
+                name=self.tool_name,
+                **({'result': InstrumentedModel.serialize_any(self.content)} if settings.include_content else {}),
+            )
+        ]
 
     def has_content(self) -> bool:
         """Return `True` if the tool return has content."""
@@ -668,6 +700,19 @@ class RetryPromptPart:
                     'name': self.tool_name,
                 },
             )
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        if self.tool_name is None:
+            return [_otel_messages.TextPart(type='text', content=self.model_response())]
+        else:
+            return [
+                _otel_messages.ToolCallResponsePart(
+                    type='tool_call_response',
+                    id=self.tool_call_id,
+                    name=self.tool_name,
+                    **({'result': self.model_response()} if settings.include_content else {}),
+                )
+            ]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -848,6 +893,9 @@ class ModelResponse:
     kind: Literal['response'] = 'response'
     """Message type identifier, this is available on all parts as a discriminator."""
 
+    provider_name: str | None = None
+    """The name of the LLM provider that generated the response."""
+
     provider_details: dict[str, Any] | None = field(default=None)
     """Additional provider-specific details in a serializable format.
 
@@ -857,6 +905,19 @@ class ModelResponse:
 
     provider_request_id: str | None = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
+
+    def price(self) -> genai_types.PriceCalculation:
+        """Calculate the price of the usage.
+
+        Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
+        """
+        assert self.model_name, 'Model name is required to calculate price'
+        return calc_price(
+            self.usage,
+            self.model_name,
+            provider_id=self.provider_name,
+            genai_request_timestamp=self.timestamp,
+        )
 
     def otel_events(self, settings: InstrumentationSettings) -> list[Event]:
         """Return OpenTelemetry events for the response."""
@@ -893,6 +954,36 @@ class ModelResponse:
                 body['content'] = text_content
 
         return result
+
+    def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
+        parts: list[_otel_messages.MessagePart] = []
+        for part in self.parts:
+            if isinstance(part, TextPart):
+                parts.append(
+                    _otel_messages.TextPart(
+                        type='text',
+                        **({'content': part.content} if settings.include_content else {}),
+                    )
+                )
+            elif isinstance(part, ThinkingPart):
+                parts.append(
+                    _otel_messages.ThinkingPart(
+                        type='thinking',
+                        **({'content': part.content} if settings.include_content else {}),
+                    )
+                )
+            elif isinstance(part, ToolCallPart):
+                call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+                if settings.include_content and part.args is not None:
+                    from .models.instrumented import InstrumentedModel
+
+                    if isinstance(part.args, str):
+                        call_part['arguments'] = part.args
+                    else:
+                        call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
+
+                parts.append(call_part)
+        return parts
 
     @property
     @deprecated('`vendor_details` is deprecated, use `provider_details` instead')
