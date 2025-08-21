@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 from pydantic import BaseModel
 
@@ -36,8 +37,6 @@ try:
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSModel
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
 try:
@@ -48,15 +47,11 @@ try:
     from logfire.testing import CaptureLogfire
     # from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.mcp import MCPServerStdio
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('mcp not installed', allow_module_level=True)
 
 
@@ -64,11 +59,8 @@ try:
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('openai not installed', allow_module_level=True)
 
-import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai.tools import ToolDefinition
