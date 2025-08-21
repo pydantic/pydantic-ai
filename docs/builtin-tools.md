@@ -27,7 +27,7 @@ making it ideal for queries that require up-to-date data.
 | OpenAI | ✅ | Full feature support |
 | Anthropic | ✅ | Full feature support |
 | Groq | ✅ | Limited parameter support |
-| Google | ❌ | Not supported |
+| Google | ✅ | No parameter support |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |

@@ -689,6 +689,7 @@ async def test_tool_returning_audio_resource(
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
+                    provider_request_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -713,6 +714,7 @@ async def test_tool_returning_audio_resource(
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
+                    provider_request_id=IsStr(),
                 ),
             ]
         )
@@ -749,6 +751,7 @@ async def test_tool_returning_audio_resource_link(
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
+                    provider_request_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -773,6 +776,7 @@ async def test_tool_returning_audio_resource_link(
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
+                    provider_request_id=IsStr(),
                 ),
             ]
         )
