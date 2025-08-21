@@ -154,7 +154,7 @@ class AnthropicModel(Model):
             model_name: The name of the Anthropic model to use. List of model names available
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
-                instance of `Provider[ASYNC_ANTHROPIC_CLIENT]`. If not provided, the other parameters will be used.
+                instance of `Provider[AsyncAnthropicClient]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
         """
