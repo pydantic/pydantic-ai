@@ -431,7 +431,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
             return False
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
+    mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
 
 
 @pytest.fixture()
