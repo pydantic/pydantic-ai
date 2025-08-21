@@ -890,7 +890,7 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.RequestUsage:
 
     return usage.RequestUsage(
         input_tokens=metadata.get('prompt_token_count', 0),
-        output_tokens=metadata.get('candidates_token_count', 0),
+        output_tokens=metadata.get('candidates_token_count', 0) + thoughts_token_count,
         cache_read_tokens=cached_content_token_count,
         input_audio_tokens=input_audio_tokens,
         output_audio_tokens=output_audio_tokens,
