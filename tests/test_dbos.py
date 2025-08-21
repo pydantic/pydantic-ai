@@ -35,7 +35,7 @@ from .conftest import IsDatetime
 try:
     from dbos import DBOS, DBOSConfig
 
-    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSModel
+    from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
@@ -555,31 +555,34 @@ async def test_dbos_agent():
     assert isinstance(complex_dbos_agent.model, DBOSModel)
     assert complex_dbos_agent.model.wrapped == complex_agent.model
 
-    # DBOS doesn't wrap the toolsets in a workflow, so we can access the wrapped tools directly.
-    assert complex_dbos_agent.toolsets == complex_agent.toolsets
+    # DBOS only wraps the MCP server toolsets. Other toolsets are not wrapped.
     toolsets = complex_dbos_agent.toolsets
-    assert len(toolsets) == 4
+    assert len(toolsets) == 5
 
-    # Function toolset for the agent's own tools
+    # Empty function toolset for the agent's own tools
     assert isinstance(toolsets[0], FunctionToolset)
     assert toolsets[0].id == '<agent>'
-    assert toolsets[0].tools.keys() == {'get_weather'}
+    assert toolsets[0].tools == {}
+
+    # Function toolset for the wrapped agent's own tools
+    assert isinstance(toolsets[1], FunctionToolset)
+    assert toolsets[1].id == '<agent>'
+    assert toolsets[1].tools.keys() == {'get_weather'}
 
     # Wrapped 'country' toolset
-    assert isinstance(toolsets[1], FunctionToolset)
-    assert toolsets[1].id == 'country'
-    assert toolsets[1].tools.keys() == {'get_country'}
+    assert isinstance(toolsets[2], FunctionToolset)
+    assert toolsets[2].id == 'country'
+    assert toolsets[2].tools.keys() == {'get_country'}
 
     # Wrapped 'mcp' MCP server
-    # TODO (Qian): Use DBOS MCP server
-    assert isinstance(toolsets[2], MCPServerStdio)
-    assert toolsets[2].id == 'mcp'
-    assert toolsets[2] == complex_agent.toolsets[2]
+    assert isinstance(toolsets[3], DBOSMCPServer)
+    assert toolsets[3].id == 'mcp'
+    assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
     # Unwrapped 'deferred' toolset
-    assert isinstance(toolsets[3], DeferredToolset)
-    assert toolsets[3].id == 'deferred'
-    assert toolsets[3] == complex_agent.toolsets[3]
+    assert isinstance(toolsets[4], DeferredToolset)
+    assert toolsets[4].id == 'deferred'
+    assert toolsets[4] == complex_agent.toolsets[3]
 
 
 async def test_dbos_agent_run(allow_model_requests: None, dbos: DBOS):

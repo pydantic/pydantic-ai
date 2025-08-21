@@ -6,7 +6,6 @@ from datetime import datetime
 from typing import Any
 
 from dbos import DBOS, DBOSConfiguredInstance
-from typing_extensions import TypedDict
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.messages import (
@@ -20,14 +19,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
-
-class StepConfig(TypedDict, total=False):
-    """Configuration for a step in the DBOS workflow."""
-
-    retries_allowed: bool
-    interval_seconds: float
-    max_attempts: int
-    backoff_rate: float
+from ._utils import StepConfig
 
 
 class DBOSStreamedResponse(StreamedResponse):
@@ -61,6 +53,8 @@ class DBOSStreamedResponse(StreamedResponse):
 
 @DBOS.dbos_class()
 class DBOSModel(WrapperModel, DBOSConfiguredInstance):
+    """A wrapper for Model that integrates with DBOS, turning request and request_stream to DBOS steps."""
+
     def __init__(
         self,
         model: Model,
@@ -82,8 +76,6 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        print(f'Running DBOSModel request with step config: {self.step_config}')
-
         # Wrap the request in a DBOS step.
         @DBOS.step(
             name=f'{self._step_name_prefix}__model.request',

@@ -17,6 +17,7 @@ from pydantic_ai import (
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.mcp import MCPServer
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
@@ -27,7 +28,9 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset
 
-from ._model import DBOSModel, StepConfig
+from ._mcp_server import DBOSMCPServer
+from ._model import DBOSModel
+from ._utils import StepConfig
 
 
 @DBOS.dbos_class()
@@ -38,7 +41,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         *,
         name: str | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        step_config: StepConfig | None = None,
+        mcp_step_config: StepConfig | None = None,
         model_step_config: StepConfig | None = None,
     ):
         """Wrap an agent to enable it with DBOS durable workflows, by automatically offloading model requests, tool calls, and MCP server communication to DBOS steps.
@@ -49,7 +52,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             wrapped: The agent to wrap.
             name: Optional unique agent name to use as the DBOS configured instance name. If not provided, the agent's `name` will be used.
             event_stream_handler: Optional event stream handler to use instead of the one set on the wrapped agent.
-            step_config: The base DBOS step config to use for all steps. If no config is provided, use the default settings of DBOS.
+            mcp_step_config: The base DBOS step config to use for MCP server steps. If no config is provided, use the default settings of DBOS.
             model_step_config: The DBOS step config to use for model request steps. This is merged with the base step config.
         """
         super().__init__(wrapped)
@@ -61,7 +64,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             )
 
         # TODO (Qian): DBOS-ify those configurations
-        self._step_config = step_config or {}
+        self._mcp_step_config = mcp_step_config or {}
         self._model_step_config = model_step_config or {}
 
         if not isinstance(wrapped.model, Model):
@@ -76,9 +79,25 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler=event_stream_handler or wrapped.event_stream_handler,
         )
         self._model = dbos_model
+
+        dbosagent_name = self._name
+
+        def dbosify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
+            # Replace MCPServer with DBOSMCPServer
+            if isinstance(toolset, MCPServer):
+                return DBOSMCPServer(
+                    wrapped=toolset,
+                    step_name_prefix=dbosagent_name,
+                    step_config=self._mcp_step_config,
+                )
+            else:
+                return toolset
+
+        dbos_toolsets = [toolset.visit_and_replace(dbosify_toolset) for toolset in wrapped.toolsets]
+        self._toolsets = dbos_toolsets
         DBOSConfiguredInstance.__init__(self, self._name)
         print(
-            f'DBOSAgent initialized with name: {self._name}, step_config: {self._step_config}, model_step_config: {self._model_step_config}'
+            f'DBOSAgent initialized with name: {self._name}, mcp_step_config: {self._mcp_step_config}, model_step_config: {self._model_step_config}'
         )
 
     @property
@@ -97,11 +116,13 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
-        return super().toolsets
+        with self._dbos_overrides():
+            return super().toolsets
 
     @contextmanager
     def _dbos_overrides(self) -> Iterator[None]:
-        with super().override(model=self._model):
+        # Override with DBOSModel and DBOSMCPServer in the toolsets.
+        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
             try:
                 yield
             except PydanticSerializationError as e:
