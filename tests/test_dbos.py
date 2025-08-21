@@ -824,3 +824,8 @@ async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: No
             # This will trigger the client to be unserializable
             logfire.instrument_httpx(client, capture_all=True)
             await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
+
+
+async def test_logfire_plugin():
+    # Not a valid test for DBOS, as we don't control the LogfirePlugin.
+    pass
