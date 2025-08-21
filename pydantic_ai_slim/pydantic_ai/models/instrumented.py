@@ -241,13 +241,16 @@ class InstrumentationSettings:
                         'properties': {
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
+                            **({'gen_ai.system_instructions': {'type': 'array'}} if instructions else {}),
                             'model_request_parameters': {'type': 'object'},
                         },
                     }
                 ),
             }
             if instructions is not None:
-                attributes['gen_ai.system_instructions'] = instructions
+                attributes['gen_ai.system_instructions'] = json.dumps(
+                    [_otel_messages.TextPart(type='text', content=instructions)]
+                )
             span.set_attributes(attributes)
 
     def _emit_events(self, span: Span, events: list[Event]) -> None:

@@ -772,7 +772,7 @@ Fix the errors and try again.\
                             }
                         ],
                         'gen_ai.response.model': 'my_model_123',
-                        'gen_ai.system_instructions': 'instructions',
+                        'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
                         'logfire.json_schema': {
@@ -780,6 +780,7 @@ Fix the errors and try again.\
                             'properties': {
                                 'gen_ai.input.messages': {'type': 'array'},
                                 'gen_ai.output.messages': {'type': 'array'},
+                                'gen_ai.system_instructions': {'type': 'array'},
                                 'model_request_parameters': {'type': 'object'},
                             },
                         },

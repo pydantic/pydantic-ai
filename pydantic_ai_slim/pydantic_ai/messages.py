@@ -521,7 +521,7 @@ class UserPromptPart:
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         parts: list[_otel_messages.MessagePart] = []
-        content = [self.content] if isinstance(self.content, str) else self.content
+        content: Sequence[UserContent] = [self.content] if isinstance(self.content, str) else self.content
         for part in content:
             if isinstance(part, str):
                 parts.append(
