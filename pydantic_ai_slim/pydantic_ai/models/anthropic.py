@@ -138,7 +138,7 @@ class AnthropicModel(Model):
     client: AsyncAnthropicClient = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _provider: Provider[AsyncAnthropic] = field(repr=False)
+    _provider: Provider[AsyncAnthropicClient] = field(repr=False)
 
     def __init__(
         self,
