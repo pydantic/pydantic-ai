@@ -119,7 +119,10 @@ class InstrumentationSettings:
             include_binary_content: Whether to include binary content in the instrumentation events.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
-            version: TODO
+            version: Version of the data format.
+                Version 1 is based on the legacy event-based OpenTelemetry GenAI spec.
+                Version 2 stores messages in the attributes `gen_ai.input.messages` and `gen_ai.output.messages`.
+                Version 2 is still WIP and experimental, but will become the default in Pydantic AI v1.
         """
         from pydantic_ai import __version__
 
