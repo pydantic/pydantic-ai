@@ -13,6 +13,7 @@ from . import _utils, messages as _messages
 if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
+    from .usage import UsageLimits
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
@@ -46,5 +47,7 @@ class RunContext(Generic[AgentDepsT]):
     """Number of retries so far."""
     run_step: int = 0
     """The current step in the run."""
+    usage_limits: UsageLimits | None = None
+    """Usage limits for this run, if any."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
