@@ -114,7 +114,7 @@ class HuggingFaceModel(Model):
     client: AsyncInferenceClient = field(repr=False)
 
     _model_name: str = field(repr=False)
-    _system: str = field(default='huggingface', repr=False)
+    _provider: Provider[AsyncInferenceClient] = field(repr=False)
 
     def __init__(
         self,
@@ -134,12 +134,22 @@ class HuggingFaceModel(Model):
             settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
-        self._provider = provider
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def model_name(self) -> HuggingFaceModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The system / model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -152,7 +162,6 @@ class HuggingFaceModel(Model):
             messages, False, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -168,16 +177,6 @@ class HuggingFaceModel(Model):
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
         yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> HuggingFaceModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
@@ -272,7 +271,7 @@ class HuggingFaceModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            vendor_id=response.id,
+            provider_request_id=response.id,
         )
 
     async def _process_streamed_response(
@@ -481,14 +480,12 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.Usage:
+def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
 
-    return usage.Usage(
-        request_tokens=response_usage.prompt_tokens,
-        response_tokens=response_usage.completion_tokens,
-        total_tokens=response_usage.total_tokens,
-        details=None,
+    return usage.RequestUsage(
+        input_tokens=response_usage.prompt_tokens,
+        output_tokens=response_usage.completion_tokens,
     )

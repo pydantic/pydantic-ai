@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from .. import _mcp, exceptions, usage
+from .. import _mcp, exceptions
 from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
@@ -63,7 +63,6 @@ class MCPSamplingModel(Model):
         if result.role == 'assistant':
             return ModelResponse(
                 parts=[_mcp.map_from_sampling_content(result.content)],
-                usage=usage.Usage(requests=1),
                 model_name=result.model,
             )
         else:

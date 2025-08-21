@@ -46,6 +46,7 @@ Either way, running `clai` will start an interactive session where you can chat 
 - `/exit`: Exit the session
 - `/markdown`: Show the last response in markdown format
 - `/multiline`: Toggle multiline input mode (use Ctrl+D to submit)
+- `/cp`: Copy the last response to clipboard
 
 ### Help
 

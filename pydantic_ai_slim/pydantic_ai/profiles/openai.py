@@ -2,10 +2,12 @@ from __future__ import annotations as _annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from . import ModelProfile
 from ._json_schema import JsonSchema, JsonSchemaTransformer
+
+OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
 @dataclass
@@ -26,8 +28,10 @@ class OpenAIModelProfile(ModelProfile):
     # safe to pass that value along.  Default is `True` to preserve existing
     # behaviour for OpenAI itself and most providers.
     openai_supports_tool_choice_required: bool = True
-    """Whether the provider accepts the value ``tool_choice='required'`` in the
-    request payload."""
+    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+
+    openai_system_prompt_role: OpenAISystemPromptRole | None = None
+    """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
 
 def openai_model_profile(model_name: str) -> ModelProfile:
@@ -36,11 +40,17 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
     # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
     # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
+
+    # The o1-mini model doesn't support the `system` role, so we default to `user`.
+    # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
+    openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else None
+
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
         openai_supports_sampling_settings=not is_reasoning_model,
+        openai_system_prompt_role=openai_system_prompt_role,
     )
 
 

@@ -44,7 +44,7 @@ TEST_CASES = [
         'MISTRAL_API_KEY',
         'mistral:mistral-small-latest',
         'mistral-small-latest',
-        'mistral_ai',
+        'mistral',
         'mistral',
         'MistralModel',
     ),

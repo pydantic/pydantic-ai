@@ -36,8 +36,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolCalls, PromptedOutput, TextOutput
-from pydantic_ai.result import AgentStream, FinalResult, Usage
+from pydantic_ai.result import AgentStream, FinalResult, RunUsage
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
 from .conftest import IsInt, IsNow, IsStr
@@ -63,7 +64,7 @@ async def test_streamed_text_response():
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=51, response_tokens=0, total_tokens=51),
+                    usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -77,11 +78,10 @@ async def test_streamed_text_response():
             ]
         )
         assert result.usage() == snapshot(
-            Usage(
+            RunUsage(
                 requests=2,
-                request_tokens=103,
-                response_tokens=5,
-                total_tokens=108,
+                input_tokens=103,
+                output_tokens=5,
             )
         )
         response = await result.get_output()
@@ -93,7 +93,7 @@ async def test_streamed_text_response():
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=51, response_tokens=0, total_tokens=51),
+                    usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -106,18 +106,17 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                    usage=Usage(request_tokens=52, response_tokens=11, total_tokens=63),
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
             ]
         )
         assert result.usage() == snapshot(
-            Usage(
+            RunUsage(
                 requests=2,
-                request_tokens=103,
-                response_tokens=11,
-                total_tokens=114,
+                input_tokens=103,
+                output_tokens=11,
             )
         )
 
@@ -224,43 +223,43 @@ async def test_streamed_text_stream():
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
-                    usage=Usage(request_tokens=51, response_tokens=1, total_tokens=52),
+                    usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
-                    usage=Usage(request_tokens=51, response_tokens=2, total_tokens=53),
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
-                    usage=Usage(request_tokens=51, response_tokens=3, total_tokens=54),
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
-                    usage=Usage(request_tokens=51, response_tokens=4, total_tokens=55),
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
-                    usage=Usage(request_tokens=51, response_tokens=5, total_tokens=56),
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
-                    usage=Usage(request_tokens=51, response_tokens=7, total_tokens=58),
+                    usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
-                    usage=Usage(request_tokens=51, response_tokens=7, total_tokens=58),
+                    usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -327,7 +326,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=50, response_tokens=5, total_tokens=55),
+                    usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -349,7 +348,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=50, response_tokens=5, total_tokens=55),
+                    usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -371,7 +370,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=Usage(request_tokens=50, response_tokens=7, total_tokens=57),
+                    usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -424,7 +423,7 @@ async def test_call_tool_wrong_name():
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=Usage(request_tokens=50, response_tokens=1, total_tokens=51),
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -480,7 +479,7 @@ async def test_early_strategy_stops_after_first_final_result():
                     ToolCallPart(tool_name='regular_tool', args='{"x": 1}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=10, total_tokens=60),
+                usage=RequestUsage(input_tokens=50, output_tokens=10),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -536,7 +535,7 @@ async def test_early_strategy_uses_first_final_result():
                     ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=8, total_tokens=58),
+                usage=RequestUsage(input_tokens=50, output_tokens=8),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -603,7 +602,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}', tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=18, total_tokens=68),
+                usage=RequestUsage(input_tokens=50, output_tokens=18),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -712,7 +711,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-call',
                     ),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=14, total_tokens=64),
+                usage=RequestUsage(input_tokens=50, output_tokens=14),
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 kind='response',
@@ -783,7 +782,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='regular_tool', args={'x': 0}, tool_call_id=IsStr())],
-                usage=Usage(request_tokens=57, response_tokens=0, total_tokens=57),
+                usage=RequestUsage(input_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -796,7 +795,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(request_tokens=58, response_tokens=4, total_tokens=62),
+                usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -852,7 +851,7 @@ async def test_iter_stream_output():
     stream: AgentStream
     messages: list[str] = []
 
-    stream_usage: Usage | None = None
+    stream_usage: RunUsage | None = None
     async with agent.iter('Hello') as run:
         async for node in run:
             if agent.is_model_request_node(node):
@@ -861,11 +860,7 @@ async def test_iter_stream_output():
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
-    assert (
-        run.usage()
-        == stream_usage
-        == Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58, details=None)
-    )
+    assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 
     assert messages == [
         '',
@@ -902,9 +897,7 @@ async def test_iter_stream_responses():
     assert messages == [
         ModelResponse(
             parts=[TextPart(content=text, part_kind='text')],
-            usage=Usage(
-                requests=0, request_tokens=IsInt(), response_tokens=IsInt(), total_tokens=IsInt(), details=None
-            ),
+            usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             kind='response',

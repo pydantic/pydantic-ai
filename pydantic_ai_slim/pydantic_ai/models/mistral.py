@@ -40,7 +40,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 from . import (
     Model,
     ModelRequestParameters,
@@ -120,7 +120,7 @@ class MistralModel(Model):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     _model_name: MistralModelName = field(repr=False)
-    _system: str = field(default='mistral_ai', repr=False)
+    _provider: Provider[Mistral] = field(repr=False)
 
     def __init__(
         self,
@@ -147,13 +147,24 @@ class MistralModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
-        return self.client.sdk_configuration.get_server_details()[0]
+        return self._provider.base_url
+
+    @property
+    def model_name(self) -> MistralModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -167,7 +178,6 @@ class MistralModel(Model):
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -185,16 +195,6 @@ class MistralModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> MistralModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     async def _completions_create(
         self,
@@ -348,7 +348,11 @@ class MistralModel(Model):
                 parts.append(tool)
 
         return ModelResponse(
-            parts, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+            parts,
+            usage=_map_usage(response),
+            model_name=response.model,
+            timestamp=timestamp,
+            provider_request_id=response.id,
         )
 
     async def _process_streamed_response(
@@ -699,17 +703,15 @@ SIMPLE_JSON_TYPE_MAPPING = {
 }
 
 
-def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> Usage:
+def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk) -> RequestUsage:
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
     if response.usage:
-        return Usage(
-            request_tokens=response.usage.prompt_tokens,
-            response_tokens=response.usage.completion_tokens,
-            total_tokens=response.usage.total_tokens,
-            details=None,
+        return RequestUsage(
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
         )
     else:
-        return Usage()  # pragma: no cover
+        return RequestUsage()  # pragma: no cover
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:

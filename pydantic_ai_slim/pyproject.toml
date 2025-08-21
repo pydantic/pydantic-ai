@@ -46,6 +46,12 @@ classifiers = [
 ]
 requires-python = ">=3.9"
 
+[project.urls]
+Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
+Source = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
+Documentation = "https://ai.pydantic.dev/install/#slim-install"
+Changelog = "https://github.com/pydantic/pydantic-ai/releases"
+
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
     "eval-type-backport>=0.2.0",
@@ -56,6 +62,7 @@ dependencies = [
     "exceptiongroup; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
+    "genai-prices>=0.0.22",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -65,7 +72,7 @@ logfire = ["logfire>=3.14.1"]
 openai = ["openai>=1.99.9"]
 cohere = ["cohere>=5.16.0; platform_system != 'Emscripten'"]
 vertexai = ["google-auth>=2.36.0", "requests>=2.32.2"]
-google = ["google-genai>=1.28.0"]
+google = ["google-genai>=1.31.0"]
 anthropic = ["anthropic>=0.61.0"]
 groq = ["groq>=0.25.0"]
 mistral = ["mistralai>=1.9.2"]
@@ -75,7 +82,7 @@ huggingface = ["huggingface-hub[inference]>=0.33.5"]
 duckduckgo = ["ddgs>=9.0.0"]
 tavily = ["tavily-python>=0.5.0"]
 # CLI
-cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0"]
+cli = ["rich>=13", "prompt-toolkit>=3", "argcomplete>=3.5.0", "pyperclip>=1.9.0"]
 # MCP
 mcp = ["mcp>=1.10.0; python_version >= '3.10'"]
 # Evals
@@ -87,13 +94,13 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
-temporal = ["temporalio>=1.15.0"]
+temporal = ["temporalio==1.15.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
 
 [project.scripts]
-pai = "pydantic_ai._cli:cli_exit"  # TODO remove this when clai has been out for a while
+pai = "pydantic_ai._cli:cli_exit" # TODO remove this when clai has been out for a while
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_ai"]
