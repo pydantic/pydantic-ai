@@ -683,7 +683,7 @@ async def test_tool_returning_audio_resource(
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='get_audio_resource', args={}, tool_call_id=IsStr())],
                     usage=RequestUsage(
-                        input_tokens=383, output_tokens=12, details={'thoughts_tokens': 125, 'text_prompt_tokens': 383}
+                        input_tokens=383, output_tokens=137, details={'thoughts_tokens': 125, 'text_prompt_tokens': 383}
                     ),
                     model_name='models/gemini-2.5-pro-preview-05-06',
                     timestamp=IsDatetime(),
@@ -745,7 +745,7 @@ async def test_tool_returning_audio_resource_link(
                         ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr()),
                     ],
                     usage=RequestUsage(
-                        input_tokens=561, output_tokens=41, details={'thoughts_tokens': 195, 'text_prompt_tokens': 561}
+                        input_tokens=561, output_tokens=236, details={'thoughts_tokens': 195, 'text_prompt_tokens': 561}
                     ),
                     model_name='models/gemini-2.5-pro',
                     timestamp=IsDatetime(),

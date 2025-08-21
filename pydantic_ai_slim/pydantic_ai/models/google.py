@@ -678,7 +678,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
     if cached_content_token_count := metadata.cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := metadata.thoughts_token_count:
+    if thoughts_token_count := (metadata.thoughts_token_count or 0):
         details['thoughts_tokens'] = thoughts_token_count
 
     if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
@@ -711,7 +711,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
 
     return usage.RequestUsage(
         input_tokens=metadata.prompt_token_count or 0,
-        output_tokens=metadata.candidates_token_count or 0,
+        output_tokens=(metadata.candidates_token_count or 0) + thoughts_token_count,
         cache_read_tokens=cached_content_token_count or 0,
         input_audio_tokens=input_audio_tokens,
         output_audio_tokens=output_audio_tokens,
