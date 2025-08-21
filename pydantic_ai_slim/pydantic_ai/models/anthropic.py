@@ -37,12 +37,13 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
+from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -134,16 +135,16 @@ class AnthropicModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: AsyncAnthropic = field(repr=False)
+    client: AsyncAnthropicClient = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _provider: Provider[AsyncAnthropic] = field(repr=False)
+    _provider: Provider[AsyncAnthropicClient] = field(repr=False)
 
     def __init__(
         self,
         model_name: AnthropicModelName,
         *,
-        provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
+        provider: Literal['anthropic'] | Provider[AsyncAnthropicClient] = 'anthropic',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -153,7 +154,7 @@ class AnthropicModel(Model):
             model_name: The name of the Anthropic model to use. List of model names available
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
-                instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
+                instance of `Provider[AsyncAnthropicClient]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
         """
