@@ -598,6 +598,7 @@ class StreamedResponse(ABC):
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),
+            provider_name=self.provider_name,
         )
 
     def usage(self) -> RequestUsage:
@@ -608,6 +609,12 @@ class StreamedResponse(ABC):
     @abstractmethod
     def model_name(self) -> str:
         """Get the model name of the response."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str | None:
+        """Get the provider name."""
         raise NotImplementedError()
 
     @property

@@ -67,6 +67,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -96,6 +97,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -109,6 +111,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=52, output_tokens=11),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
@@ -226,42 +229,49 @@ async def test_streamed_text_stream():
                     usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
@@ -785,6 +795,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 usage=RequestUsage(input_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -798,6 +809,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -901,6 +913,7 @@ async def test_iter_stream_responses():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             kind='response',
+            provider_name='test',
         )
         for text in [
             '',

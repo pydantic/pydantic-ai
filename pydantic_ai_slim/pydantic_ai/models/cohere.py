@@ -205,7 +205,9 @@ class CohereModel(Model):
                         tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
-        return ModelResponse(parts=parts, usage=_map_usage(response), model_name=self._model_name)
+        return ModelResponse(
+            parts=parts, usage=_map_usage(response), model_name=self._model_name, provider_name=self._provider.name
+        )
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
