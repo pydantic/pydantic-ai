@@ -215,7 +215,6 @@ class InstrumentationSettings:
                     Event(
                         'gen_ai.choice',
                         body={
-                            # TODO finish_reason
                             'index': 0,
                             'message': event.body,
                         },
@@ -228,7 +227,9 @@ class InstrumentationSettings:
                 }
             self._emit_events(span, events)
         else:
-            output_message = cast(_otel_messages.OutputMessage, self.messages_to_otel_messages([response])[0])
+            output_messages = self.messages_to_otel_messages([response])
+            assert len(output_messages) == 1
+            output_message = cast(_otel_messages.OutputMessage, output_messages[0])
             if response.provider_details and 'finish_reason' in response.provider_details:
                 output_message['finish_reason'] = response.provider_details['finish_reason']
             instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
