@@ -13,6 +13,7 @@ from . import _utils, messages as _messages
 if TYPE_CHECKING:
     from .models import Model
     from .result import RunUsage
+    from .usage import UsageLimits
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
@@ -48,5 +49,7 @@ class RunContext(Generic[AgentDepsT]):
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+    usage_limits: UsageLimits | None = None
+    """Usage limits for this run, if any."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
