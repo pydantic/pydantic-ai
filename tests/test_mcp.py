@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
@@ -123,6 +124,62 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     async with server:
         tools = await server.get_tools(run_context)
         assert len(tools) == snapshot(16)
+
+
+def test_load_mcp_servers():
+    invalid_type = {
+        'mcpServers': {
+            'invalid_type': {
+                'type': 'streamable-http',
+                'url': 'http://127.0.0.1:8000/mcp',
+            }
+        }
+    }
+
+    invalid_config = {'mcpServers': {'invalid_config': {'type': 'sse'}}}
+
+    missing_type = {'mcpServers': {'missing_type': {'url': 'https://127.0.0.1:8000/mcp'}}}
+
+    valid_config = {
+        'mcpServers': {
+            'valid_stdio': {
+                'command': 'uv',
+                'args': ['run', 'foobar'],
+                'env': {'EXAMPLE_ENV': 'value'},
+            },
+            'valid_sse': {'type': 'sse', 'url': 'http://127.0.0.1:8000/sse', 'headers': {'x-version': '0.1.2'}},
+            'valid_http': {'type': 'http', 'url': 'http://127.0.0.1:8000/mcp', 'headers': {'x-version': '0.1.2'}},
+        }
+    }
+
+    with pytest.raises(ValueError, match="MCP server type is required for 'missing_type'"):
+        load_mcp_servers(mcp_config=missing_type)
+
+    with pytest.raises(ValueError, match="Invalid MCP server type for 'invalid_type'"):
+        load_mcp_servers(mcp_config=invalid_type)
+
+    with pytest.raises(ValueError, match="Invalid MCP server configuration for 'invalid_config'"):
+        load_mcp_servers(mcp_config=invalid_config)
+
+    servers = load_mcp_servers(mcp_config=valid_config)
+    assert len(servers) == 3
+
+    for server in servers:
+        if server.id == 'valid_sse':
+            assert isinstance(server, MCPServerSSE)
+            assert server.id == 'valid_sse'
+            assert server.url == 'http://127.0.0.1:8000/sse'
+            assert server.headers == {'x-version': '0.1.2'}
+        elif server.id == 'valid_http':
+            assert isinstance(server, MCPServerStreamableHTTP)
+            assert server.id == 'valid_http'
+            assert server.url == 'http://127.0.0.1:8000/mcp'
+            assert server.headers == {'x-version': '0.1.2'}
+        else:
+            assert isinstance(server, MCPServerStdio)
+            assert server.command == 'uv'
+            assert server.args == ['run', 'foobar']
+            assert server.env == {'EXAMPLE_ENV': 'value'}
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
