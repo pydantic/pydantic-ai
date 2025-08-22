@@ -42,6 +42,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
+from pydantic_ai.providers.cerebras import CerebrasProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -2957,3 +2958,23 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
 
     result = await agent.run('What is the capital of France?', model_settings=ModelSettings(temperature=0.0))
     assert result.output == snapshot('Paris.')
+
+
+async def test_openai_model_cerebras_provider(allow_model_requests: None, cerebras_api_key: str):
+    m = OpenAIModel('llama3.3-70b', provider=CerebrasProvider(api_key=cerebras_api_key))
+    agent = Agent(m)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
+async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests: None, cerebras_api_key: str):
+    class Location(TypedDict):
+        city: str
+        country: str
+
+    m = OpenAIModel('qwen-3-coder-480b', provider=CerebrasProvider(api_key=cerebras_api_key))
+    agent = Agent(m, output_type=Location)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
