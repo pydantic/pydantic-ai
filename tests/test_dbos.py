@@ -248,7 +248,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     # Assert the root span and its structure matches expected hierarchy
     assert root_span == snapshot(
         BasicSpan(
-            content='DBOSAgent.run',
+            content='complex_agent.run',
             children=[
                 BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                 BasicSpan(
@@ -886,7 +886,7 @@ async def test_dbos_agent_run_stream_in_workflow(allow_model_requests: None, dbo
     async def run_stream_workflow():
         async with simple_dbos_agent.run_stream('What is the capital of Mexico?') as result:
             pass
-        return await result.get_output()
+        return await result.get_output()  # pragma: no cover
 
     with workflow_raises(
         UserError,
@@ -1015,7 +1015,7 @@ async def test_dbos_model_stream_direct(allow_model_requests: None, dbos: DBOS):
         async with model_request_stream(complex_dbos_agent.model, messages) as stream:
             async for _ in stream:
                 pass
-        return 'done'
+        return 'done'  # pragma: no cover
 
     with workflow_raises(
         AssertionError,
@@ -1036,16 +1036,14 @@ unserializable_deps_agent = Agent(model, name='unserializable_deps_agent', deps_
 
 @unserializable_deps_agent.tool
 async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
-    print('This tool should not be called')
     return ctx.deps.client.max_redirects  # pragma: no cover
 
 
 async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
     unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)
-    # TODO(Qian): This error is not great and should be improved in DBOS. This actually means the `client` is not serializable, but the error message is about the object proxy.
     with pytest.raises(
-        NotImplementedError,
-        match='object proxy must define __reduce_ex__()',
+        UserError,
+        match='Serialization error. DBOS requires all outputs are JSON pickleable',
     ):
         async with AsyncClient() as client:
             # This will trigger the client to be unserializable

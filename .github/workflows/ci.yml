@@ -145,10 +145,25 @@ jobs:
             command: ""
           - name: all-extras
             command: "--all-extras"
+    services:
+    # Postgres service container for DBOS tests
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: dbos
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true
       COVERAGE_PROCESS_START: ./pyproject.toml
+      DBOS_DATABASE_URL: postgresql://postgres:dbos@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
 
