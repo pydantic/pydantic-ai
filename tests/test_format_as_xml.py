@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, computed_field
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self
 
 from pydantic_ai import format_as_xml
@@ -390,7 +391,7 @@ def test_nested_data():
         value: int
         items: list[DataItem1] = Field(description='Items')
 
-    @dataclass
+    @pydantic_dataclass
     class DataItem2:
         model: ModelItem1 = field(metadata={'title': 'the model', 'alias': 'info'})
         others: tuple[ModelItem1] | None = None
