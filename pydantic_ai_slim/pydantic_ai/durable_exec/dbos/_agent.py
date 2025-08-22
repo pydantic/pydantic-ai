@@ -96,9 +96,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         dbos_toolsets = [toolset.visit_and_replace(dbosify_toolset) for toolset in wrapped.toolsets]
         self._toolsets = dbos_toolsets
         DBOSConfiguredInstance.__init__(self, self._name)
-        print(
-            f'DBOSAgent initialized with name: {self._name}, mcp_step_config: {self._mcp_step_config}, model_step_config: {self._model_step_config}'
-        )
 
     @property
     def name(self) -> str | None:

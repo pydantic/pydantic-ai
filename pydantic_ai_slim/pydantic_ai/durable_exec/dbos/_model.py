@@ -120,7 +120,6 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
                 if self.event_stream_handler is not None:
-                    print(self.event_stream_handler)
                     assert run_context is not None, (
                         'A DBOS model cannot be used with `pydantic_ai.direct.model_request_stream()` as it requires a `run_context`. Set an `event_stream_handler` on the agent and use `agent.run()` instead.'
                     )

@@ -63,6 +63,7 @@ dependencies = [
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
     "genai-prices>=0.0.22",
+    "dbos @ file:///Users/qianli/DBOS-projects/pydantic-ai/dbos-1.13.0a2+g4b56355-py3-none-any.whl",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -96,7 +97,7 @@ retries = ["tenacity>=8.2.3"]
 # Temporal
 temporal = ["temporalio==1.15.0"]
 # DBOS
-dbos = ["dbos>=1.12.0"]
+# dbos = ["dbos>=1.12.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
