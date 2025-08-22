@@ -54,6 +54,6 @@ __all__ = (
     'TextOutput',
     'StructuredDict',
     # format_prompt
-    'format_as_xml'
+    'format_as_xml',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
