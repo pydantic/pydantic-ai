@@ -395,7 +395,7 @@ def test_nested_data():
     class DataItem2:
         model: ModelItem1 = field(metadata={'title': 'the model', 'alias': 'info'})
         others: tuple[ModelItem1] | None = None
-        count: int = 10
+        count: int = field(default=20, metadata={'info': 'a count'})
 
     data = {
         'values': [
