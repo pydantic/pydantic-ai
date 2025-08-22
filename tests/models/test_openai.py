@@ -42,7 +42,6 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
-from pydantic_ai.providers.cerebras import CerebrasProvider
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
@@ -76,6 +75,7 @@ with try_import() as imports_successful:
         OpenAISystemPromptRole,
     )
     from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+    from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
