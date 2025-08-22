@@ -70,12 +70,6 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
 
         DBOSConfiguredInstance.__init__(self, f'{step_name_prefix}__model')
 
-    async def request(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
         # Wrap the request in a DBOS step.
         @DBOS.step(
             name=f'{self._step_name_prefix}__model.request',
@@ -88,24 +82,9 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
         ) -> ModelResponse:
             return await super(DBOSModel, self).request(messages, model_settings, model_request_parameters)
 
-        return await wrapped_request_step(messages, model_settings, model_request_parameters)
+        self._dbos_wrapped_request_step = wrapped_request_step
 
-    @asynccontextmanager
-    async def request_stream(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-        run_context: RunContext[Any] | None = None,
-    ) -> AsyncIterator[StreamedResponse]:
-        # If not in a workflow (could be in a step), just call the wrapped request_stream method.
-        if DBOS.workflow_id is None or DBOS.step_id is not None:
-            async with super().request_stream(
-                messages, model_settings, model_request_parameters, run_context
-            ) as streamed_response:
-                yield streamed_response
-                return
-
+        # Wrap the request_stream in a DBOS step.
         @DBOS.step(
             name=f'{self._step_name_prefix}__model.request_stream',
             **self.step_config,
@@ -129,5 +108,33 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
                     pass
             return streamed_response.get()
 
-        response = await wrapped_request_stream_step(messages, model_settings, model_request_parameters, run_context)
+        self._dbos_wrapped_request_stream_step = wrapped_request_stream_step
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return await self._dbos_wrapped_request_step(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        # If not in a workflow (could be in a step), just call the wrapped request_stream method.
+        if DBOS.workflow_id is None or DBOS.step_id is not None:
+            async with super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ) as streamed_response:
+                yield streamed_response
+                return
+
+        response = await self._dbos_wrapped_request_stream_step(
+            messages, model_settings, model_request_parameters, run_context
+        )
         yield DBOSStreamedResponse(model_request_parameters, response)

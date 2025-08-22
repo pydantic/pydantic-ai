@@ -31,6 +31,33 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC, DBOSConfiguredInstance):
 
         DBOSConfiguredInstance.__init__(self, self._name)
 
+        # Wrap get_tools in a DBOS step.
+        @DBOS.step(
+            name=f'{self._name}.get_tools',
+            **self._step_config,
+        )
+        async def wrapped_get_tools_step(
+            ctx: RunContext[AgentDepsT],
+        ) -> dict[str, ToolsetTool[AgentDepsT]]:
+            return await super(DBOSMCPServer, self).get_tools(ctx)
+
+        self._dbos_wrapped_get_tools_step = wrapped_get_tools_step
+
+        # Wrap call_tool in a DBOS step.
+        @DBOS.step(
+            name=f'{self._name}.call_tool',
+            **self._step_config,
+        )
+        async def wrapped_call_tool_step(
+            name: str,
+            tool_args: dict[str, Any],
+            ctx: RunContext[AgentDepsT],
+            tool: ToolsetTool[AgentDepsT],
+        ) -> ToolResult:
+            return await super(DBOSMCPServer, self).call_tool(name, tool_args, ctx, tool)
+
+        self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
+
     @property
     def id(self) -> str:
         # An error is raised in `DBOS` if no `id` is set.
@@ -52,16 +79,7 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC, DBOSConfiguredInstance):
         return self
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        @DBOS.step(
-            name=f'{self._name}.get_tools',
-            **self._step_config,
-        )
-        async def wrapped_get_tools_step(
-            ctx: RunContext[AgentDepsT],
-        ) -> dict[str, ToolsetTool[AgentDepsT]]:
-            return await super(DBOSMCPServer, self).get_tools(ctx)
-
-        return await wrapped_get_tools_step(ctx)
+        return await self._dbos_wrapped_get_tools_step(ctx)
 
     async def call_tool(
         self,
@@ -70,16 +88,4 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC, DBOSConfiguredInstance):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> ToolResult:
-        @DBOS.step(
-            name=f'{self._name}.call_tool',
-            **self._step_config,
-        )
-        async def wrapped_call_tool_step(
-            name: str,
-            tool_args: dict[str, Any],
-            ctx: RunContext[AgentDepsT],
-            tool: ToolsetTool[AgentDepsT],
-        ) -> ToolResult:
-            return await super(DBOSMCPServer, self).call_tool(name, tool_args, ctx, tool)
-
-        return await wrapped_call_tool_step(name, tool_args, ctx, tool)
+        return await self._dbos_wrapped_call_tool_step(name, tool_args, ctx, tool)
