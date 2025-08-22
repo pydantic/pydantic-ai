@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import asdict, dataclass, field, is_dataclass
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date
 from typing import Any
 from xml.etree import ElementTree
@@ -37,8 +37,9 @@ def format_as_xml(
             for dataclasses and Pydantic models.
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
-        include_field_info: Whether to include attributes like Pydantic Field attributes (title, description, alias)
-            as XML attributes.
+        include_field_info: Whether to include attributes like Pydantic `Field` attributes and dataclasses `field()`
+            `metadata` as XML attributes. In both cases the allowed `Field` attributes and `field()` metadata keys are:
+            `title`, `description` and `alias`.
         repeat_field_info: Whether to include XML attributes extracted from a field info for each occurrence of an XML
             element relative to the same field.
 
@@ -82,7 +83,8 @@ class _ToXml:
     none_str: str
     include_field_info: bool
     repeat_field_info: bool
-    # a map of Pydantic Field paths to their metadata: a field unique string representation and its class
+    # a map of Pydantic and dataclasses Field paths to their metadata:
+    # a field unique string representation and its class
     _fields_info: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] = field(default_factory=dict)
     # keep track of fields we have extracted attributes from
     _included_fields: set[str] = field(default_factory=set)
@@ -173,15 +175,21 @@ class _ToXml:
                 self._parse_data_structures(v, f'{path}.{k}' if path else f'{k}')
         elif is_dataclass(value) and not isinstance(value, type):
             self._element_names[path] = value.__class__.__name__
-            for k, v in asdict(value).items():
-                self._parse_data_structures(v, f'{path}.{k}' if path else f'{k}')
+            for field in fields(value):
+                new_path = f'{path}.{field.name}' if path else field.name
+                if self.include_field_info and field.metadata:
+                    attributes = {k: v for k, v in field.metadata.items() if k in self._FIELD_ATTRIBUTES}
+                    if attributes:
+                        field_repr = f'{value.__class__.__name__}.{field.name}'
+                        self._fields_info[new_path] = (field_repr, FieldInfo(**attributes))
+                self._parse_data_structures(getattr(value, field.name), new_path)
         elif isinstance(value, BaseModel):
             self._element_names[path] = value.__class__.__name__
             for model_fields in (value.__class__.model_fields, value.__class__.model_computed_fields):
                 for field, info in model_fields.items():
                     new_path = f'{path}.{field}' if path else field
-                    field_repr = f'{value.__class__.__name__}.{field}'
                     if self.include_field_info and (isinstance(info, ComputedFieldInfo) or not info.exclude):
+                        field_repr = f'{value.__class__.__name__}.{field}'
                         self._fields_info[new_path] = (field_repr, info)
                     self._parse_data_structures(getattr(value, field), new_path)
         elif isinstance(value, Iterable):

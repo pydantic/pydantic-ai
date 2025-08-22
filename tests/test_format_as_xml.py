@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
@@ -383,6 +383,7 @@ def test_nested_data():
     @dataclass
     class DataItem1:
         id: str | None = None
+        source: str = field(default='none', metadata={'description': 'the source', 'date': '19990805'})
 
     class ModelItem1(BaseModel):
         name: str = Field(description='Name')
@@ -391,7 +392,7 @@ def test_nested_data():
 
     @dataclass
     class DataItem2:
-        model: ModelItem1
+        model: ModelItem1 = field(metadata={'title': 'the model', 'alias': 'info'})
         others: tuple[ModelItem1] | None = None
         count: int = 10
 
@@ -407,7 +408,7 @@ def test_nested_data():
                     value=7,
                     items=[
                         DataItem1('a'),
-                        DataItem1(),
+                        DataItem1(source='xx'),
                     ],
                 ),
                 count=42,
@@ -420,12 +421,13 @@ def test_nested_data():
         == """
 <values>
   <DataItem2>
-    <model>
+    <model title="the model" alias="info">
       <name description="Name">Alice</name>
       <value>42</value>
       <items description="Items">
         <DataItem1>
           <id>xyz</id>
+          <source description="the source">none</source>
         </DataItem1>
       </items>
     </model>
@@ -445,9 +447,11 @@ def test_nested_data():
       <items>
         <DataItem1>
           <id>a</id>
+          <source>none</source>
         </DataItem1>
         <DataItem1>
           <id>null</id>
+          <source>xx</source>
         </DataItem1>
       </items>
     </model>
@@ -469,6 +473,7 @@ def test_nested_data():
       <items>
         <DataItem1>
           <id>xyz</id>
+          <source>none</source>
         </DataItem1>
       </items>
     </model>
@@ -488,9 +493,11 @@ def test_nested_data():
       <items>
         <DataItem1>
           <id>a</id>
+          <source>none</source>
         </DataItem1>
         <DataItem1>
           <id>null</id>
+          <source>xx</source>
         </DataItem1>
       </items>
     </model>
