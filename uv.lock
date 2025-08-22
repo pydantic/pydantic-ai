@@ -953,8 +953,8 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "1.13.0a2+g4b56355"
-source = { path = "dbos-1.13.0a2+g4b56355-py3-none-any.whl" }
+version = "1.12.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
     { name = "cryptography" },
@@ -976,30 +976,9 @@ dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.10'" },
     { name = "websockets" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/96/bf/f9249994da6a913a377d54a2a240963c07b9618e6c2867de903996187d2e/dbos-1.12.0.tar.gz", hash = "sha256:69690b96376588ba03778473e6c73d553b7bc21a70bd8474c86647e657b96175", size = 202028, upload-time = "2025-08-19T17:36:15.969Z" }
 wheels = [
-    { filename = "dbos-1.13.0a2+g4b56355-py3-none-any.whl", hash = "sha256:06b809dc84a0c584b8b18b1ac5ae2a1f8b2e3569a45f3cd6b913e87713db46e7" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.13.3" },
-    { name = "cryptography", specifier = ">=43.0.3" },
-    { name = "docker", specifier = ">=7.1.0" },
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.115.2" },
-    { name = "jsonpickle", specifier = ">=3.3.0" },
-    { name = "jsonschema", specifier = ">=4.23.0" },
-    { name = "opentelemetry-api", specifier = ">=1.27.0" },
-    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.27.0" },
-    { name = "opentelemetry-sdk", specifier = ">=1.27.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.1" },
-    { name = "pyjwt", specifier = ">=2.10.1" },
-    { name = "python-dateutil", specifier = ">=2.9.0.post0" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
-    { name = "rich", specifier = ">=13.9.4" },
-    { name = "tomlkit", specifier = ">=0.13.2" },
-    { name = "typer", specifier = ">=0.12.5" },
-    { name = "typing-extensions", marker = "python_full_version < '3.10'", specifier = ">=4.12.2" },
-    { name = "websockets", specifier = ">=14.0" },
+    { url = "https://files.pythonhosted.org/packages/0d/73/87089169afe6dd5d45f6b41073a0541ae676c504f447a7f78fdc2e5d5a96/dbos-1.12.0-py3-none-any.whl", hash = "sha256:5a701757d545e08722c67eda84cb3d45bc34e87a35d1fecb738f3f70609ed02a", size = 138817, upload-time = "2025-08-19T17:36:14.333Z" },
 ]
 
 [[package]]
@@ -3724,7 +3703,7 @@ email = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "evals", "google", "groq", "huggingface", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -3874,7 +3853,6 @@ requires-dist = [
 name = "pydantic-ai-slim"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
-    { name = "dbos" },
     { name = "eval-type-backport" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "genai-prices" },
@@ -3908,6 +3886,9 @@ cli = [
 ]
 cohere = [
     { name = "cohere", marker = "sys_platform != 'emscripten'" },
+]
+dbos = [
+    { name = "dbos" },
 ]
 duckduckgo = [
     { name = "ddgs" },
@@ -3957,7 +3938,7 @@ requires-dist = [
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.16.0" },
-    { name = "dbos", path = "dbos-1.13.0a2+g4b56355-py3-none-any.whl" },
+    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.12.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
@@ -3987,7 +3968,7 @@ requires-dist = [
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "temporal", "vertexai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "temporal", "vertexai"]
 
 [[package]]
 name = "pydantic-core"
