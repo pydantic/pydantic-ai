@@ -865,9 +865,9 @@ def load_mcp_servers(
     config_path: str | None = None,
     /,
     *,
-    mcp_config: dict | None = None,
-    server_options: dict = {},
-    stdio_options: dict = {},
+    mcp_config: dict[str, Any] | None = None,
+    server_options: dict[str, Any] = {},
+    stdio_options: dict[str, Any] = {},
 ) -> list[MCPServer]:
     """Load MCP servers from a configuration file.
 
@@ -883,7 +883,7 @@ def load_mcp_servers(
     mcp_servers: list[MCPServer] = []
     if not mcp_config:
         config_path = Path(config_path) if not isinstance(config_path, Path) else config_path
-        mcp_config: dict[str, dict[str, dict]] = json.loads(config_path.read_text(encoding='utf-8'))
+        mcp_config = json.loads(config_path.read_text(encoding='utf-8'))
 
     for name, server in mcp_config.get('mcpServers', {}).items():
         if 'command' in server:
