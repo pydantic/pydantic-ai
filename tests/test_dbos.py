@@ -41,11 +41,7 @@ except ImportError:  # pragma: lax no cover
 
 try:
     import logfire
-
-    # from logfire import Logfire
-    # from logfire._internal.tracer import _ProxyTracer
     from logfire.testing import CaptureLogfire
-    # from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
@@ -86,15 +82,13 @@ async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
         await http_client.aclose()
 
 
-# Set up logfire for the tests.
-logfire.configure()
-logfire.instrument_pydantic_ai()
-
-
 # Our setup calls `logfire.instrument_pydantic_ai()`, so we need to make sure this doesn't bleed into other tests.
 @pytest.fixture(autouse=True, scope='module')
 def uninstrument_pydantic_ai() -> Iterator[None]:
     try:
+        # Set up logfire for the tests.
+        logfire.configure(metrics=False)
+        logfire.instrument_pydantic_ai()
         yield
     finally:
         Agent.instrument_all(False)
