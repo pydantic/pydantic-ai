@@ -114,10 +114,12 @@ DBOS_CONFIG: DBOSConfig = {
 
 @pytest.fixture()
 def dbos() -> Generator[DBOS, Any, None]:
-    dbos = DBOS(config=DBOS_CONFIG, conductor_key=os.environ.get('DBOS_CONDUCTOR_KEY'))
+    dbos = DBOS(config=DBOS_CONFIG)
     DBOS.launch()
-    yield dbos
-    DBOS.destroy()
+    try:
+        yield dbos
+    finally:
+        DBOS.destroy()
 
 
 model = OpenAIModel(
@@ -1009,7 +1011,6 @@ async def test_dbos_model_stream_direct(allow_model_requests: None, dbos: DBOS):
         async with model_request_stream(complex_dbos_agent.model, messages) as stream:
             async for _ in stream:
                 pass
-        return 'done'  # pragma: no cover
 
     with workflow_raises(
         AssertionError,
