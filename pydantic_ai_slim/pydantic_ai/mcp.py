@@ -862,10 +862,10 @@ metadata.
 
 
 def load_mcp_servers(
-    config_path: str | None = None,
+    config_path: str = '',
     /,
     *,
-    mcp_config: dict[str, Any] | None = None,
+    mcp_config: dict[str, Any] = {},
     server_options: dict[str, Any] = {},
     stdio_options: dict[str, Any] = {},
 ) -> list[MCPServer]:
