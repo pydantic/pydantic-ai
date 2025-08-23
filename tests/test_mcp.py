@@ -14,7 +14,6 @@ from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.mcp import MCPServerSSE, MCPServerStdio, MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
@@ -38,7 +37,14 @@ with try_import() as imports_successful:
     from mcp.types import CreateMessageRequestParams, ImageContent, TextContent
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
-    from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
+    from pydantic_ai.mcp import (
+        CallToolFunc,
+        MCPServerSSE,
+        MCPServerStdio,
+        MCPServerStreamableHTTP,
+        ToolResult,
+        load_mcp_servers,
+    )
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -126,6 +132,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
         assert len(tools) == snapshot(16)
 
 
+@pytest.mark.skipif(not imports_successful(), reason='mcp not installed')
 def test_load_mcp_servers():
     invalid_type = {
         'mcpServers': {
