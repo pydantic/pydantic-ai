@@ -12,6 +12,7 @@ from .exceptions import (
     UserError,
 )
 from .format_prompt import format_as_xml
+from .mcp import load_mcp_servers
 from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .tools import RunContext, Tool
@@ -55,5 +56,7 @@ __all__ = (
     'StructuredDict',
     # format_prompt
     'format_as_xml',
+    # mcp
+    'load_mcp_servers',
 )
 __version__ = _metadata_version('pydantic_ai_slim')
