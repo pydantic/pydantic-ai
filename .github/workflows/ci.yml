@@ -208,8 +208,6 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
 
-      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
-
       - name: store coverage files
         uses: actions/upload-artifact@v4
         with:
@@ -268,8 +266,8 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage
 
-      - name: Store coverage html
-        uses: actions/upload-artifact@v4
+      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
         with:
           name: coverage-html
           path: htmlcov
@@ -302,17 +300,15 @@ jobs:
   check:
     if: always()
     needs:
-      [
-        lint,
-        mypy,
-        docs,
-        test-live,
-        test,
-        test-lowest-versions,
-        test-examples,
-        coverage,
-        test-mcp-run-python,
-      ]
+      - lint
+      - mypy
+      - docs
+      - test-live
+      - test
+      - test-lowest-versions
+      - test-examples
+      - coverage
+      - test-mcp-run-python
     runs-on: ubuntu-latest
 
     steps:
