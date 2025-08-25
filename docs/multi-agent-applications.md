@@ -48,7 +48,7 @@ async def joke_factory(ctx: RunContext[None], count: int) -> list[str]:
 
 result = joke_selection_agent.run_sync(
     'Tell me a joke.',
-    usage_limits=UsageLimits(request_limit=5, total_tokens_limit=300),
+    usage_limits=UsageLimits(request_limit=5, total_tokens_limit=500),
 )
 print(result.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
