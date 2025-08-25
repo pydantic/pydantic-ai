@@ -118,6 +118,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None = None
+    
+    hook_registry: Any = None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -400,7 +402,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
         default=None, repr=False
     )
-
+    
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], End[result.FinalResult[NodeRunEndT]]]:  # noqa UP007
@@ -493,15 +495,90 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
-        run_context = build_run_context(ctx)
 
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
+
+        # Get hook registry for dynamic hook resolution
+        registry = ctx.deps.hook_registry
+
+        # Run before_tool_call hooks for each tool call
+        for tool_call in tool_calls:
+            try:
+                # Check for tool-specific hooks via registry
+                before_hook = None
+                if registry:
+                    before_hook = registry.get_tool_hook(tool_call.tool_name, 'before')
+                
+                # Execute before hook if available
+                if before_hook:
+                    hook_result = await before_hook({
+                        'tool_call': tool_call,
+                        'context': ctx,
+                        'run_context': build_run_context(ctx)
+                    })
+                    if isinstance(hook_result, exceptions.ModelRetry):
+                        # Create RetryPromptPart and skip this tool call
+                        retry_part = _messages.RetryPromptPart(
+                            content=str(hook_result),
+                            tool_name=tool_call.tool_name,
+                            tool_call_id=tool_call.tool_call_id
+                        )
+                        output_parts.append(retry_part)
+                        # Remove this tool call from the list
+                        tool_calls = [tc for tc in tool_calls if tc.tool_call_id != tool_call.tool_call_id]
+                        continue
+                        
+            except Exception as e:
+                # Run error hook if available
+                error_hook = None
+                if registry:
+                    error_hook = registry.get_tool_hook(tool_call.tool_name, 'error')
+                
+                if error_hook:
+                    await error_hook({
+                        'tool_call': tool_call,
+                        'context': ctx,
+                        'run_context': build_run_context(ctx),
+                        'error': e
+                    })
+                raise
 
         async for event in process_function_tools(
             ctx.deps.tool_manager, tool_calls, None, ctx, output_parts, output_final_result
         ):
             yield event
+
+        # Run after_tool_call hooks if available
+        for tool_call in tool_calls:
+            try:
+                # Check for tool-specific after hooks via registry
+                after_hook = None
+                if registry:
+                    after_hook = registry.get_tool_hook(tool_call.tool_name, 'after')
+                
+                # Execute after hook if available
+                if after_hook:
+                    await after_hook({
+                        'tool_call': tool_call,
+                        'context': ctx,
+                        'run_context': build_run_context(ctx)
+                    })
+                    
+            except Exception as e:
+                # Run error hook if available
+                error_hook = None
+                if registry:
+                    error_hook = registry.get_tool_hook(tool_call.tool_name, 'error')
+                
+                if error_hook:
+                    await error_hook({
+                        'tool_call': tool_call,
+                        'context': ctx,
+                        'run_context': build_run_context(ctx),
+                        'error': e
+                    })
+                # Don't raise here, just log the error
 
         if output_final_result:
             final_result = output_final_result[0]
@@ -514,7 +591,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_calls), None, None)
             self._next_node = self._handle_final_result(ctx, final_result, output_parts)
         else:
-            instructions = await ctx.deps.get_instructions(run_context)
+            instructions = await ctx.deps.get_instructions(build_run_context(ctx))
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                 _messages.ModelRequest(parts=output_parts, instructions=instructions)
             )

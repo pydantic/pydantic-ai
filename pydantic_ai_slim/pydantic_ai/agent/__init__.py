@@ -69,6 +69,7 @@ UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
     from ..mcp import MCPServer
+    from ..hooks import AgentHooks, HookRegistry
 
 __all__ = (
     'Agent',
@@ -403,6 +404,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._name = value
 
     @property
+    def on(self) -> 'AgentHooks':
+        """Access to agent hooks for setting up reactive behavior."""
+        if not hasattr(self, '_hooks'):
+            from ..hooks import AgentHooks
+            self._hooks = AgentHooks()
+        return self._hooks
+
+    @property
     def deps_type(self) -> type:
         """The type of dependencies used by the agent."""
         return self._deps_type
@@ -572,6 +581,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _agent_graph.build_agent_graph(self.name, self._deps_type, output_type_)
         )
 
+        # Get hook registry for nodes to query during execution
+        hook_registry = None
+        if hasattr(self, '_hooks'):
+            from ..hooks import HookRegistry
+            hook_registry = HookRegistry(self._hooks)
+
         # Build the initial state
         usage = usage or _usage.RunUsage()
         state = _agent_graph.GraphAgentState(
@@ -626,6 +641,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
+            hook_registry=hook_registry,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
