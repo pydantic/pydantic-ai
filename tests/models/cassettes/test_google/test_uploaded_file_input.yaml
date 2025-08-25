@@ -1,0 +1,70 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '280'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - fileData:
+            fileUri: https://generativelanguage.googleapis.com/v1beta/files/6myu0b1v3mxl
+            mimeType: application/pdf
+        role: user
+      - parts:
+        - text: Give me a short description of this image
+        role: user
+      generationConfig: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '881'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=5652
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: The image displays a classic smiley face. It features a bright yellow circular face with two simple black
+              dot eyes and an upward-curved black line forming a smile. The yellow circle has a subtle darker yellow outline
+              and is set against a plain white background.
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-2.5-flash
+      responseId: T7OkaOv-JOemmtkP5IXU2QI
+      usageMetadata:
+        candidatesTokenCount: 51
+        promptTokenCount: 268
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 10
+        - modality: DOCUMENT
+          tokenCount: 258
+        thoughtsTokenCount: 678
+        totalTokenCount: 997
+    status:
+      code: 200
+      message: OK
+version: 1

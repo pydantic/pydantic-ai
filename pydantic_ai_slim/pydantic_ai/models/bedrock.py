@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
     UserPromptPart,
     VideoUrl,
 )
@@ -577,6 +578,8 @@ class BedrockConverseModel(Model):
                         content.append({'video': video})
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
+                elif isinstance(item, UploadedFile):
+                    raise NotImplementedError('Uploaded files are not supported yet.')
                 else:
                     assert_never(item)
         return [{'role': 'user', 'content': content}]
