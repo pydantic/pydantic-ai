@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import json
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
@@ -858,3 +859,53 @@ It accepts a run context, the original tool call function, a tool name, and argu
 Allows wrapping an MCP server tool call to customize it, including adding extra request
 metadata.
 """
+
+
+def load_mcp_servers(
+    config_path: str = '',
+    /,
+    *,
+    mcp_config: dict[str, Any] = {},
+    server_options: dict[str, Any] = {},
+    stdio_options: dict[str, Any] = {},
+) -> list[MCPServer]:
+    """Load MCP servers from configuration file.
+
+    Args:
+        config_path (str): The path to the MCP configuration file.
+        mcp_config (dict): A dictionary containing the MCP server configuration. If provided, `config_path` is ignored.
+        server_options (dict): Additional options to pass to the `MCPServerSSE` or `MCPServerStreamableHTTP`.
+        stdio_options (dict): Additional options to pass to the `MCPServerStdio`.
+
+    Returns:
+        list[MCPServer]: A list of MCP servers.
+    """
+    mcp_servers: list[MCPServer] = []
+    if not mcp_config:
+        path = Path(config_path)  # pragma: no cover
+        config = json.loads(path.read_text(encoding='utf-8'))  # pragma: no cover
+    else:
+        config = mcp_config
+
+    for name, server in config.get('mcpServers', {}).items():
+        if 'command' in server:
+            mcp_server = MCPServerStdio(
+                command=server['command'], args=server.get('args', []), env=server.get('env'), id=name, **stdio_options
+            )
+        elif 'url' in server:
+            if not server.get('type'):
+                raise ValueError(f'MCP server type is required for {name!r}')
+            elif server.get('type') == 'sse':
+                mcp_server = MCPServerSSE(url=server['url'], headers=server.get('headers'), id=name, **server_options)
+            elif server.get('type') == 'http':
+                mcp_server = MCPServerStreamableHTTP(
+                    url=server['url'], headers=server.get('headers'), id=name, **server_options
+                )
+            else:
+                raise ValueError(f'Invalid MCP server type for {name!r}')
+        else:
+            raise ValueError(f'Invalid MCP server configuration for {name!r}')
+
+        mcp_servers.append(mcp_server)
+
+    return mcp_servers
