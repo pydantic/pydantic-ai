@@ -1954,7 +1954,7 @@ def test_run_with_history_new_structured():
     assert result2.output == snapshot(Response(a=0))
     assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
     assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
-    assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13))
+    assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13, tool_calls=1))
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
     assert new_msg_part_kinds == snapshot(
         [
