@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -297,9 +298,13 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
+        print('DEBUG: raw usage', response['usage'])
         u = usage.RequestUsage(
             input_tokens=response['usage']['inputTokens'],
             output_tokens=response['usage']['outputTokens'],
+            # TODO(larryhudson): Failing type check here because boto3 bedrock runtime type defs are not updated yet (needs 1.40.11).
+            cache_read_tokens=response['usage'].get('cacheReadInputTokens', 0),
+            cache_write_tokens=response['usage'].get('cacheWriteInputTokens', 0),
         )
         vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         return ModelResponse(
@@ -417,16 +422,31 @@ class BedrockConverseModel(Model):
         Groups consecutive ToolReturnPart objects into a single user message as required by Bedrock Claude/Nova models.
         """
         profile = BedrockModelProfile.from_profile(self.profile)
+        supports_caching = profile.bedrock_supports_prompt_caching
         system_prompt: list[SystemContentBlockTypeDef] = []
         bedrock_messages: list[MessageUnionTypeDef] = []
         document_count: Iterator[int] = count(1)
         for message in messages:
             if isinstance(message, ModelRequest):
-                for part in message.parts:
+                for i, part in enumerate(message.parts):
                     if isinstance(part, SystemPromptPart):
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(await self._map_user_prompt(part, document_count))
+                        # Handle case where UserPromptPart starts with a CachePoint and follows the SystemPromptPart
+                        cache_point_for_system_prompt, user_prompt_part = self._extract_leading_cache_point(
+                            part,
+                            supports_caching,
+                            immediately_follows_system_prompt=i > 0
+                            and isinstance(message.parts[i - 1], SystemPromptPart),
+                        )
+                        if cache_point_for_system_prompt is not None:
+                            # TODO: Failing type check here because boto3 bedrock runtime type defs are not updated yet (needs 1.40.11).
+                            system_prompt.append(cache_point_for_system_prompt)
+
+                        if user_prompt_part is not None:
+                            bedrock_messages.extend(
+                                await self._map_user_prompt(user_prompt_part, document_count, supports_caching)
+                            )
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -517,16 +537,57 @@ class BedrockConverseModel(Model):
         if instructions := self._get_instructions(messages):
             system_prompt.insert(0, {'text': instructions})
 
+        print('DEBUG: system_prompt', system_prompt)
+        print('DEBUG: processed_messages', processed_messages)
         return system_prompt, processed_messages
 
-    @staticmethod
-    async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:
+    def _extract_leading_cache_point(
+        self,
+        part: UserPromptPart,
+        supports_caching: bool,
+        immediately_follows_system_prompt: bool,
+    ) -> tuple[SystemContentBlockTypeDef | None, UserPromptPart | None]:
+        """Extract leading CachePoint from UserPromptPart if conditions are met.
+
+        Returns a tuple of:
+            - cache_point_for_system_prompt: Cache point block to add to system prompt, or None
+            - user_prompt_part: UserPromptPart with cache point removed, or None if no content remains
+        """
+        # Only remove cache point if this UserPromptPart immediately follows a SystemPromptPart
+        # within the same message parts, and the cache point is the first item in the user prompt
+
+        if (
+            immediately_follows_system_prompt
+            and isinstance(part.content, list)
+            and part.content
+            and isinstance(part.content[0], CachePoint)
+        ):
+            cache_point_for_system_prompt = {'cachePoint': {'type': 'default'}} if supports_caching else None
+
+            remaining_content = part.content[1:]
+            print('DEBUG: removing cache point from the part')
+            user_prompt_part = UserPromptPart(content=remaining_content) if remaining_content else None
+
+            # TODO: Failing type check here because boto3 bedrock runtime type defs are not updated yet (needs 1.40.11).
+            return cache_point_for_system_prompt, user_prompt_part
+
+        return None, part
+
+    async def _map_user_prompt(
+        self, part: UserPromptPart, document_count: Iterator[int], supports_caching: bool
+    ) -> list[MessageUnionTypeDef]:
         content: list[ContentBlockUnionTypeDef] = []
+
         if isinstance(part.content, str):
             content.append({'text': part.content})
         else:
             for item in part.content:
-                if isinstance(item, str):
+                if isinstance(item, CachePoint):
+                    if supports_caching:
+                        # TODO: update the boto3 bedrock type defs so 'cachePoint' is available
+                        content.append({'cachePoint': {'type': 'default'}})
+                    continue
+                elif isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
                     format = item.format
@@ -579,6 +640,7 @@ class BedrockConverseModel(Model):
                     raise NotImplementedError('Audio is not supported yet.')
                 else:
                     assert_never(item)
+        print('DEBUG: content', content)
         return [{'role': 'user', 'content': content}]
 
     @staticmethod
@@ -676,9 +738,14 @@ class BedrockStreamedResponse(StreamedResponse):
         return self._timestamp
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        print('DEBUG: raw usage', metadata['usage'])
+
         return usage.RequestUsage(
             input_tokens=metadata['usage']['inputTokens'],
             output_tokens=metadata['usage']['outputTokens'],
+            # TODO(larryhudson): Failing type check here because boto3 bedrock runtime type defs are not updated yet (needs 1.40.11).
+            cache_write_tokens=metadata['usage'].get('cacheWriteInputTokens', 0),
+            cache_read_tokens=metadata['usage'].get('cacheReadInputTokens', 0),
         )
 
 
