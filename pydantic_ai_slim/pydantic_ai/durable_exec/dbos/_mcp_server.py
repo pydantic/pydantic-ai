@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC
 from typing import Any, Callable
 
-from dbos import DBOS, DBOSConfiguredInstance
+from dbos import DBOS
 from typing_extensions import Self
 
 from pydantic_ai.mcp import MCPServer, ToolResult
@@ -14,7 +14,7 @@ from pydantic_ai.toolsets.wrapper import WrapperToolset
 from ._utils import StepConfig
 
 
-class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC, DBOSConfiguredInstance):
+class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
     """A wrapper for MCPServer that integrates with DBOS, turning call_tool and get_tools to DBOS steps."""
 
     def __init__(
@@ -28,8 +28,6 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC, DBOSConfiguredInstance):
         self._step_config = step_config or {}
         self._step_name_prefix = step_name_prefix
         self._name = f'{step_name_prefix}__mcp_server__{wrapped.id}'
-
-        DBOSConfiguredInstance.__init__(self, self._name)
 
         # Wrap get_tools in a DBOS step.
         @DBOS.step(

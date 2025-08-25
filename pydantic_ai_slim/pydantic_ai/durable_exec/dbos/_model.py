@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from dbos import DBOS, DBOSConfiguredInstance
+from dbos import DBOS
 
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.messages import (
@@ -51,8 +51,7 @@ class DBOSStreamedResponse(StreamedResponse):
         return self.response.timestamp  # pragma: no cover
 
 
-@DBOS.dbos_class()
-class DBOSModel(WrapperModel, DBOSConfiguredInstance):
+class DBOSModel(WrapperModel):
     """A wrapper for Model that integrates with DBOS, turning request and request_stream to DBOS steps."""
 
     def __init__(
@@ -67,8 +66,6 @@ class DBOSModel(WrapperModel, DBOSConfiguredInstance):
         self.step_config = step_config
         self.event_stream_handler = event_stream_handler
         self._step_name_prefix = step_name_prefix
-
-        DBOSConfiguredInstance.__init__(self, f'{step_name_prefix}__model')
 
         # Wrap the request in a DBOS step.
         @DBOS.step(

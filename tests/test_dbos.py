@@ -39,6 +39,28 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
+# Check if Postgres is available
+try:
+    import psycopg
+
+    DBOS_DATABASE_URL = os.environ.get('DBOS_DATABASE_URL', 'postgresql://postgres:dbos@localhost:5432/postgres')
+    # Connect to Postgres to see if it's running
+    conn = None
+    try:
+        conn = psycopg.connect(
+            DBOS_DATABASE_URL,
+        )
+        cursor = conn.cursor()
+        cursor.execute('SELECT 1;')
+        cursor.close()
+    except Exception as error:  # pragma: lax no cover
+        pytest.skip(f'Postgres not available: {error}', allow_module_level=True)
+    finally:
+        if conn is not None:  # pragma: lax no cover
+            conn.close()
+except ImportError:  # pragma: lax no cover
+    pytest.skip('psycopg is not installed', allow_module_level=True)
+
 try:
     import logfire
     from logfire.testing import CaptureLogfire
@@ -67,7 +89,6 @@ pytestmark = [
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='dbos'),
 ]
-
 
 # We need to use a custom cached HTTP client here as the default one created for OpenAIProvider will be closed automatically
 # at the end of each test, but we need this one to live longer.
@@ -103,7 +124,6 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
     assert str(exc_info.value) == exc_message
 
 
-DBOS_DATABASE_URL = os.environ.get('DBOS_DATABASE_URL', 'postgresql://postgres:dbos@localhost:5432/postgres')
 DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
     'database_url': DBOS_DATABASE_URL,
@@ -754,7 +774,7 @@ async def test_multiple_agents(allow_model_requests: None, dbos: DBOS):
 
 async def test_agent_name_collision(allow_model_requests: None, dbos: DBOS):
     with pytest.raises(
-        Exception, match="Duplicate instance registration for class 'DBOSModel' instance 'simple_agent__model'"
+        Exception, match="Duplicate instance registration for class 'DBOSAgent' instance 'simple_agent'"
     ):
         DBOSAgent(simple_agent)
 
