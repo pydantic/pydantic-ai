@@ -882,10 +882,12 @@ def load_mcp_servers(
     """
     mcp_servers: list[MCPServer] = []
     if not mcp_config:
-        path = Path(config_path) if not isinstance(config_path, Path) else config_path  # pragma: no cover
-        mcp_config = json.loads(path.read_text(encoding='utf-8'))  # pragma: no cover
+        path = Path(config_path)
+        config = json.loads(path.read_text(encoding='utf-8'))
+    else:
+        config = mcp_config
 
-    for name, server in mcp_config.get('mcpServers', {}).items():
+    for name, server in config.get('mcpServers', {}).items():
         if 'command' in server:
             mcp_server = MCPServerStdio(
                 command=server['command'], args=server.get('args', []), env=server.get('env'), id=name, **stdio_options
