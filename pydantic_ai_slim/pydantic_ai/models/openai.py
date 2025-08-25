@@ -573,6 +573,8 @@ class OpenAIModel(Model):
                     # Note: model responses from this model should only have one text item, so the following
                     # shouldn't merge multiple texts into one unless you switch models between runs:
                     message_param['content'] = '\n\n'.join(texts)
+                else:
+                    message_param['content'] = None
                 if tool_calls:
                     message_param['tool_calls'] = tool_calls
                 openai_messages.append(message_param)

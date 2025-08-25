@@ -1035,6 +1035,26 @@ async def test_document_as_binary_content_input(
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
+async def test_document_as_binary_content_input_with_tool(
+    allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    @agent.tool_plain
+    async def get_upper_case(text: str) -> str:
+        return text.upper()
+
+    result = await agent.run(
+        [
+            'What is the main content on this document? Use the get_upper_case tool to get the upper case of the text.',
+            document_content,
+        ]
+    )
+
+    assert result.output == snapshot('The main content of the document is "DUMMY PDF FILE" in uppercase.')
+
+
 def test_model_status_error(allow_model_requests: None) -> None:
     mock_client = MockOpenAI.create_mock(
         APIStatusError(
