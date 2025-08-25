@@ -754,11 +754,36 @@ class TextPart:
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    # TODO(Marcelo): Is this better as a list or a set?
+    citations: list[Citation] = field(default_factory=list)
+    """The citations of the response."""
+
     def has_content(self) -> bool:
         """Return `True` if the text content is non-empty."""
         return bool(self.content)
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class URLCitation:
+    """A citation from a text response."""
+
+    url: str
+    """The URL of the citation."""
+
+    title: str
+    """The title of the citation."""
+
+    # TODO(Marcelo): Should we add a `vendor_details` field or something?
+
+    kind: Literal['url-citation'] = 'url-citation'
+    """The type of the citation."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+Citation = Annotated[URLCitation, pydantic.Discriminator('kind')]
 
 
 @dataclass(repr=False)

@@ -566,6 +566,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         Example:
         ```python
+        from inline_snapshot import snapshot
         from pydantic_ai import Agent
 
         agent = Agent('openai:gpt-4o')
