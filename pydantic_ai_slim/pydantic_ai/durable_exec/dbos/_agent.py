@@ -5,7 +5,6 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import Any, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
-from pydantic_core import PydanticSerializationError
 from typing_extensions import Never
 
 from pydantic_ai import (
@@ -114,22 +113,23 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
             **_deprecated_kwargs: Never,
         ) -> AgentRunResult[Any]:
-            return await super(WrapperAgent, self).run(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
-                **_deprecated_kwargs,
-            )
+            with self._dbos_overrides():
+                return await super(WrapperAgent, self).run(
+                    user_prompt,
+                    output_type=output_type,
+                    message_history=message_history,
+                    model=model,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    infer_name=infer_name,
+                    toolsets=toolsets,
+                    event_stream_handler=event_stream_handler,
+                    **_deprecated_kwargs,
+                )
 
-        self._dbos_wrapped_run_workflow = wrapped_run_workflow
+        self.dbos_wrapped_run_workflow = wrapped_run_workflow
 
         # Wrap the `run_sync` method in a DBOS workflow
         @DBOS.workflow(name=f'{self._name}.run_sync')
@@ -148,22 +148,23 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
             **_deprecated_kwargs: Never,
         ) -> AgentRunResult[Any]:
-            return super(DBOSAgent, self).run_sync(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
-                **_deprecated_kwargs,
-            )
+            with self._dbos_overrides():
+                return super(DBOSAgent, self).run_sync(
+                    user_prompt,
+                    output_type=output_type,
+                    message_history=message_history,
+                    model=model,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    infer_name=infer_name,
+                    toolsets=toolsets,
+                    event_stream_handler=event_stream_handler,
+                    **_deprecated_kwargs,
+                )
 
-        self._dbos_wrapped_run_sync_workflow = wrapped_run_sync_workflow
+        self.dbos_wrapped_run_sync_workflow = wrapped_run_sync_workflow
 
     @property
     def name(self) -> str | None:
@@ -188,11 +189,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     def _dbos_overrides(self) -> Iterator[None]:
         # Override with DBOSModel and DBOSMCPServer in the toolsets.
         with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
-            try:
-                yield
-            except (NotImplementedError, PydanticSerializationError) as e:
-                # TODO(Qian): This NotImplementedError is not great and should be improved in DBOS. This actually means some dependencies are not serializable, but the error message is about the object proxy.
-                raise UserError('Serialization error. DBOS requires all outputs are JSON pickleable.') from e
+            yield
 
     @overload
     async def run(
@@ -278,21 +275,20 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        with self._dbos_overrides():
-            return await self._dbos_wrapped_run_workflow(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
-                **_deprecated_kwargs,
-            )
+        return await self.dbos_wrapped_run_workflow(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            **_deprecated_kwargs,
+        )
 
     @overload
     def run_sync(
@@ -328,7 +324,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
-    @DBOS.workflow()
     def run_sync(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
@@ -378,21 +373,20 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         Returns:
             The result of the run.
         """
-        with self._dbos_overrides():
-            return self._dbos_wrapped_run_sync_workflow(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                model=model,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                usage=usage,
-                infer_name=infer_name,
-                toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
-                **_deprecated_kwargs,
-            )
+        return self.dbos_wrapped_run_sync_workflow(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            model=model,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            **_deprecated_kwargs,
+        )
 
     @overload
     def run_stream(

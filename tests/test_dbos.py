@@ -1056,9 +1056,10 @@ async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
 
 async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
     unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)
+    # Test this raises a serialization error because httpx.AsyncClient is not serializable.
     with pytest.raises(
-        UserError,
-        match='Serialization error. DBOS requires all outputs are JSON pickleable',
+        Exception,
+        match='object proxy must define __reduce_ex__()',
     ):
         async with AsyncClient() as client:
             # This will trigger the client to be unserializable
