@@ -100,6 +100,10 @@ class TenacityTransport(BaseTransport):
         for attempt in self.controller:
             with attempt:
                 response = self.wrapped.handle_request(request)
+
+                # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+                response.request = request
+
                 if self.validate_response:
                     self.validate_response(response)
                 return response
@@ -171,6 +175,10 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         async for attempt in self.controller:
             with attempt:
                 response = await self.wrapped.handle_async_request(request)
+
+                # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+                response.request = request
+
                 if self.validate_response:
                     self.validate_response(response)
                 return response
