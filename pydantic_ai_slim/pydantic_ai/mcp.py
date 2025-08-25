@@ -869,7 +869,7 @@ def load_mcp_servers(
     server_options: dict[str, Any] = {},
     stdio_options: dict[str, Any] = {},
 ) -> list[MCPServer]:
-    """Load MCP servers from a configuration file.
+    """Load MCP servers from configuration file.
 
     Args:
         config_path (str): The path to the MCP configuration file.
