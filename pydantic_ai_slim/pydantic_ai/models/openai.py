@@ -216,6 +216,7 @@ class OpenAIModel(Model):
             'heroku',
             'github',
             'ollama',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -241,6 +242,7 @@ class OpenAIModel(Model):
             'heroku',
             'github',
             'ollama',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -265,6 +267,7 @@ class OpenAIModel(Model):
             'heroku',
             'github',
             'ollama',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
