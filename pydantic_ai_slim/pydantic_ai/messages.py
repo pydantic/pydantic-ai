@@ -754,9 +754,25 @@ class TextPart:
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    citations: list[Citation] | None = None
+    """The citations of the response."""
+
     def has_content(self) -> bool:
         """Return `True` if the text content is non-empty."""
         return bool(self.content)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
+class Citation:
+    """A citation from a text response."""
+
+    url: str
+    """The URL of the citation."""
+
+    title: str
+    """The title of the citation."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
