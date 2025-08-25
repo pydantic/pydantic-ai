@@ -266,6 +266,13 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage
 
+      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: htmlcov
+          include-hidden-files: true
+
   test-mcp-run-python:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -292,7 +299,16 @@ jobs:
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, mypy, docs, test-live, test, test-lowest-versions, test-examples, coverage, test-mcp-run-python]
+    needs:
+      - lint
+      - mypy
+      - docs
+      - test-live
+      - test
+      - test-lowest-versions
+      - test-examples
+      - coverage
+      - test-mcp-run-python
     runs-on: ubuntu-latest
 
     steps:
