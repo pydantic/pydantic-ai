@@ -2189,8 +2189,32 @@ async def test_openai_web_search_tool(allow_model_requests: None, openai_api_key
         m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool(search_context_size='low')]
     )
 
-    result = await agent.run('What day is today?')
-    assert result.output == snapshot('May 14, 2025, 8:51:29 AM ')
+    result = await agent.run('What are the latest news in Iceland?')
+    assert result.output == snapshot("""\
+Here are some of the latest news updates from Iceland:
+
+**Volcanic Activity**
+
+On July 16, 2025, a volcanic eruption occurred on the Reykjanes Peninsula in southwest Iceland. The eruption produced smoke and vibrant lava flows from a fissure spanning 700 to 1,000 meters. Authorities evacuated the Blue Lagoon geothermal spa and the nearby town of Grindavik as a precaution. The Icelandic Meteorological Office described the eruption as relatively small, posing no immediate threat to infrastructure, and flights at Reykjavik's Keflavik airport remained unaffected. ([reuters.com](https://www.reuters.com/business/environment/iceland-volcano-erupts-12th-time-since-2021-2025-07-16/?utm_source=openai))
+
+**Political Developments**
+
+Iceland is set to begin negotiations on a security and defense partnership with the European Union. Prime Minister Kristrún Frostadóttir announced the talks, aiming to establish cooperation in areas such as infrastructure, civil protection, dual-use defense investment, and addressing hybrid and cyber threats. The discussions are expected to conclude by the end of the year. ([reuters.com](https://www.reuters.com/world/iceland-launch-negotiations-security-defence-partnership-with-eu-2025-07-17/?utm_source=openai))
+
+**Environmental Concerns**
+
+The Icelandic Meteorological Office has issued warnings about air pollution resulting from the recent volcanic eruption. Volcanic haze has spread widely, with gas pollution, mainly sulfur dioxide, reaching populated areas such as Reykjanesbær. Vulnerable groups are advised to limit time outdoors if they experience discomfort. ([en.vedur.is](https://en.vedur.is/about-imo/news?utm_source=openai))
+
+**Cultural Events**
+
+The town of Hafnarfjörður recently celebrated the ninth annual "Í hjarta Hafnarfjarðar" ("In the Heart of Hafnarfjörður") festival. The event featured various festivities and was noted for its positive impact on the community. ([icelandmonitor.mbl.is](https://icelandmonitor.mbl.is/news/latest/?utm_source=openai))
+
+
+## Recent Developments in Iceland:
+- [Iceland to launch negotiations on security, defence partnership with EU](https://www.reuters.com/world/iceland-launch-negotiations-security-defence-partnership-with-eu-2025-07-17/?utm_source=openai)
+- [Iceland volcano eruption forces evacuation of town and iconic geothermal spa](https://apnews.com/article/c72f44eb9ecb5f2d87e87fd53ed3b26d?utm_source=openai)
+- [Iceland volcano emits smoke and glowing lava in 12th eruption since 2021](https://www.reuters.com/business/environment/iceland-volcano-erupts-12th-time-since-2021-2025-07-16/?utm_source=openai) \
+""")
 
 
 async def test_openai_web_search_tool_with_user_location(allow_model_requests: None, openai_api_key: str):

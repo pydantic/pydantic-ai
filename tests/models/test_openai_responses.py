@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    URLCitation,
     UserPromptPart,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -417,7 +418,17 @@ OpenAI's recent launch of GPT-5 has faced mixed reactions. Despite strong benchm
 
 ## OpenAI's GPT-5 Launch Faces Mixed Reactions:
 - [OpenAI's big GPT-5 launch gets bumpy](https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai) \
-"""
+""",
+                        citations=[
+                            URLCitation(
+                                url='https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai',
+                                title="OpenAI's big GPT-5 launch gets bumpy",
+                            ),
+                            URLCitation(
+                                url='https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai',
+                                title="OpenAI's big GPT-5 launch gets bumpy",
+                            ),
+                        ],
                     )
                 ],
                 usage=RequestUsage(input_tokens=320, output_tokens=159, details={'reasoning_tokens': 0}),
@@ -458,23 +469,90 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
     m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[WebSearchTool()])
 
-    result = await agent.run('What day is it today?')
+    result = await agent.run('What are the latest news in Iceland?')
     assert result.output == snapshot("""\
-Today is Wednesday, May 14, 2025.
+As of August 25, 2025, here are the latest developments in Iceland:
 
-## Weather for San Francisco, CA:
-Current Conditions: Mostly clear, 50°F (10°C)
+**Volcanic Activity:**
 
-Daily Forecast:
-* Wednesday, May 14: Low: 51°F (10°C), High: 65°F (18°C), Description: Areas of low clouds early; otherwise, mostly sunny
-* Thursday, May 15: Low: 53°F (12°C), High: 66°F (19°C), Description: Areas of low clouds, then sun
-* Friday, May 16: Low: 53°F (12°C), High: 64°F (18°C), Description: Partly sunny
-* Saturday, May 17: Low: 52°F (11°C), High: 63°F (17°C), Description: Low clouds breaking for some sun; breezy in the afternoon
-* Sunday, May 18: Low: 51°F (10°C), High: 68°F (20°C), Description: Clouds yielding to sun
-* Monday, May 19: Low: 53°F (12°C), High: 68°F (20°C), Description: Sunny
-* Tuesday, May 20: Low: 52°F (11°C), High: 70°F (21°C), Description: Mostly sunny
- \
+The Reykjanes Peninsula has experienced a series of volcanic eruptions since December 2023, collectively known as the 2023–2025 Sundhnúkur eruptions. The most recent eruption began on July 16, 2025, and lasted approximately 20 days. While this eruption did not threaten infrastructure, it caused significant gas pollution that spread unusually far, resulting in higher pollution levels in nearby towns and cities compared to previous eruptions. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2023%E2%80%932025_Sundhn%C3%BAkur_eruptions?utm_source=openai))
+
+**Political Developments:**
+
+- **Presidential Election:** On June 1, 2024, entrepreneur Halla Tómasdóttir was elected President of Iceland, succeeding Guðni Th. Jóhannesson, who did not seek a third term. Tómasdóttir assumed office on August 1, 2024. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2024_Icelandic_presidential_election?utm_source=openai))
+
+- **Parliamentary Election:** Following the collapse of the coalition government in October 2024, parliamentary elections were held on November 30, 2024. The Social Democratic Alliance, led by Kristrún Frostadóttir, won a plurality of seats, marking a significant shift in Iceland's political landscape. Frostadóttir was sworn in as Prime Minister on December 21, 2024. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2024_Icelandic_parliamentary_election?utm_source=openai))
+
+**Environmental and Cultural Events:**
+
+- **Geological Recognition:** In September 2024, the Reykjanes Peninsula and Vatnajökull glacier were included in the International Geological Union's list of 100 geological heritage sites, highlighting their global significance. ([icelandmonitor.mbl.is](https://icelandmonitor.mbl.is/news/latest//?utm_source=openai))
+
+- **Peace Column Renovation:** Renovation work on the Peace Column in Viðey was completed in September 2024, ensuring its readiness for illumination on October 9, coinciding with John Lennon's birthday. ([icelandmonitor.mbl.is](https://icelandmonitor.mbl.is/news/latest//?utm_source=openai))
+
+Please note that the situation, especially regarding volcanic activity, is subject to change. For the most current information, consult local news sources and official government communications. \
 """)
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='What are the latest news in Iceland?', timestamp=IsDatetime())],
+                instructions='You are a helpful assistant.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+As of August 25, 2025, here are the latest developments in Iceland:
+
+**Volcanic Activity:**
+
+The Reykjanes Peninsula has experienced a series of volcanic eruptions since December 2023, collectively known as the 2023–2025 Sundhnúkur eruptions. The most recent eruption began on July 16, 2025, and lasted approximately 20 days. While this eruption did not threaten infrastructure, it caused significant gas pollution that spread unusually far, resulting in higher pollution levels in nearby towns and cities compared to previous eruptions. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2023%E2%80%932025_Sundhn%C3%BAkur_eruptions?utm_source=openai))
+
+**Political Developments:**
+
+- **Presidential Election:** On June 1, 2024, entrepreneur Halla Tómasdóttir was elected President of Iceland, succeeding Guðni Th. Jóhannesson, who did not seek a third term. Tómasdóttir assumed office on August 1, 2024. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2024_Icelandic_presidential_election?utm_source=openai))
+
+- **Parliamentary Election:** Following the collapse of the coalition government in October 2024, parliamentary elections were held on November 30, 2024. The Social Democratic Alliance, led by Kristrún Frostadóttir, won a plurality of seats, marking a significant shift in Iceland's political landscape. Frostadóttir was sworn in as Prime Minister on December 21, 2024. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2024_Icelandic_parliamentary_election?utm_source=openai))
+
+**Environmental and Cultural Events:**
+
+- **Geological Recognition:** In September 2024, the Reykjanes Peninsula and Vatnajökull glacier were included in the International Geological Union's list of 100 geological heritage sites, highlighting their global significance. ([icelandmonitor.mbl.is](https://icelandmonitor.mbl.is/news/latest//?utm_source=openai))
+
+- **Peace Column Renovation:** Renovation work on the Peace Column in Viðey was completed in September 2024, ensuring its readiness for illumination on October 9, coinciding with John Lennon's birthday. ([icelandmonitor.mbl.is](https://icelandmonitor.mbl.is/news/latest//?utm_source=openai))
+
+Please note that the situation, especially regarding volcanic activity, is subject to change. For the most current information, consult local news sources and official government communications. \
+""",
+                        citations=[
+                            URLCitation(
+                                url='https://en.wikipedia.org/wiki/2023%E2%80%932025_Sundhn%C3%BAkur_eruptions?utm_source=openai',
+                                title='2023–2025 Sundhnúkur eruptions',
+                            ),
+                            URLCitation(
+                                url='https://en.wikipedia.org/wiki/2024_Icelandic_presidential_election?utm_source=openai',
+                                title='2024 Icelandic presidential election',
+                            ),
+                            URLCitation(
+                                url='https://en.wikipedia.org/wiki/2024_Icelandic_parliamentary_election?utm_source=openai',
+                                title='2024 Icelandic parliamentary election',
+                            ),
+                            URLCitation(
+                                url='https://icelandmonitor.mbl.is/news/latest//?utm_source=openai',
+                                title='Latest news - Iceland Monitor',
+                            ),
+                            URLCitation(
+                                url='https://icelandmonitor.mbl.is/news/latest//?utm_source=openai',
+                                title='Latest news - Iceland Monitor',
+                            ),
+                        ],
+                    )
+                ],
+                usage=RequestUsage(input_tokens=319, output_tokens=556, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_request_id='resp_68ac1e32b0108192973c8cfec29c2e61014ed998995dd5ee',
+            ),
+        ]
+    )
 
 
 async def test_openai_responses_model_web_search_tool_with_user_location(

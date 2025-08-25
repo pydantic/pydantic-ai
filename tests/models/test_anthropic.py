@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    URLCitation,
     UserPromptPart,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -1338,7 +1339,7 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
             ModelRequest(parts=[UserPromptPart(content='What day is today?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    TextPart(content="Let me search for current events to help establish today's date."),
+                    TextPart(content="Let me search for current events to help establish today's date.", citations=[]),
                     BuiltinToolCallPart(
                         tool_name='web_search',
                         args={'query': 'current events today August 14 2025'},
@@ -1419,37 +1420,67 @@ async def test_anthropic_web_search_tool(allow_model_requests: None, anthropic_a
                         content="""\
 Based on the search results, today is Thursday, August 14, 2025. This is confirmed by multiple sources:
 
-"""
+""",
+                        citations=[],
                     ),
-                    TextPart(content='Today is August 14, 2025 (Thursday)'),
+                    TextPart(
+                        content='Today is August 14, 2025 (Thursday)',
+                        citations=[
+                            URLCitation(
+                                url='https://en.wikipedia.org/wiki/Portal:Current_events/2025_August_14',
+                                title='Portal:Current events/2025 August 14 - Wikipedia',
+                            )
+                        ],
+                    ),
                     TextPart(
                         content="""\
 
 
 Several major events are happening today, including:
 
-"""
+""",
+                        citations=[],
                     ),
                     TextPart(
-                        content='There is an ongoing situation in Gaza with Israeli forces launching a massive aerial bombardment of Gaza City'
+                        content='There is an ongoing situation in Gaza with Israeli forces launching a massive aerial bombardment of Gaza City',
+                        citations=[
+                            URLCitation(
+                                url='https://en.wikipedia.org/wiki/Portal:Current_events',
+                                title='Portal:Current events - Wikipedia',
+                            )
+                        ],
                     ),
                     TextPart(
                         content="""\
 
 
-"""
+""",
+                        citations=[],
                     ),
                     TextPart(
-                        content='U.S. President Donald Trump has announced he will be meeting Russian President Vladimir Putin in Alaska tomorrow (August 15) to discuss ending the war in Ukraine'
+                        content='U.S. President Donald Trump has announced he will be meeting Russian President Vladimir Putin in Alaska tomorrow (August 15) to discuss ending the war in Ukraine',
+                        citations=[
+                            URLCitation(
+                                url='https://en.wikipedia.org/wiki/Portal:Current_events/August_2025',
+                                title='Portal:Current events/August 2025 - Wikipedia',
+                            )
+                        ],
                     ),
                     TextPart(
                         content="""\
 
 
-"""
+""",
+                        citations=[],
                     ),
                     TextPart(
-                        content="Mount Lewotobi Laki Laki in Indonesia is experiencing its second consecutive day of eruption, sending volcanic materials and ash up to 18 km into the sky. This is one of Indonesia's largest eruptions since 2010, though fortunately no casualties have been reported."
+                        content="Mount Lewotobi Laki Laki in Indonesia is experiencing its second consecutive day of eruption, sending volcanic materials and ash up to 18 km into the sky. This is one of Indonesia's largest eruptions since 2010, though fortunately no casualties have been reported.",
+                        citations=[
+                            URLCitation(
+                                url='https://en.wikipedia.org/wiki/Portal:Current_events/August_2025',
+                                title='Portal:Current events/August 2025 - Wikipedia',
+                            )
+                        ],
                     ),
                 ],
                 usage=RequestUsage(

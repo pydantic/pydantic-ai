@@ -36,6 +36,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    URLCitation,
     UserPromptPart,
     VideoUrl,
 )
@@ -72,6 +73,7 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_output_text import AnnotationURLCitation
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -480,6 +482,7 @@ class OpenAIModel(Model):
             }
 
         if choice.message.content is not None:
+            # NOTE: Should we include the citations on each `TextPart` here?
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
@@ -796,7 +799,16 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'message':
                 for content in item.content:
                     if content.type == 'output_text':  # pragma: no branch
-                        items.append(TextPart(content.text))
+                        items.append(
+                            TextPart(
+                                content.text,
+                                citations=[
+                                    URLCitation(url=annotation.url, title=annotation.title)
+                                    for annotation in content.annotations
+                                    if isinstance(annotation, AnnotationURLCitation)
+                                ],
+                            )
+                        )
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
