@@ -46,7 +46,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, StructuredDict, ToolOutput
+from pydantic_ai.output import (
+    DeferredToolCalls,
+    StructuredDict,
+    ToolOutput,
+)
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import ToolDefinition
@@ -1361,6 +1365,64 @@ def test_output_type_structured_dict():
             ),
         ]
     )
+
+
+def test_output_type_structured_dict_nested():
+    """Test StructuredDict with nested JSON schemas using $ref - Issue #2466."""
+    # Schema with nested $ref that pydantic's generator can't resolve
+    CarDict = StructuredDict(
+        {
+            '$defs': {
+                'Tire': {
+                    'type': 'object',
+                    'properties': {'brand': {'type': 'string'}, 'size': {'type': 'integer'}},
+                    'required': ['brand', 'size'],
+                }
+            },
+            'type': 'object',
+            'properties': {
+                'make': {'type': 'string'},
+                'model': {'type': 'string'},
+                'tires': {'type': 'array', 'items': {'$ref': '#/$defs/Tire'}},
+            },
+            'required': ['make', 'model', 'tires'],
+        },
+        name='Car',
+        description='A car with tires',
+    )
+
+    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+
+        # Verify the output tool schema has been properly transformed
+        # The $refs should be inlined by InlineDefsJsonSchemaTransformer
+        output_tool = info.output_tools[0]
+        assert output_tool.parameters_json_schema is not None
+        schema = output_tool.parameters_json_schema
+
+        # Check that the Tire definition has been inlined in the tires array items
+        assert 'properties' in schema
+        assert 'tires' in schema['properties']
+        tires_schema = schema['properties']['tires']
+        assert tires_schema['type'] == 'array'
+
+        # The $ref should have been resolved to the actual Tire schema
+        items_schema = tires_schema['items']
+        assert '$ref' not in items_schema  # Should be inlined, not a ref
+        assert items_schema['type'] == 'object'
+        assert 'properties' in items_schema
+        assert 'brand' in items_schema['properties']
+        assert 'size' in items_schema['properties']
+
+        args_json = '{"make": "Toyota", "model": "Camry", "tires": [{"brand": "Michelin", "size": 17}]}'
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=CarDict)
+
+    result = agent.run_sync('Generate a car')
+
+    expected = {'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': 17}]}
+    assert result.output == expected
 
 
 def test_default_structured_output_mode():
