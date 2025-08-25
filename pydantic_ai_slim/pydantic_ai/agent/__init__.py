@@ -14,6 +14,8 @@ from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeVar, deprecated
 
+from pydantic_ai.agent.abstract import AbstractAgent
+from pydantic_ai.toolsets.agent import AgentToolset
 from pydantic_graph import Graph
 
 from .. import (
@@ -53,6 +55,15 @@ from ..toolsets import AbstractToolset
 from ..toolsets._dynamic import (
     DynamicToolset,
     ToolsetFunc,
+)
+from ..toolsets.agent import (
+    AgentToolset,
+    AgentToolsetTool,
+    HandoffDepsFunc,
+    HandoffDepsT,
+    HandoffInputModelT,
+    HandoffOutputDataT,
+    HandoffUserPromptFunc,
 )
 from ..toolsets.combined import CombinedToolset
 from ..toolsets.function import FunctionToolset
@@ -145,6 +156,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _function_toolset: FunctionToolset[AgentDepsT] = dataclasses.field(repr=False)
     _output_toolset: OutputToolset[AgentDepsT] | None = dataclasses.field(repr=False)
     _user_toolsets: list[AbstractToolset[AgentDepsT]] = dataclasses.field(repr=False)
+    _handoff_toolset: AgentToolset[AgentDepsT] = dataclasses.field(repr=False)
     _prepare_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _prepare_output_tools: ToolsPrepareFunc[AgentDepsT] | None = dataclasses.field(repr=False)
     _max_result_retries: int = dataclasses.field(repr=False)
@@ -345,6 +357,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_toolset = self._output_schema.toolset
         if self._output_toolset:
             self._output_toolset.max_retries = self._max_result_retries
+
+        self._handoff_toolset = AgentToolset[AgentDepsT]()
 
         self._function_toolset = _AgentFunctionToolset(tools, max_retries=self._max_tool_retries)
         self._dynamic_toolsets = [
@@ -1180,6 +1194,63 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             return func_
 
         return toolset_decorator if func is None else toolset_decorator(func)
+
+    @overload
+    def handoff(
+        self,
+        agent: AbstractAgent[AgentDepsT, HandoffOutputDataT],
+        input_type: type[HandoffInputModelT] = str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        user_prompt_func: HandoffUserPromptFunc[AgentDepsT, HandoffInputModelT] | None = None,
+    ) -> None: ...
+
+    @overload
+    def handoff(
+        self,
+        agent: AbstractAgent[HandoffDepsT, HandoffOutputDataT],
+        input_type: type[HandoffInputModelT] = str,
+        *,
+        deps_func: HandoffDepsFunc[AgentDepsT, HandoffInputModelT, HandoffDepsT],
+        name: str | None = None,
+        description: str | None = None,
+        user_prompt_func: HandoffUserPromptFunc[AgentDepsT, HandoffInputModelT] | None = None,
+    ) -> None: ...
+
+    def handoff(
+        self,
+        agent: AbstractAgent[AgentDepsT, HandoffOutputDataT],
+        input_type: type[HandoffInputModelT] = str,
+        *,
+        name: str | None = None,
+        description: str | None = None,
+        deps_func: HandoffDepsFunc[AgentDepsT, HandoffInputModelT, HandoffDepsT] | None = None,
+        user_prompt_func: HandoffUserPromptFunc[AgentDepsT, HandoffInputModelT] | None = None,
+    ) -> None:
+        """Add an Agent as a tool to the toolset."""
+        if not (tool_name := name or agent.name):
+            raise ValueError('Provide either `name` or an Agent with a name')
+
+        if deps_func is None:
+            self._handoff_toolset.add_agent(
+                agent,
+                input_type=input_type,
+                name=tool_name,
+                description=description,
+                user_prompt_func=user_prompt_func,
+            )
+
+        else:
+            handoff_agent = cast(AbstractAgent[HandoffDepsT, HandoffOutputDataT], agent)
+            self._handoff_toolset.add_agent(
+                handoff_agent,
+                input_type=input_type,
+                name=tool_name,
+                description=description,
+                deps_func=deps_func,
+                user_prompt_func=user_prompt_func,
+            )
 
     def _get_model(self, model: models.Model | models.KnownModelName | str | None) -> models.Model:
         """Create a model configured for this agent.
