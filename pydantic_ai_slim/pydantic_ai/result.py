@@ -153,12 +153,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return await self._tool_manager.handle_call(
                 tool_call, allow_partial=allow_partial, wrap_validation_errors=False
             )
-        elif deferred_tool_calls := self._tool_manager.get_deferred_tool_calls(message.parts):
-            if not self._output_schema.allows_deferred_tool_calls:
+        elif deferred_tool_requests := self._tool_manager.get_deferred_tool_requests(message.parts):
+            if not self._output_schema.allows_deferred_tool_requests:
                 raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
+                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
                 )
-            return cast(OutputDataT, deferred_tool_calls)
+            return cast(OutputDataT, deferred_tool_requests)
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 

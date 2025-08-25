@@ -3,7 +3,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -46,10 +46,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, StructuredDict, ToolOutput
+from pydantic_ai.output import DeferredToolRequests, StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -2069,7 +2069,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
     with pytest.raises(
         UserError,
-        match='Cannot provide a new user prompt when the message history ends with a model response containing unprocessed tool calls',
+        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.',
     ):
         agent.run_sync(user_prompt='New question', message_history=message_history)
 
@@ -4269,6 +4269,11 @@ async def test_hitl_tool_approval():
             return ModelResponse(
                 parts=[
                     ToolCallPart(
+                        tool_name='create_file',
+                        args={'path': 'new_file.py', 'content': 'print("Hello, world!")'},
+                        tool_call_id='create_file',
+                    ),
+                    ToolCallPart(
                         tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
                     ),
                     ToolCallPart(
@@ -4277,40 +4282,28 @@ async def test_hitl_tool_approval():
                 ]
             )
         else:
-            return ModelResponse(parts=[TextPart('OK')])
+            return ModelResponse(parts=[TextPart('Done!')])
 
     model = FunctionModel(model_function)
 
-    @dataclass
-    class ApprovableToolsDeps:
-        tool_call_results: dict[str, Union[bool, str]] = field(default_factory=dict)
+    agent = Agent(model, output_type=[str, DeferredToolRequests])
 
-    agent = Agent(model, output_type=[str, DeferredToolCalls], deps_type=ApprovableToolsDeps)
-
-    async def defer_unless_approved(
-        ctx: RunContext[ApprovableToolsDeps], tool_def: ToolDefinition
-    ) -> Union[ToolDefinition, None]:
-        # When restarting a run with message history ending on `ModelResponse`, run_step will be 0
-        return tool_def if ctx.run_step == 0 else replace(tool_def, kind='deferred')
-
-    @agent.tool(prepare=defer_unless_approved)
-    def delete_file(ctx: RunContext[ApprovableToolsDeps], path: str) -> str:
-        assert ctx.tool_call_id is not None
-        assert ctx.tool_call_id in ctx.deps.tool_call_results
-        response = ctx.deps.tool_call_results[ctx.tool_call_id]
-        if response is not True:
-            raise ModelRetry(f'File {path!r} was not deleted: {response}')
-
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
         return f'File {path!r} deleted'
 
-    result = await agent.run('Delete files ok_to_delete.py and never_delete.py', deps=ApprovableToolsDeps())
+    @agent.tool_plain
+    def create_file(path: str, content: str) -> str:
+        return f'File {path!r} created with content: {content}'
+
+    result = await agent.run('Create new_file.py and delete ok_to_delete.py and never_delete.py')
     messages = result.all_messages()
     assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Delete files ok_to_delete.py and never_delete.py',
+                        content='Create new_file.py and delete ok_to_delete.py and never_delete.py',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -4318,54 +4311,10 @@ async def test_hitl_tool_approval():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                        tool_name='create_file',
+                        args={'path': 'new_file.py', 'content': 'print("Hello, world!")'},
+                        tool_call_id='create_file',
                     ),
-                    ToolCallPart(
-                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=57, output_tokens=12),
-                model_name='function:model_function:',
-                timestamp=IsDatetime(),
-            ),
-        ]
-    )
-    assert result.output == snapshot(
-        DeferredToolCalls(
-            tool_calls=[
-                ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
-                ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ],
-            tool_defs={
-                'delete_file': ToolDefinition(
-                    name='delete_file',
-                    parameters_json_schema={
-                        'additionalProperties': False,
-                        'properties': {'path': {'type': 'string'}},
-                        'required': ['path'],
-                        'type': 'object',
-                    },
-                    kind='deferred',
-                )
-            },
-        )
-    )
-
-    results = {'ok_to_delete': True, 'never_delete': 'Please stop!'}
-
-    result = await agent.run(message_history=messages, deps=ApprovableToolsDeps(tool_call_results=results))
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Delete files ok_to_delete.py and never_delete.py',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
                     ToolCallPart(
                         tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
                     ),
@@ -4373,32 +4322,147 @@ async def test_hitl_tool_approval():
                         tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=57, output_tokens=12),
+                usage=RequestUsage(input_tokens=60, output_tokens=23),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
+                        tool_name='create_file',
+                        content='File \'new_file.py\' created with content: print("Hello, world!")',
+                        tool_call_id='create_file',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
+                ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
+            ]
+        )
+    )
+
+    result = await agent.run(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={'ok_to_delete': True, 'never_delete': ToolDenied('File cannot be deleted')},
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create new_file.py and delete ok_to_delete.py and never_delete.py',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='create_file',
+                        args={'path': 'new_file.py', 'content': 'print("Hello, world!")'},
+                        tool_call_id='create_file',
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=60, output_tokens=23),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='create_file',
+                        content='File \'new_file.py\' created with content: print("Hello, world!")',
+                        tool_call_id='create_file',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
                         tool_name='delete_file',
                         content="File 'ok_to_delete.py' deleted",
                         tool_call_id='ok_to_delete',
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
-                        content="File 'never_delete.py' was not deleted: Please stop!",
+                    ToolReturnPart(
                         tool_name='delete_file',
+                        content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                     ),
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='OK')],
-                usage=RequestUsage(input_tokens=76, output_tokens=13),
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
         ]
     )
-    assert result.output == snapshot('OK')
+    assert result.output == snapshot('Done!')
+
+
+async def test_run_with_deferred_tool_results_errors():
+    agent = Agent('test')
+
+    message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])])]
+
+    with pytest.raises(
+        UserError,
+        match='Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.',
+    ):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='Hello to you too!')]),
+    ]
+
+    with pytest.raises(
+        UserError,
+        match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.',
+    ):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='say_hello')]),
+    ]
+
+    with pytest.raises(
+        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+    ):
+        await agent.run('Hello', message_history=message_history)
+
+    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+        await agent.run(
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(),
+        )
+
+    # TODO: Raise an error, and disallow in method overloads
+    with pytest.raises(UserError):
+        await agent.run(
+            'Hello again',
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )

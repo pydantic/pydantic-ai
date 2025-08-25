@@ -46,7 +46,7 @@ from .messages import (
     UserPromptPart,
 )
 from .models import KnownModelName, Model
-from .output import DeferredToolCalls, OutputDataT, OutputSpec
+from .output import DeferredToolRequests, OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import AgentDepsT, ToolDefinition
 from .toolsets import AbstractToolset
@@ -57,6 +57,7 @@ try:
     from ag_ui.core import (
         AssistantMessage,
         BaseEvent,
+        DeferredToolResultEvent,
         DeveloperMessage,
         EventType,
         Message,
@@ -75,7 +76,6 @@ try:
         Tool as AGUITool,
         ToolCallArgsEvent,
         ToolCallEndEvent,
-        ToolCallResultEvent,
         ToolCallStartEvent,
         ToolMessage,
         UserMessage,
@@ -343,7 +343,7 @@ async def run_ag_ui(
 
         async with agent.iter(
             user_prompt=None,
-            output_type=[output_type or agent.output_type, DeferredToolCalls],
+            output_type=[output_type or agent.output_type, DeferredToolRequests],
             message_history=messages,
             model=model,
             deps=deps,
@@ -503,7 +503,7 @@ async def _handle_tool_result_event(
         return
 
     message_id = stream_ctx.new_message_id()
-    yield ToolCallResultEvent(
+    yield DeferredToolResultEvent(
         message_id=message_id,
         type=EventType.TOOL_CALL_RESULT,
         role='tool',

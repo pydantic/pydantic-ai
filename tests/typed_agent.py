@@ -11,7 +11,7 @@ from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.output import DeferredToolCalls, StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.output import DeferredToolRequests, StructuredDict, TextOutput, ToolOutput
 from pydantic_ai.tools import ToolDefinition
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
@@ -225,11 +225,11 @@ if MYPY:
     )
 
     complex_deferred_output_agent = Agent[
-        None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls
-    ](output_type=[complex_output_agent.output_type, DeferredToolCalls])
+        None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests
+    ](output_type=[complex_output_agent.output_type, DeferredToolRequests])
     assert_type(
         complex_deferred_output_agent,
-        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls],
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
     )
 else:
     # pyright is able to correctly infer the type here
@@ -250,10 +250,10 @@ else:
         complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
     )
 
-    complex_deferred_output_agent = Agent(output_type=[complex_output_agent.output_type, DeferredToolCalls])
+    complex_deferred_output_agent = Agent(output_type=[complex_output_agent.output_type, DeferredToolRequests])
     assert_type(
         complex_deferred_output_agent,
-        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolCalls],
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
     )
 
 
