@@ -391,6 +391,11 @@ def heroku_inference_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def cerebras_api_key() -> str:
+    return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3

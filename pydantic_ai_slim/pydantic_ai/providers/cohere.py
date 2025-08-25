@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import os
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -43,7 +43,7 @@ class CohereProvider(Provider[AsyncClientV2]):
         *,
         api_key: str | None = None,
         cohere_client: AsyncClientV2 | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Cohere provider.
 

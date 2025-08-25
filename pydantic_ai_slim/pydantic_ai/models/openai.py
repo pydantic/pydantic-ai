@@ -204,18 +204,19 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openrouter',
+            'together',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -232,6 +233,7 @@ class OpenAIModel(Model):
             'openai',
             'deepseek',
             'azure',
+            'cerebras',
             'openrouter',
             'moonshotai',
             'vercel',
@@ -256,6 +258,7 @@ class OpenAIModel(Model):
             'openai',
             'deepseek',
             'azure',
+            'cerebras',
             'openrouter',
             'moonshotai',
             'vercel',
@@ -392,6 +395,11 @@ class OpenAIModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
+
+        # TODO(Marcelo): Deprecate this in favor of `openai_unsupported_model_settings`.
         sampling_settings = (
             model_settings
             if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings

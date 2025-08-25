@@ -137,6 +137,7 @@ def test_list_models(capfd: CaptureFixture[str]):
         'openai',
         'anthropic',
         'bedrock',
+        'cerebras',
         'google-vertex',
         'google-gla',
         'groq',

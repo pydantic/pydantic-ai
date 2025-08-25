@@ -16,6 +16,8 @@
 
 ::: pydantic_ai.providers.cohere
 
+::: pydantic_ai.providers.cerebras.CerebrasProvider
+
 ::: pydantic_ai.providers.mistral.MistralProvider
 
 ::: pydantic_ai.providers.fireworks.FireworksProvider

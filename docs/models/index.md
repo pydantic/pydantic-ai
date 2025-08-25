@@ -26,6 +26,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [Heroku](openai.md#heroku-ai)
 - [GitHub Models](openai.md#github-models)
+- [Cerebras](openai.md#cerebras)
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
