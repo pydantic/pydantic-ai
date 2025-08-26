@@ -14,7 +14,6 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models import Model
-from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = [
     pytest.mark.skipif(os.getenv('PYDANTIC_AI_LIVE_TEST_DANGEROUS') != 'CHARGE-ME!', reason='live tests disabled'),
@@ -23,6 +22,7 @@ pytestmark = [
 
 
 def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     return OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
