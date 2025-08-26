@@ -19,7 +19,6 @@ from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     ModelMessage,
     ModelRequest,
     PartDeltaEvent,
@@ -196,7 +195,7 @@ class Deps(BaseModel):
 
 async def event_stream_handler(
     ctx: RunContext[Deps],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     logfire.info(f'{ctx.run_step=}')
     async for event in stream:
@@ -636,11 +635,11 @@ async def test_complex_agent_run_in_workflow(
 
 
 async def test_complex_agent_run(allow_model_requests: None):
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
     async def event_stream_handler(
         ctx: RunContext[Deps],
-        stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+        stream: AsyncIterable[AgentStreamEvent],
     ):
         async for event in stream:
             events.append(event)
@@ -1161,7 +1160,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
 
 async def simple_event_stream_handler(
     ctx: RunContext[None],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     pass
 
