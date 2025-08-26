@@ -110,7 +110,9 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
-    _media_type: str | None = field(init=False, repr=False, compare=False)
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+        compare=False
+    )
 
     def __init__(
         self,
@@ -124,6 +126,7 @@ class FileUrl(ABC):
         self.force_download = force_download
         self._media_type = media_type
 
+    @pydantic.computed_field
     @property
     def media_type(self) -> str:
         """Return the media type of the file, based on the URL or the provided `media_type`."""
