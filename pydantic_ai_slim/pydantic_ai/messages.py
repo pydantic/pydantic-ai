@@ -110,7 +110,7 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
-    _media_type: str | None = field(repr=False, compare=False)
+    _media_type: str | None = field(repr=False, compare=False, default=None)
 
     def __init__(
         self,
