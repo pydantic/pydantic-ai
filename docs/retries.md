@@ -23,14 +23,13 @@ Here's an example of adding retry functionality with smart retry handling:
 ```python {title="smart_retry_example.py"}
 from httpx import AsyncClient, HTTPStatusError
 from tenacity import (
-    AsyncRetrying,
     stop_after_attempt,
     wait_exponential,
     retry_if_exception_type
 )
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.retries import AsyncTenacityTransport, wait_retry_after
+from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 from pydantic_ai.providers.openai import OpenAIProvider
 
 def create_retrying_client():
@@ -42,7 +41,7 @@ def create_retrying_client():
             response.raise_for_status()  # This will raise HTTPStatusError
 
     transport = AsyncTenacityTransport(
-        controller=AsyncRetrying(
+        config=RetryConfig(
             # Retry on HTTP errors and connection issues
             retry=retry_if_exception_type((HTTPStatusError, ConnectionError)),
             # Smart waiting: respects Retry-After headers, falls back to exponential backoff
@@ -100,11 +99,8 @@ For asynchronous HTTP clients (recommended for most use cases):
 
 ```python {title="async_transport_example.py"}
 from httpx import AsyncClient
-from tenacity import AsyncRetrying, stop_after_attempt
-from pydantic_ai.retries import AsyncTenacityTransport
-
-# Create the basic components
-async_retrying = AsyncRetrying(stop=stop_after_attempt(3), reraise=True)
+from tenacity import stop_after_attempt
+from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig
 
 def validator(response):
     """Treat responses with HTTP status 4xx/5xx as failures that need to be retried.
@@ -114,8 +110,8 @@ def validator(response):
 
 # Create the transport
 transport = AsyncTenacityTransport(
-    controller=async_retrying,   # AsyncRetrying instance
-    validate_response=validator  # Optional response validator
+    config=RetryConfig(stop=stop_after_attempt(3), reraise=True),
+    validate_response=validator
 )
 
 # Create a client using the transport:
@@ -128,11 +124,8 @@ For synchronous HTTP clients:
 
 ```python {title="sync_transport_example.py"}
 from httpx import Client
-from tenacity import Retrying, stop_after_attempt
-from pydantic_ai.retries import TenacityTransport
-
-# Create the basic components
-retrying = Retrying(stop=stop_after_attempt(3), reraise=True)
+from tenacity import stop_after_attempt
+from pydantic_ai.retries import RetryConfig, TenacityTransport
 
 def validator(response):
     """Treat responses with HTTP status 4xx/5xx as failures that need to be retried.
@@ -142,8 +135,8 @@ def validator(response):
 
 # Create the transport
 transport = TenacityTransport(
-    controller=retrying,       # Retrying instance
-    validate_response=validator # Optional response validator
+    config=RetryConfig(stop=stop_after_attempt(3), reraise=True),
+    validate_response=validator
 )
 
 # Create a client using the transport
@@ -156,13 +149,13 @@ client = Client(transport=transport)
 
 ```python {title="rate_limit_handling.py"}
 from httpx import AsyncClient, HTTPStatusError
-from tenacity import AsyncRetrying, stop_after_attempt, retry_if_exception_type, wait_exponential
-from pydantic_ai.retries import AsyncTenacityTransport, wait_retry_after
+from tenacity import stop_after_attempt, retry_if_exception_type, wait_exponential
+from pydantic_ai.retries import AsyncTenacityTransport, wait_retry_after, RetryConfig
 
 def create_rate_limit_client():
     """Create a client that respects Retry-After headers from rate limiting responses."""
     transport = AsyncTenacityTransport(
-        controller=AsyncRetrying(
+        config=RetryConfig(
             retry=retry_if_exception_type(HTTPStatusError),
             wait=wait_retry_after(
                 fallback_strategy=wait_exponential(multiplier=1, max=60),
@@ -186,13 +179,13 @@ The `wait_retry_after` function automatically detects `Retry-After` headers in 4
 
 ```python {title="network_error_handling.py"}
 import httpx
-from tenacity import AsyncRetrying, retry_if_exception_type, wait_exponential, stop_after_attempt
-from pydantic_ai.retries import AsyncTenacityTransport
+from tenacity import retry_if_exception_type, wait_exponential, stop_after_attempt
+from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig
 
 def create_network_resilient_client():
     """Create a client that handles network errors with retries."""
     transport = AsyncTenacityTransport(
-        controller=AsyncRetrying(
+        config=RetryConfig(
             retry=retry_if_exception_type((
                 httpx.TimeoutException,
                 httpx.ConnectError,
@@ -214,8 +207,8 @@ client = create_network_resilient_client()
 
 ```python {title="custom_retry_logic.py"}
 import httpx
-from tenacity import AsyncRetrying, wait_exponential, stop_after_attempt
-from pydantic_ai.retries import AsyncTenacityTransport, wait_retry_after
+from tenacity import wait_exponential, stop_after_attempt
+from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
 def create_custom_retry_client():
     """Create a client with custom retry logic."""
@@ -227,7 +220,7 @@ def create_custom_retry_client():
         return isinstance(exception, (httpx.TimeoutException, httpx.ConnectError))
 
     transport = AsyncTenacityTransport(
-        controller=AsyncRetrying(
+        config=RetryConfig(
             retry=custom_retry_condition,
             # Use wait_retry_after for smart waiting on rate limits,
             # with custom exponential backoff as fallback
