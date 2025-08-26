@@ -27,6 +27,8 @@ __all__ = (
     'EvaluationReportAdapter',
     'ReportCase',
     'ReportCaseAdapter',
+    'ReportCaseFailure',
+    'ReportCaseFailureAdapter',
     'EvaluationRenderer',
     'RenderValueConfig',
     'RenderNumberConfig',
@@ -215,6 +217,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_averages: bool = True,
         include_errors: bool = True,
         include_error_stacktrace: bool = False,
+        include_evaluator_failures: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -238,6 +241,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
             include_averages=include_averages,
+            include_evaluator_failures=include_evaluator_failures,
             input_config=input_config,
             metadata_config=metadata_config,
             output_config=output_config,
@@ -273,6 +277,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
         include_averages: bool = True,
+        include_evaluator_failures: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -297,6 +302,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_averages=include_averages,
             include_error_message=False,
             include_error_stacktrace=False,
+            include_evaluator_failures=include_evaluator_failures,
             input_config={**_DEFAULT_VALUE_CONFIG, **(input_config or {})},
             metadata_config={**_DEFAULT_VALUE_CONFIG, **(metadata_config or {})},
             output_config=output_config or _DEFAULT_VALUE_CONFIG,
@@ -342,6 +348,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_reasons=False,
             include_error_message=include_error_message,
             include_error_stacktrace=include_error_stacktrace,
+            include_evaluator_failures=False,  # Not applicable for failures table
         )
         return renderer.build_failures_table(self)
 
@@ -626,6 +633,7 @@ class ReportCaseRenderer:
     include_total_duration: bool
     include_error_message: bool
     include_error_stacktrace: bool
+    include_evaluator_failures: bool
 
     input_renderer: _ValueRenderer
     metadata_renderer: _ValueRenderer
@@ -655,6 +663,8 @@ class ReportCaseRenderer:
             table.add_column('Metrics', overflow='fold')
         if self.include_assertions:
             table.add_column('Assertions', overflow='fold')
+        if self.include_evaluator_failures:
+            table.add_column('Evaluator Failures', overflow='fold')
         if self.include_durations:
             table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
         return table
@@ -703,6 +713,9 @@ class ReportCaseRenderer:
         if self.include_assertions:
             row.append(self._render_assertions(list(case.assertions.values())))
 
+        if self.include_evaluator_failures:
+            row.append(self._render_evaluator_failures(case.evaluator_failures))
+
         if self.include_durations:
             row.append(self._render_durations(case))
 
@@ -735,6 +748,9 @@ class ReportCaseRenderer:
 
         if self.include_assertions:
             row.append(self._render_aggregate_assertions(aggregate.assertions))
+
+        if self.include_evaluator_failures:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
 
         if self.include_durations:
             row.append(self._render_durations(aggregate))
@@ -797,6 +813,12 @@ class ReportCaseRenderer:
             )
             row.append(assertions_diff)
 
+        if self.include_evaluator_failures:  # pragma: no branch
+            evaluator_failures_diff = self._render_evaluator_failures_diff(
+                baseline.evaluator_failures, new_case.evaluator_failures
+            )
+            row.append(evaluator_failures_diff)
+
         if self.include_durations:  # pragma: no branch
             durations_diff = self._render_durations_diff(baseline, new_case)
             row.append(durations_diff)
@@ -839,6 +861,9 @@ class ReportCaseRenderer:
         if self.include_assertions:  # pragma: no branch
             assertions_diff = self._render_aggregate_assertions_diff(baseline.assertions, new.assertions)
             row.append(assertions_diff)
+
+        if self.include_evaluator_failures:  # pragma: no branch
+            row.append(EMPTY_AGGREGATE_CELL_STR)
 
         if self.include_durations:  # pragma: no branch
             durations_diff = self._render_durations_diff(baseline, new)
@@ -980,6 +1005,31 @@ class ReportCaseRenderer:
         rendered_new = default_render_percentage(new) + ' [green]✔[/]' if new is not None else EMPTY_CELL_STR
         return rendered_new if rendered_baseline == rendered_new else f'{rendered_baseline} → {rendered_new}'
 
+    def _render_evaluator_failures(
+        self,
+        failures: list[EvaluatorFailure],
+    ) -> str:
+        if not failures:
+            return EMPTY_CELL_STR
+        lines: list[str] = []
+        for failure in failures:
+            line = f'[red]{failure.name}[/]'
+            if failure.error_message:
+                line += f': {failure.error_message}'
+            lines.append(line)
+        return '\n'.join(lines)
+
+    def _render_evaluator_failures_diff(
+        self,
+        baseline_failures: list[EvaluatorFailure],
+        new_failures: list[EvaluatorFailure],
+    ) -> str:
+        baseline_str = self._render_evaluator_failures(baseline_failures)
+        new_str = self._render_evaluator_failures(new_failures)
+        if baseline_str == new_str:
+            return baseline_str
+        return f'{baseline_str} → {new_str}'
+
 
 @dataclass
 class EvaluationRenderer:
@@ -1011,6 +1061,7 @@ class EvaluationRenderer:
 
     include_error_message: bool
     include_error_stacktrace: bool
+    include_evaluator_failures: bool
 
     def include_scores(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.scores for case in self._all_cases(report, baseline))
@@ -1023,6 +1074,11 @@ class EvaluationRenderer:
 
     def include_assertions(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.assertions for case in self._all_cases(report, baseline))
+
+    def include_evaluator_failures_column(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
+        return self.include_evaluator_failures and any(
+            case.evaluator_failures for case in self._all_cases(report, baseline)
+        )
 
     def _all_cases(self, report: EvaluationReport, baseline: EvaluationReport | None) -> list[ReportCase]:
         if not baseline:
@@ -1063,6 +1119,7 @@ class EvaluationRenderer:
             include_total_duration=self.include_total_duration,
             include_error_message=self.include_error_message,
             include_error_stacktrace=self.include_error_stacktrace,
+            include_evaluator_failures=self.include_evaluator_failures_column(report, baseline),
             input_renderer=input_renderer,
             metadata_renderer=metadata_renderer,
             output_renderer=output_renderer,

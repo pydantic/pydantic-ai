@@ -123,6 +123,7 @@ async def test_evaluation_renderer_basic(sample_report: EvaluationReport):
         include_reasons=False,
         include_error_message=False,
         include_error_stacktrace=False,
+        include_evaluator_failures=True,
     )
 
     table = renderer.build_table(sample_report)
@@ -161,6 +162,7 @@ async def test_evaluation_renderer_with_reasons(sample_report: EvaluationReport)
         include_reasons=True,
         include_error_message=False,
         include_error_stacktrace=False,
+        include_evaluator_failures=True,
     )
 
     table = renderer.build_table(sample_report)
@@ -236,6 +238,7 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
         include_reasons=False,
         include_error_message=False,
         include_error_stacktrace=False,
+        include_evaluator_failures=True,
     )
 
     table = renderer.build_diff_table(sample_report, baseline_report)
@@ -296,6 +299,7 @@ async def test_evaluation_renderer_with_removed_cases(sample_report: EvaluationR
         include_reasons=False,
         include_error_message=False,
         include_error_stacktrace=False,
+        include_evaluator_failures=True,
     )
 
     table = renderer.build_diff_table(sample_report, baseline_report)
@@ -362,6 +366,7 @@ async def test_evaluation_renderer_with_custom_configs(sample_report: Evaluation
         include_reasons=False,
         include_error_message=False,
         include_error_stacktrace=False,
+        include_evaluator_failures=True,
     )
 
     table = renderer.build_table(sample_report)
@@ -486,3 +491,235 @@ async def test_report_case_aggregate_empty():
         'task_duration': 0.0,
         'total_duration': 0.0,
     }
+
+
+async def test_evaluation_renderer_with_failures(sample_report_case: ReportCase):
+    """Test EvaluationRenderer with task failures."""
+    from pydantic_evals.reporting import ReportCaseFailure
+
+    failure = ReportCaseFailure(
+        name='failed_case',
+        inputs={'query': 'What is 10/0?'},
+        metadata={'difficulty': 'impossible'},
+        expected_output={'answer': 'undefined'},
+        error_message='Division by zero',
+        error_stacktrace='Traceback (most recent call last):\n  File "test.py", line 1\n    10/0\nZeroDivisionError: division by zero',
+        trace_id='test-trace-failure',
+        span_id='test-span-failure',
+    )
+
+    report = EvaluationReport(
+        cases=[sample_report_case],
+        failures=[failure],
+        name='test_report_with_failures',
+    )
+
+    # Test with include_error_message=True, include_error_stacktrace=False
+    failures_table = report.failures_table(
+        include_input=True,
+        include_metadata=True,
+        include_expected_output=True,
+        include_error_message=True,
+        include_error_stacktrace=False,
+    )
+
+    assert render_table(failures_table) == snapshot("""\
+                                                     Case Failures
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┓
+┃ Case ID     ┃ Inputs                     ┃ Metadata                     ┃ Expected Output         ┃ Error Message    ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━┩
+│ failed_case │ {'query': 'What is 10/0?'} │ {'difficulty': 'impossible'} │ {'answer': 'undefined'} │ Division by zero │
+└─────────────┴────────────────────────────┴──────────────────────────────┴─────────────────────────┴──────────────────┘
+""")
+
+    # Test with both include_error_message=True and include_error_stacktrace=True
+    failures_table_with_stacktrace = report.failures_table(
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_error_message=True,
+        include_error_stacktrace=True,
+    )
+
+    assert render_table(failures_table_with_stacktrace) == snapshot("""\
+                             Case Failures
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID     ┃ Error Message    ┃ Error Stacktrace                    ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ failed_case │ Division by zero │ Traceback (most recent call last):  │
+│             │                  │   File "test.py", line 1            │
+│             │                  │     10/0                            │
+│             │                  │ ZeroDivisionError: division by zero │
+└─────────────┴──────────────────┴─────────────────────────────────────┘
+""")
+
+
+async def test_evaluation_renderer_with_evaluator_failures(
+    sample_assertion: EvaluationResult[bool], sample_score: EvaluationResult[float], sample_label: EvaluationResult[str]
+):
+    """Test EvaluationRenderer with evaluator failures."""
+    from pydantic_evals.evaluators.evaluator import EvaluatorFailure
+
+    case_with_evaluator_failures = ReportCase(
+        name='test_case',
+        inputs={'query': 'What is 2+2?'},
+        output={'answer': '4'},
+        expected_output={'answer': '4'},
+        metadata={'difficulty': 'easy'},
+        metrics={'accuracy': 0.95},
+        attributes={},
+        scores={'score1': sample_score},
+        labels={'label1': sample_label},
+        assertions={sample_assertion.name: sample_assertion},
+        task_duration=0.1,
+        total_duration=0.2,
+        trace_id='test-trace-id',
+        span_id='test-span-id',
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='CustomEvaluator',
+                error_message='Failed to evaluate: timeout',
+                error_stacktrace='Timeout stacktrace',
+                source=sample_score.source,
+            ),
+            EvaluatorFailure(
+                name='AnotherEvaluator',
+                error_message='Connection refused',
+                error_stacktrace='Connection refused stacktrace',
+                source=sample_label.source,
+            ),
+        ],
+    )
+
+    report = EvaluationReport(
+        cases=[case_with_evaluator_failures],
+        name='test_report_with_evaluator_failures',
+    )
+
+    # Test with include_evaluator_failures=True (default)
+    renderer = EvaluationRenderer(
+        include_input=True,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=True,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_error_message=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    table = renderer.build_table(report)
+    assert render_table(table) == snapshot("""\
+                                                              Evaluation Summary: test_report_with_evaluator_failures
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Outputs         ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Evaluator Failures                           ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │ CustomEvaluator: Failed to evaluate: timeout │    0.100 │
+│           │                           │                 │              │               │                 │            │ AnotherEvaluator: Connection refused         │          │
+└───────────┴───────────────────────────┴─────────────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────────────────────────────────────────┴──────────┘
+""")
+
+    # Test with include_evaluator_failures=False
+    renderer_no_failures = EvaluationRenderer(
+        include_input=True,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=True,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_error_message=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=False,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    table_no_failures = renderer_no_failures.build_table(report)
+    assert render_table(table_no_failures) == snapshot("""\
+                                      Evaluation Summary: test_report_with_evaluator_failures
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Outputs         ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │    0.100 │
+└───────────┴───────────────────────────┴─────────────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+""")
+
+
+async def test_evaluation_renderer_no_evaluator_failures_column():
+    """Test that evaluator failures column is omitted when no failures exist even if flag is True."""
+
+    case_without_evaluator_failures = ReportCase(
+        name='test_case',
+        inputs={'query': 'What is 2+2?'},
+        output={'answer': '4'},
+        expected_output={'answer': '4'},
+        metadata={'difficulty': 'easy'},
+        metrics={'accuracy': 0.95},
+        attributes={},
+        scores={},
+        labels={},
+        assertions={},
+        task_duration=0.1,
+        total_duration=0.2,
+        trace_id='test-trace-id',
+        span_id='test-span-id',
+        evaluator_failures=[],  # No evaluator failures
+    )
+
+    report = EvaluationReport(
+        cases=[case_without_evaluator_failures],
+        name='test_report_no_evaluator_failures',
+    )
+
+    # Even with include_evaluator_failures=True, column should not appear if no failures exist
+    renderer = EvaluationRenderer(
+        include_input=True,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=True,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_error_message=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,  # True, but no failures exist
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    table = renderer.build_table(report)
+    # The Evaluator Failures column should not be present
+    assert render_table(table) == snapshot("""\
+                 Evaluation Summary: test_report_no_evaluator_failures
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Outputs         ┃ Metrics         ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ accuracy: 0.950 │    0.100 │
+└───────────┴───────────────────────────┴─────────────────┴─────────────────┴──────────┘
+""")
