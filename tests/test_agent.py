@@ -3078,7 +3078,7 @@ def test_binary_content_serializable():
 
 def test_image_url_serializable_missing_media_type():
     agent = Agent('test')
-    content = ImageUrl('https://example.com/chart')
+    content = ImageUrl('https://example.com/chart.jpeg')
     result = agent.run_sync(['Hello', content])
     serialized = result.all_messages_json()
     assert json.loads(serialized) == snapshot(
@@ -3089,9 +3089,10 @@ def test_image_url_serializable_missing_media_type():
                         'content': [
                             'Hello',
                             {
-                                'url': 'https://example.com/chart',
+                                'url': 'https://example.com/chart.jpeg',
                                 'force_download': False,
                                 'vendor_metadata': None,
+                                '_media_type': None,
                                 'kind': 'image-url',
                             },
                         ],
@@ -3152,6 +3153,7 @@ def test_image_url_serializable():
                                 'url': 'https://example.com/chart',
                                 'force_download': False,
                                 'vendor_metadata': None,
+                                '_media_type': 'image/jpeg',
                                 'kind': 'image-url',
                             },
                         ],
