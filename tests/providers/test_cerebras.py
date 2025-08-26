@@ -8,7 +8,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
-from pydantic_ai.profiles.qwen import NotStrictCompatibleJsonSchemaTransformer, qwen_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -73,7 +73,7 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     qwen_profile = provider.model_profile('qwen-3-coder-480b')
     qwen_model_profile_mock.assert_called_with('qwen-3-coder-480b')
     assert qwen_profile is not None
-    assert qwen_profile.json_schema_transformer == NotStrictCompatibleJsonSchemaTransformer
+    assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     openai_profile = provider.model_profile('gpt-oss-120b')
     openai_model_profile_mock.assert_called_with('gpt-oss-120b')

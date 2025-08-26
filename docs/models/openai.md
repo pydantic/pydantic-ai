@@ -550,10 +550,10 @@ If you need to configure the provider, you can use the [`CerebrasProvider`][pyda
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.cerebras import CerebrasProvider
 
-model = OpenAIModel(
+model = OpenAIChatModel(
     'llama3.3-70b',
     provider=CerebrasProvider(api_key='your-cerebras-api-key'),
 )

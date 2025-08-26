@@ -11,6 +11,8 @@ interactions:
       - '414'
       content-type:
       - application/json
+      cookie:
+      - __cf_bm=hqG7YTrLAdrCNKQU34H3qhIKxESTvFsG9X7OjEzKuDk-1756198142-1.0.1.1-WG8.rT3zC66xxHN6c33AcERCdH0FDum2a7djbEu85gy9rEiq9nTHQVY8g5BAZ_DmviuVxhphMwTsxDclYqQCobIlgurA9g.prg5M_i9PZyM
       host:
       - api.cerebras.ai
     method: POST
@@ -45,11 +47,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '563'
+      - '645'
       content-type:
       - application/json
       inference-id:
-      - chatcmpl-8347181b-8cbf-4b95-a0d1-d67506ff261f
+      - chatcmpl-65763e70-ba85-41a3-a758-4dc3fcb73c9a
       referrer-policy:
       - strict-origin-when-cross-origin
       strict-transport-security:
@@ -61,25 +63,26 @@ interactions:
       - finish_reason: stop
         index: 0
         message:
-          content: The capital of France is Paris.
+          content: The capital of France is Paris. If you need more information about Paris or any other details, feel free
+            to ask!
           role: assistant
-      created: 1755860211
-      id: chatcmpl-8347181b-8cbf-4b95-a0d1-d67506ff261f
+      created: 1756198142
+      id: chatcmpl-65763e70-ba85-41a3-a758-4dc3fcb73c9a
       model: qwen-3-coder-480b
       object: chat.completion
-      system_fingerprint: fp_31a2887711266f4f7714
+      system_fingerprint: fp_4405be376d055dc5bff7
       time_info:
-        completion_time: 0.018394739
-        created: 1755860211
-        prompt_time: 0.010609346
-        queue_time: 0.000614518
-        total_time: 0.04493212699890137
+        completion_time: 0.045860486
+        created: 1756198142
+        prompt_time: 0.011004894
+        queue_time: 0.001344637
+        total_time: 0.05971097946166992
       usage:
-        completion_tokens: 8
+        completion_tokens: 25
         prompt_tokens: 304
         prompt_tokens_details:
           cached_tokens: 0
-        total_tokens: 312
+        total_tokens: 329
     status:
       code: 200
       message: OK
@@ -92,11 +95,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '646'
+      - '727'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=BDMfBURYanUixVLBlBoOCXPWzpiM.763TVbnJZY42fY-1755860211-1.0.1.1-hoTGjQLLaYENHx42c6GpD8um3ZHEcyuOTjqhFP8XKwMLwwkb8_cneD0mIipRrjij16RbouUCYjMA3pKso.Myilo0l2iCWkYbr0Y_M.o2cNA
+      - __cf_bm=hqG7YTrLAdrCNKQU34H3qhIKxESTvFsG9X7OjEzKuDk-1756198142-1.0.1.1-WG8.rT3zC66xxHN6c33AcERCdH0FDum2a7djbEu85gy9rEiq9nTHQVY8g5BAZ_DmviuVxhphMwTsxDclYqQCobIlgurA9g.prg5M_i9PZyM
       host:
       - api.cerebras.ai
     method: POST
@@ -104,7 +107,8 @@ interactions:
       messages:
       - content: What is the capital of France?
         role: user
-      - content: The capital of France is Paris.
+      - content: The capital of France is Paris. If you need more information about Paris or any other details, feel free
+          to ask!
         role: assistant
       - content: |-
           Validation feedback:
@@ -139,84 +143,11 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '155'
-      content-type:
-      - application/json
-      referrer-policy:
-      - strict-origin-when-cross-origin
-      retry-after-ms:
-      - '660'
-      strict-transport-security:
-      - max-age=3600; includeSubDomains
-    parsed_body:
-      code: request_quota_exceeded
-      message: Requests per second limit exceeded - too many requests sent.
-      param: quota
-      type: too_many_requests_error
-    status:
-      code: 429
-      message: Too Many Requests
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate
-      connection:
-      - keep-alive
-      content-length:
-      - '646'
-      content-type:
-      - application/json
-      cookie:
-      - __cf_bm=BDMfBURYanUixVLBlBoOCXPWzpiM.763TVbnJZY42fY-1755860211-1.0.1.1-hoTGjQLLaYENHx42c6GpD8um3ZHEcyuOTjqhFP8XKwMLwwkb8_cneD0mIipRrjij16RbouUCYjMA3pKso.Myilo0l2iCWkYbr0Y_M.o2cNA
-      host:
-      - api.cerebras.ai
-    method: POST
-    parsed_body:
-      messages:
-      - content: What is the capital of France?
-        role: user
-      - content: The capital of France is Paris.
-        role: assistant
-      - content: |-
-          Validation feedback:
-          Plain text responses are not permitted, please include your response in a tool call
-
-          Fix the errors and try again.
-        role: user
-      model: qwen-3-coder-480b
-      stream: false
-      tool_choice: auto
-      tools:
-      - function:
-          description: The final response which ends this conversation
-          name: final_result
-          parameters:
-            properties:
-              city:
-                type: string
-              country:
-                type: string
-            required:
-            - city
-            - country
-            title: Location
-            type: object
-        type: function
-    uri: https://api.cerebras.ai/v1/chat/completions
-  response:
-    headers:
-      alt-svc:
-      - h3=":443"; ma=86400
-      connection:
-      - keep-alive
-      content-length:
-      - '673'
+      - '672'
       content-type:
       - application/json
       inference-id:
-      - chatcmpl-54677781-246a-48a7-bdd2-9700a973cb18
+      - chatcmpl-6659125c-6d06-402c-be3b-4640aa64ffa2
       referrer-policy:
       - strict-origin-when-cross-origin
       strict-transport-security:
@@ -233,25 +164,25 @@ interactions:
           - function:
               arguments: '{"city": "Paris", "country": "France"}'
               name: final_result
-            id: 4f027f52b
+            id: b8847f144
             type: function
-      created: 1755860212
-      id: chatcmpl-54677781-246a-48a7-bdd2-9700a973cb18
+      created: 1756198143
+      id: chatcmpl-6659125c-6d06-402c-be3b-4640aa64ffa2
       model: qwen-3-coder-480b
       object: chat.completion
       system_fingerprint: fp_4405be376d055dc5bff7
       time_info:
-        completion_time: 0.049739543
-        created: 1755860212
-        prompt_time: 0.013182467
-        queue_time: 0.00011378
-        total_time: 0.06537389755249023
+        completion_time: 0.103362557
+        created: 1756198143
+        prompt_time: 0.22219986
+        queue_time: 0.346436935
+        total_time: 0.6736249923706055
       usage:
         completion_tokens: 33
-        prompt_tokens: 347
+        prompt_tokens: 364
         prompt_tokens_details:
           cached_tokens: 0
-        total_tokens: 380
+        total_tokens: 397
     status:
       code: 200
       message: OK
