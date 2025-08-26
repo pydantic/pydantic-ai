@@ -530,3 +530,36 @@ You can set the `HEROKU_INFERENCE_KEY` and `HEROKU_INFERENCE_URL` environment va
 export HEROKU_INFERENCE_KEY='your-heroku-inference-key'
 export HEROKU_INFERENCE_URL='https://us.inference.heroku.com'
 ```
+
+### Cerebras
+
+To use [Cerebras](https://cerebras.ai/), you need to create an API key in the [Cerebras Console](https://cloud.cerebras.ai/).
+
+Once you've set the `CEREBRAS_API_KEY` environment variable, you can run the following:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('cerebras:llama3.3-70b')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the [`CerebrasProvider`][pydantic_ai.providers.cerebras.CerebrasProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.cerebras import CerebrasProvider
+
+model = OpenAIChatModel(
+    'llama3.3-70b',
+    provider=CerebrasProvider(api_key='your-cerebras-api-key'),
+)
+agent = Agent(model)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```

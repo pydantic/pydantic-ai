@@ -4,15 +4,12 @@ import os
 from typing import overload
 
 import httpx
-from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.deepseek import deepseek_model_profile
-from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
@@ -21,48 +18,48 @@ try:
     from openai import AsyncOpenAI
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
-        'Please install the `openai` package to use the Fireworks AI provider, '
+        'Please install the `openai` package to use the Cerebras provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
 
 
-class FireworksProvider(Provider[AsyncOpenAI]):
-    """Provider for Fireworks AI API."""
+class CerebrasProvider(Provider[AsyncOpenAI]):
+    """Provider for Cerebras API."""
 
     @property
     def name(self) -> str:
-        return 'fireworks'
+        return 'cerebras'
 
     @property
     def base_url(self) -> str:
-        return 'https://api.fireworks.ai/inference/v1'
+        return 'https://api.cerebras.ai/v1'
 
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        prefix_to_profile = {
-            'llama': meta_model_profile,
-            'qwen': qwen_model_profile,
-            'deepseek': deepseek_model_profile,
-            'mistral': mistral_model_profile,
-            'gemma': google_model_profile,
-        }
-
-        prefix = 'accounts/fireworks/models/'
+        prefix_to_profile = {'llama': meta_model_profile, 'qwen': qwen_model_profile, 'gpt-oss': harmony_model_profile}
 
         profile = None
-        if model_name.startswith(prefix):
-            model_name = model_name[len(prefix) :]
-            for provider, profile_func in prefix_to_profile.items():
-                if model_name.startswith(provider):
-                    profile = profile_func(model_name)
-                    break
+        for prefix, profile_func in prefix_to_profile.items():
+            model_name = model_name.lower()
+            if model_name.startswith(prefix):
+                profile = profile_func(model_name)
 
-        # As the Fireworks API is OpenAI-compatible, let's assume we also need OpenAIJsonSchemaTransformer,
-        # unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        # According to https://inference-docs.cerebras.ai/resources/openai#currently-unsupported-openai-features,
+        # Cerebras doesn't support some model settings.
+        unsupported_model_settings = (
+            'frequency_penalty',
+            'logit_bias',
+            'presence_penalty',
+            'parallel_tool_calls',
+            'service_tier',
+        )
+        return OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer,
+            openai_unsupported_model_settings=unsupported_model_settings,
+        ).update(profile)
 
     @overload
     def __init__(self) -> None: ...
@@ -83,11 +80,11 @@ class FireworksProvider(Provider[AsyncOpenAI]):
         openai_client: AsyncOpenAI | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        api_key = api_key or os.getenv('FIREWORKS_API_KEY')
+        api_key = api_key or os.getenv('CEREBRAS_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
-                'Set the `FIREWORKS_API_KEY` environment variable or pass it via `FireworksProvider(api_key=...)`'
-                'to use the Fireworks AI provider.'
+                'Set the `CEREBRAS_API_KEY` environment variable or pass it via `CerebrasProvider(api_key=...)` '
+                'to use the Cerebras provider.'
             )
 
         if openai_client is not None:
@@ -95,5 +92,5 @@ class FireworksProvider(Provider[AsyncOpenAI]):
         elif http_client is not None:
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)
         else:
-            http_client = cached_async_http_client(provider='fireworks')
+            http_client = cached_async_http_client(provider='cerebras')
             self._client = AsyncOpenAI(base_url=self.base_url, api_key=api_key, http_client=http_client)

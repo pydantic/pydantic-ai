@@ -211,19 +211,20 @@ class OpenAIChatModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
+            'azure',
+            'deepseek',
+            'cerebras',
+            'fireworks',
+            'github',
+            'grok',
+            'heroku',
+            'moonshotai',
+            'ollama',
             'openai',
             'openai-chat',
-            'deepseek',
-            'azure',
             'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
-            'fireworks',
             'together',
-            'heroku',
-            'github',
-            'ollama',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -237,19 +238,20 @@ class OpenAIChatModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
+            'azure',
+            'deepseek',
+            'cerebras',
+            'fireworks',
+            'github',
+            'grok',
+            'heroku',
+            'moonshotai',
+            'ollama',
             'openai',
             'openai-chat',
-            'deepseek',
-            'azure',
             'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
-            'fireworks',
             'together',
-            'heroku',
-            'github',
-            'ollama',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -262,19 +264,20 @@ class OpenAIChatModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
+            'azure',
+            'deepseek',
+            'cerebras',
+            'fireworks',
+            'github',
+            'grok',
+            'heroku',
+            'moonshotai',
+            'ollama',
             'openai',
             'openai-chat',
-            'deepseek',
-            'azure',
             'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
-            'fireworks',
             'together',
-            'heroku',
-            'github',
-            'ollama',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -402,6 +405,11 @@ class OpenAIChatModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
+
+        # TODO(Marcelo): Deprecate this in favor of `openai_unsupported_model_settings`.
         sampling_settings = (
             model_settings
             if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
@@ -646,9 +654,7 @@ class OpenAIChatModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
