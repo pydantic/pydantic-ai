@@ -13,7 +13,15 @@ The module includes:
 
 from __future__ import annotations
 
-from httpx import AsyncBaseTransport, AsyncHTTPTransport, BaseTransport, HTTPTransport, Request, Response
+from httpx import (
+    AsyncBaseTransport,
+    AsyncHTTPTransport,
+    BaseTransport,
+    HTTPStatusError,
+    HTTPTransport,
+    Request,
+    Response,
+)
 
 try:
     from tenacity import AsyncRetrying, RetryCallState, RetryError, Retrying, retry, wait_exponential
@@ -28,7 +36,6 @@ from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Callable, NoReturn, cast
 
-from httpx import HTTPStatusError
 from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
