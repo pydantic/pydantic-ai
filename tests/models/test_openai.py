@@ -2981,8 +2981,9 @@ async def test_openai_model_settings_temperature_ignored_on_gpt_5(allow_model_re
     assert result.output == snapshot('Paris.')
 
 
-def test_deprecated_openai_model():
+def test_deprecated_openai_model(openai_api_key: str):
     with pytest.warns(DeprecationWarning):
         from pydantic_ai.models.openai import OpenAIModel  # type: ignore[reportDeprecated]
 
-        OpenAIModel('gpt-4o')  # type: ignore[reportDeprecated]
+        provider = OpenAIProvider(api_key=openai_api_key)
+        OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
