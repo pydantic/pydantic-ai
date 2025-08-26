@@ -65,7 +65,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
@@ -152,7 +152,7 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
 
 
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     provider=OpenAIProvider(
         api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
@@ -207,8 +207,15 @@ async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
 
-def get_weather(city: str) -> str:
-    return 'sunny'
+class WeatherArgs(BaseModel):
+    city: str
+
+
+def get_weather(args: WeatherArgs) -> str:
+    if args.city == 'Mexico City':
+        return 'sunny'
+    else:
+        return 'unknown'  # pragma: no cover
 
 
 @dataclass
