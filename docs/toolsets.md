@@ -573,7 +573,7 @@ while True:
         final_output = output
         break
 
-    print(output.tool_calls)
+    print(output.calls)
     """
     [
         ToolCallPart(
@@ -583,7 +583,7 @@ while True:
         )
     ]
     """
-    for tool_call in output.tool_calls:
+    for tool_call in output.calls:
         if function := frontend_tool_functions.get(tool_call.tool_name):
             part = ToolReturnPart(
                 tool_name=tool_call.tool_name,
