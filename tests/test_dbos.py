@@ -74,7 +74,7 @@ except ImportError:  # pragma: lax no cover
 
 
 try:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
@@ -142,7 +142,7 @@ def dbos() -> Generator[DBOS, Any, None]:
         DBOS.destroy()
 
 
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     provider=OpenAIProvider(
         api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
