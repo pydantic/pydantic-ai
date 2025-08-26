@@ -64,7 +64,7 @@ class VercelProvider(Provider[AsyncOpenAI]):
         if provider in provider_to_profile:
             profile = provider_to_profile[provider](model_name)
 
-        # As VercelProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As VercelProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
