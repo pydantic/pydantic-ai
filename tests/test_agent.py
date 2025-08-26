@@ -3081,7 +3081,7 @@ def test_binary_content_serializable():
 def test_image_url_serializable():
     agent = Agent('test')
 
-    content = ImageUrl('https://example.com/chart', media_type='image/jpeg', identifier='url_id1')
+    content = ImageUrl('https://example.com/chart', media_type='image/jpeg')
     result = agent.run_sync(['Hello', content])
 
     serialized = result.all_messages_json()
@@ -3095,7 +3095,6 @@ def test_image_url_serializable():
                             {
                                 'url': 'https://example.com/chart',
                                 'force_download': False,
-                                'identifier': 'url_id1',
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
                             },
