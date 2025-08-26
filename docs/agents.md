@@ -115,7 +115,6 @@ The example below shows how to stream events and text output. You can also [stre
 import asyncio
 from collections.abc import AsyncIterable
 from datetime import date
-from typing import Union
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
