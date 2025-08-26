@@ -28,7 +28,7 @@ __all__ = ['TenacityTransport', 'AsyncTenacityTransport', 'wait_retry_after']
 
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Callable, cast
+from typing import Any, Callable, cast
 
 from httpx import HTTPStatusError
 from tenacity import RetryCallState, wait_exponential
@@ -78,7 +78,7 @@ class TenacityTransport(BaseTransport):
         self,
         controller: Retrying,
         wrapped: BaseTransport | None = None,
-        validate_response: Callable[[Response], None] | None = None,
+        validate_response: Callable[[Response], Any] | None = None,
     ):
         self.controller = controller
         self.wrapped = wrapped or HTTPTransport()
@@ -100,6 +100,10 @@ class TenacityTransport(BaseTransport):
         for attempt in self.controller:
             with attempt:
                 response = self.wrapped.handle_request(request)
+
+                # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+                response.request = request
+
                 if self.validate_response:
                     self.validate_response(response)
                 return response
@@ -149,7 +153,7 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         self,
         controller: AsyncRetrying,
         wrapped: AsyncBaseTransport | None = None,
-        validate_response: Callable[[Response], None] | None = None,
+        validate_response: Callable[[Response], Any] | None = None,
     ):
         self.controller = controller
         self.wrapped = wrapped or AsyncHTTPTransport()
@@ -171,6 +175,10 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         async for attempt in self.controller:
             with attempt:
                 response = await self.wrapped.handle_async_request(request)
+
+                # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+                response.request = request
+
                 if self.validate_response:
                     self.validate_response(response)
                 return response

@@ -134,6 +134,54 @@ class TestTenacityTransport:
         assert result is mock_response_success
         assert mock_transport.handle_request.call_count == 2
 
+    def test_raise_for_status_in_validate_response(self):
+        """Test that response.raise_for_status() works in validate_response callback."""
+        mock_transport = Mock(spec=httpx.BaseTransport)
+        mock_response_fail = Mock(spec=httpx.Response)
+        mock_response_fail.status_code = 429
+        mock_response_fail.is_success = False
+        mock_response_fail.is_error = True
+        mock_response_fail.request = None  # Initially None, will be set by transport
+
+        # Mock raise_for_status to check if request is set
+        def mock_raise_for_status():
+            if mock_response_fail.request is None:
+                raise RuntimeError(  # pragma: no cover
+                    'Cannot call `raise_for_status` as the request instance has not been set on this response.'
+                )
+            raise httpx.HTTPStatusError(
+                'Too Many Requests', request=mock_response_fail.request, response=mock_response_fail
+            )
+
+        mock_response_fail.raise_for_status = mock_raise_for_status
+
+        mock_response_success = Mock(spec=httpx.Response)
+        mock_response_success.status_code = 200
+        mock_response_success.is_success = True
+        mock_response_success.is_error = False
+        mock_response_success.raise_for_status = Mock()  # Should not raise
+
+        mock_transport.handle_request.side_effect = [mock_response_fail, mock_response_success]
+
+        controller = Retrying(
+            retry=retry_if_exception_type(httpx.HTTPStatusError),
+            stop=stop_after_attempt(3),
+            wait=wait_fixed(0.001),
+            reraise=True,
+        )
+        transport = TenacityTransport(
+            controller, mock_transport, validate_response=lambda response: response.raise_for_status()
+        )
+
+        request = httpx.Request('GET', 'https://example.com')
+        result = transport.handle_request(request)
+
+        assert result is mock_response_success
+        assert mock_transport.handle_request.call_count == 2
+        # Verify that the request was set on the failed response before raise_for_status was called
+        assert mock_response_fail.request is request
+        mock_response_success.raise_for_status.assert_called_once()
+
 
 class TestAsyncTenacityTransport:
     """Tests for the asynchronous AsyncTenacityTransport."""
@@ -242,6 +290,54 @@ class TestAsyncTenacityTransport:
 
         assert result is mock_response_success
         assert mock_transport.handle_async_request.call_count == 2
+
+    async def test_raise_for_status_in_validate_response(self):
+        """Test that response.raise_for_status() works in validate_response callback."""
+        mock_transport = AsyncMock(spec=httpx.AsyncBaseTransport)
+        mock_response_fail = Mock(spec=httpx.Response)
+        mock_response_fail.status_code = 429
+        mock_response_fail.is_success = False
+        mock_response_fail.is_error = True
+        mock_response_fail.request = None  # Initially None, will be set by transport
+
+        # Mock raise_for_status to check if request is set
+        def mock_raise_for_status():
+            if mock_response_fail.request is None:
+                raise RuntimeError(  # pragma: no cover
+                    'Cannot call `raise_for_status` as the request instance has not been set on this response.'
+                )
+            raise httpx.HTTPStatusError(
+                'Too Many Requests', request=mock_response_fail.request, response=mock_response_fail
+            )
+
+        mock_response_fail.raise_for_status = mock_raise_for_status
+
+        mock_response_success = Mock(spec=httpx.Response)
+        mock_response_success.status_code = 200
+        mock_response_success.is_success = True
+        mock_response_success.is_error = False
+        mock_response_success.raise_for_status = Mock()  # Should not raise
+
+        mock_transport.handle_async_request.side_effect = [mock_response_fail, mock_response_success]
+
+        controller = AsyncRetrying(
+            retry=retry_if_exception_type(httpx.HTTPStatusError),
+            stop=stop_after_attempt(3),
+            wait=wait_fixed(0.001),
+            reraise=True,
+        )
+        transport = AsyncTenacityTransport(
+            controller, mock_transport, validate_response=lambda response: response.raise_for_status()
+        )
+
+        request = httpx.Request('GET', 'https://example.com')
+        result = await transport.handle_async_request(request)
+
+        assert result is mock_response_success
+        assert mock_transport.handle_async_request.call_count == 2
+        # Verify that the request was set on the failed response before raise_for_status was called
+        assert mock_response_fail.request is request
+        mock_response_success.raise_for_status.assert_called_once()
 
 
 class TestWaitRetryAfter:
