@@ -28,7 +28,7 @@ from tenacity import (
     retry_if_exception_type
 )
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -60,7 +60,7 @@ def create_retrying_client():
 
 # Use the retrying client with a model
 client = create_retrying_client()
-model = OpenAIModel('gpt-4o', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -247,13 +247,13 @@ The retry transports work with any provider that accepts a custom HTTP client:
 
 ```python {title="openai_with_retries.py" requires="smart_retry_example.py"}
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIModel('gpt-4o', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
@@ -275,13 +275,13 @@ agent = Agent(model)
 
 ```python {title="openai_compatible_with_retries.py" requires="smart_retry_example.py"}
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIModel(
+model = OpenAIChatModel(
     'your-model-name',  # Replace with actual model name
     provider=OpenAIProvider(
         base_url='https://api.example.com/v1',  # Replace with actual API URL
@@ -312,13 +312,13 @@ The retry transports will re-raise the last exception if all retry attempts fail
 
 ```python {title="error_handling_example.py" requires="smart_retry_example.py"}
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from smart_retry_example import create_retrying_client
 
 client = create_retrying_client()
-model = OpenAIModel('gpt-4o', provider=OpenAIProvider(http_client=client))
+model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(http_client=client))
 agent = Agent(model)
 ```
 
