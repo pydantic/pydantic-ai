@@ -80,6 +80,8 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
 
 @dataclass
 class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
+    """A single case in an evaluation report that failed due to an error during task execution."""
+
     name: str
     """The name of the [case][pydantic_evals.Case]."""
     inputs: InputsT
