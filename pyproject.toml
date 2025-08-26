@@ -54,6 +54,7 @@ dependencies = [
 examples = ["pydantic-ai-examples=={{ version }}"]
 logfire = ["logfire>=3.14.1"]
 a2a = ["fasta2a>=0.4.1"]
+dbos = ["pydantic-ai-slim[dbos]=={{ version }}"]
 
 [project.urls]
 Homepage = "https://ai.pydantic.dev"
@@ -105,7 +106,6 @@ dev = [
     # Needed for PyCharm users
     "pip>=25.2",
     "genai-prices>=0.0.22",
-    "dbos>=1.12.0",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [

@@ -3710,6 +3710,9 @@ dependencies = [
 a2a = [
     { name = "fasta2a" },
 ]
+dbos = [
+    { name = "pydantic-ai-slim", extra = ["dbos"] },
+]
 examples = [
     { name = "pydantic-ai-examples" },
 ]
@@ -3723,7 +3726,6 @@ dev = [
     { name = "asgi-lifespan" },
     { name = "boto3-stubs", extra = ["bedrock-runtime"] },
     { name = "coverage", extra = ["toml"] },
-    { name = "dbos" },
     { name = "devtools" },
     { name = "diff-cover", version = "9.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9.17'" },
     { name = "diff-cover", version = "9.2.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9.17'" },
@@ -3766,8 +3768,9 @@ requires-dist = [
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["dbos"], marker = "extra == 'dbos'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "examples", "logfire"]
+provides-extras = ["a2a", "dbos", "examples", "logfire"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3775,7 +3778,6 @@ dev = [
     { name = "asgi-lifespan", specifier = ">=2.1.0" },
     { name = "boto3-stubs", extras = ["bedrock-runtime"] },
     { name = "coverage", extras = ["toml"], specifier = ">=7.10.3" },
-    { name = "dbos", specifier = ">=1.12.0" },
     { name = "devtools", specifier = ">=0.12.2" },
     { name = "diff-cover", specifier = ">=9.2.0" },
     { name = "dirty-equals", specifier = ">=0.9.0" },
@@ -3889,6 +3891,9 @@ cli = [
 cohere = [
     { name = "cohere", marker = "sys_platform != 'emscripten'" },
 ]
+dbos = [
+    { name = "dbos" },
+]
 duckduckgo = [
     { name = "ddgs" },
 ]
@@ -3937,6 +3942,7 @@ requires-dist = [
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.16.0" },
+    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.12.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
@@ -3966,7 +3972,7 @@ requires-dist = [
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "temporal", "vertexai"]
+provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "tavily", "temporal", "vertexai"]
 
 [[package]]
 name = "pydantic-core"
