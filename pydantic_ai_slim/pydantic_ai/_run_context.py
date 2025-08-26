@@ -40,6 +40,8 @@ class RunContext(Generic[AgentDepsT]):
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
+    tool_prefix: str | None = None
+    """Prefix of the tool being called."""
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0

@@ -239,7 +239,7 @@ class MCPServer(AbstractToolset[Any], ABC):
     ) -> ToolResult:
         if self.tool_prefix:
             name = name.removeprefix(f'{self.tool_prefix}_')
-            ctx = replace(ctx, tool_name=name)
+            ctx = replace(ctx, tool_name=name, tool_prefix=self.tool_prefix)
 
         if self.process_tool_call is not None:
             return await self.process_tool_call(ctx, self.direct_call_tool, name, tool_args)
