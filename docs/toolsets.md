@@ -467,11 +467,11 @@ Deferred tools enable various use cases:
 - Implement a Human-in-the-Loop flow where the user needs to explicitly provide an "answer" before the run can continue
 - Pass slow tasks off to a background worker or external service that will send a (webhook) notification when the result is ready and the agent run can be continued.
 
-When the model calls a deferred tool, the agent run ends with a [`DeferredToolCalls`][pydantic_ai.output.DeferredToolCalls] object containing the deferred tool call names and arguments, which are expected to be returned to the service that will (eventually) produce the result(s). Once all the results are ready, a new Pydantic AI agent run can then be started with the original run's message history plus new [`ToolReturnPart`s][pydantic_ai.messages.ToolReturnPart] (or [`RetryPromptPart`s][pydantic_ai.messages.RetryPromptPart] in case of failure) corresponding to each deferred call, after which the run will continue.
+When the model calls a deferred tool, the agent run ends with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] object containing the deferred tool call names and arguments, which are expected to be returned to the service that will (eventually) produce the result(s). Once all the results are ready, a new Pydantic AI agent run can then be started with the original run's message history plus new [`ToolReturnPart`s][pydantic_ai.messages.ToolReturnPart] (or [`RetryPromptPart`s][pydantic_ai.messages.RetryPromptPart] in case of failure) corresponding to each deferred call, after which the run will continue.
 
-To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolCalls` to the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. Finally, you should handle the possible `DeferredToolCalls` output by passing it to the service that will produce the results.
+To enable an agent to call deferred tools, you create a [`DeferredToolset`][pydantic_ai.toolsets.DeferredToolset], pass it a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition], and provide it to the agent using one of the methods described above. Additionally, you need to add `DeferredToolRequests` to the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. Finally, you should handle the possible `DeferredToolRequests` output by passing it to the service that will produce the results.
 
-If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolCalls` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly.
+If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolRequests` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly.
 
 To demonstrate, let us first define a simple agent _without_ deferred tools:
 
@@ -506,25 +506,25 @@ print(repr(result.output))
 #> PersonalizedGreeting(greeting='Hello, David!', language_code='en-US')
 ```
 
-Next, let's define a function that represents a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model plus a list of frontend tool definitions. This is where `DeferredToolset` and `DeferredToolCalls` come in:
+Next, let's define a function that represents a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model plus a list of frontend tool definitions. This is where `DeferredToolset` and `DeferredToolRequests` come in:
 
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
 from deferred_toolset_agent import agent, PersonalizedGreeting
 
 from typing import Union
 
-from pydantic_ai.output import DeferredToolCalls
+from pydantic_ai.output import DeferredToolRequests
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import DeferredToolset
 from pydantic_ai.messages import ModelMessage
 
 def run_agent(
     messages: list[ModelMessage] = [], frontend_tools: list[ToolDefinition] = {}
-) -> tuple[Union[PersonalizedGreeting, DeferredToolCalls], list[ModelMessage]]:
+) -> tuple[Union[PersonalizedGreeting, DeferredToolRequests], list[ModelMessage]]:
     deferred_toolset = DeferredToolset(frontend_tools)
     result = agent.run_sync(
         toolsets=[deferred_toolset], # (1)!
-        output_type=[agent.output_type, DeferredToolCalls], # (2)!
+        output_type=[agent.output_type, DeferredToolRequests], # (2)!
         message_history=messages, # (3)!
     )
     return result.output, result.new_messages()
@@ -541,7 +541,7 @@ from deferred_toolset_api import run_agent
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.output import DeferredToolCalls
+from pydantic_ai.output import DeferredToolRequests
 
 frontend_tool_definitions = [
     ToolDefinition(
@@ -569,7 +569,7 @@ while True:
     output, new_messages = run_agent(messages, frontend_tool_definitions)
     messages += new_messages
 
-    if not isinstance(output, DeferredToolCalls):
+    if not isinstance(output, DeferredToolRequests):
         final_output = output
         break
 
