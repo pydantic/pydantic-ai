@@ -38,6 +38,26 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 - **Graph Support**:
   [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
 
+**Sign up to *The Pydantic Stack* newsletter, with updates & tutorials on Logfire, Pydantic AI and Pydantic:**
+
+  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" style="display: flex; align-items: center; gap: 10px; max-width: 85%;">
+      <input
+      type="email"
+      id="email_input"
+      name="email"
+      class="md-input"
+      style="border-bottom: none; flex: 1;"
+      required
+      placeholder="Email"
+      data-1p-ignore
+      data-lpignore="true"
+      data-protonpass-ignore="true"
+      data-bwignore="true"
+      />
+      <input type="hidden" id="source_input" name="source" value="pydantic-ai" />
+      <button type="submit" class="md-button" style="width: fit-content;">Subscribe</button>
+  </form>
+
 ## Hello World Example
 
 Here's a minimal example of Pydantic AI:
