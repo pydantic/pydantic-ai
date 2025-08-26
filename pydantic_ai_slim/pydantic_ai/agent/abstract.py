@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Callable, Generic, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Callable, Generic, cast, overload
 
 from typing_extensions import Self, TypeAlias, TypeIs, TypeVar
 
@@ -53,11 +53,7 @@ RunOutputDataT = TypeVar('RunOutputDataT')
 """Type variable for the result data of a run where `output_type` was customized on the run call."""
 
 EventStreamHandler: TypeAlias = Callable[
-    [
-        RunContext[AgentDepsT],
-        AsyncIterable[Union[_messages.AgentStreamEvent, _messages.HandleResponseEvent]],
-    ],
-    Awaitable[None],
+    [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]], Awaitable[None]
 ]
 """A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
 
@@ -445,7 +441,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     async with node.stream(graph_ctx) as stream:
                         final_result_event = None
 
-                        async def stream_to_final(stream: AgentStream) -> AsyncIterator[_messages.AgentStreamEvent]:
+                        async def stream_to_final(
+                            stream: AgentStream,
+                        ) -> AsyncIterator[_messages.ModelResponseStreamEvent]:
                             nonlocal final_result_event
                             async for event in stream:
                                 yield event
