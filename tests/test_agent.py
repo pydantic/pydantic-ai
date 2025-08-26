@@ -29,7 +29,6 @@ from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.messages import (
     AgentStreamEvent,
     BinaryContent,
-    HandleResponseEvent,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -4220,9 +4219,7 @@ def test_toolsets():
 
 
 async def test_wrapper_agent():
-    async def event_stream_handler(
-        ctx: RunContext[None], events: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]]
-    ):
+    async def event_stream_handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]):
         pass  # pragma: no cover
 
     foo_toolset = FunctionToolset()

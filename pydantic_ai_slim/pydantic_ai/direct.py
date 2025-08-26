@@ -275,7 +275,9 @@ class StreamedResponseSync:
     """
 
     _async_stream_cm: AbstractAsyncContextManager[StreamedResponse]
-    _queue: queue.Queue[messages.AgentStreamEvent | Exception | None] = field(default_factory=queue.Queue, init=False)
+    _queue: queue.Queue[messages.ModelResponseStreamEvent | Exception | None] = field(
+        default_factory=queue.Queue, init=False
+    )
     _thread: threading.Thread | None = field(default=None, init=False)
     _stream_response: StreamedResponse | None = field(default=None, init=False)
     _exception: Exception | None = field(default=None, init=False)
@@ -295,8 +297,8 @@ class StreamedResponseSync:
     ) -> None:
         self._cleanup()
 
-    def __iter__(self) -> Iterator[messages.AgentStreamEvent]:
-        """Stream the response as an iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s."""
+    def __iter__(self) -> Iterator[messages.ModelResponseStreamEvent]:
+        """Stream the response as an iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         self._check_context_manager_usage()
 
         while True:
