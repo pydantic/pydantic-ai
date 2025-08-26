@@ -12,8 +12,6 @@ interactions:
     uri: https://us.inference.heroku.com/available-models
   response:
     headers:
-      connection:
-      - keep-alive
       content-length:
       - '760'
       content-security-policy:
