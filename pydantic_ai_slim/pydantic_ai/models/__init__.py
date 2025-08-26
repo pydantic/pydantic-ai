@@ -111,6 +111,15 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
+        'cerebras:gpt-oss-120b',
+        'cerebras:llama3.1-8b',
+        'cerebras:llama-3.3-70b',
+        'cerebras:llama-4-scout-17b-16e-instruct',
+        'cerebras:llama-4-maverick-17b-128e-instruct',
+        'cerebras:qwen-3-235b-a22b-instruct-2507',
+        'cerebras:qwen-3-32b',
+        'cerebras:qwen-3-coder-480b',
+        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'claude-3-5-haiku-20241022',
         'claude-3-5-haiku-latest',
         'claude-3-5-sonnet-20240620',
@@ -695,18 +704,19 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
 
         return CohereModel(model_name, provider=provider)
     elif provider in (
+        'azure',
+        'deepseek',
+        'cerebras',
+        'fireworks',
+        'github',
+        'grok',
+        'heroku',
+        'moonshotai',
         'openai',
         'openai-chat',
-        'deepseek',
-        'azure',
         'openrouter',
-        'vercel',
-        'grok',
-        'moonshotai',
-        'fireworks',
         'together',
-        'heroku',
-        'github',
+        'vercel',
     ):
         from .openai import OpenAIChatModel
 
