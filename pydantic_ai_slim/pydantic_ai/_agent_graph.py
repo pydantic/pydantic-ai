@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
+from genai_prices import calc_price
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
@@ -309,6 +310,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ) as streamed_response:
             self._did_stream = True
             ctx.state.usage.requests += 1
+            ctx.state.usage.cost += calc_price(streamed_response.usage(), ctx.deps.model.model_name).total_price
             agent_stream = result.AgentStream[DepsT, T](
                 streamed_response,
                 ctx.deps.output_schema,
@@ -338,6 +340,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
+        ctx.state.usage.cost += calc_price(model_response.usage, ctx.deps.model.model_name).total_price
 
         return self._finish_handling(ctx, model_response)
 

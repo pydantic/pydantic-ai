@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from enum import Enum
 from functools import cached_property
 from typing import Annotated, Any, Callable, Literal, Union, cast
@@ -236,13 +237,7 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(
-        RunUsage(
-            requests=1,
-            input_tokens=2,
-            output_tokens=1,
-        )
-    )
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1, cost=Decimal('0.000015')))
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -423,7 +418,9 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3))
+    assert result.usage() == snapshot(
+        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, cost=Decimal('0.00004625'))
+    )
 
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
@@ -826,6 +823,7 @@ async def test_openai_audio_url_input(allow_model_requests: None, openai_api_key
                 'text_tokens': 72,
             },
             requests=1,
+            cost=Decimal('0.0008925'),
         )
     )
 
@@ -1024,6 +1022,7 @@ async def test_audio_as_binary_content_input(
                 'text_tokens': 9,
             },
             requests=1,
+            cost=Decimal('0.00020'),
         )
     )
 
