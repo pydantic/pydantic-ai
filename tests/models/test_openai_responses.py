@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from ..parts_from_messages import part_types_from_messages
@@ -1076,3 +1076,16 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_text_verbosity='low'))
     result = await agent.run('What is 2+2?')
     assert result.output == snapshot('4')
+
+
+async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None, openai_api_key: str):
+    # The VCR cassette was manually modified to remove the input_tokens_details and output_tokens_details fields.
+    provider = OpenAIProvider(api_key=openai_api_key)
+    model = OpenAIResponsesModel('gpt-4o', provider=provider)
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+
+    assert result.usage() == snapshot(
+        RunUsage(input_tokens=14, output_tokens=9, details={'reasoning_tokens': 0}, requests=1)
+    )

@@ -1266,13 +1266,10 @@ class FinalResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
-"""An event in the model response stream, either starting a new part or applying a delta to an existing one."""
-
-AgentStreamEvent = Annotated[
+ModelResponseStreamEvent = Annotated[
     Union[PartStartEvent, PartDeltaEvent, FinalResultEvent], pydantic.Discriminator('event_kind')
 ]
-"""An event in the agent stream."""
+"""An event in the model response stream, starting a new part, applying a delta to an existing one, or indicating the final result."""
 
 
 @dataclass(repr=False)
@@ -1342,3 +1339,6 @@ HandleResponseEvent = Annotated[
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
+
+AgentStreamEvent = Annotated[Union[ModelResponseStreamEvent, HandleResponseEvent], pydantic.Discriminator('event_kind')]
+"""An event in the agent stream: model response stream events and response-handling events."""

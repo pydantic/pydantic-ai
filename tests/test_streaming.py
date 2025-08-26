@@ -20,7 +20,6 @@ from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1271,11 +1270,9 @@ async def test_run_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(
-        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
-    ):
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -1314,11 +1311,9 @@ def test_run_sync_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(
-        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
-    ):
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -1357,11 +1352,9 @@ async def test_run_stream_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(
-        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
-    ):
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
