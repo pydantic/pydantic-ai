@@ -43,6 +43,8 @@ with try_import() as imports_successful:
 
 
 with try_import() as tenacity_import_successful:
+    from tenacity import stop_after_attempt
+
     from pydantic_ai.retries import RetryConfig
 
 
@@ -299,12 +301,6 @@ async def test_evaluate_sync(
 async def test_evaluate_with_retried_task_and_evaluator(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
 ):
-    try:
-        from tenacity import stop_after_attempt
-    except ImportError:  # pragma no cover
-        # Just pass the test if tenacity isn't installed
-        return
-
     task_attempt = 0
 
     async def mock_async_task(inputs: TaskInput) -> TaskOutput:

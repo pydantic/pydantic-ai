@@ -664,6 +664,227 @@ async def test_evaluation_renderer_with_evaluator_failures(
 """)
 
 
+async def test_evaluation_renderer_with_evaluator_failures_diff(
+    sample_assertion: EvaluationResult[bool], sample_score: EvaluationResult[float], sample_label: EvaluationResult[str]
+):
+    """Test EvaluationRenderer with evaluator failures in diff table."""
+    from pydantic_evals.evaluators.evaluator import EvaluatorFailure
+
+    # Create baseline case with one evaluator failure
+    baseline_case = ReportCase(
+        name='test_case',
+        inputs={'query': 'What is 2+2?'},
+        output={'answer': '4'},
+        expected_output={'answer': '4'},
+        metadata={'difficulty': 'easy'},
+        metrics={'accuracy': 0.95},
+        attributes={},
+        scores={'score1': sample_score},
+        labels={'label1': sample_label},
+        assertions={sample_assertion.name: sample_assertion},
+        task_duration=0.1,
+        total_duration=0.2,
+        trace_id='test-trace-id',
+        span_id='test-span-id',
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='BaselineEvaluator',
+                error_message='Baseline error',
+                error_stacktrace='Baseline stacktrace',
+                source=sample_score.source,
+            ),
+        ],
+    )
+
+    # Create new case with different evaluator failures
+    new_case = ReportCase(
+        name='test_case',
+        inputs={'query': 'What is 2+2?'},
+        output={'answer': '4'},
+        expected_output={'answer': '4'},
+        metadata={'difficulty': 'easy'},
+        metrics={'accuracy': 0.97},
+        attributes={},
+        scores={'score1': sample_score},
+        labels={'label1': sample_label},
+        assertions={sample_assertion.name: sample_assertion},
+        task_duration=0.09,
+        total_duration=0.19,
+        trace_id='test-trace-id-new',
+        span_id='test-span-id-new',
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='NewEvaluator',
+                error_message='New error',
+                error_stacktrace='New stacktrace',
+                source=sample_label.source,
+            ),
+        ],
+    )
+
+    baseline_report = EvaluationReport(
+        cases=[baseline_case],
+        name='baseline_report',
+    )
+
+    new_report = EvaluationReport(
+        cases=[new_case],
+        name='new_report',
+    )
+
+    # Test diff table with evaluator failures
+    renderer = EvaluationRenderer(
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=True,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=True,
+        include_error_message=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    diff_table = renderer.build_diff_table(new_report, baseline_report)
+    assert render_table(diff_table) == snapshot("""\
+                                                                       Evaluation Diff: baseline_report → new_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels                 ┃ Metrics                 ┃ Assertions ┃ Evaluator Failures                                          ┃                        Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 → 0.970 │ ✔          │ BaselineEvaluator: Baseline error → NewEvaluator: New error │ 0.100 → 0.0900 (-0.01 / -10.0%) │
+├───────────┼──────────────┼────────────────────────┼─────────────────────────┼────────────┼─────────────────────────────────────────────────────────────┼─────────────────────────────────┤
+│ Averages  │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 → 0.970 │ 100.0% ✔   │                                                             │ 0.100 → 0.0900 (-0.01 / -10.0%) │
+└───────────┴──────────────┴────────────────────────┴─────────────────────────┴────────────┴─────────────────────────────────────────────────────────────┴─────────────────────────────────┘
+""")
+
+
+async def test_evaluation_renderer_failures_without_error_message(sample_report_case: ReportCase):
+    """Test failures table without error message."""
+    from pydantic_evals.reporting import ReportCaseFailure
+
+    # Create failure without error message
+    failure = ReportCaseFailure(
+        name='failed_case',
+        inputs={'query': 'What is 10/0?'},
+        metadata={'difficulty': 'impossible'},
+        expected_output={'answer': 'undefined'},
+        error_message='',  # Empty error message
+        error_stacktrace='Traceback',
+        trace_id='test-trace-failure',
+        span_id='test-span-failure',
+    )
+
+    report = EvaluationReport(
+        cases=[sample_report_case],
+        failures=[failure],
+        name='test_report_with_failures',
+    )
+
+    # Test with include_error_message=True even though message is empty
+    failures_table = report.failures_table(
+        include_input=True,
+        include_metadata=False,
+        include_expected_output=False,
+        include_error_message=True,
+        include_error_stacktrace=False,
+    )
+
+    # The test ensures build_failure_row covers the empty error_message branch
+    assert render_table(failures_table) == snapshot("""\
+                       Case Failures
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Case ID     ┃ Inputs                     ┃ Error Message ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ failed_case │ {'query': 'What is 10/0?'} │ -             │
+└─────────────┴────────────────────────────┴───────────────┘
+""")
+
+
+async def test_evaluation_renderer_evaluator_failures_without_message():
+    """Test evaluator failures without error messages."""
+    from pydantic_evals.evaluators.evaluator import Evaluator, EvaluatorFailure
+
+    @dataclass
+    class MockEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> float:
+            raise NotImplementedError
+
+    source = MockEvaluator().as_spec()
+
+    # Create case with evaluator failure that has no error message
+    case_with_no_message_failure = ReportCase(
+        name='test_case',
+        inputs={'query': 'What is 2+2?'},
+        output={'answer': '4'},
+        expected_output={'answer': '4'},
+        metadata={'difficulty': 'easy'},
+        metrics={'accuracy': 0.95},
+        attributes={},
+        scores={},
+        labels={},
+        assertions={},
+        task_duration=0.1,
+        total_duration=0.2,
+        trace_id='test-trace-id',
+        span_id='test-span-id',
+        evaluator_failures=[
+            EvaluatorFailure(
+                name='EmptyMessageEvaluator',
+                error_message='',  # Empty error message
+                error_stacktrace='Some stacktrace',
+                source=source,
+            ),
+        ],
+    )
+
+    report = EvaluationReport(
+        cases=[case_with_no_message_failure],
+        name='test_report',
+    )
+
+    renderer = EvaluationRenderer(
+        include_input=False,
+        include_metadata=False,
+        include_expected_output=False,
+        include_output=False,
+        include_durations=False,
+        include_total_duration=False,
+        include_removed_cases=False,
+        include_averages=False,
+        include_error_message=False,
+        include_error_stacktrace=False,
+        include_evaluator_failures=True,
+        input_config={},
+        metadata_config={},
+        output_config={},
+        score_configs={},
+        label_configs={},
+        metric_configs={},
+        duration_config={},
+        include_reasons=False,
+    )
+
+    table = renderer.build_table(report)
+    assert render_table(table) == snapshot("""\
+            Evaluation Summary: test_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID   ┃ Metrics         ┃ Evaluator Failures    ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━┩
+│ test_case │ accuracy: 0.950 │ EmptyMessageEvaluator │
+└───────────┴─────────────────┴───────────────────────┘
+""")
+
+
 async def test_evaluation_renderer_no_evaluator_failures_column():
     """Test that evaluator failures column is omitted when no failures exist even if flag is True."""
 
