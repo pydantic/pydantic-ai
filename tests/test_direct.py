@@ -119,7 +119,7 @@ def test_model_request_stream_sync_without_context_manager():
     """Test that accessing properties or iterating without context manager raises RuntimeError."""
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('x')]
 
-    expected_error_msg = re.escape(
+    expected_error_message = re.escape(
         'StreamedResponseSync must be used as a context manager. Use: `with model_request_stream_sync(...) as stream:`'
     )
 
@@ -129,22 +129,22 @@ def test_model_request_stream_sync_without_context_manager():
     assert 'StreamedResponseSync' in stream_repr
     assert 'context_entered=False' in stream_repr
 
-    with pytest.raises(RuntimeError, match=expected_error_msg):
+    with pytest.raises(RuntimeError, match=expected_error_message):
         _ = stream_cm.model_name
 
-    with pytest.raises(RuntimeError, match=expected_error_msg):
+    with pytest.raises(RuntimeError, match=expected_error_message):
         _ = stream_cm.timestamp
 
-    with pytest.raises(RuntimeError, match=expected_error_msg):
+    with pytest.raises(RuntimeError, match=expected_error_message):
         stream_cm.get()
 
-    with pytest.raises(RuntimeError, match=expected_error_msg):
+    with pytest.raises(RuntimeError, match=expected_error_message):
         stream_cm.usage()
 
-    with pytest.raises(RuntimeError, match=expected_error_msg):
+    with pytest.raises(RuntimeError, match=expected_error_message):
         list(stream_cm)
 
-    with pytest.raises(RuntimeError, match=expected_error_msg):
+    with pytest.raises(RuntimeError, match=expected_error_message):
         for _ in stream_cm:
             break  # pragma: no cover
 
