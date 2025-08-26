@@ -15,10 +15,10 @@ included in Pydantic AI. If you want to use a specific model, you can install th
 
 Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
 
-To use Logfire with Pydantic AI, install `pydantic-ai` or `pydantic-ai-slim` with the `logfire` optional group:
+Since Logfire is now included as a core dependency in `pydantic-ai`, you can start using it immediately:
 
 ```bash
-pip/uv-add "pydantic-ai[logfire]"
+pip/uv-add pydantic-ai
 ```
 
 From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configure Logfire.
@@ -46,7 +46,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 `pydantic-ai-slim` has the following optional groups:
 
-* `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
+* `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"} (included in main package)
 * `evals` — installs [`pydantic-evals`](evals.md) [PyPI ↗](https://pypi.org/project/pydantic-evals){:target="_blank"}
 * `openai` — installs `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `vertexai` — installs `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
@@ -71,3 +71,5 @@ You can also install dependencies for multiple models and use cases, for example
 ```bash
 pip/uv-add "pydantic-ai-slim[openai,vertexai,logfire]"
 ```
+
+Note: If using the main `pydantic-ai` package, logfire is already included.
