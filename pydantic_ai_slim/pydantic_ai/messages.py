@@ -1341,3 +1341,4 @@ HandleResponseEvent = Annotated[
     Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
     pydantic.Discriminator('event_kind'),
 ]
+"""An event yielded when handling a model response, indicating tool calls and results."""
