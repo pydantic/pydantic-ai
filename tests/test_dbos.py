@@ -185,9 +185,16 @@ async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
 
+class WeatherArgs(BaseModel):
+    city: str
+
+
 @DBOS.step()
-def get_weather(city: str) -> str:
-    return 'sunny'
+def get_weather(args: WeatherArgs) -> str:
+    if args.city == 'Mexico City':
+        return 'sunny'
+    else:
+        return 'unknown'  # pragma: no cover
 
 
 @dataclass

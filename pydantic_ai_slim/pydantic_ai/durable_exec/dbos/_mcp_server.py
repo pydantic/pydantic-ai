@@ -27,7 +27,8 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
         super().__init__(wrapped)
         self._step_config = step_config or {}
         self._step_name_prefix = step_name_prefix
-        self._name = f'{step_name_prefix}__mcp_server__{wrapped.id}'
+        id_suffix = f'__{wrapped.id}' if wrapped.id else ''
+        self._name = f'{step_name_prefix}__mcp_server{id_suffix}'
 
         # Wrap get_tools in a DBOS step.
         @DBOS.step(
@@ -57,9 +58,7 @@ class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):
         self._dbos_wrapped_call_tool_step = wrapped_call_tool_step
 
     @property
-    def id(self) -> str:
-        # An error is raised in `DBOS` if no `id` is set.
-        assert self.wrapped.id is not None
+    def id(self) -> str | None:
         return self.wrapped.id
 
     async def __aenter__(self) -> Self:
