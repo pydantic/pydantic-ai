@@ -3,8 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.server.session import ServerSessionT
-from mcp.shared.context import LifespanContextT, RequestT
+from mcp.server.session import ServerSession
 from mcp.types import (
     BlobResourceContents,
     EmbeddedResource,
@@ -170,7 +169,7 @@ async def get_log_level(ctx: Context) -> str:  # type: ignore
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -186,7 +185,7 @@ async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) ->
 
 
 @mcp.tool()
-async def use_sampling(ctx: Context[ServerSessionT, LifespanContextT, RequestT], foo: str) -> str:
+async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> str:
     """Use sampling callback."""
 
     result = await ctx.session.create_message(
@@ -207,7 +206,7 @@ class UserResponse(BaseModel):
 
 
 @mcp.tool()
-async def use_elicitation(ctx: Context[ServerSessionT, LifespanContextT, RequestT], question: str) -> str:
+async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> str:
     """Use elicitation callback to ask the user a question."""
 
     result = await ctx.elicit(message=question, schema=UserResponse)
