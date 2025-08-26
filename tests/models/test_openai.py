@@ -3002,6 +3002,14 @@ async def test_openai_model_cerebras_provider_qwen_3_coder(allow_model_requests:
     assert result.output == snapshot({'city': 'Paris', 'country': 'France'})
 
 
+async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None, cerebras_api_key: str):
+    m = OpenAIChatModel('gpt-oss-120b', provider=CerebrasProvider(api_key=cerebras_api_key))
+    agent = Agent(m)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is **Paris**.')
+
+
 def test_deprecated_openai_model(openai_api_key: str):
     with pytest.warns(DeprecationWarning):
         from pydantic_ai.models.openai import OpenAIModel  # type: ignore[reportDeprecated]

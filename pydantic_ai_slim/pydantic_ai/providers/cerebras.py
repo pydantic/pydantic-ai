@@ -8,8 +8,9 @@ import httpx
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -38,18 +39,13 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        prefix_to_profile = {'llama': meta_model_profile, 'qwen': qwen_model_profile, 'gpt-oss': openai_model_profile}
+        prefix_to_profile = {'llama': meta_model_profile, 'qwen': qwen_model_profile, 'gpt-oss': harmony_model_profile}
 
         profile = None
         for prefix, profile_func in prefix_to_profile.items():
             model_name = model_name.lower()
             if model_name.startswith(prefix):
                 profile = profile_func(model_name)
-        else:
-            # TODO(Marcelo): We should create a profile for OpenAI Harmony: https://github.com/openai/harmony.
-            if model_name.startswith('gpt-oss'):
-                profile = openai_model_profile(model_name)
-                profile = OpenAIModelProfile(openai_supports_tool_choice_required=False).update(profile)
 
         # According to https://inference-docs.cerebras.ai/resources/openai#currently-unsupported-openai-features,
         # Cerebras doesn't support some model settings.

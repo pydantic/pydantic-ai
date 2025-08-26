@@ -6,8 +6,9 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
+from pydantic_ai.profiles.harmony import harmony_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
-from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, openai_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 from pydantic_ai.profiles.qwen import qwen_model_profile
 
 from ..conftest import TestEnv, try_import
@@ -58,7 +59,7 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     ns = 'pydantic_ai.providers.cerebras'
     meta_model_profile_mock = mocker.patch(f'{ns}.meta_model_profile', wraps=meta_model_profile)
     qwen_model_profile_mock = mocker.patch(f'{ns}.qwen_model_profile', wraps=qwen_model_profile)
-    openai_model_profile_mock = mocker.patch(f'{ns}.openai_model_profile', wraps=openai_model_profile)
+    harmony_model_profile_mock = mocker.patch(f'{ns}.harmony_model_profile', wraps=harmony_model_profile)
 
     meta_profile = provider.model_profile('llama4-maverick-instruct-basic')
     meta_model_profile_mock.assert_called_with('llama4-maverick-instruct-basic')
@@ -76,7 +77,7 @@ def test_cerebras_provider_model_profile(mocker: MockerFixture):
     assert qwen_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
 
     openai_profile = provider.model_profile('gpt-oss-120b')
-    openai_model_profile_mock.assert_called_with('gpt-oss-120b')
+    harmony_model_profile_mock.assert_called_with('gpt-oss-120b')
     assert openai_profile is not None
     assert openai_profile.json_schema_transformer == OpenAIJsonSchemaTransformer
 
