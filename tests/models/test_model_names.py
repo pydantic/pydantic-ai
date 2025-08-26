@@ -126,10 +126,8 @@ class CerebrasModel(TypedDict):
     owned_by: Literal['Cerebras']
 
 
-def get_cerebras_model_names():  # pragma: lax no cover
-    api_key = os.getenv('CEREBRAS_API_KEY')
-    if not api_key:
-        pytest.skip('CEREBRAS_API_KEY is not set')
+def get_cerebras_model_names():
+    api_key = os.getenv('CEREBRAS_API_KEY', 'testing')
 
     response = httpx.get(
         'https://api.cerebras.ai/v1/models',
@@ -137,7 +135,7 @@ def get_cerebras_model_names():  # pragma: lax no cover
     )
 
     if response.status_code != 200:
-        pytest.skip(f'Cerebras returned status code {response.status_code}')
+        pytest.skip(f'Cerebras returned status code {response.status_code}')  # pragma: lax no cover
 
     cerebras_models: list[CerebrasModel] = response.json()['data']
     return sorted(f'cerebras:{model["id"]}' for model in cerebras_models)
