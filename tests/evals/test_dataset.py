@@ -296,9 +296,8 @@ async def test_evaluate_sync(
 
 
 @pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
-async def test_evaluate_with_retried_task_failure(
+async def test_evaluate_with_retried_task_and_evaluator(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
-    simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     try:
         from tenacity import stop_after_attempt
@@ -306,24 +305,45 @@ async def test_evaluate_with_retried_task_failure(
         # Just pass the test if tenacity isn't installed
         return
 
-    example_dataset.add_evaluator(simple_evaluator())
-
-    attempt = 0
+    task_attempt = 0
 
     async def mock_async_task(inputs: TaskInput) -> TaskOutput:
-        nonlocal attempt
-        if attempt < 3:
-            attempt += 1
-            raise RuntimeError(f'failure {attempt}')
+        nonlocal task_attempt
+        if task_attempt < 3:
+            task_attempt += 1
+            raise RuntimeError(f'task failure {task_attempt}')
         if inputs.query == 'What is 2+2?':
             return TaskOutput(answer='4')
         elif inputs.query == 'What is the capital of France?':
             return TaskOutput(answer='Paris')
         return TaskOutput(answer='Unknown')  # pragma: no cover
 
-    report = await example_dataset.evaluate(mock_async_task, retry_task=RetryConfig(stop=stop_after_attempt(3)))
+    evaluator_attempt = 0
 
-    assert attempt == 3
+    @dataclass
+    class RetryEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
+            nonlocal evaluator_attempt
+            if evaluator_attempt < 3:
+                evaluator_attempt += 1
+                raise RuntimeError(f'evaluator failure {evaluator_attempt}')
+            if ctx.expected_output is None:  # pragma: no cover
+                return {'result': 'no_expected_output'}
+            return {
+                'correct': ctx.output.answer == ctx.expected_output.answer,
+                'confidence': ctx.output.confidence,
+            }
+
+    example_dataset.add_evaluator(RetryEvaluator())
+
+    report = await example_dataset.evaluate(
+        mock_async_task,
+        retry_task=RetryConfig(stop=stop_after_attempt(3)),
+        retry_evaluators=RetryConfig(stop=stop_after_attempt(3)),
+    )
+
+    assert task_attempt == 3
+    assert evaluator_attempt == 3
 
     assert report is not None
     assert len(report.cases) == 2
@@ -333,7 +353,7 @@ async def test_evaluate_with_retried_task_failure(
                 'correct': {
                     'name': 'correct',
                     'reason': None,
-                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': True,
                 }
             },
@@ -350,13 +370,13 @@ async def test_evaluate_with_retried_task_failure(
                 'confidence': {
                     'name': 'confidence',
                     'reason': None,
-                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
+                    'source': {'name': 'RetryEvaluator', 'arguments': None},
                     'value': 1.0,
                 }
             },
             'span_id': '0000000000000003',
             'task_duration': 1.0,
-            'total_duration': 20.0,
+            'total_duration': 19.0,
             'trace_id': '00000000000000000000000000000001',
         }
     )
