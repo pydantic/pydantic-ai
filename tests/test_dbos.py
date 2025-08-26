@@ -1058,7 +1058,7 @@ unserializable_deps_agent = Agent(model, name='unserializable_deps_agent', deps_
 
 @unserializable_deps_agent.tool
 async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
-    return ctx.deps.client.max_redirects  # pragma: no cover
+    return ctx.deps.client.max_redirects  # pragma: lax no cover
 
 
 async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
