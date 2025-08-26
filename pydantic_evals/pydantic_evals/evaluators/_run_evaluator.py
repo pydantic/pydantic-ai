@@ -68,6 +68,7 @@ async def run_evaluator(
     """
     evaluate = evaluator.evaluate_async
     if retry is not None:
+        # import from pydantic_ai.retries to trigger more descriptive import error if tenacity is missing
         from pydantic_ai.retries import retry as tenacity_retry
 
         evaluate = tenacity_retry(**retry)(evaluate)

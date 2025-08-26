@@ -11,8 +11,6 @@ from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
 
-from pydantic_ai.retries import RetryConfig
-
 from ..conftest import IsStr, try_import
 from .utils import render_table
 
@@ -42,6 +40,10 @@ with try_import() as imports_successful:
 
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
+
+
+with try_import() as tenacity_import_successful:
+    from pydantic_ai.retries import RetryConfig
 
 
 pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
@@ -293,6 +295,7 @@ async def test_evaluate_sync(
     )
 
 
+@pytest.mark.skipif(not tenacity_import_successful(), reason='tenacity not installed')
 async def test_evaluate_with_retried_task_failure(
     example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata],
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
