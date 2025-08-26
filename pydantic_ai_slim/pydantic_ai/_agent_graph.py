@@ -5,7 +5,7 @@ import dataclasses
 import hashlib
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
@@ -310,7 +310,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ) as streamed_response:
             self._did_stream = True
             ctx.state.usage.requests += 1
-            ctx.state.usage.cost += calc_price(streamed_response.usage(), ctx.deps.model.model_name).total_price
+
+            # If we can't calculate the price, we don't want to fail the run.
+            with suppress(LookupError):
+                ctx.state.usage.cost += calc_price(
+                    streamed_response.usage(),
+                    ctx.deps.model.model_name,
+                    provider_id=streamed_response.provider_name,
+                    genai_request_timestamp=streamed_response.timestamp,
+                ).total_price
             agent_stream = result.AgentStream[DepsT, T](
                 streamed_response,
                 ctx.deps.output_schema,
@@ -340,7 +348,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
-        ctx.state.usage.cost += calc_price(model_response.usage, ctx.deps.model.model_name).total_price
+
+        # If we can't calculate the price, we don't want to fail the run.
+        with suppress(LookupError):
+            ctx.state.usage.cost += calc_price(
+                model_response.usage,
+                ctx.deps.model.model_name,
+                provider_id=model_response.provider_name,
+                genai_request_timestamp=model_response.timestamp,
+            ).total_price
 
         return self._finish_handling(ctx, model_response)
 
