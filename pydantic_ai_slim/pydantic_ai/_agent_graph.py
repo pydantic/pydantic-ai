@@ -575,10 +575,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
-def multi_modal_content_identifier(identifier: str | bytes) -> str:
+def multi_modal_content_identifier(identifier: bytes) -> str:
     """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
-    if isinstance(identifier, str):
-        identifier = identifier.encode('utf-8')
     return hashlib.sha1(identifier).hexdigest()[:6]
 
 
