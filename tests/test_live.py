@@ -67,6 +67,7 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
     return OpenAIChatModel(
