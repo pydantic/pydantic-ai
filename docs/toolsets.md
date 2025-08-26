@@ -519,7 +519,8 @@ from pydantic_ai.toolsets import DeferredToolset
 from pydantic_ai.messages import ModelMessage
 
 def run_agent(
-    messages: list[ModelMessage] = [], frontend_tools: list[ToolDefinition] = {}
+    messages: list[ModelMessage] = [], 
+    frontend_tools: list[ToolDefinition] = [],
 ) -> tuple[Union[PersonalizedGreeting, DeferredToolCalls], list[ModelMessage]]:
     deferred_toolset = DeferredToolset(frontend_tools)
     result = agent.run_sync(
