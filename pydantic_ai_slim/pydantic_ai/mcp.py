@@ -56,15 +56,49 @@ class MCPServer(AbstractToolset[Any], ABC):
     """
 
     tool_prefix: str | None
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore(`_`).
+
+    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
+
     log_level: mcp_types.LoggingLevel | None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
+
     log_handler: LoggingFnT | None
+    """A handler for logging messages from the server."""
+
     timeout: float
+    """The timeout in seconds to wait for the client to initialize."""
+
     read_timeout: float
+    """Maximum time in seconds to wait for new messages before timing out.
+
+    This timeout applies to the long-lived connection after it's established.
+    If no new messages are received within this time, the connection will be considered stale
+    and may be closed. Defaults to 5 minutes (300 seconds).
+    """
+
     process_tool_call: ProcessToolCallback | None
+    """Hook to customize tool calling and optionally pass extra metadata."""
+
     allow_sampling: bool
+    """Whether to allow MCP sampling through this client."""
+
     sampling_model: models.Model | None
+    """The model to use for sampling."""
+
     max_retries: int
+    """The maximum number of times to retry a tool call."""
+
     elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
 
     _id: str | None
 
@@ -407,49 +441,15 @@ class MCPServerStdio(MCPServer):
 
     # last fields are re-defined from the parent class so they appear as fields
     tool_prefix: str | None
-    """A prefix to add to all tools that are registered with the server.
-
-    If not empty, will include a trailing underscore(`_`).
-
-    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
-    """
-
     log_level: mcp_types.LoggingLevel | None
-    """The log level to set when connecting to the server, if any.
-
-    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
-
-    If `None`, no log level will be set.
-    """
-
     log_handler: LoggingFnT | None
-    """A handler for logging messages from the server."""
-
     timeout: float
-    """The timeout in seconds to wait for the client to initialize."""
-
     read_timeout: float
-    """Maximum time in seconds to wait for new messages before timing out.
-
-    This timeout applies to the long-lived connection after it's established.
-    If no new messages are received within this time, the connection will be considered stale
-    and may be closed. Defaults to 5 minutes (300 seconds).
-    """
-
     process_tool_call: ProcessToolCallback | None
-    """Hook to customize tool calling and optionally pass extra metadata."""
-
     allow_sampling: bool
-    """Whether to allow MCP sampling through this client."""
-
     sampling_model: models.Model | None
-    """The model to use for sampling."""
-
     max_retries: int
-    """The maximum number of times to retry a tool call."""
-
     elicitation_callback: ElicitationFnT | None = None
-    """Callback function to handle elicitation requests from the server."""
 
     def __init__(
         self,
@@ -569,53 +569,15 @@ class _MCPServerHTTP(MCPServer):
 
     # last fields are re-defined from the parent class so they appear as fields
     tool_prefix: str | None
-    """A prefix to add to all tools that are registered with the server.
-
-    If not empty, will include a trailing underscore (`_`).
-
-    For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
-    """
-
     log_level: mcp_types.LoggingLevel | None
-    """The log level to set when connecting to the server, if any.
-
-    See <https://modelcontextprotocol.io/introduction#logging> for more details.
-
-    If `None`, no log level will be set.
-    """
-
     log_handler: LoggingFnT | None
-    """A handler for logging messages from the server."""
-
     timeout: float
-    """Initial connection timeout in seconds for establishing the connection.
-
-    This timeout applies to the initial connection setup and handshake.
-    If the connection cannot be established within this time, the operation will fail.
-    """
-
     read_timeout: float
-    """Maximum time in seconds to wait for new messages before timing out.
-
-    This timeout applies to the long-lived connection after it's established.
-    If no new messages are received within this time, the connection will be considered stale
-    and may be closed. Defaults to 5 minutes (300 seconds).
-    """
-
     process_tool_call: ProcessToolCallback | None
-    """Hook to customize tool calling and optionally pass extra metadata."""
-
     allow_sampling: bool
-    """Whether to allow MCP sampling through this client."""
-
     sampling_model: models.Model | None
-    """The model to use for sampling."""
-
     max_retries: int
-    """The maximum number of times to retry a tool call."""
-
     elicitation_callback: ElicitationFnT | None = None
-    """Callback function to handle elicitation requests from the server."""
 
     def __init__(
         self,
