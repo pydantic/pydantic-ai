@@ -3,7 +3,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -3092,8 +3092,8 @@ def test_image_url_serializable_missing_media_type():
                                 'url': 'https://example.com/chart.jpeg',
                                 'force_download': False,
                                 'vendor_metadata': None,
-                                '_media_type': None,
                                 'kind': 'image-url',
+                                'media_type': 'image/jpeg',
                             },
                         ],
                         'timestamp': IsStr(),
@@ -3153,8 +3153,8 @@ def test_image_url_serializable():
                                 'url': 'https://example.com/chart',
                                 'force_download': False,
                                 'vendor_metadata': None,
-                                '_media_type': 'image/jpeg',
                                 'kind': 'image-url',
+                                'media_type': 'image/jpeg',
                             },
                         ],
                         'timestamp': IsStr(),
