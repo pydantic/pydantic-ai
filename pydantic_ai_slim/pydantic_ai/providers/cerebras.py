@@ -56,9 +56,6 @@ class CerebrasProvider(Provider[AsyncOpenAI]):
             'parallel_tool_calls',
             'service_tier',
         )
-
-        # As DeepSeekProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
-        # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         return OpenAIModelProfile(
             json_schema_transformer=OpenAIJsonSchemaTransformer,
             openai_unsupported_model_settings=unsupported_model_settings,
