@@ -215,7 +215,7 @@ def get_weather(args: WeatherArgs) -> str:
     if args.city == 'Mexico City':
         return 'sunny'
     else:
-        return 'unknown'
+        return 'unknown'  # pragma: no cover
 
 
 @dataclass
