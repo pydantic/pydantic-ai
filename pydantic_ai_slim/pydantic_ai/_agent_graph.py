@@ -767,7 +767,7 @@ async def _call_function_tool(
                 if isinstance(content, _messages.BinaryContent):
                     identifier = content.identifier or multi_modal_content_identifier(content.data)
                 else:
-                    identifier = content.identifier or multi_modal_content_identifier(content.url)
+                    identifier = content.identifier
 
                 user_parts.append(
                     _messages.UserPromptPart(
