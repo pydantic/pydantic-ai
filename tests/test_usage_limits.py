@@ -10,13 +10,7 @@ from inline_snapshot import snapshot
 from inline_snapshot.extra import warns
 
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
-from pydantic_ai.messages import (
-    ModelRequest,
-    ModelResponse,
-    ToolCallPart,
-    ToolReturnPart,
-    UserPromptPart,
-)
+from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
@@ -102,6 +96,7 @@ async def test_streamed_text_limits() -> None:
                         usage=RequestUsage(input_tokens=51),
                         model_name='test',
                         timestamp=IsNow(tz=timezone.utc),
+                        provider_name='test',
                     ),
                     ModelRequest(
                         parts=[

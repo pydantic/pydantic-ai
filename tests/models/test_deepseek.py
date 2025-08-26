@@ -24,7 +24,7 @@ from pydantic_ai.usage import RequestUsage
 from ..conftest import IsDatetime, IsStr, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.deepseek import DeepSeekProvider
 
 
@@ -36,7 +36,7 @@ pytestmark = [
 
 
 async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek_api_key: str):
-    deepseek_model = OpenAIModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
@@ -55,6 +55,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
                 ),
                 model_name='deepseek-reasoner',
                 timestamp=IsDatetime(),
+                provider_name='deepseek',
                 provider_request_id='181d9669-2b3a-445e-bd13-2ebff2c378f6',
             ),
         ]
@@ -62,7 +63,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
 
 
 async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepseek_api_key: str):
-    deepseek_model = OpenAIModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
+    deepseek_model = OpenAIChatModel('deepseek-reasoner', provider=DeepSeekProvider(api_key=deepseek_api_key))
     agent = Agent(model=deepseek_model)
 
     event_parts: list[Any] = []

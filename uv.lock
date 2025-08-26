@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
@@ -1329,7 +1329,7 @@ wheels = [
 
 [[package]]
 name = "google-genai"
-version = "1.28.0"
+version = "1.31.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1341,9 +1341,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/23/f1/039bb08df4670e204c55b5da0b2fa5228dff3346bda01389a86b300f6f58/google_genai-1.28.0.tar.gz", hash = "sha256:e93053c02e616842679ba5ecce5b99db8c0ca6310623c55ff6245b5b1d293138", size = 221029, upload-time = "2025-07-30T21:39:57.002Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/1b/da30fa6e2966942d7028a58eb7aa7d04544dcc3aa66194365b2e0adac570/google_genai-1.31.0.tar.gz", hash = "sha256:8572b47aa684357c3e5e10d290ec772c65414114939e3ad2955203e27cd2fcbc", size = 233482, upload-time = "2025-08-18T23:40:21.733Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3f/ea/b704df3b348d3ae3572b0db5b52438fa426900b0830cff664107abfdba69/google_genai-1.28.0-py3-none-any.whl", hash = "sha256:7fd506799005cc87d3c5704a2eb5a2cb020d45b4d216a802e606700308f7f2f3", size = 219384, upload-time = "2025-07-30T21:39:55.652Z" },
+    { url = "https://files.pythonhosted.org/packages/41/27/1525bc9cbec58660f0842ebcbfe910a1dde908c2672373804879666e0bb8/google_genai-1.31.0-py3-none-any.whl", hash = "sha256:5c6959bcf862714e8ed0922db3aaf41885bacf6318751b3421bf1e459f78892f", size = 231876, upload-time = "2025-08-18T23:40:20.385Z" },
 ]
 
 [[package]]
@@ -1979,7 +1979,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.12.1"
+version = "1.12.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "python_full_version >= '3.10'" },
@@ -1994,9 +1994,9 @@ dependencies = [
     { name = "starlette", marker = "python_full_version >= '3.10'" },
     { name = "uvicorn", marker = "python_full_version >= '3.10' and sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/5a/16cef13b2e60d5f865fbc96372efb23dc8b0591f102dd55003b4ae62f9b1/mcp-1.12.1.tar.gz", hash = "sha256:d1d0bdeb09e4b17c1a72b356248bf3baf75ab10db7008ef865c4afbeb0eb810e", size = 425768, upload-time = "2025-07-22T16:51:41.66Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/19/9955e2df5384ff5dd25d38f8e88aaf89d2d3d9d39f27e7383eaf0b293836/mcp-1.12.3.tar.gz", hash = "sha256:ab2e05f5e5c13e1dc90a4a9ef23ac500a6121362a564447855ef0ab643a99fed", size = 427203, upload-time = "2025-07-31T18:36:36.795Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b9/04/9a967a575518fc958bda1e34a52eae0c7f6accf3534811914fdaf57b0689/mcp-1.12.1-py3-none-any.whl", hash = "sha256:34147f62891417f8b000c39718add844182ba424c8eb2cea250b4267bda4b08b", size = 158463, upload-time = "2025-07-22T16:51:40.086Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/8b/0be74e3308a486f1d127f3f6767de5f9f76454c9b4183210c61cc50999b6/mcp-1.12.3-py3-none-any.whl", hash = "sha256:5483345bf39033b858920a5b6348a303acacf45b23936972160ff152107b850e", size = 158810, upload-time = "2025-07-31T18:36:34.915Z" },
 ]
 
 [package.optional-dependencies]
@@ -3552,13 +3552,13 @@ requires-dist = [
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "genai-prices", specifier = ">=0.0.22" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.28.0" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.31.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5" },
+    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.12.3" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
-    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.10.0" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.99.9" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },
@@ -3571,7 +3571,7 @@ requires-dist = [
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
     { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.45.3" },
     { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
-    { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.15.0" },
+    { name = "temporalio", marker = "extra == 'temporal'", specifier = "==1.15.0" },
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "typing-inspection", specifier = ">=0.4.0" },
 ]

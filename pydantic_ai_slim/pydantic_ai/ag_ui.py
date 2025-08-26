@@ -28,11 +28,11 @@ from ._agent_graph import CallToolsNode, ModelRequestNode
 from .agent import AbstractAgent, AgentRun
 from .exceptions import UserError
 from .messages import (
-    AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseStreamEvent,
     PartDeltaEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -403,7 +403,7 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEve
 
 async def _handle_model_request_event(
     stream_ctx: _RequestStreamContext,
-    agent_event: AgentStreamEvent,
+    agent_event: ModelResponseStreamEvent,
 ) -> AsyncIterator[BaseEvent]:
     """Handle an agent event and yield AG-UI protocol events.
 

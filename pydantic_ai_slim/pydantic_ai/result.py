@@ -22,7 +22,7 @@ from ._output import (
     ToolOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from .messages import AgentStreamEvent
+from .messages import ModelResponseStreamEvent
 from .output import (
     OutputDataT,
     ToolOutput,
@@ -51,7 +51,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
 
-    _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
+    _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
 
     def __post_init__(self):
@@ -221,8 +221,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 deltas.append(text)
                 yield ''.join(deltas)
 
-    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
-        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s."""
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._agent_stream_iterator is None:
             self._agent_stream_iterator = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
@@ -426,7 +426,7 @@ def _get_usage_checking_stream_response(
     stream_response: models.StreamedResponse,
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
-) -> AsyncIterator[AgentStreamEvent]:
+) -> AsyncIterator[ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():

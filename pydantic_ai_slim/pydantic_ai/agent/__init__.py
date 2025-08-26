@@ -26,7 +26,14 @@ from .. import (
     models,
     usage as _usage,
 )
-from .._agent_graph import HistoryProcessor
+from .._agent_graph import (
+    CallToolsNode,
+    EndStrategy,
+    HistoryProcessor,
+    ModelRequestNode,
+    UserPromptNode,
+    capture_run_messages,
+)
 from .._output import OutputToolset
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
@@ -64,13 +71,6 @@ from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from .abstract import AbstractAgent, EventStreamHandler, RunOutputDataT
 from .wrapper import WrapperAgent
-
-# Re-exporting like this improves auto-import behavior in PyCharm
-capture_run_messages = _agent_graph.capture_run_messages
-EndStrategy = _agent_graph.EndStrategy
-CallToolsNode = _agent_graph.CallToolsNode
-ModelRequestNode = _agent_graph.ModelRequestNode
-UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
     from ..mcp import MCPServer
@@ -248,7 +248,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Create an agent.
 
         Args:
-            model: The default model to use for this agent, if not provide,
+            model: The default model to use for this agent, if not provided,
                 you must provide the model when calling it. We allow `str` here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
@@ -702,16 +702,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _run_span_end_attributes(
         self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
     ):
+        if settings.version == 1:
+            attr_name = 'all_messages_events'
+            value = [
+                InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)
+            ]
+        else:
+            attr_name = 'pydantic_ai.all_messages'
+            value = settings.messages_to_otel_messages(state.message_history)
+
         return {
             **usage.opentelemetry_attributes(),
-            'all_messages_events': json.dumps(
-                [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)]
-            ),
+            attr_name: json.dumps(value),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
                     'properties': {
-                        'all_messages_events': {'type': 'array'},
+                        attr_name: {'type': 'array'},
                         'final_result': {'type': 'object'},
                     },
                 }

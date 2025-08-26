@@ -4,10 +4,11 @@ Builtin tools are native tools provided by LLM providers that can be used to enh
 
 ## Overview
 
-PydanticAI supports two types of builtin tools:
+PydanticAI supports the following builtin tools:
 
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
+- **[`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool]**: Enables agents to pull URL contents into their context
 
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
@@ -26,7 +27,7 @@ making it ideal for queries that require up-to-date data.
 | OpenAI | ✅ | Full feature support |
 | Anthropic | ✅ | Full feature support |
 | Groq | ✅ | Limited parameter support |
-| Google | ❌ | Not supported |
+| Google | ✅ | No parameter support |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
@@ -116,6 +117,35 @@ agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[CodeExecutionTool()]
 
 result = agent.run_sync('Calculate the factorial of 15 and show your work')
 # > The factorial of 15 is **1,307,674,368,000**.
+```
+
+## URL Context Tool
+
+The [`UrlContextTool`][pydantic_ai.builtin_tools.UrlContextTool] enables your agent to pull URL contents into its context,
+allowing it to pull up-to-date information from the web.
+
+### Provider Support
+
+| Provider | Supported |
+|----------|-----------|
+| Google | ✅ |
+| OpenAI | ❌ |
+| Anthropic | ❌ |
+| Groq | ❌ |
+| Bedrock | ❌ |
+| Mistral | ❌ |
+| Cohere | ❌ |
+| HuggingFace | ❌ |
+
+### Usage
+
+```py title="url_context_basic.py"
+from pydantic_ai import Agent, UrlContextTool
+
+agent = Agent('google-gla:gemini-2.5-flash', builtin_tools=[UrlContextTool()])
+
+result = agent.run_sync('What is this? https://ai.pydantic.dev')
+# > A Python agent framework for building Generative AI applications.
 ```
 
 ## API Reference

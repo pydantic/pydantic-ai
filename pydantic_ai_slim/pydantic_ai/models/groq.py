@@ -118,7 +118,7 @@ class GroqModel(Model):
     client: AsyncGroq = field(repr=False)
 
     _model_name: GroqModelName = field(repr=False)
-    _system: str = field(default='groq', repr=False)
+    _provider: Provider[AsyncGroq] = field(repr=False)
 
     def __init__(
         self,
@@ -143,6 +143,7 @@ class GroqModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -150,6 +151,16 @@ class GroqModel(Model):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> GroqModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -178,16 +189,6 @@ class GroqModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> GroqModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
@@ -289,6 +290,7 @@ class GroqModel(Model):
             model_name=response.model,
             timestamp=timestamp,
             provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -308,6 +310,7 @@ class GroqModel(Model):
             _model_name=self._model_name,
             _model_profile=self.profile,
             _timestamp=number_to_datetime(first_chunk.created),
+            _provider_name=self._provider.name,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -443,6 +446,7 @@ class GroqStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -480,6 +484,11 @@ class GroqStreamedResponse(StreamedResponse):
     def model_name(self) -> GroqModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:
