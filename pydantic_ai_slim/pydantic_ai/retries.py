@@ -16,22 +16,44 @@ from __future__ import annotations
 from httpx import AsyncBaseTransport, AsyncHTTPTransport, BaseTransport, HTTPTransport, Request, Response
 
 try:
-    from tenacity import AsyncRetrying, Retrying
+    from tenacity import RetryCallState, RetryError, retry, wait_exponential
 except ImportError as _import_error:
     raise ImportError(
         'Please install `tenacity` to use the retries utilities, '
         'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
     ) from _import_error
 
-
-__all__ = ['TenacityTransport', 'AsyncTenacityTransport', 'wait_retry_after']
-
+from collections.abc import Awaitable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from httpx import HTTPStatusError
-from tenacity import RetryCallState, wait_exponential
+from typing_extensions import TypedDict
+
+if TYPE_CHECKING:
+    from tenacity.asyncio.retry import RetryBaseT
+    from tenacity.retry import RetryBaseT as SyncRetryBaseT
+    from tenacity.stop import StopBaseT
+    from tenacity.wait import WaitBaseT
+
+__all__ = ['RetryConfig', 'TenacityTransport', 'AsyncTenacityTransport', 'wait_retry_after']
+
+
+class RetryConfig(TypedDict, total=False):
+    """These are precisely the arguments to the tenacity `retry` function."""
+
+    sleep: Callable[[int | float], None | Awaitable[None]]
+    stop: StopBaseT
+    wait: WaitBaseT
+    retry: SyncRetryBaseT | RetryBaseT
+    before: Callable[[RetryCallState], None | Awaitable[None]]
+    after: Callable[[RetryCallState], None | Awaitable[None]]
+
+    before_sleep: Callable[[RetryCallState], None | Awaitable[None]] | None
+    reraise: bool
+    retry_error_cls: type[RetryError]
+    retry_error_callback: Callable[[RetryCallState], Any | Awaitable[Any]] | None
 
 
 class TenacityTransport(BaseTransport):
@@ -47,8 +69,8 @@ class TenacityTransport(BaseTransport):
 
     Args:
         wrapped: The underlying transport to wrap and add retry functionality to.
-        controller: The tenacity Retrying instance that defines the retry behavior
-                   (retry conditions, wait strategy, stop conditions, etc.).
+        config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
+            wait strategy, stop conditions, etc. See the tenacity docs for more info.
         validate_response: Optional callable that takes a Response and can raise an exception
             to be handled by the controller if the response should trigger a retry.
             Common use case is to raise exceptions for certain HTTP status codes.
@@ -57,17 +79,17 @@ class TenacityTransport(BaseTransport):
     Example:
         ```python
         from httpx import Client, HTTPTransport, HTTPStatusError
-        from tenacity import Retrying, stop_after_attempt, retry_if_exception_type
-        from pydantic_ai.retries import TenacityTransport, wait_retry_after
+        from tenacity import stop_after_attempt, retry_if_exception_type
+        from pydantic_ai.retries import RetryConfig, TenacityTransport, wait_retry_after
 
         transport = TenacityTransport(
-            HTTPTransport(),
-            Retrying(
+            RetryConfig(
                 retry=retry_if_exception_type(HTTPStatusError),
                 wait=wait_retry_after(max_wait=300),
                 stop=stop_after_attempt(5),
                 reraise=True
             ),
+            HTTPTransport(),
             validate_response=lambda r: r.raise_for_status()
         )
         client = Client(transport=transport)
@@ -76,11 +98,11 @@ class TenacityTransport(BaseTransport):
 
     def __init__(
         self,
-        controller: Retrying,
+        config: RetryConfig,
         wrapped: BaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
     ):
-        self.controller = controller
+        self.config = config
         self.wrapped = wrapped or HTTPTransport()
         self.validate_response = validate_response
 
@@ -97,17 +119,19 @@ class TenacityTransport(BaseTransport):
             RuntimeError: If the retry controller did not make any attempts.
             Exception: Any exception raised by the wrapped transport or validation function.
         """
-        for attempt in self.controller:
-            with attempt:
-                response = self.wrapped.handle_request(request)
 
-                # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
-                response.request = request
+        @retry(**self.config)
+        def handle_request(req: Request) -> Response:
+            response = self.wrapped.handle_request(req)
 
-                if self.validate_response:
-                    self.validate_response(response)
-                return response
-        raise RuntimeError('The retry controller did not make any attempts')  # pragma: no cover
+            # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+            response.request = req
+
+            if self.validate_response:
+                self.validate_response(response)
+            return response
+
+        return handle_request(request)
 
 
 class AsyncTenacityTransport(AsyncBaseTransport):
@@ -123,8 +147,8 @@ class AsyncTenacityTransport(AsyncBaseTransport):
 
     Args:
         wrapped: The underlying async transport to wrap and add retry functionality to.
-        controller: The tenacity AsyncRetrying instance that defines the retry behavior
-                   (retry conditions, wait strategy, stop conditions, etc.).
+        config: The arguments to use for the tenacity `retry` decorator, including retry conditions,
+            wait strategy, stop conditions, etc. See the tenacity docs for more info.
         validate_response: Optional callable that takes a Response and can raise an exception
             to be handled by the controller if the response should trigger a retry.
             Common use case is to raise exceptions for certain HTTP status codes.
@@ -133,11 +157,11 @@ class AsyncTenacityTransport(AsyncBaseTransport):
     Example:
         ```python
         from httpx import AsyncClient, HTTPStatusError
-        from tenacity import AsyncRetrying, stop_after_attempt, retry_if_exception_type
-        from pydantic_ai.retries import AsyncTenacityTransport, wait_retry_after
+        from tenacity import stop_after_attempt, retry_if_exception_type
+        from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
         transport = AsyncTenacityTransport(
-            AsyncRetrying(
+            RetryConfig(
                 retry=retry_if_exception_type(HTTPStatusError),
                 wait=wait_retry_after(max_wait=300),
                 stop=stop_after_attempt(5),
@@ -151,11 +175,11 @@ class AsyncTenacityTransport(AsyncBaseTransport):
 
     def __init__(
         self,
-        controller: AsyncRetrying,
+        config: RetryConfig,
         wrapped: AsyncBaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
     ):
-        self.controller = controller
+        self.config = config
         self.wrapped = wrapped or AsyncHTTPTransport()
         self.validate_response = validate_response
 
@@ -172,17 +196,19 @@ class AsyncTenacityTransport(AsyncBaseTransport):
             RuntimeError: If the retry controller did not make any attempts.
             Exception: Any exception raised by the wrapped transport or validation function.
         """
-        async for attempt in self.controller:
-            with attempt:
-                response = await self.wrapped.handle_async_request(request)
 
-                # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
-                response.request = request
+        @retry(**self.config)
+        async def handle_async_request(req: Request) -> Response:
+            response = await self.wrapped.handle_async_request(req)
 
-                if self.validate_response:
-                    self.validate_response(response)
-                return response
-        raise RuntimeError('The retry controller did not make any attempts')  # pragma: no cover
+            # this is normally set by httpx _after_ calling this function, but we want the request in the validator:
+            response.request = req
+
+            if self.validate_response:
+                self.validate_response(response)
+            return response
+
+        return await handle_async_request(request)
 
 
 def wait_retry_after(
@@ -210,11 +236,11 @@ def wait_retry_after(
     Example:
         ```python
         from httpx import AsyncClient, HTTPStatusError
-        from tenacity import AsyncRetrying, stop_after_attempt, retry_if_exception_type
-        from pydantic_ai.retries import AsyncTenacityTransport, wait_retry_after
+        from tenacity import stop_after_attempt, retry_if_exception_type
+        from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
         transport = AsyncTenacityTransport(
-            AsyncRetrying(
+            RetryConfig(
                 retry=retry_if_exception_type(HTTPStatusError),
                 wait=wait_retry_after(max_wait=120),
                 stop=stop_after_attempt(5),
