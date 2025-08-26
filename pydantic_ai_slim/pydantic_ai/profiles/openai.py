@@ -12,7 +12,7 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 @dataclass
 class OpenAIModelProfile(ModelProfile):
-    """Profile for models used with OpenAIModel.
+    """Profile for models used with `OpenAIChatModel`.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models import Model
+from pydantic_ai.models.openai import OpenAIChatModel
 
 pytestmark = [
     pytest.mark.skipif(os.getenv('PYDANTIC_AI_LIVE_TEST_DANGEROUS') != 'CHARGE-ME!', reason='live tests disabled'),
@@ -22,10 +23,9 @@ pytestmark = [
 
 
 def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
+    return OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
 
 
 def gemini(_: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -67,10 +67,9 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel(
+    return OpenAIChatModel(
         'qwen2:0.5b', provider=OpenAIProvider(base_url='http://localhost:11434/v1/', http_client=http_client)
     )
 

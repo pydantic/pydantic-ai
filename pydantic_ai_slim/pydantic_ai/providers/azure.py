@@ -65,7 +65,7 @@ class AzureProvider(Provider[AsyncOpenAI]):
 
                 profile = profile_func(model_name)
 
-                # As AzureProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+                # As AzureProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
                 # we need to maintain that behavior unless json_schema_transformer is set explicitly
                 return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
