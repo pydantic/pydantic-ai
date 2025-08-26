@@ -57,7 +57,6 @@ try:
     from ag_ui.core import (
         AssistantMessage,
         BaseEvent,
-        DeferredToolResultEvent,
         DeveloperMessage,
         EventType,
         Message,
@@ -76,6 +75,7 @@ try:
         Tool as AGUITool,
         ToolCallArgsEvent,
         ToolCallEndEvent,
+        ToolCallResultEvent,
         ToolCallStartEvent,
         ToolMessage,
         UserMessage,
@@ -503,7 +503,7 @@ async def _handle_tool_result_event(
         return
 
     message_id = stream_ctx.new_message_id()
-    yield DeferredToolResultEvent(
+    yield ToolCallResultEvent(
         message_id=message_id,
         type=EventType.TOOL_CALL_RESULT,
         role='tool',

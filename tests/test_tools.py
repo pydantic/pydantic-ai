@@ -1474,13 +1474,6 @@ def test_parallel_tool_return_with_deferred():
                     content='I bought a pear',
                     metadata={'fruit': 'pear', 'price': 100.0},
                 ),
-                'get_price_apple': RetryPromptPart(content='Unfortunately, we are out of apples.'),
-                'get_price_banana': ToolReturnPart(
-                    content=10.0,
-                    tool_name='get_price',
-                    tool_call_id='get_price_banana',
-                    metadata={'fruit': 'banana', 'price': 10.0},
-                ),
             },
         ),
     )
@@ -1508,17 +1501,17 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelRequest(
                 parts=[
-                    RetryPromptPart(
-                        content='Unfortunately, we are out of apples.',
-                        tool_name='get_price',
-                        tool_call_id='get_price_apple',
-                        timestamp=IsDatetime(),
-                    ),
                     ToolReturnPart(
                         tool_name='get_price',
                         content=10.0,
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: banana',
+                        tool_name='get_price',
                         tool_call_id='get_price_banana',
-                        metadata={'fruit': 'banana', 'price': 10.0},
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
@@ -1543,9 +1536,6 @@ def test_parallel_tool_return_with_deferred():
                     ),
                     UserPromptPart(
                         content=[
-                            # Ideally this would have been excluded when the `get_price_apple` result was replaced with a `RetryPromptPart`,
-                            # but there's no way to tell that this user prompt part belonged to that tool result.
-                            # TODO: This won't be a problem once we disallow overriding previously executed tool results
                             'The price of apple is 10.0.',
                             'The price of pear is 10.0.',
                         ],
@@ -1559,7 +1549,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=116, output_tokens=26),
+                usage=RequestUsage(input_tokens=113, output_tokens=26),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

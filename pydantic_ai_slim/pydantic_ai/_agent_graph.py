@@ -192,20 +192,19 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             parts.extend(await self._sys_parts(run_context))
 
-        if (
-            (tool_call_results := ctx.deps.tool_call_results) is not None
-            and messages
-            and (last_message := messages[-1])
-            and isinstance(last_message, _messages.ModelRequest)
-        ):
-            # If tool call results were provided, that means the previous run ended on deferred tool calls.
-            # That run would typically have ended on a `ModelResponse`, but if it had a mix of deferred tool calls and ones that could already be executed,
-            # a `ModelRequest` would already have been added to the history with the preliminary results, even if it wouldn't have been sent to the model yet.
-            # So now that we have all of the deferred results, we roll back to the last `ModelResponse` and store the contents of the `ModelRequest` on `deferred_tool_results` to be handled by `CallToolsNode`.
-            ctx.deps.tool_call_results = self._update_tool_call_results_from_model_request(
-                tool_call_results, last_message
-            )
-            messages.pop()
+        if (tool_call_results := ctx.deps.tool_call_results) is not None:
+            if messages and (last_message := messages[-1]) and isinstance(last_message, _messages.ModelRequest):
+                # If tool call results were provided, that means the previous run ended on deferred tool calls.
+                # That run would typically have ended on a `ModelResponse`, but if it had a mix of deferred tool calls and ones that could already be executed,
+                # a `ModelRequest` would already have been added to the history with the preliminary results, even if it wouldn't have been sent to the model yet.
+                # So now that we have all of the deferred results, we roll back to the last `ModelResponse` and store the contents of the `ModelRequest` on `deferred_tool_results` to be handled by `CallToolsNode`.
+                ctx.deps.tool_call_results = self._update_tool_call_results_from_model_request(
+                    tool_call_results, last_message
+                )
+                messages.pop()
+
+            if not messages:
+                raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
 
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
@@ -258,17 +257,18 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         user_content: list[str | _messages.UserContent] = []
         for part in message.parts:
             if isinstance(part, _messages.ToolReturnPart):
-                # TODO: Don't allow overriding previously executed tool results, raise an error here
-                # Explicitly provided tool call results take precedence over the ones in the message history
                 if part.tool_call_id in tool_call_results:
-                    continue
+                    raise exceptions.UserError(
+                        f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                    )
 
                 last_tool_return = _messages.ToolReturn(return_value=part.content, metadata=part.metadata)
                 tool_call_results[part.tool_call_id] = last_tool_return
             elif isinstance(part, _messages.RetryPromptPart):
-                # Explicitly provided tool call results take precedence over the ones in the message history
                 if part.tool_call_id in tool_call_results:
-                    continue
+                    raise exceptions.UserError(
+                        f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                    )
 
                 tool_call_results[part.tool_call_id] = part
             elif isinstance(part, _messages.UserPromptPart):
