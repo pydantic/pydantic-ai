@@ -302,9 +302,7 @@ async def main():
         CallToolsNode(
             model_response=ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                ),
+                usage=RequestUsage(input_tokens=56, output_tokens=7),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             )
@@ -367,12 +365,7 @@ async def main():
             CallToolsNode(
                 model_response=ModelResponse(
                     parts=[TextPart(content='The capital of France is Paris.')],
-                    usage=Usage(
-                        requests=1,
-                        request_tokens=56,
-                        response_tokens=7,
-                        total_tokens=63,
-                    ),
+                    usage=RequestUsage(input_tokens=56, output_tokens=7),
                     model_name='gpt-4o',
                     timestamp=datetime.datetime(...),
                 )
@@ -391,7 +384,7 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 #### Accessing usage and final output
 
-You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`Usage`][pydantic_ai.usage.Usage] object containing the usage data.
+You can retrieve usage statistics (tokens, requests, etc.) at any time from the [`AgentRun`][pydantic_ai.agent.AgentRun] object via `agent_run.usage()`. This method returns a [`RunUsage`][pydantic_ai.usage.RunUsage] object containing the usage data.
 
 Once the run finishes, `agent_run.result` becomes a [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] object containing the final output (and related metadata).
 
@@ -570,7 +563,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage())
-#> Usage(requests=1, request_tokens=62, response_tokens=1, total_tokens=63)
+#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
 
 try:
     result_sync = agent.run_sync(
@@ -579,7 +572,7 @@ try:
     )
 except UsageLimitExceeded as e:
     print(e)
-    #> Exceeded the response_tokens_limit of 10 (response_tokens=32)
+    #> Exceeded the output_tokens_limit of 10 (output_tokens=32)
 ```
 
 Restricting the number of requests can be useful in preventing infinite loops or excessive tool calling:
@@ -626,7 +619,8 @@ except UsageLimitExceeded as e:
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
 !!! note
-    This is especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
+    - Usage limits are especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
+    - These limits are enforced at the final stage before the LLM is called. If your limits are stricter than your retry settings, the usage limit will be reached before all retries are attempted.
 
 #### Model (Run) Settings
 
@@ -645,11 +639,11 @@ you can do the following:
 
 ```py
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.settings import ModelSettings
 
 # 1. Model-level defaults
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
@@ -1018,9 +1012,7 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=62, response_tokens=4, total_tokens=66
-                ),
+                usage=RequestUsage(input_tokens=62, output_tokens=4),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),
@@ -1042,9 +1034,7 @@ with capture_run_messages() as messages:  # (2)!
                         tool_call_id='pyd_ai_tool_call_id',
                     )
                 ],
-                usage=Usage(
-                    requests=1, request_tokens=72, response_tokens=8, total_tokens=80
-                ),
+                usage=RequestUsage(input_tokens=72, output_tokens=8),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),

@@ -391,6 +391,11 @@ def heroku_inference_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def cerebras_api_key() -> str:
+    return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
@@ -431,7 +436,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
             return False
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
+    mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
 
 
 @pytest.fixture()
@@ -476,10 +481,10 @@ def model(
 
             return TestModel()
         elif request.param == 'openai':
-            from pydantic_ai.models.openai import OpenAIModel
+            from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
-            return OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+            return OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
         elif request.param == 'anthropic':
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider

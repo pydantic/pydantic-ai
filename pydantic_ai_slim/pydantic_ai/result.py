@@ -27,7 +27,7 @@ from .output import (
     OutputDataT,
     ToolOutput,
 )
-from .usage import Usage, UsageLimits
+from .usage import RunUsage, UsageLimits
 
 __all__ = (
     'OutputDataT',
@@ -52,7 +52,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _tool_manager: ToolManager[AgentDepsT]
 
     _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
-    _initial_run_ctx_usage: Usage = field(init=False)
+    _initial_run_ctx_usage: RunUsage = field(init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = copy(self._run_ctx.usage)
@@ -110,7 +110,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         """Get the current state of the response."""
         return self._raw_stream_response.get()
 
-    def usage(self) -> Usage:
+    def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
         !!! note
@@ -196,7 +196,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
-                    yield event.part.content, event.index
+                    yield event.part.content, event.index  # pragma: no cover
                 elif (  # pragma: no branch
                     isinstance(event, _messages.PartDeltaEvent)
                     and isinstance(event.delta, _messages.TextPartDelta)
@@ -382,7 +382,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         await self._marked_completed(self._stream_response.get())
         return output
 
-    def usage(self) -> Usage:
+    def usage(self) -> RunUsage:
         """Return the usage of the whole run.
 
         !!! note
@@ -425,7 +425,7 @@ class FinalResult(Generic[OutputDataT]):
 def _get_usage_checking_stream_response(
     stream_response: models.StreamedResponse,
     limits: UsageLimits | None,
-    get_usage: Callable[[], Usage],
+    get_usage: Callable[[], RunUsage],
 ) -> AsyncIterator[AgentStreamEvent]:
     if limits is not None and limits.has_token_limits():
 

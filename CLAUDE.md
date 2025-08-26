@@ -21,7 +21,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Core Components
 
-**Agent System (`pydantic_ai_slim/pydantic_ai/agent.py`)**
+**Agent System (`pydantic_ai_slim/pydantic_ai/agent/`)**
 - `Agent[AgentDepsT, OutputDataT]`: Main orchestrator class with generic types for dependency injection and output validation
 - Entry points: `run()`, `run_sync()`, `run_stream()` methods
 - Handles tool management, system prompts, and model interaction
@@ -134,7 +134,7 @@ from typing_extensions import deprecated
 
 class NewClass: ...  # This class was renamed from OldClass.
 
-@deprecated("Use `NewClass` instead")
+@deprecated("Use `NewClass` instead.")
 class OldClass(NewClass): ...
 ```
 
@@ -143,7 +143,7 @@ deprecation warning:
 
 ```python
 def test_old_class_is_deprecated():
-    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead"):
+    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead."):
         OldClass()
 ```
 

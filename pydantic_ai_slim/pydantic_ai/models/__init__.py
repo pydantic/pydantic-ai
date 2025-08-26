@@ -42,7 +42,7 @@ from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
@@ -111,6 +111,15 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
+        'cerebras:gpt-oss-120b',
+        'cerebras:llama3.1-8b',
+        'cerebras:llama-3.3-70b',
+        'cerebras:llama-4-scout-17b-16e-instruct',
+        'cerebras:llama-4-maverick-17b-128e-instruct',
+        'cerebras:qwen-3-235b-a22b-instruct-2507',
+        'cerebras:qwen-3-32b',
+        'cerebras:qwen-3-coder-480b',
+        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'claude-3-5-haiku-20241022',
         'claude-3-5-haiku-latest',
         'claude-3-5-sonnet-20240620',
@@ -418,7 +427,7 @@ class Model(ABC):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> Usage:
+    ) -> RequestUsage:
         """Make a request to the model for counting tokens."""
         # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
         raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
@@ -480,7 +489,7 @@ class Model(ABC):
     @property
     @abstractmethod
     def system(self) -> str:
-        """The system / model provider, ex: openai.
+        """The model provider, ex: openai.
 
         Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
         so should use well-known values listed in
@@ -547,7 +556,7 @@ class StreamedResponse(ABC):
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
-    _usage: Usage = field(default_factory=Usage, init=False)
+    _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream the response as an async iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
@@ -598,9 +607,10 @@ class StreamedResponse(ABC):
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),
+            provider_name=self.provider_name,
         )
 
-    def usage(self) -> Usage:
+    def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
 
@@ -608,6 +618,12 @@ class StreamedResponse(ABC):
     @abstractmethod
     def model_name(self) -> str:
         """Get the model name of the response."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str | None:
+        """Get the provider name."""
         raise NotImplementedError()
 
     @property
@@ -688,21 +704,23 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
 
         return CohereModel(model_name, provider=provider)
     elif provider in (
-        'openai',
-        'deepseek',
         'azure',
-        'openrouter',
-        'vercel',
-        'grok',
-        'moonshotai',
+        'deepseek',
+        'cerebras',
         'fireworks',
-        'together',
-        'heroku',
         'github',
+        'grok',
+        'heroku',
+        'moonshotai',
+        'openai',
+        'openai-chat',
+        'openrouter',
+        'together',
+        'vercel',
     ):
-        from .openai import OpenAIModel
+        from .openai import OpenAIChatModel
 
-        return OpenAIModel(model_name, provider=provider)
+        return OpenAIChatModel(model_name, provider=provider)
     elif provider == 'openai-responses':
         from .openai import OpenAIResponsesModel
 

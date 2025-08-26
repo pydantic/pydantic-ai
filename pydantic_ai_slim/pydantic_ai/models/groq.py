@@ -118,7 +118,7 @@ class GroqModel(Model):
     client: AsyncGroq = field(repr=False)
 
     _model_name: GroqModelName = field(repr=False)
-    _system: str = field(default='groq', repr=False)
+    _provider: Provider[AsyncGroq] = field(repr=False)
 
     def __init__(
         self,
@@ -143,6 +143,7 @@ class GroqModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -150,6 +151,16 @@ class GroqModel(Model):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> GroqModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -162,7 +173,6 @@ class GroqModel(Model):
             messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -179,16 +189,6 @@ class GroqModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> GroqModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
@@ -285,7 +285,12 @@ class GroqModel(Model):
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
         return ModelResponse(
-            items, usage=_map_usage(response), model_name=response.model, timestamp=timestamp, vendor_id=response.id
+            items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            timestamp=timestamp,
+            provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -305,6 +310,7 @@ class GroqModel(Model):
             _model_name=self._model_name,
             _model_profile=self.profile,
             _timestamp=number_to_datetime(first_chunk.created),
+            _provider_name=self._provider.name,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -440,6 +446,7 @@ class GroqStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: AsyncIterable[chat.ChatCompletionChunk]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -457,6 +464,7 @@ class GroqStreamedResponse(StreamedResponse):
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -478,12 +486,17 @@ class GroqStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
 
 
-def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> usage.Usage:
+def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> usage.RequestUsage:
     response_usage = None
     if isinstance(completion, chat.ChatCompletion):
         response_usage = completion.usage
@@ -491,10 +504,9 @@ def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> us
         response_usage = completion.x_groq.usage
 
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
 
-    return usage.Usage(
-        request_tokens=response_usage.prompt_tokens,
-        response_tokens=response_usage.completion_tokens,
-        total_tokens=response_usage.total_tokens,
+    return usage.RequestUsage(
+        input_tokens=response_usage.prompt_tokens,
+        output_tokens=response_usage.completion_tokens,
     )

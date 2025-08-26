@@ -243,7 +243,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Create an agent.
 
         Args:
-            model: The default model to use for this agent, if not provide,
+            model: The default model to use for this agent, if not provided,
                 you must provide the model when calling it. We allow `str` here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
@@ -431,7 +431,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -447,7 +447,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
@@ -463,7 +463,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -514,9 +514,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=Usage(
-                            requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                        ),
+                        usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                     )
@@ -575,7 +573,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # Build the initial state
-        usage = usage or _usage.Usage()
+        usage = usage or _usage.RunUsage()
         state = _agent_graph.GraphAgentState(
             message_history=message_history[:] if message_history else [],
             usage=usage,
@@ -677,18 +675,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 run_span.end()
 
     def _run_span_end_attributes(
-        self, state: _agent_graph.GraphAgentState, usage: _usage.Usage, settings: InstrumentationSettings
+        self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
     ):
+        if settings.version == 1:
+            attr_name = 'all_messages_events'
+            value = [
+                InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)
+            ]
+        else:
+            attr_name = 'pydantic_ai.all_messages'
+            value = settings.messages_to_otel_messages(state.message_history)
+
         return {
             **usage.opentelemetry_attributes(),
-            'all_messages_events': json.dumps(
-                [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)]
-            ),
+            attr_name: json.dumps(value),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
                     'properties': {
-                        'all_messages_events': {'type': 'array'},
+                        attr_name: {'type': 'array'},
                         'final_result': {'type': 'object'},
                     },
                 }

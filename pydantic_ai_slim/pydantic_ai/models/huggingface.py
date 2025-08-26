@@ -35,7 +35,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..profiles import ModelProfile
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -114,13 +114,15 @@ class HuggingFaceModel(Model):
     client: AsyncInferenceClient = field(repr=False)
 
     _model_name: str = field(repr=False)
-    _system: str = field(default='huggingface', repr=False)
+    _provider: Provider[AsyncInferenceClient] = field(repr=False)
 
     def __init__(
         self,
         model_name: str,
         *,
         provider: Literal['huggingface'] | Provider[AsyncInferenceClient] = 'huggingface',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Hugging Face model.
 
@@ -128,12 +130,26 @@ class HuggingFaceModel(Model):
             model_name: The name of the Model to use. You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
             provider: The provider to use for Hugging Face Inference Providers. Can be either the string 'huggingface' or an
                 instance of `Provider[AsyncInferenceClient]`. If not provided, the other parameters will be used.
+            profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
-        self._provider = provider
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
+
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+    @property
+    def model_name(self) -> HuggingFaceModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The system / model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -146,7 +162,6 @@ class HuggingFaceModel(Model):
             messages, False, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -162,16 +177,6 @@ class HuggingFaceModel(Model):
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
         yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> HuggingFaceModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
@@ -266,7 +271,8 @@ class HuggingFaceModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            vendor_id=response.id,
+            provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -286,6 +292,7 @@ class HuggingFaceModel(Model):
             _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
+            _provider_name=self._provider.name,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ChatCompletionInputTool]:
@@ -432,6 +439,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionStreamOutput]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -444,11 +452,12 @@ class HuggingFaceStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content:
+            if content is not None:
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
                     thinking_tags=self._model_profile.thinking_tags,
+                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -469,19 +478,22 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
 
 
-def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.Usage:
+def _map_usage(response: ChatCompletionOutput | ChatCompletionStreamOutput) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
 
-    return usage.Usage(
-        request_tokens=response_usage.prompt_tokens,
-        response_tokens=response_usage.completion_tokens,
-        total_tokens=response_usage.total_tokens,
-        details=None,
+    return usage.RequestUsage(
+        input_tokens=response_usage.prompt_tokens,
+        output_tokens=response_usage.completion_tokens,
     )

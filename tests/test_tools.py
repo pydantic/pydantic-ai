@@ -31,7 +31,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets.deferred import DeferredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
 
@@ -1150,6 +1150,35 @@ def test_function_tool_consistent_with_schema():
     assert agent._function_toolset.tools['foobar'].max_retries == 0
 
 
+def test_function_tool_from_schema_with_ctx():
+    def function(ctx: RunContext[str], *args: Any, **kwargs: Any) -> str:
+        assert len(args) == 0
+        assert set(kwargs) == {'one', 'two'}
+        return ctx.deps + 'I like being called like this'
+
+    json_schema = {
+        'type': 'object',
+        'additionalProperties': False,
+        'properties': {
+            'one': {'description': 'first argument', 'type': 'string'},
+            'two': {'description': 'second argument', 'type': 'object'},
+        },
+        'required': ['one', 'two'],
+    }
+    pydantic_tool = Tool[str].from_schema(
+        function, name='foobar', description='does foobar stuff', json_schema=json_schema, takes_ctx=True
+    )
+
+    assert pydantic_tool.takes_ctx is True
+    assert pydantic_tool.function_schema.takes_ctx is True
+
+    agent = Agent('test', tools=[pydantic_tool], retries=0, deps_type=str)
+    result = agent.run_sync('foobar', deps='Hello, ')
+    assert result.output == snapshot('{"foobar":"Hello, I like being called like this"}')
+    assert agent._function_toolset.tools['foobar'].takes_ctx is True
+    assert agent._function_toolset.tools['foobar'].max_retries == 0
+
+
 def test_function_tool_inconsistent_with_schema():
     def function(three: str, four: int) -> str:
         return 'Coverage made me call this'
@@ -1385,7 +1414,7 @@ def test_parallel_tool_return():
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=58, response_tokens=10, total_tokens=68),
+                usage=RequestUsage(input_tokens=58, output_tokens=10),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1417,7 +1446,7 @@ def test_parallel_tool_return():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=Usage(requests=1, request_tokens=76, response_tokens=11, total_tokens=87),
+                usage=RequestUsage(input_tokens=76, output_tokens=11),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

@@ -95,7 +95,7 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(requests=1, request_tokens=90, response_tokens=2, total_tokens=92),
+        usage=RequestUsage(input_tokens=90, output_tokens=2),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
     ),
@@ -115,7 +115,7 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=Usage(requests=1, request_tokens=91, response_tokens=4, total_tokens=95),
+        usage=RequestUsage(input_tokens=91, output_tokens=4),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
     ),
@@ -135,9 +135,7 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=Usage(
-            requests=1, request_tokens=92, response_tokens=12, total_tokens=104
-        ),
+        usage=RequestUsage(input_tokens=92, output_tokens=12),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
     ),
@@ -473,7 +471,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Custom Tool Schema
 
-If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description and JSON schema for the function directly:
+If you have a function that lacks appropriate documentation (i.e. poorly named, no type information, poor docstring, use of \*args or \*\*kwargs and suchlike) then you can still turn it into a tool that can be effectively used by the agent with the [`Tool.from_schema`][pydantic_ai.Tool.from_schema] function. With this you provide the name, description, JSON schema, and whether the function takes a `RunContext` for the function directly:
 
 ```python
 from pydantic_ai import Agent, Tool
@@ -495,7 +493,8 @@ tool = Tool.from_schema(
         },
         'required': ['a', 'b'],
         'type': 'object',
-    }
+    },
+    takes_ctx=False,
 )
 
 test_model = TestModel()

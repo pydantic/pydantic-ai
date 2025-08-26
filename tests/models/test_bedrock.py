@@ -34,7 +34,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
@@ -58,7 +58,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
     assert result.output == snapshot(
         "Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
     )
-    assert result.usage() == snapshot(Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37))
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=7, output_tokens=30))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -79,9 +79,10 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                         content="Hello! How can I assist you today? Whether you have questions, need information, or just want to chat, I'm here to help."
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=7, response_tokens=30, total_tokens=37),
+                usage=RequestUsage(input_tokens=7, output_tokens=30),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -111,7 +112,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(Usage(requests=2, request_tokens=1236, response_tokens=298, total_tokens=1534))
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1236, output_tokens=298))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -137,9 +138,10 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_5WEci1UmQ8ifMFkUcy2gHQ',
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=551, response_tokens=132, total_tokens=683),
+                usage=RequestUsage(input_tokens=551, output_tokens=132),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -162,9 +164,10 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                         tool_call_id='tooluse_9AjloJSaQDKmpPFff-2Clg',
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=685, response_tokens=166, total_tokens=851),
+                usage=RequestUsage(input_tokens=685, output_tokens=166),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -262,9 +265,10 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                         tool_call_id='tooluse_F8LnaCMtQ0-chKTnPhNH2g',
                     ),
                 ],
-                usage=Usage(requests=1, request_tokens=417, response_tokens=69, total_tokens=486),
+                usage=RequestUsage(input_tokens=417, output_tokens=69),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -286,9 +290,10 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
 """
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=509, response_tokens=108, total_tokens=617),
+                usage=RequestUsage(input_tokens=509, output_tokens=108),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -553,9 +558,10 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                         content='The capital of France is Paris. Paris is not only the political and economic hub of the country but also a major center for culture, fashion, art, and tourism. It is renowned for its rich history, iconic landmarks such as the Eiffel Tower, Notre-Dame Cathedral, and the Louvre Museum, as well as its influence on global culture and cuisine.'
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=13, response_tokens=71, total_tokens=84),
+                usage=RequestUsage(input_tokens=13, output_tokens=71),
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -603,9 +609,10 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
-                usage=Usage(requests=1, request_tokens=12, response_tokens=882, total_tokens=894),
+                usage=RequestUsage(input_tokens=12, output_tokens=882),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -626,9 +633,10 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
-                usage=Usage(requests=1, request_tokens=12, response_tokens=882, total_tokens=894),
+                usage=RequestUsage(input_tokens=12, output_tokens=882),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -646,9 +654,10 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                     ),
                     IsInstance(TextPart),
                 ],
-                usage=Usage(requests=1, request_tokens=636, response_tokens=690, total_tokens=1326),
+                usage=RequestUsage(input_tokens=636, output_tokens=690),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -1150,9 +1159,15 @@ Also\
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' all together.\n')),
             PartStartEvent(
                 index=1,
-                part=TextPart(content='Crossing the'),
+                part=TextPart(
+                    content="""\
+
+
+"""
+                ),
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='Crossing the')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' street safely involves')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' careful')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' observation')),
