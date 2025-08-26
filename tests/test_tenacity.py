@@ -146,7 +146,7 @@ class TestTenacityTransport:
         # Mock raise_for_status to check if request is set
         def mock_raise_for_status():
             if mock_response_fail.request is None:
-                raise RuntimeError(
+                raise RuntimeError(  # pragma: no cover
                     'Cannot call `raise_for_status` as the request instance has not been set on this response.'
                 )
             raise httpx.HTTPStatusError(
@@ -303,7 +303,7 @@ class TestAsyncTenacityTransport:
         # Mock raise_for_status to check if request is set
         def mock_raise_for_status():
             if mock_response_fail.request is None:
-                raise RuntimeError(
+                raise RuntimeError(  # pragma: no cover
                     'Cannot call `raise_for_status` as the request instance has not been set on this response.'
                 )
             raise httpx.HTTPStatusError(
