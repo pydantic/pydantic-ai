@@ -677,16 +677,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _run_span_end_attributes(
         self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
     ):
+        if settings.version == 1:
+            attr_name = 'all_messages_events'
+            value = [
+                InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)
+            ]
+        else:
+            attr_name = 'pydantic_ai.all_messages'
+            value = settings.messages_to_otel_messages(state.message_history)
+
         return {
             **usage.opentelemetry_attributes(),
-            'all_messages_events': json.dumps(
-                [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)]
-            ),
+            attr_name: json.dumps(value),
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
                     'properties': {
-                        'all_messages_events': {'type': 'array'},
+                        attr_name: {'type': 'array'},
                         'final_result': {'type': 'object'},
                     },
                 }

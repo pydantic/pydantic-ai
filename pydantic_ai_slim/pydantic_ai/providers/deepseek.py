@@ -40,7 +40,7 @@ class DeepSeekProvider(Provider[AsyncOpenAI]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         profile = deepseek_model_profile(model_name)
 
-        # As DeepSeekProvider is always used with OpenAIModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
+        # As DeepSeekProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly.
         # This was not the case when using a DeepSeek model with another model class (e.g. BedrockConverseModel or GroqModel),
         # so we won't do this in `deepseek_model_profile` unless we learn it's always needed.

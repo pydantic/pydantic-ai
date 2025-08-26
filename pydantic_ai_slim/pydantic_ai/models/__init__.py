@@ -713,13 +713,14 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'heroku',
         'moonshotai',
         'openai',
+        'openai-chat',
         'openrouter',
         'together',
         'vercel',
     ):
-        from .openai import OpenAIModel
+        from .openai import OpenAIChatModel
 
-        return OpenAIModel(model_name, provider=provider)
+        return OpenAIChatModel(model_name, provider=provider)
     elif provider == 'openai-responses':
         from .openai import OpenAIResponsesModel
 
