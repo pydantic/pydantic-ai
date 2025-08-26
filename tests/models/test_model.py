@@ -10,10 +10,10 @@ from ..conftest import TestEnv
 # TODO(Marcelo): We need to add Vertex AI to the test cases.
 
 TEST_CASES = [
-    ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
-    ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
-    ('OPENAI_API_KEY', 'o1', 'o1', 'openai', 'openai', 'OpenAIModel'),
-    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIModel'),
+    ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
+    ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
+    ('OPENAI_API_KEY', 'o1', 'o1', 'openai', 'openai', 'OpenAIChatModel'),
+    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIChatModel'),
     ('GEMINI_API_KEY', 'google-gla:gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
     ('GEMINI_API_KEY', 'gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
     (
@@ -70,7 +70,7 @@ TEST_CASES = [
         'xai/grok-3-mini',
         'github',
         'github',
-        'OpenAIModel',
+        'OpenAIChatModel',
     ),
     (
         'MOONSHOTAI_API_KEY',
@@ -78,7 +78,7 @@ TEST_CASES = [
         'kimi-k2-0711-preview',
         'moonshotai',
         'moonshotai',
-        'OpenAIModel',
+        'OpenAIChatModel',
     ),
     (
         'GROK_API_KEY',
@@ -86,7 +86,7 @@ TEST_CASES = [
         'grok-3',
         'grok',
         'grok',
-        'OpenAIModel',
+        'OpenAIChatModel',
     ),
     (
         'GROK_API_KEY',
@@ -94,7 +94,7 @@ TEST_CASES = [
         'grok-4',
         'grok',
         'grok',
-        'OpenAIModel',
+        'OpenAIChatModel',
     ),
     (
         'OPENAI_API_KEY',

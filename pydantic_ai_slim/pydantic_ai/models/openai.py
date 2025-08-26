@@ -82,8 +82,10 @@ except ImportError as _import_error:
 
 __all__ = (
     'OpenAIModel',
+    'OpenAIChatModel',
     'OpenAIResponsesModel',
     'OpenAIModelSettings',
+    'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
@@ -101,7 +103,7 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 """
 
 
-class OpenAIModelSettings(ModelSettings, total=False):
+class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
     # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -139,7 +141,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """
 
 
-class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
+@deprecated('Use `OpenAIChatModelSettings` instead.')
+class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
+    """Deprecated alias for `OpenAIChatModelSettings`."""
+
+
+class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -185,7 +192,7 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
 
 
 @dataclass(init=False)
-class OpenAIModel(Model):
+class OpenAIChatModel(Model):
     """A model that uses the OpenAI API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
@@ -204,18 +211,20 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -229,18 +238,20 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -253,18 +264,20 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -322,7 +335,7 @@ class OpenAIModel(Model):
     ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
         return model_response
@@ -337,7 +350,7 @@ class OpenAIModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, True, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
@@ -347,7 +360,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: Literal[True],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[ChatCompletionChunk]: ...
 
@@ -356,7 +369,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: Literal[False],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion: ...
 
@@ -364,7 +377,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: bool,
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
@@ -392,10 +405,15 @@ class OpenAIModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
+
+        # TODO(Marcelo): Deprecate this in favor of `openai_unsupported_model_settings`.
         sampling_settings = (
             model_settings
             if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIModelSettings()
+            else OpenAIChatModelSettings()
         )
 
         try:
@@ -636,9 +654,7 @@ class OpenAIModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -704,6 +720,16 @@ class OpenAIModel(Model):
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+
+@deprecated(
+    '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
+    "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
+    "require a feature that the Responses API doesn't support yet like audio."
+)
+@dataclass(init=False)
+class OpenAIModel(OpenAIChatModel):
+    """Deprecated alias for `OpenAIChatModel`."""
 
 
 @dataclass(init=False)

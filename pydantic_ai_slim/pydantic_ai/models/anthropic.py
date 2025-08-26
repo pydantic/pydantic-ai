@@ -475,9 +475,9 @@ class AnthropicModel(Model):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
-        system_prompt = '\n\n'.join(system_prompt_parts)
         if instructions := self._get_instructions(messages):
-            system_prompt = f'{instructions}\n\n{system_prompt}'
+            system_prompt_parts.insert(0, instructions)
+        system_prompt = '\n\n'.join(system_prompt_parts)
         return system_prompt, anthropic_messages
 
     @staticmethod

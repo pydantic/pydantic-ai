@@ -639,11 +639,11 @@ you can do the following:
 
 ```py
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.settings import ModelSettings
 
 # 1. Model-level defaults
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )

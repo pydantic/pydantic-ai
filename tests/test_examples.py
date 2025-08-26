@@ -157,6 +157,7 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_SECRET_ACCESS_KEY', 'testing')
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
+    env.set('CEREBRAS_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -807,12 +808,12 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         mock_fallback_models: list[Model] = []
         for m in model.models:
             try:
-                from pydantic_ai.models.openai import OpenAIModel
+                from pydantic_ai.models.openai import OpenAIChatModel
             except ImportError:  # pragma: lax no cover
-                OpenAIModel = type(None)
+                OpenAIChatModel = type(None)
 
-            if isinstance(m, OpenAIModel):
-                # Raise an HTTP error for OpenAIModel
+            if isinstance(m, OpenAIChatModel):
+                # Raise an HTTP error for OpenAIChatModel
                 mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
             else:
                 mock_fallback_models.append(mock_infer_model(m))

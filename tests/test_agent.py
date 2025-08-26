@@ -3076,12 +3076,10 @@ def test_binary_content_serializable():
     assert messages == result.all_messages()
 
 
-def test_image_url_serializable():
+def test_image_url_serializable_missing_media_type():
     agent = Agent('test')
-
-    content = ImageUrl('https://example.com/chart', media_type='image/jpeg')
+    content = ImageUrl('https://example.com/chart.jpeg')
     result = agent.run_sync(['Hello', content])
-
     serialized = result.all_messages_json()
     assert json.loads(serialized) == snapshot(
         [
@@ -3091,10 +3089,11 @@ def test_image_url_serializable():
                         'content': [
                             'Hello',
                             {
-                                'url': 'https://example.com/chart',
+                                'url': 'https://example.com/chart.jpeg',
                                 'force_download': False,
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
+                                'media_type': 'image/jpeg',
                             },
                         ],
                         'timestamp': IsStr(),
@@ -3128,6 +3127,72 @@ def test_image_url_serializable():
 
     # We also need to be able to round trip the serialized messages.
     messages = ModelMessagesTypeAdapter.validate_json(serialized)
+    part = messages[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    content = part.content[1]
+    assert isinstance(content, ImageUrl)
+    assert content.media_type == 'image/jpeg'
+    assert messages == result.all_messages()
+
+
+def test_image_url_serializable():
+    agent = Agent('test')
+
+    content = ImageUrl('https://example.com/chart', media_type='image/jpeg')
+    result = agent.run_sync(['Hello', content])
+
+    serialized = result.all_messages_json()
+    assert json.loads(serialized) == snapshot(
+        [
+            {
+                'parts': [
+                    {
+                        'content': [
+                            'Hello',
+                            {
+                                'url': 'https://example.com/chart',
+                                'force_download': False,
+                                'vendor_metadata': None,
+                                'kind': 'image-url',
+                                'media_type': 'image/jpeg',
+                            },
+                        ],
+                        'timestamp': IsStr(),
+                        'part_kind': 'user-prompt',
+                    }
+                ],
+                'instructions': None,
+                'kind': 'request',
+            },
+            {
+                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'usage': {
+                    'input_tokens': 51,
+                    'cache_write_tokens': 0,
+                    'cache_read_tokens': 0,
+                    'output_tokens': 4,
+                    'input_audio_tokens': 0,
+                    'cache_audio_read_tokens': 0,
+                    'output_audio_tokens': 0,
+                    'details': {},
+                },
+                'model_name': 'test',
+                'timestamp': IsStr(),
+                'provider_name': None,
+                'provider_details': None,
+                'provider_request_id': None,
+                'kind': 'response',
+            },
+        ]
+    )
+
+    # We also need to be able to round trip the serialized messages.
+    messages = ModelMessagesTypeAdapter.validate_json(serialized)
+    part = messages[0].parts[0]
+    assert isinstance(part, UserPromptPart)
+    content = part.content[1]
+    assert isinstance(content, ImageUrl)
+    assert content.media_type == 'image/jpeg'
     assert messages == result.all_messages()
 
 

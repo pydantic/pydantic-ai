@@ -13,7 +13,7 @@ Pydantic AI is model-agnostic and has built-in support for multiple model provid
 
 ## OpenAI-compatible Providers
 
-In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIModel` in Pydantic AI:
+In addition, many providers are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI:
 
 - [DeepSeek](openai.md#deepseek)
 - [Grok (xAI)](openai.md#grok-xai)
@@ -26,6 +26,7 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Azure AI Foundry](openai.md#azure-ai-foundry)
 - [Heroku](openai.md#heroku-ai)
 - [GitHub Models](openai.md#github-models)
+- [Cerebras](openai.md#cerebras)
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
@@ -41,20 +42,20 @@ Pydantic AI uses a few key terms to describe how it interacts with different LLM
   (generally by wrapping a vendor-provided SDK, like the `openai` python SDK). These classes implement a
   vendor-SDK-agnostic API, ensuring a single Pydantic AI agent is portable to different LLM vendors without
   any other code changes just by swapping out the Model it uses. Model classes are named
-  roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIModel`, `AnthropicModel`, `GoogleModel`,
+  roughly in the format `<VendorSdk>Model`, for example, we have `OpenAIChatModel`, `AnthropicModel`, `GoogleModel`,
   etc. When using a Model class, you specify the actual LLM model name (e.g., `gpt-4o`,
   `claude-3-5-sonnet-latest`, `gemini-1.5-flash`) as a parameter.
 - **Provider**: This refers to provider-specific classes which handle the authentication and connections
   to an LLM vendor. Passing a non-default _Provider_ as a parameter to a Model is how you can ensure
   that your agent will make requests to a specific endpoint, or make use of a specific approach to
-  authentication (e.g., you can use Azure auth with the `OpenAIModel` by way of the `AzureProvider`).
+  authentication (e.g., you can use Azure auth with the `OpenAIChatModel` by way of the `AzureProvider`).
   In particular, this is how you can make use of an AI gateway, or an LLM vendor that offers API compatibility
-  with the vendor SDK used by an existing Model (such as `OpenAIModel`).
+  with the vendor SDK used by an existing Model (such as `OpenAIChatModel`).
 - **Profile**: This refers to a description of how requests to a specific model or family of models need to be
   constructed to get the best results, independent of the model and provider classes used.
   For example, different models have different restrictions on the JSON schemas that can be used for tools,
   and the same schema transformer needs to be used for Gemini models whether you're using `GoogleModel`
-  with model name `gemini-2.5-pro-preview`, or `OpenAIModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
+  with model name `gemini-2.5-pro-preview`, or `OpenAIChatModel` with `OpenRouterProvider` and model name `google/gemini-2.5-pro-preview`.
 
 When you instantiate an [`Agent`][pydantic_ai.Agent] with just a name formatted as `<provider>:<model>`, e.g. `openai:gpt-4o` or `openrouter:google/gemini-2.5-pro-preview`,
 Pydantic AI will automatically select the appropriate model class, provider, and profile.
@@ -65,7 +66,7 @@ If you want to use a different provider or profile, you can instantiate a model 
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
 
-The best place to start is to review the source code for existing implementations, e.g. [`OpenAIModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
+The best place to start is to review the source code for existing implementations, e.g. [`OpenAIChatModel`](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/models/openai.py).
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
@@ -88,9 +89,9 @@ and then falls back to the Anthropic model.
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 
-openai_model = OpenAIModel('gpt-4o')
+openai_model = OpenAIChatModel('gpt-4o')
 anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
 fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -136,11 +137,11 @@ You can configure different [`ModelSettings`][pydantic_ai.settings.ModelSettings
 from pydantic_ai import Agent
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.settings import ModelSettings
 
 # Configure each model with provider-specific optimal settings
-openai_model = OpenAIModel(
+openai_model = OpenAIChatModel(
     'gpt-4o',
     settings=ModelSettings(temperature=0.7, max_tokens=1000)  # Higher creativity for OpenAI
 )
@@ -172,9 +173,9 @@ contains all the exceptions encountered during the `run` execution.
     from pydantic_ai.exceptions import ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
 
-    openai_model = OpenAIModel('gpt-4o')
+    openai_model = OpenAIChatModel('gpt-4o')
     anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 
@@ -199,7 +200,7 @@ contains all the exceptions encountered during the `run` execution.
     from pydantic_ai.exceptions import ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
 
 
     def model_status_error_handler(exc_group: BaseExceptionGroup) -> None:
@@ -207,7 +208,7 @@ contains all the exceptions encountered during the `run` execution.
             print(exc)
 
 
-    openai_model = OpenAIModel('gpt-4o')
+    openai_model = OpenAIChatModel('gpt-4o')
     anthropic_model = AnthropicModel('claude-3-5-sonnet-latest')
     fallback_model = FallbackModel(openai_model, anthropic_model)
 

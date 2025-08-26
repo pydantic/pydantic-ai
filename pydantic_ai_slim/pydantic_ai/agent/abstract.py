@@ -34,13 +34,6 @@ from ..tools import (
 from ..toolsets import AbstractToolset
 from ..usage import RunUsage, UsageLimits
 
-# Re-exporting like this improves auto-import behavior in PyCharm
-capture_run_messages = _agent_graph.capture_run_messages
-EndStrategy = _agent_graph.EndStrategy
-CallToolsNode = _agent_graph.CallToolsNode
-ModelRequestNode = _agent_graph.ModelRequestNode
-UserPromptNode = _agent_graph.UserPromptNode
-
 if TYPE_CHECKING:
     from fasta2a.applications import FastA2A
     from fasta2a.broker import Broker
@@ -899,12 +892,18 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             lifespan=lifespan,
         )
 
-    async def to_cli(self: Self, deps: AgentDepsT = None, prog_name: str = 'pydantic-ai') -> None:
+    async def to_cli(
+        self: Self,
+        deps: AgentDepsT = None,
+        prog_name: str = 'pydantic-ai',
+        message_history: list[_messages.ModelMessage] | None = None,
+    ) -> None:
         """Run the agent in a CLI chat interface.
 
         Args:
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
+            message_history: History of the conversation so far.
 
         Example:
         ```python {title="agent_to_cli.py" test="skip"}
@@ -920,14 +919,28 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
         from pydantic_ai._cli import run_chat
 
-        await run_chat(stream=True, agent=self, deps=deps, console=Console(), code_theme='monokai', prog_name=prog_name)
+        await run_chat(
+            stream=True,
+            agent=self,
+            deps=deps,
+            console=Console(),
+            code_theme='monokai',
+            prog_name=prog_name,
+            message_history=message_history,
+        )
 
-    def to_cli_sync(self: Self, deps: AgentDepsT = None, prog_name: str = 'pydantic-ai') -> None:
+    def to_cli_sync(
+        self: Self,
+        deps: AgentDepsT = None,
+        prog_name: str = 'pydantic-ai',
+        message_history: list[_messages.ModelMessage] | None = None,
+    ) -> None:
         """Run the agent in a CLI chat interface with the non-async interface.
 
         Args:
             deps: The dependencies to pass to the agent.
             prog_name: The name of the program to use for the CLI. Defaults to 'pydantic-ai'.
+            message_history: History of the conversation so far.
 
         ```python {title="agent_to_cli_sync.py" test="skip"}
         from pydantic_ai import Agent
@@ -937,4 +950,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         agent.to_cli_sync(prog_name='assistant')
         ```
         """
-        return get_event_loop().run_until_complete(self.to_cli(deps=deps, prog_name=prog_name))
+        return get_event_loop().run_until_complete(
+            self.to_cli(deps=deps, prog_name=prog_name, message_history=message_history)
+        )
