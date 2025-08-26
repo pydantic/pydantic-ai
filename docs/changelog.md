@@ -12,6 +12,16 @@ Pydantic AI is still pre-version 1, so breaking changes will occur, however:
 !!! note
     Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v0.8.0 (2025-08-26)
+
+See [#2689](https://github.com/pydantic/pydantic-ai/pull/2689) - `AgentStreamEvent` was expanded to be a union of `ModelResponseStreamEvent` and `HandleResponseEvent`, simplifying the `event_stream_handler` function signature. Existing code accepting `AgentStreamEvent | HandleResponseEvent` will continue to work.
+
+### v0.7.6 (2025-08-26)
+
+The following breaking change was inadvertently released in a patch version rather than a minor version:
+
+See [#2670](https://github.com/pydantic/pydantic-ai/pull/2670) - `TenacityTransport` and `AsyncTenacityTransport` now require the use of `pydantic_ai.retries.RetryConfig` (which is just a `TypedDict` containing the kwargs to `tenacity.retry`) instead of `tenacity.Retrying` or `tenacity.AsyncRetrying`.
+
 ### v0.7.0 (2025-08-12)
 
 See [#2458](https://github.com/pydantic/pydantic-ai/pull/2458) - `pydantic_ai.models.StreamedResponse` now yields a `FinalResultEvent` along with the existing `PartStartEvent` and `PartDeltaEvent`. If you're using `pydantic_ai.direct.model_request_stream` or `pydantic_ai.direct.model_request_stream_sync`, you may need to update your code to account for this.
