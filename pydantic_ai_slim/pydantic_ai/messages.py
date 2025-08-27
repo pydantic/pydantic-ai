@@ -130,8 +130,8 @@ class FileUrl(ABC):
     def __init__(
         self,
         url: str,
-        force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
+        force_download: bool = False,
         media_type: str | None = None,
         identifier: str | None = None,
     ) -> None:
@@ -251,8 +251,8 @@ class AudioUrl(FileUrl):
     ) -> None:
         super().__init__(
             url=url,
-            vendor_metadata=vendor_metadata,
             force_download=force_download,
+            vendor_metadata=vendor_metadata,
             media_type=media_type,
             identifier=identifier,
         )
