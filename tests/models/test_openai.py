@@ -1,11 +1,9 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from functools import cached_property
 from typing import Annotated, Any, Callable, Literal, Union, cast
 
 import httpx
@@ -47,13 +45,13 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, raise_if_exception, try_import
-from .mock_async_stream import MockAsyncStream
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
+from .mock_openai import MockOpenAI, completion_message, get_mock_chat_completion_kwargs
 
 with try_import() as imports_successful:
-    from openai import NOT_GIVEN, APIStatusError, AsyncOpenAI
+    from openai import APIStatusError, AsyncOpenAI
     from openai.types import chat
-    from openai.types.chat.chat_completion import Choice, ChoiceLogprobs
+    from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
         Choice as ChunkChoice,
         ChoiceDelta,
@@ -96,75 +94,6 @@ def test_init():
     assert m.base_url == 'https://api.openai.com/v1/'
     assert m.client.api_key == 'foobar'
     assert m.model_name == 'gpt-4o'
-
-
-@dataclass
-class MockOpenAI:
-    completions: MockChatCompletion | Sequence[MockChatCompletion] | None = None
-    stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]] | None = None
-    index: int = 0
-    chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list)
-
-    @cached_property
-    def chat(self) -> Any:
-        chat_completions = type('Completions', (), {'create': self.chat_completions_create})
-        return type('Chat', (), {'completions': chat_completions})
-
-    @classmethod
-    def create_mock(cls, completions: MockChatCompletion | Sequence[MockChatCompletion]) -> AsyncOpenAI:
-        return cast(AsyncOpenAI, cls(completions=completions))
-
-    @classmethod
-    def create_mock_stream(
-        cls,
-        stream: Sequence[MockChatCompletionChunk] | Sequence[Sequence[MockChatCompletionChunk]],
-    ) -> AsyncOpenAI:
-        return cast(AsyncOpenAI, cls(stream=stream))
-
-    async def chat_completions_create(  # pragma: lax no cover
-        self, *_args: Any, stream: bool = False, **kwargs: Any
-    ) -> chat.ChatCompletion | MockAsyncStream[MockChatCompletionChunk]:
-        self.chat_completion_kwargs.append({k: v for k, v in kwargs.items() if v is not NOT_GIVEN})
-
-        if stream:
-            assert self.stream is not None, 'you can only used `stream=True` if `stream` is provided'
-            if isinstance(self.stream[0], Sequence):
-                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream[self.index])))
-            else:
-                response = MockAsyncStream(iter(cast(list[MockChatCompletionChunk], self.stream)))
-        else:
-            assert self.completions is not None, 'you can only used `stream=False` if `completions` are provided'
-            if isinstance(self.completions, Sequence):
-                raise_if_exception(self.completions[self.index])
-                response = cast(chat.ChatCompletion, self.completions[self.index])
-            else:
-                raise_if_exception(self.completions)
-                response = cast(chat.ChatCompletion, self.completions)
-        self.index += 1
-        return response
-
-
-def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
-    if isinstance(async_open_ai, MockOpenAI):
-        return async_open_ai.chat_completion_kwargs
-    else:  # pragma: no cover
-        raise RuntimeError('Not a MockOpenAI instance')
-
-
-def completion_message(
-    message: ChatCompletionMessage, *, usage: CompletionUsage | None = None, logprobs: ChoiceLogprobs | None = None
-) -> chat.ChatCompletion:
-    choices = [Choice(finish_reason='stop', index=0, message=message)]
-    if logprobs:
-        choices = [Choice(finish_reason='stop', index=0, message=message, logprobs=logprobs)]
-    return chat.ChatCompletion(
-        id='123',
-        choices=choices,
-        created=1704067200,  # 2024-01-01
-        model='gpt-4o-123',
-        object='chat.completion',
-        usage=usage,
-    )
 
 
 async def test_request_simple_success(allow_model_requests: None):
