@@ -11,6 +11,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
+    from .approval_required import ApprovalRequiredToolset
     from .filtered import FilteredToolset
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
@@ -173,3 +174,12 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .renamed import RenamedToolset
 
         return RenamedToolset(self, name_map)
+
+    def approval_required(
+        self,
+        approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool] = lambda ctx, tool_def: True,
+    ) -> ApprovalRequiredToolset[AgentDepsT]:
+        """TODO: Docstring."""
+        from .approval_required import ApprovalRequiredToolset
+
+        return ApprovalRequiredToolset(self, approval_required_func)

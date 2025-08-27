@@ -1596,3 +1596,124 @@ def test_deferred_tool_call_approved_fails():
                 },
             ),
         )
+
+
+async def test_approval_required_toolset():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('foo', {'x': 1}, tool_call_id='foo'),
+                    ToolCallPart('bar', {'x': 2}, tool_call_id='bar'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def foo(x: int) -> int:
+        return x * 2
+
+    @toolset.tool
+    def bar(x: int) -> int:
+        return x * 3
+
+    toolset = toolset.approval_required(lambda ctx, tool_def: tool_def.name == 'foo')
+
+    agent = Agent(FunctionModel(llm), toolsets=[toolset], output_type=[str, DeferredToolRequests])
+
+    result = await agent.run('foo')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='foo',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo'),
+                    ToolCallPart(tool_name='bar', args={'x': 2}, tool_call_id='bar'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content=6,
+                        tool_call_id='bar',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id=IsStr())])
+    )
+
+    result = await agent.run(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={
+                'foo': True,
+            },
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='foo',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo'),
+                    ToolCallPart(tool_name='bar', args={'x': 2}, tool_call_id='bar'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='foo',
+                        content=2,
+                        tool_call_id='foo',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content=6,
+                        tool_call_id='bar',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=53, output_tokens=9),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('Done!')
