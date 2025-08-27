@@ -49,7 +49,7 @@ class TemporalStreamedResponse(StreamedResponse):
         return self.response
 
     def usage(self) -> RequestUsage:
-        return self.response.usage  # pragma: no cover
+        return self.response.usage
 
     @property
     def model_name(self) -> str:
@@ -57,11 +57,11 @@ class TemporalStreamedResponse(StreamedResponse):
 
     @property
     def provider_name(self) -> str:
-        return self.response.provider_name or ''  # pragma: no cover
+        return self.response.provider_name or ''
 
     @property
     def timestamp(self) -> datetime:
-        return self.response.timestamp  # pragma: no cover
+        return self.response.timestamp
 
 
 class TemporalModel(WrapperModel):
