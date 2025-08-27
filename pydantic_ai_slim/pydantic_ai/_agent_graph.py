@@ -30,6 +30,7 @@ from .tools import (
     ToolApproved,
     ToolDefinition,
     ToolDenied,
+    ToolKind,
 )
 
 if TYPE_CHECKING:
@@ -85,11 +86,6 @@ class GraphAgentState:
     usage: _usage.RunUsage
     retries: int
     run_step: int
-
-    @property
-    def is_resuming_run_with_deferred_tool_calls(self) -> bool:
-        """Whether we are resuming a previous run that ended with deferred tool calls that we now have results for."""
-        return self.run_step == 0
 
     def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
         self.retries += 1
@@ -581,28 +577,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
-        tool_call_ids_with_results: set[str] = set()
         async for event in process_function_tools(
             ctx.deps.tool_manager, tool_calls, None, ctx, output_parts, output_final_result
         ):
-            if isinstance(event, _messages.FunctionToolResultEvent):
-                tool_call_ids_with_results.add(event.result.tool_call_id)
-
             yield event
 
         if output_final_result:
             final_result = output_final_result[0]
-            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
-        elif (
-            tool_calls_without_results := [
-                call for call in tool_calls if call.tool_call_id not in tool_call_ids_with_results
-            ]
-        ) and (deferred_tool_requests := ctx.deps.tool_manager.get_deferred_tool_requests(tool_calls_without_results)):
-            if not ctx.deps.output_schema.allows_deferred_tool_requests:
-                raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-                )
-            final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
             self._next_node = self._handle_final_result(ctx, final_result, output_parts)
         else:
             instructions = await ctx.deps.get_instructions(run_context)
@@ -663,6 +644,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
+        resuming_after_deferred_tool_calls=ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None,
     )
 
 
@@ -687,20 +669,11 @@ async def process_function_tools(  # noqa: C901
 
     Because async iterators can't have return values, we use `output_parts` and `output_final_result` as output arguments.
     """
-    tool_calls_by_kind: dict[Literal['output', 'function', 'deferred', 'unknown'], list[_messages.ToolCallPart]] = (
-        defaultdict(list)
-    )
+    tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
     for call in tool_calls:
         tool_def = tool_manager.get_tool_def(call.tool_name)
         if tool_def:
-            if tool_def.defer:
-                kind = 'deferred'
-            elif tool_def.kind == 'output':
-                kind = 'output'
-            elif tool_def.kind == 'function':
-                kind = 'function'
-            else:
-                raise ValueError(f'Unknown tool kind: {tool_def.kind}')  # pragma: no cover
+            kind = tool_def.kind
         else:
             kind = 'unknown'
         tool_calls_by_kind[kind].append(call)
@@ -766,11 +739,12 @@ async def process_function_tools(  # noqa: C901
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     deferred_tool_results: dict[str, DeferredToolResult] = {}
-    if ctx.state.is_resuming_run_with_deferred_tool_calls and ctx.deps.tool_call_results is not None:
+    if build_run_context(ctx).resuming_after_deferred_tool_calls and ctx.deps.tool_call_results is not None:
         deferred_tool_results = ctx.deps.tool_call_results
 
         # Deferred tool calls are "run" as well, by reading their value from the tool call results
-        calls_to_run.extend(tool_calls_by_kind['deferred'])
+        calls_to_run.extend(tool_calls_by_kind['external'])
+        calls_to_run.extend(tool_calls_by_kind['unapproved'])
 
         result_tool_call_ids = set(deferred_tool_results.keys())
         tool_call_ids_to_run = {call.tool_call_id for call in calls_to_run}
@@ -780,16 +754,23 @@ async def process_function_tools(  # noqa: C901
                 f'Expected: {tool_call_ids_to_run}, got: {result_tool_call_ids}'
             )
 
+    deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
+
     if calls_to_run:
         async for event in _call_tools(
-            tool_manager, calls_to_run, deferred_tool_results, ctx.deps.tracer, output_parts
+            tool_manager,
+            calls_to_run,
+            deferred_tool_results,
+            ctx.deps.tracer,
+            output_parts,
+            deferred_calls,
         ):
             yield event
 
     # Finally, we handle deferred tool calls (unless they were already included in the run because results were provided)
     if not deferred_tool_results:
-        for call in tool_calls_by_kind['deferred']:
-            if final_result:
+        if final_result:
+            for call in [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]:
                 output_parts.append(
                     _messages.ToolReturnPart(
                         tool_name=call.tool_name,
@@ -797,8 +778,26 @@ async def process_function_tools(  # noqa: C901
                         tool_call_id=call.tool_call_id,
                     )
                 )
-            else:
+        else:
+            for call in tool_calls_by_kind['external']:
+                deferred_calls['external'].append(call)
                 yield _messages.FunctionToolCallEvent(call)
+
+            for call in tool_calls_by_kind['unapproved']:
+                deferred_calls['unapproved'].append(call)
+                yield _messages.FunctionToolCallEvent(call)
+
+    if not final_result and deferred_calls:
+        if not ctx.deps.output_schema.allows_deferred_tool_requests:
+            raise exceptions.UserError(
+                'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+            )
+        deferred_tool_requests = _output.DeferredToolRequests(
+            calls=deferred_calls['external'],
+            approvals=deferred_calls['unapproved'],
+        )
+
+        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
 
     if final_result:
         output_final_result.append(final_result)
@@ -810,6 +809,7 @@ async def _call_tools(
     deferred_tool_results: dict[str, DeferredToolResult],
     tracer: Tracer,
     output_parts: list[_messages.ModelRequestPart],
+    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
@@ -838,12 +838,18 @@ async def _call_tools(
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
                 index = tasks.index(task)
-                tool_part, tool_user_part = task.result()
-                yield _messages.FunctionToolResultEvent(tool_part)
+                try:
+                    tool_part, tool_user_part = task.result()
+                except exceptions.CallDeferred:
+                    output_deferred_calls['external'].append(tool_calls[index])
+                except exceptions.ApprovalRequired:
+                    output_deferred_calls['unapproved'].append(tool_calls[index])
+                else:
+                    yield _messages.FunctionToolResultEvent(tool_part)
 
-                tool_parts_by_index[index] = tool_part
-                if tool_user_part:
-                    user_parts_by_index[index] = tool_user_part
+                    tool_parts_by_index[index] = tool_part
+                    if tool_user_part:
+                        user_parts_by_index[index] = tool_user_part
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing

@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 __all__ = (
     'ModelRetry',
+    'CallDeferred',
+    'ApprovalRequired',
     'UserError',
     'AgentRunError',
     'UnexpectedModelBehavior',
@@ -35,6 +37,18 @@ class ModelRetry(Exception):
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+
+class CallDeferred(Exception):
+    """TODO: Docstring."""
+
+    pass
+
+
+class ApprovalRequired(Exception):
+    """TODO: Docstring."""
+
+    pass
 
 
 class UserError(RuntimeError):

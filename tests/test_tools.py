@@ -13,7 +13,7 @@ from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolRequests, ToolOutput
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition
 from pydantic_ai.toolsets.external import ExternalToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -1261,17 +1261,12 @@ def test_tool_retries():
     assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
 
 
-def test_deferred_tool():
-    deferred_toolset = ExternalToolset(
-        [
-            ToolDefinition(
-                name='my_tool',
-                description='',
-                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
-            ),
-        ]
-    )
-    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests], toolsets=[deferred_toolset])
+def test_tool_raises_call_deferred():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
@@ -1279,6 +1274,76 @@ def test_deferred_tool():
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
         )
     )
+
+
+def test_tool_raises_approval_required():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.resuming_after_deferred_tool_calls:
+            raise ApprovalRequired
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')])
+    )
+
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved(override_args={'x': 2})}),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=84,
+                        tool_call_id='my_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('Done!')
 
 
 def test_deferred_tool_with_output_type():
@@ -1387,12 +1452,9 @@ def test_parallel_tool_return_with_deferred():
         else:
             raise ModelRetry(f'Unknown fruit: {fruit}')
 
-    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
-        return replace(tool_def, kind='external')
-
-    @agent.tool_plain(prepare=defer)
+    @agent.tool_plain
     def buy(fruit: str):
-        pass
+        raise CallDeferred
 
     result = agent.run_sync('What do an apple, a banana, a pear and a grape cost? Also buy me a pear.')
 
@@ -1580,7 +1642,7 @@ def test_deferred_tool_call_approved_fails():
 
     @agent.tool_plain(prepare=defer)
     def foo(x: int) -> None:
-        pass
+        raise CallDeferred
 
     result = agent.run_sync('foo')
     assert result.output == snapshot(

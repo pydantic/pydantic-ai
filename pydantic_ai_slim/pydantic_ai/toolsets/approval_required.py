@@ -18,7 +18,7 @@ class ApprovalRequiredToolset(WrapperToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return {
             name: replace(tool, tool_def=replace(tool.tool_def, kind='unapproved'))
-            if not ctx.is_resuming_run_with_deferred_tool_calls and self.approval_required_func(ctx, tool.tool_def)
+            if not ctx.resuming_after_deferred_tool_calls and self.approval_required_func(ctx, tool.tool_def)
             else tool
             for name, tool in (await super().get_tools(ctx)).items()
         }

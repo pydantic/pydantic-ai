@@ -452,8 +452,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
             node = first_node
             while True:
+                graph_ctx = agent_run.ctx
                 if self.is_model_request_node(node):
-                    graph_ctx = agent_run.ctx
                     async with node.stream(graph_ctx) as stream:
                         final_result_event = None
 
@@ -521,6 +521,17 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         await event_stream_handler(_agent_graph.build_run_context(agent_run.ctx), stream)
 
                 next_node = await agent_run.next(node)
+                if isinstance(next_node, End) and agent_run.result is not None:
+                    # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
+                    # if a tool function raised CallDeferred or ApprovalRequired.
+                    # In this case there's no response to stream, but we still let the user access the output etc as normal.
+                    yield StreamedRunResult(
+                        graph_ctx.state.message_history,
+                        graph_ctx.deps.new_message_index,
+                        run_result=agent_run.result,
+                    )
+                    yielded = True
+                    break
                 if not isinstance(next_node, _agent_graph.AgentNode):
                     raise exceptions.AgentRunError(  # pragma: no cover
                         'Should have produced a StreamedRunResult before getting here'
