@@ -414,7 +414,7 @@ def bedrock_provider():
         pytest.skip('boto3 is not installed')
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI', False):
@@ -440,7 +440,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
 
 
 @pytest.fixture()
-async def vertex_provider():  # pragma: lax no cover
+async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
     if not os.getenv('CI', False):
         pytest.skip('Requires properly configured local google vertex config to pass')
