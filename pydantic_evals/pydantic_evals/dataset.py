@@ -959,7 +959,7 @@ async def _run_task_and_evaluators(
             expected_output=case.expected_output,
         ) as case_span:
             context = case_span.context
-            if context is not None:
+            if context is not None:  # pragma: no branch
                 trace_id = f'{context.trace_id:032x}'
                 span_id = f'{context.span_id:016x}'
 
