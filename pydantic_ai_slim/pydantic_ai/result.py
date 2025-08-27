@@ -558,7 +558,7 @@ def _get_deferred_tool_requests(
             tool_def = tool_manager.get_tool_def(part.tool_name)
             if tool_def is not None:  # pragma: no branch
                 if tool_def.kind == 'unapproved':
-                    approvals.append(part)  # TODO: Coverage
+                    approvals.append(part)
                 elif tool_def.kind == 'external':
                     calls.append(part)
 

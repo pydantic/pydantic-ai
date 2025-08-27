@@ -1288,6 +1288,10 @@ async def test_deferred_tool_iter():
     def my_tool(x: int) -> int:
         return x + 1  # pragma: no cover
 
+    @agent.tool_plain(requires_approval=True)
+    def my_other_tool(x: int) -> int:
+        return x + 1  # pragma: no cover
+
     outputs: list[str | DeferredToolRequests] = []
     events: list[Any] = []
 
@@ -1308,6 +1312,7 @@ async def test_deferred_tool_iter():
         [
             DeferredToolRequests(
                 calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
             )
         ]
     )
@@ -1318,17 +1323,26 @@ async def test_deferred_tool_iter():
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
         ]
     )
 
 
-async def test_tool_raises_call_deferred_iter():
+async def test_tool_raises_call_deferred_approval_required_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain
     def my_tool(x: int) -> int:
         raise CallDeferred
+
+    @agent.tool_plain
+    def my_other_tool(x: int) -> int:
+        raise ApprovalRequired
 
     events: list[Any] = []
 
@@ -1349,7 +1363,12 @@ async def test_tool_raises_call_deferred_iter():
                 index=0,
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
             ),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
         ]
     )
 
@@ -1357,6 +1376,7 @@ async def test_tool_raises_call_deferred_iter():
     assert run.result.output == snapshot(
         DeferredToolRequests(
             calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
         )
     )
 
