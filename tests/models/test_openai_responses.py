@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -1087,5 +1088,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
     result = await agent.run('What is 2+2?')
 
     assert result.usage() == snapshot(
-        RunUsage(input_tokens=14, output_tokens=9, details={'reasoning_tokens': 0}, requests=1)
+        RunUsage(
+            input_tokens=14, output_tokens=9, details={'reasoning_tokens': 0}, requests=1, cost=Decimal('0.000125')
+        )
     )
