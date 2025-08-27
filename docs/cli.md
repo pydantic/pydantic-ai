@@ -108,3 +108,25 @@ async def main():
 ```
 
 _(You'll need to add `asyncio.run(main())` to run `main`)_
+
+### Message History
+
+Both `Agent.to_cli()` and `Agent.to_cli_sync()` support a `message_history` parameter, allowing you to continue an existing conversation or provide conversation context:
+
+```python {title="agent_with_history.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
+
+agent = Agent('openai:gpt-4.1')
+
+# Create some conversation history
+message_history: list[ModelMessage] = [
+    ModelRequest([UserPromptPart(content='What is 2+2?')]),
+    ModelResponse([TextPart(content='2+2 equals 4.')])
+]
+
+# Start CLI with existing conversation context
+agent.to_cli_sync(message_history=message_history)
+```
+
+The CLI will start with the provided conversation history, allowing the agent to refer back to previous exchanges and maintain context throughout the session.

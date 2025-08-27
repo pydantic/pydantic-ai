@@ -127,7 +127,7 @@ async def post_chat(
         messages = await database.get_messages()
         # run the agent with the user prompt and the chat history
         async with agent.run_stream(prompt, message_history=messages) as result:
-            async for text in result.stream(debounce_by=0.01):
+            async for text in result.stream_output(debounce_by=0.01):
                 # text here is a `str` and the frontend wants
                 # JSON encoded ModelResponse, so we create one
                 m = ModelResponse(parts=[TextPart(text)], timestamp=result.timestamp())

@@ -18,9 +18,9 @@ and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`A
 
     E.g. you've awaited one of the following coroutines:
 
-    * [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream]
+    * [`StreamedRunResult.stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output]
     * [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text]
-    * [`StreamedRunResult.stream_structured()`][pydantic_ai.result.StreamedRunResult.stream_structured]
+    * [`StreamedRunResult.stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses]
     * [`StreamedRunResult.get_output()`][pydantic_ai.result.StreamedRunResult.get_output]
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.

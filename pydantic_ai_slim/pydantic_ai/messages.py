@@ -111,7 +111,7 @@ class FileUrl(ABC):
     """
 
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
-        compare=False
+        compare=False, default=None
     )
 
     def __init__(
@@ -163,8 +163,16 @@ class VideoUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['video-url'] = 'video-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> VideoMediaType:
@@ -226,8 +234,16 @@ class AudioUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['audio-url'] = 'audio-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> AudioMediaType:
@@ -276,8 +292,16 @@ class ImageUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['image-url'] = 'image-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> ImageMediaType:
@@ -321,8 +345,16 @@ class DocumentUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['document-url'] = 'document-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> str:
