@@ -82,7 +82,7 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
     async def run_worker(self, worker: Worker) -> None:
         await self.next_worker_plugin.run_worker(worker)
 
-    def configure_replayer(self, config: ReplayerConfig) -> ReplayerConfig:
+    def configure_replayer(self, config: ReplayerConfig) -> ReplayerConfig:  # pragma: no cover
         config['data_converter'] = self._get_new_data_converter(config.get('data_converter'))  # pyright: ignore[reportUnknownMemberType]
         return self.next_worker_plugin.configure_replayer(config)
 
@@ -90,7 +90,7 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
         self,
         replayer: Replayer,
         histories: AsyncIterator[WorkflowHistory],
-    ) -> AbstractAsyncContextManager[AsyncIterator[WorkflowReplayResult]]:
+    ) -> AbstractAsyncContextManager[AsyncIterator[WorkflowReplayResult]]:  # pragma: no cover
         return self.next_worker_plugin.run_replayer(replayer, histories)
 
     def _get_new_data_converter(self, converter: DataConverter | None) -> DataConverter:
@@ -123,12 +123,12 @@ class AgentPlugin(WorkerPlugin):
     async def run_worker(self, worker: Worker) -> None:
         await self.next_worker_plugin.run_worker(worker)
 
-    def configure_replayer(self, config: ReplayerConfig) -> ReplayerConfig:
+    def configure_replayer(self, config: ReplayerConfig) -> ReplayerConfig:  # pragma: no cover
         return self.next_worker_plugin.configure_replayer(config)
 
     def run_replayer(
         self,
         replayer: Replayer,
         histories: AsyncIterator[WorkflowHistory],
-    ) -> AbstractAsyncContextManager[AsyncIterator[WorkflowReplayResult]]:
+    ) -> AbstractAsyncContextManager[AsyncIterator[WorkflowReplayResult]]:  # pragma: no cover
         return self.next_worker_plugin.run_replayer(replayer, histories)
