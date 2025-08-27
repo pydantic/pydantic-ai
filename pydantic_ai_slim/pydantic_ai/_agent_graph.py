@@ -87,6 +87,11 @@ class GraphAgentState:
     retries: int
     run_step: int
 
+    @property
+    def is_resuming_run_with_deferred_tool_calls(self) -> bool:
+        """Whether we are resuming a previous run that ended with deferred tool calls that we now have results for."""
+        return self.run_step == 0
+
     def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
         self.retries += 1
         if self.retries > max_result_retries:
@@ -686,13 +691,7 @@ async def process_function_tools(  # noqa: C901
     tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
     for call in tool_calls:
         tool_def = tool_manager.get_tool_def(call.tool_name)
-        if tool_def:
-            if tool_def.is_deferred:
-                kind = 'deferred'
-            else:
-                kind = tool_def.kind
-        else:
-            kind = 'unknown'
+        kind = ('deferred' if tool_def.defer else tool_def.kind) if tool_def else 'unknown'
         tool_calls_by_kind[kind].append(call)
 
     # First, we handle output tool calls
@@ -756,8 +755,7 @@ async def process_function_tools(  # noqa: C901
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     deferred_tool_results: dict[str, DeferredToolResult] = {}
-    # When resuming a run that ended on deferred tool calls, run_step will be 0
-    if ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None:
+    if ctx.state.is_resuming_run_with_deferred_tool_calls and ctx.deps.tool_call_results is not None:
         deferred_tool_results = ctx.deps.tool_call_results
 
         # Deferred tool calls are "run" as well, by reading their value from the tool call results

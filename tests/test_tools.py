@@ -1556,3 +1556,43 @@ def test_parallel_tool_return_with_deferred():
         ]
     )
     assert result.output == snapshot('Done!')
+
+
+def test_deferred_tool_call_approved_fails():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('foo', {'x': 0}, tool_call_id='foo'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        return replace(tool_def, kind='deferred')
+
+    @agent.tool_plain(prepare=defer)
+    def foo(x: int) -> None:
+        pass
+
+    result = agent.run_sync('foo')
+    assert result.output == snapshot(
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
+    )
+
+    with pytest.raises(RuntimeError, match='Deferred tools cannot be called'):
+        agent.run_sync(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(
+                approvals={
+                    'foo': True,
+                },
+            ),
+        )

@@ -106,6 +106,9 @@ class ToolManager(Generic[AgentDepsT]):
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
 
+            if tool.tool_def.defer:
+                raise RuntimeError('Deferred tools cannot be called')
+
             ctx = replace(
                 self.ctx,
                 tool_name=name,

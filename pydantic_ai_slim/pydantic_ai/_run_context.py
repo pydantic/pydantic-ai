@@ -47,4 +47,9 @@ class RunContext(Generic[AgentDepsT]):
     run_step: int = 0
     """The current step in the run."""
 
+    @property
+    def is_resuming_run_with_deferred_tool_calls(self) -> bool:
+        """Whether we are resuming a previous run that ended with deferred tool calls that we now have results for."""
+        return self.run_step == 0
+
     __repr__ = _utils.dataclasses_no_defaults_repr

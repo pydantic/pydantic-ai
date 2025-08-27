@@ -143,7 +143,7 @@ class ToolApproved:
 class ToolDenied:
     """TODO: Docstring."""
 
-    message: str
+    message: str = field(default='The tool call was denied.')
 
 
 DeferredToolApprovalResult: TypeAlias = Union[ToolApproved, ToolDenied]
@@ -360,8 +360,7 @@ class Tool(Generic[AgentDepsT]):
         """
         base_tool_def = self.tool_def
 
-        # When resuming a run that ended on deferred tool calls, run_step will be 0
-        if self.requires_approval and ctx.run_step > 0:
+        if self.requires_approval and not ctx.is_resuming_run_with_deferred_tool_calls:
             base_tool_def = replace(base_tool_def, kind='unapproved')
 
         if self.prepare is not None:
@@ -427,7 +426,7 @@ class ToolDefinition:
     """
 
     @property
-    def is_deferred(self) -> bool:
+    def defer(self) -> bool:
         return self.kind in ('deferred', 'unapproved')
 
     __repr__ = _utils.dataclasses_no_defaults_repr

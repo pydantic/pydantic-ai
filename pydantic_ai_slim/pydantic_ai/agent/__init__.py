@@ -618,7 +618,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        # TODO: It's kinda ugly to do this here
         tool_call_results: dict[str, DeferredToolResult] | None = None
         if deferred_tool_results is not None:
             tool_call_results = {}
@@ -626,8 +625,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 if approval is True:
                     approval = ToolApproved()
                 elif approval is False:
-                    approval = ToolDenied('The tool call was denied.')
+                    approval = ToolDenied()
                 tool_call_results[tool_call_id] = approval
+
             for tool_call_id, result in deferred_tool_results.calls.items():
                 if not isinstance(result, _utils.get_union_args(DeferredToolCallResult)):
                     result = _messages.ToolReturn(result)
