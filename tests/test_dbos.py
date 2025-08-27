@@ -96,17 +96,6 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
         Agent.instrument_all(False)
 
 
-# Automatically clean up old DBOS sqlite files
-@pytest.fixture(autouse=True, scope='module')
-def cleanup_test_sqlite_file() -> Iterator[None]:
-    if os.path.exists('dbostest.sqlite'):
-        os.remove('dbostest.sqlite')  # pragma: lax no cover
-    yield
-
-    if os.path.exists('dbostest.sqlite'):
-        os.remove('dbostest.sqlite')  # pragma: lax no cover
-
-
 @contextmanager
 def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
     """Helper for asserting that a DBOS workflow fails with the expected error."""
@@ -116,10 +105,11 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
     assert str(exc_info.value) == exc_message
 
 
+DBOS_SQLITE_FILE = 'dbostest.sqlite'
 DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
-    'database_url': 'sqlite:///dbostest.sqlite',
-    'system_database_url': 'sqlite:///dbostest.sqlite',
+    'database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
+    'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'run_admin_server': False,
 }
 
@@ -132,6 +122,17 @@ def dbos() -> Generator[DBOS, Any, None]:
         yield dbos
     finally:
         DBOS.destroy()
+
+
+# Automatically clean up old DBOS sqlite files
+@pytest.fixture(autouse=True, scope='module')
+def cleanup_test_sqlite_file() -> Iterator[None]:
+    if os.path.exists(DBOS_SQLITE_FILE):
+        os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
+    yield
+
+    if os.path.exists(DBOS_SQLITE_FILE):
+        os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
 
 
 model = OpenAIChatModel(
