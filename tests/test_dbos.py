@@ -4,11 +4,13 @@ import os
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 import pytest
 from httpx import AsyncClient
 from pydantic import BaseModel
+from typing_extensions import Literal
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
@@ -29,6 +31,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models.test import TestModel
 
 from .conftest import IsDatetime, IsStr
 
@@ -1077,3 +1080,82 @@ async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: No
 async def test_logfire_plugin():
     # Not a valid test for DBOS, as we don't need the LogfirePlugin.
     pass
+
+
+# Test dynamic toolsets in an agent with DBOS
+
+
+@DBOS.step()
+def temperature_celsius(city: str) -> float:
+    return 21.0
+
+
+@DBOS.step()
+def temperature_fahrenheit(city: str) -> float:
+    return 69.8
+
+
+weather_toolset = FunctionToolset(tools=[temperature_celsius, temperature_fahrenheit])
+
+
+@weather_toolset.tool
+@DBOS.step()
+def conditions(ctx: RunContext, city: str) -> str:
+    if ctx.run_step % 2 == 0:
+        return "It's sunny"  # pragma: lax no cover
+    else:
+        return "It's raining"
+
+
+datetime_toolset = FunctionToolset()
+
+
+@DBOS.step()
+def now_func() -> datetime:
+    return datetime.now()
+
+
+datetime_toolset.add_function(now_func, name='now')
+
+
+@dataclass
+class ToggleableDeps:
+    active: Literal['weather', 'datetime']
+
+    def toggle(self):
+        if self.active == 'weather':
+            self.active = 'datetime'
+        else:
+            self.active = 'weather'
+
+
+test_model = TestModel()
+dynamic_agent = Agent(name='dynamic_agent', model=test_model, deps_type=ToggleableDeps)
+
+
+@dynamic_agent.toolset  # type: ignore
+def toggleable_toolset(ctx: RunContext[ToggleableDeps]) -> FunctionToolset[None]:
+    if ctx.deps.active == 'weather':
+        return weather_toolset
+    else:
+        return datetime_toolset
+
+
+@dynamic_agent.tool
+def toggle(ctx: RunContext[ToggleableDeps]):
+    ctx.deps.toggle()
+
+
+dynamic_dbos_agent = DBOSAgent(dynamic_agent)
+
+
+def test_dynamic_toolset(dbos: DBOS):
+    weather_deps = ToggleableDeps('weather')
+
+    result = dynamic_dbos_agent.run_sync('Toggle the toolset', deps=weather_deps)
+    assert result.output == snapshot(
+        '{"toggle":null,"temperature_celsius":21.0,"temperature_fahrenheit":69.8,"conditions":"It\'s raining"}'
+    )
+
+    result = dynamic_dbos_agent.run_sync('Toggle the toolset', deps=weather_deps)
+    assert result.output == snapshot(IsStr(regex=r'{"toggle":null,"now":".+?"}'))
