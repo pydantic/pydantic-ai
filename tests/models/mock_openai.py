@@ -113,7 +113,7 @@ class MockOpenAIResponses:
         cls,
         stream: Sequence[MockResponseStreamEvent] | Sequence[Sequence[MockResponseStreamEvent]],
     ) -> AsyncOpenAI:
-        return cast(AsyncOpenAI, cls(stream=stream))
+        return cast(AsyncOpenAI, cls(stream=stream))  # pragma: lax no cover
 
     async def responses_create(  # pragma: lax no cover
         self, *_args: Any, stream: bool = False, **kwargs: Any
@@ -139,7 +139,7 @@ class MockOpenAIResponses:
 
 
 def get_mock_responses_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str, Any]]:
-    if isinstance(async_open_ai, MockOpenAIResponses):
+    if isinstance(async_open_ai, MockOpenAIResponses):  # pragma: lax no cover
         return async_open_ai.response_kwargs
     else:  # pragma: no cover
         raise RuntimeError('Not a MockOpenAIResponses instance')
