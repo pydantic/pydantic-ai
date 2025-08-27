@@ -3042,7 +3042,7 @@ def test_binary_content_serializable():
                                 'media_type': 'text/plain',
                                 'vendor_metadata': None,
                                 'kind': 'binary',
-                                'identifier': None,
+                                'identifier': 'f7ff9e',
                             },
                         ],
                         'timestamp': IsStr(),
@@ -3097,6 +3097,7 @@ def test_image_url_serializable():
                                 'force_download': False,
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
+                                'identifier': 'bdd86d',
                             },
                         ],
                         'timestamp': IsStr(),
@@ -3135,7 +3136,7 @@ def test_image_url_serializable():
 def test_tool_return_part_binary_content_serialization():
     """Test that ToolReturnPart can properly serialize BinaryContent."""
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
-    binary_content = BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
+    binary_content = BinaryContent(png_data, media_type='image/png')
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
@@ -3144,12 +3145,12 @@ def test_tool_return_part_binary_content_serialization():
     assert '"kind":"binary"' in response_str
     assert '"media_type":"image/png"' in response_str
     assert '"data":"' in response_str
-    assert '"identifier":"image_id_1"' in response_str
+    assert '"identifier":"14a01a"' in response_str
 
     response_obj = tool_return.model_response_object()
     assert response_obj['return_value']['kind'] == 'binary'
     assert response_obj['return_value']['media_type'] == 'image/png'
-    assert response_obj['return_value']['identifier'] == 'image_id_1'
+    assert response_obj['return_value']['identifier'] == '14a01a'
     assert 'data' in response_obj['return_value']
 
 
@@ -3233,8 +3234,6 @@ def test_tool_returning_file_url_with_identifier():
     @agent.tool_plain
     def get_files():
         """Return various file URLs with custom identifiers."""
-        from pydantic_ai.messages import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
-
         return [
             ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
             VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),

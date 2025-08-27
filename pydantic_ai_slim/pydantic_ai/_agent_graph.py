@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import hashlib
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -575,11 +574,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
-def multi_modal_content_identifier(identifier: bytes) -> str:
-    """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
-    return hashlib.sha1(identifier).hexdigest()[:6]
-
-
 async def process_function_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -764,18 +758,13 @@ async def _call_function_tool(
                     f'`ToolReturn` should be used directly.'
                 )
             elif isinstance(content, _messages.MultiModalContentTypes):
-                if isinstance(content, _messages.BinaryContent):
-                    identifier = content.identifier or multi_modal_content_identifier(content.data)
-                else:
-                    identifier = content.identifier
-
                 user_parts.append(
                     _messages.UserPromptPart(
-                        content=[f'This is file {identifier}:', content],
+                        content=[f'This is file {content.identifier}:', content],
                         part_kind='user-prompt',
                     )
                 )
-                return f'See file {identifier}'
+                return f'See file {content.identifier}'
 
             return content
 
