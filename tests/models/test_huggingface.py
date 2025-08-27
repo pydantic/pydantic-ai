@@ -555,7 +555,7 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {},
                 {'first': 'One'},
@@ -584,7 +584,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},

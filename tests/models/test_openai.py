@@ -518,7 +518,7 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {},
                 {'first': 'One'},
@@ -547,7 +547,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
@@ -573,7 +573,7 @@ async def test_stream_native_output(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
@@ -609,7 +609,7 @@ async def test_stream_tool_call_with_empty_text(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
@@ -640,7 +640,7 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {},
                 {'first': 'One'},
