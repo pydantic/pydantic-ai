@@ -251,8 +251,8 @@ class AudioUrl(FileUrl):
     ) -> None:
         super().__init__(
             url=url,
-            force_download=force_download,
             vendor_metadata=vendor_metadata,
+            force_download=force_download,
             media_type=media_type,
             identifier=identifier,
         )
