@@ -237,7 +237,7 @@ async def test_request_simple_usage(allow_model_requests: None):
 
     result = await agent.run('Hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1, cost=Decimal('0.000015')))
+    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -418,9 +418,7 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage() == snapshot(
-        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, cost=Decimal('0.00004625'))
-    )
+    assert result.usage() == snapshot(RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3))
 
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']

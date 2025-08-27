@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -88,6 +89,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
             input_tokens=7,
             output_tokens=11,
             details={'text_prompt_tokens': 7, 'text_candidates_tokens': 11},
+            cost=Decimal('0.000003825'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -149,6 +151,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             input_tokens=224,
             output_tokens=35,
             details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
+            cost=Decimal('0.000015525'),
         )
     )
     assert result.all_messages() == snapshot(

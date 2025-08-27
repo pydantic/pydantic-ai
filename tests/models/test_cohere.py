@@ -4,6 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timezone
+from decimal import Decimal
 from typing import Any, Union, cast
 
 import pytest
@@ -158,6 +159,7 @@ async def test_request_simple_usage(allow_model_requests: None):
                 'input_tokens': 1,
                 'output_tokens': 1,
             },
+            cost=Decimal('1.875E-7'),
         )
     )
 

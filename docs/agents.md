@@ -563,7 +563,7 @@ result_sync = agent.run_sync(
 print(result_sync.output)
 #> Rome
 print(result_sync.usage())
-#> RunUsage(input_tokens=62, output_tokens=1, requests=1)
+#> RunUsage(input_tokens=62, output_tokens=1, requests=1, cost=Decimal('0.000201'))
 
 try:
     result_sync = agent.run_sync(

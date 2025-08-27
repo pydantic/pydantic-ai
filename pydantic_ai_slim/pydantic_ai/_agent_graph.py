@@ -351,12 +351,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # If we can't calculate the price, we don't want to fail the run.
         with suppress(LookupError):
-            ctx.state.usage.cost += calc_price(
-                model_response.usage,
-                ctx.deps.model.model_name,
-                provider_id=model_response.provider_name,
-                genai_request_timestamp=model_response.timestamp,
-            ).total_price
+            ctx.state.usage.cost = model_response.price().total_price
 
         return self._finish_handling(ctx, model_response)
 
