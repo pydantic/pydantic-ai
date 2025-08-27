@@ -813,6 +813,7 @@ async def _call_tools(
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
+    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
 
     for call in tool_calls:
         yield _messages.FunctionToolCallEvent(call)
@@ -841,9 +842,9 @@ async def _call_tools(
                 try:
                     tool_part, tool_user_part = task.result()
                 except exceptions.CallDeferred:
-                    output_deferred_calls['external'].append(tool_calls[index])
+                    deferred_calls_by_index[index] = 'external'
                 except exceptions.ApprovalRequired:
-                    output_deferred_calls['unapproved'].append(tool_calls[index])
+                    deferred_calls_by_index[index] = 'unapproved'
                 else:
                     yield _messages.FunctionToolResultEvent(tool_part)
 
@@ -858,6 +859,9 @@ async def _call_tools(
 
     for k in sorted(user_parts_by_index):
         output_parts.append(user_parts_by_index[k])
+
+    for k in sorted(deferred_calls_by_index):
+        output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])
 
 
 async def _call_tool(  # noqa: C901

@@ -1531,9 +1531,9 @@ def test_parallel_tool_return_with_deferred():
         DeferredToolRequests(
             calls=[
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
-                ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
             ],
         )
     )
