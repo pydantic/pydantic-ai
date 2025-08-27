@@ -873,8 +873,7 @@ def mcp_server_discriminator(value: dict[str, Any]) -> str | None:
     if 'url' in value:
         if value['url'].endswith('/sse'):
             return 'sse'
-        else:
-            return 'streamable-http'
+        return 'streamable-http'
     return 'stdio'
 
 
