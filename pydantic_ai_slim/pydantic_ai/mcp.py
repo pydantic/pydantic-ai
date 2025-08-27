@@ -10,12 +10,14 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -508,6 +510,22 @@ class MCPServerStdio(MCPServer):
             id=id,
         )
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            lambda dct: MCPServerStdio(**dct),
+            core_schema.typed_dict_schema(
+                {
+                    'command': core_schema.typed_dict_field(core_schema.str_schema()),
+                    'args': core_schema.typed_dict_field(core_schema.list_schema(core_schema.str_schema())),
+                    'env': core_schema.typed_dict_field(
+                        core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()),
+                        required=False,
+                    ),
+                }
+            ),
+        )
+
     @asynccontextmanager
     async def client_streams(
         self,
@@ -744,6 +762,13 @@ class MCPServerSSE(_MCPServerHTTP):
     2. This will connect to a server running on `localhost:3001`.
     """
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            lambda dct: MCPServerSSE(**dct),
+            core_schema.typed_dict_schema({'url': core_schema.typed_dict_field(core_schema.str_schema())}),
+        )
+
     @property
     def _transport_client(self):
         return sse_client  # pragma: no cover
@@ -802,6 +827,13 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     ```
     """
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            lambda dct: MCPServerStreamableHTTP(**dct),
+            core_schema.typed_dict_schema({'url': core_schema.typed_dict_field(core_schema.str_schema())}),
+        )
+
     @property
     def _transport_client(self):
         return streamablehttp_client  # pragma: no cover
@@ -835,3 +867,37 @@ It accepts a run context, the original tool call function, a tool name, and argu
 Allows wrapping an MCP server tool call to customize it, including adding extra request
 metadata.
 """
+
+
+def mcp_server_discriminator(value: dict[str, Any]) -> str | None:
+    if 'url' in value:
+        if value['url'].endswith('/sse'):
+            return 'sse'
+        else:
+            return 'streamable-http'
+    return 'stdio'
+
+
+class MCPServerConfig(BaseModel):
+    mcp_servers: Annotated[
+        dict[
+            str,
+            Annotated[
+                Annotated[MCPServerStdio, Tag('stdio')]
+                | Annotated[MCPServerStreamableHTTP, Tag('streamable-http')]
+                | Annotated[MCPServerSSE, Tag('sse')],
+                Discriminator(mcp_server_discriminator),
+            ],
+        ],
+        Field(alias='mcpServers'),
+    ]
+
+
+def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
+    config_path = Path(config_path)
+
+    if not config_path.exists():
+        raise FileNotFoundError(f'Config file {config_path} not found')
+
+    config = MCPServerConfig.model_validate_json(config_path.read_bytes())
+    return list(config.mcp_servers.values())
