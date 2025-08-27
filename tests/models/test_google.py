@@ -151,7 +151,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             input_tokens=224,
             output_tokens=35,
             details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
-            cost=Decimal('0.000015525'),
+            cost=Decimal('0.000027300'),
         )
     )
     assert result.all_messages() == snapshot(

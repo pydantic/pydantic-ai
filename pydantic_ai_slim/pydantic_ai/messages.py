@@ -15,10 +15,7 @@ from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUs
 from typing_extensions import TypeAlias, deprecated
 
 from . import _otel_messages, _utils
-from ._utils import (
-    generate_tool_call_id as _generate_tool_call_id,
-    now_utc as _now_utc,
-)
+from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
@@ -941,8 +938,8 @@ class ModelResponse:
     provider_request_id: str | None = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
-    def price(self) -> genai_types.PriceCalculation:
-        """Calculate the price of the usage.
+    def cost(self) -> genai_types.PriceCalculation:
+        """Calculate the cost of the usage.
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """

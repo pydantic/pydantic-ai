@@ -784,7 +784,9 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6, cost=Decimal('6.75E-7')))
+    assert result.usage() == snapshot(
+        RunUsage(requests=3, input_tokens=3, output_tokens=6, cost=Decimal('0.000002025'))
+    )
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):

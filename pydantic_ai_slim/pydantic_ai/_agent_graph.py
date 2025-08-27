@@ -3,14 +3,15 @@ from __future__ import annotations as _annotations
 import asyncio
 import dataclasses
 import hashlib
+import warnings
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
-from contextlib import asynccontextmanager, contextmanager, suppress
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
 
-from genai_prices import calc_price
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeGuard, TypeVar, assert_never
 
@@ -80,6 +81,7 @@ class GraphAgentState:
     usage: _usage.RunUsage
     retries: int
     run_step: int
+    ignore_warning_cost: bool
 
     def increment_retries(self, max_result_retries: int, error: BaseException | None = None) -> None:
         self.retries += 1
@@ -310,15 +312,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ) as streamed_response:
             self._did_stream = True
             ctx.state.usage.requests += 1
+            ctx.state.usage.cost += cost(streamed_response, ctx.state.ignore_warning_cost)
 
-            # If we can't calculate the price, we don't want to fail the run.
-            with suppress(LookupError):
-                ctx.state.usage.cost += calc_price(
-                    streamed_response.usage(),
-                    ctx.deps.model.model_name,
-                    provider_id=streamed_response.provider_name,
-                    genai_request_timestamp=streamed_response.timestamp,
-                ).total_price
             agent_stream = result.AgentStream[DepsT, T](
                 streamed_response,
                 ctx.deps.output_schema,
@@ -348,10 +343,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_settings, model_request_parameters, message_history, _ = await self._prepare_request(ctx)
         model_response = await ctx.deps.model.request(message_history, model_settings, model_request_parameters)
         ctx.state.usage.requests += 1
-
-        # If we can't calculate the price, we don't want to fail the run.
-        with suppress(LookupError):
-            ctx.state.usage.cost = model_response.price().total_price
+        ctx.state.usage.cost += cost(model_response, ctx.state.ignore_warning_cost)
 
         return self._finish_handling(ctx, model_response)
 
@@ -572,6 +564,24 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
         else:
             return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
+
+
+def cost(response: _messages.ModelResponse | models.StreamedResponse, ignore_warning_cost: bool) -> Decimal:
+    # If we can't calculate the price, we don't want to fail the run.
+    try:
+        cost = response.cost().total_price
+    except LookupError:
+        # NOTE(Marcelo): We can allow some kind of hook on the provider level, which we could retrieve via
+        # `ctx.deps.model.provider.calculate_cost`, but I'm not sure how would the API look like. Maybe a new parameter
+        # on the `Provider` classes, that parameter would be a callable that receives the same parameters as `genai_prices`.
+        if response.model_name not in ('test', 'function') and not ignore_warning_cost:
+            warnings.warn(
+                f'The costs with provider "{response.provider_name}" and model "{response.model_name}" '
+                "couldn't be calculated. Please report this on GitHub https://github.com/pydantic/genai-prices. "
+                'If you want to ignore this warning, please pass the `ignore_warning_cost=True` parameter to the `Agent`.'
+            )
+        return Decimal(0)
+    return cost
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
