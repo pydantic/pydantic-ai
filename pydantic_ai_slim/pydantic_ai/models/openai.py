@@ -1375,11 +1375,21 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             ).items()
             if isinstance(value, int)
         }
-        details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+        # Handle vLLM compatibility - some providers don't include token details
+        if getattr(response_usage, 'input_tokens_details', None) is not None:
+            cache_read_tokens = response_usage.input_tokens_details.cached_tokens
+        else:
+            cache_read_tokens = 0
+
+        if getattr(response_usage, 'output_tokens_details', None) is not None:
+            details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+        else:
+            details['reasoning_tokens'] = 0
+
         return usage.RequestUsage(
             input_tokens=response_usage.input_tokens,
             output_tokens=response_usage.output_tokens,
-            cache_read_tokens=response_usage.input_tokens_details.cached_tokens,
+            cache_read_tokens=cache_read_tokens,
             details=details,
         )
     else:

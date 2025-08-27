@@ -110,7 +110,9 @@ class FileUrl(ABC):
     - `GoogleModel`: `VideoUrl.vendor_metadata` is used as `video_metadata`: https://ai.google.dev/gemini-api/docs/video-understanding#customize-video-processing
     """
 
-    _media_type: str | None = field(init=False, repr=False, compare=False)
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+        compare=False, default=None
+    )
 
     def __init__(
         self,
@@ -124,6 +126,7 @@ class FileUrl(ABC):
         self.force_download = force_download
         self._media_type = media_type
 
+    @pydantic.computed_field
     @property
     def media_type(self) -> str:
         """Return the media type of the file, based on the URL or the provided `media_type`."""
@@ -160,8 +163,16 @@ class VideoUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['video-url'] = 'video-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> VideoMediaType:
@@ -223,8 +234,16 @@ class AudioUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['audio-url'] = 'audio-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> AudioMediaType:
@@ -273,8 +292,16 @@ class ImageUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['image-url'] = 'image-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> ImageMediaType:
@@ -318,8 +345,16 @@ class DocumentUrl(FileUrl):
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['document-url'] = 'document-url',
+        *,
+        # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
+        _media_type: str | None = None,
     ) -> None:
-        super().__init__(url=url, force_download=force_download, vendor_metadata=vendor_metadata, media_type=media_type)
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+        )
         self.kind = kind
 
     def _infer_media_type(self) -> str:
@@ -1263,13 +1298,10 @@ class FinalResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelResponseStreamEvent = Annotated[Union[PartStartEvent, PartDeltaEvent], pydantic.Discriminator('event_kind')]
-"""An event in the model response stream, either starting a new part or applying a delta to an existing one."""
-
-AgentStreamEvent = Annotated[
+ModelResponseStreamEvent = Annotated[
     Union[PartStartEvent, PartDeltaEvent, FinalResultEvent], pydantic.Discriminator('event_kind')
 ]
-"""An event in the agent stream."""
+"""An event in the model response stream, starting a new part, applying a delta to an existing one, or indicating the final result."""
 
 
 @dataclass(repr=False)
@@ -1338,3 +1370,7 @@ HandleResponseEvent = Annotated[
     Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
     pydantic.Discriminator('event_kind'),
 ]
+"""An event yielded when handling a model response, indicating tool calls and results."""
+
+AgentStreamEvent = Annotated[Union[ModelResponseStreamEvent, HandleResponseEvent], pydantic.Discriminator('event_kind')]
+"""An event in the agent stream: model response stream events and response-handling events."""

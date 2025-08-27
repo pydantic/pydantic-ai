@@ -34,7 +34,9 @@ from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
-    from mcp.types import CreateMessageRequestParams, ImageContent, TextContent
+    from mcp.client.session import ClientSession
+    from mcp.shared.context import RequestContext
+    from mcp.types import CreateMessageRequestParams, ElicitRequestParams, ElicitResult, ImageContent, TextContent
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
@@ -74,7 +76,7 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(16)
+        assert len(tools) == snapshot(17)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
@@ -122,7 +124,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(16)
+        assert len(tools) == snapshot(17)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -291,7 +293,7 @@ async def test_log_level_unset(run_context: RunContext[int]):
     assert server.log_level is None
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(16)
+        assert len(tools) == snapshot(17)
         assert tools[13].name == 'get_log_level'
 
         result = await server.direct_call_tool('get_log_level', {})
@@ -1260,3 +1262,40 @@ def test_map_from_mcp_params_model_response():
 def test_map_from_model_response():
     with pytest.raises(UnexpectedModelBehavior, match='Unexpected part type: ThinkingPart, expected TextPart'):
         map_from_model_response(ModelResponse(parts=[ThinkingPart(content='Thinking...')]))
+
+
+async def test_elicitation_callback_functionality(run_context: RunContext[int]):
+    """Test that elicitation callback is actually called and works."""
+    # Track callback execution
+    callback_called = False
+    callback_message = None
+    callback_response = 'Yes, proceed with the action'
+
+    async def mock_elicitation_callback(
+        context: RequestContext[ClientSession, Any, Any], params: ElicitRequestParams
+    ) -> ElicitResult:
+        nonlocal callback_called, callback_message
+        callback_called = True
+        callback_message = params.message
+        return ElicitResult(action='accept', content={'response': callback_response})
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], elicitation_callback=mock_elicitation_callback)
+
+    async with server:
+        # Call the tool that uses elicitation
+        result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+        # Verify the callback was called
+        assert callback_called, 'Elicitation callback should have been called'
+        assert callback_message == 'Should I continue?', 'Callback should receive the question'
+        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
+
+
+async def test_elicitation_callback_not_set(run_context: RunContext[int]):
+    """Test that elicitation fails when no callback is set."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+
+    async with server:
+        # Should raise an error when elicitation is attempted without callback
+        with pytest.raises(ModelRetry, match='Elicitation not supported'):
+            await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})

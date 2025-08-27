@@ -280,7 +280,7 @@ async def main():
 ```
 
 1. When you supply `http_client`, Pydantic AI re-uses this client for every
-   request.  Anything supported by **httpx** (`verify`, `cert`, custom
+   request. Anything supported by **httpx** (`verify`, `cert`, custom
    proxies, timeouts, etc.) therefore applies to all MCP traffic.
 
 ## MCP Sampling
@@ -318,7 +318,7 @@ Pydantic AI supports sampling as both a client and server. See the [server](./se
 
 Sampling is automatically supported by Pydantic AI agents when they act as a client.
 
-To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServerStdio.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.Agent.set_mcp_sampling_model] to set the agent's model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
+To be able to use sampling, an MCP server instance needs to have a [`sampling_model`][pydantic_ai.mcp.MCPServer.sampling_model] set. This can be done either directly on the server using the constructor keyword argument or the property, or by using [`agent.set_mcp_sampling_model()`][pydantic_ai.Agent.set_mcp_sampling_model] to set the agent's model or one specified as an argument as the sampling model on all MCP servers registered with that agent.
 
 Let's say we have an MCP server that wants to use sampling (in this case to generate an SVG as per the tool arguments).
 
@@ -380,7 +380,7 @@ async def main():
 
 _(This example is complete, it can be run "as is" with Python 3.10+)_
 
-You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MCPServerStdio.allow_sampling] when creating the server reference, e.g.:
+You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MCPServer.allow_sampling] when creating the server reference, e.g.:
 
 ```python {title="sampling_disallowed.py" hl_lines="6" py="3.10"}
 from pydantic_ai.mcp import MCPServerStdio
@@ -391,3 +391,143 @@ server = MCPServerStdio(
     allow_sampling=False,
 )
 ```
+
+## Elicitation
+
+In MCP, [elicitation](https://modelcontextprotocol.io/docs/concepts/elicitation) allows a server to request for [structured input](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) from the client for missing or additional context during a session.
+
+Elicitation let models essentially say "Hold on - I need to know X before i can continue" rather than requiring everything upfront or taking a shot in the dark.
+
+### How Elicitation works
+
+Elicitation introduces a new protocol message type called [`ElicitRequest`](https://modelcontextprotocol.io/specification/2025-06-18/schema#elicitrequest), which is sent from the server to the client when it needs additional information. The client can then respond with an [`ElicitResult`](https://modelcontextprotocol.io/specification/2025-06-18/schema#elicitresult) or an `ErrorData` message.
+
+Here's a typical interaction:
+
+- User makes a request to the MCP server (e.g. "Book a table at that Italian place")
+- The server identifies that it needs more information (e.g. "Which Italian place?", "What date and time?")
+- The server sends an `ElicitRequest` to the client asking for the missing information.
+- The client receives the request, presents it to the user (e.g. via a terminal prompt, GUI dialog, or web interface).
+- User provides the requested information, `decline` or `cancel` the request.
+- The client sends an `ElicitResult` back to the server with the user's response.
+- With the structured data, the server can continue processing the original request.
+
+This allows for a more interactive and user-friendly experience, especially for multi-staged workflows. Instead of requiring all information upfront, the server can ask for it as needed, making the interaction feel more natural.
+
+### Setting up Elicitation
+
+To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPServer.elicitation_callback] function when creating your MCP server instance:
+
+```python {title="restaurant_server.py" py="3.10"}
+from mcp.server.fastmcp import Context, FastMCP
+from pydantic import BaseModel, Field
+
+mcp = FastMCP(name='Restaurant Booking')
+
+
+class BookingDetails(BaseModel):
+    """Schema for restaurant booking information."""
+
+    restaurant: str = Field(description='Choose a restaurant')
+    party_size: int = Field(description='Number of people', ge=1, le=8)
+    date: str = Field(description='Reservation date (DD-MM-YYYY)')
+
+
+@mcp.tool()
+async def book_table(ctx: Context) -> str:
+    """Book a restaurant table with user input."""
+    # Ask user for booking details using Pydantic schema
+    result = await ctx.elicit(message='Please provide your booking details:', schema=BookingDetails)
+
+    if result.action == 'accept' and result.data:
+        booking = result.data
+        return f'✅ Booked table for {booking.party_size} at {booking.restaurant} on {booking.date}'
+    elif result.action == 'decline':
+        return 'No problem! Maybe another time.'
+    else:  # cancel
+        return 'Booking cancelled.'
+
+
+if __name__ == '__main__':
+    mcp.run(transport='stdio')
+```
+
+This server demonstrates elicitation by requesting structured booking details from the client when the `book_table` tool is called. Here's how to create a client that handles these elicitation requests:
+
+```python {title="client_example.py" py="3.10" requires="restaurant_server.py" test="skip"}
+import asyncio
+from typing import Any
+
+from mcp.client.session import ClientSession
+from mcp.shared.context import RequestContext
+from mcp.types import ElicitRequestParams, ElicitResult
+
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServerStdio
+
+
+async def handle_elicitation(
+    context: RequestContext[ClientSession, Any, Any],
+    params: ElicitRequestParams,
+) -> ElicitResult:
+    """Handle elicitation requests from MCP server."""
+    print(f'\n{params.message}')
+
+    if not params.requestedSchema:
+        response = input('Response: ')
+        return ElicitResult(action='accept', content={'response': response})
+
+    # Collect data for each field
+    properties = params.requestedSchema['properties']
+    data = {}
+
+    for field, info in properties.items():
+        description = info.get('description', field)
+
+        value = input(f'{description}: ')
+
+        # Convert to proper type based on JSON schema
+        if info.get('type') == 'integer':
+            data[field] = int(value)
+        else:
+            data[field] = value
+
+    # Confirm
+    confirm = input('\nConfirm booking? (y/n/c): ').lower()
+
+    if confirm == 'y':
+        print('Booking details:', data)
+        return ElicitResult(action='accept', content=data)
+    elif confirm == 'n':
+        return ElicitResult(action='decline')
+    else:
+        return ElicitResult(action='cancel')
+
+
+# Set up MCP server connection
+restaurant_server = MCPServerStdio(
+    command='python', args=['restaurant_server.py'], elicitation_callback=handle_elicitation
+)
+
+# Create agent
+agent = Agent('openai:gpt-4o', toolsets=[restaurant_server])
+
+
+async def main():
+    """Run the agent to book a restaurant table."""
+    async with agent:
+        result = await agent.run('Book me a table')
+        print(f'\nResult: {result.output}')
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+### Supported Schema Types
+
+MCP elicitation supports string, number, boolean, and enum types with flat object structures only. These limitations ensure reliable cross-client compatibility. See [supported schema types](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#supported-schema-types) for details.
+
+### Security
+
+MCP Elicitation requires careful handling - servers must not request sensitive information, and clients must implement user approval controls with clear explanations. See [security considerations](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#security-considerations) for details.
