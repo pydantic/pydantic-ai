@@ -125,18 +125,14 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
             self._client = openai_client
             return
 
-        # Use api_base if provided, otherwise use a generic base URL
-        # LiteLLM doesn't actually use this URL - it routes internally
-        base_url = api_base or 'https://api.litellm.ai/v1'
-
         # Create OpenAI client that will be used with LiteLLM's completion function
         # The actual API calls will be intercepted and routed through LiteLLM
         if http_client is not None:
             self._client = AsyncOpenAI(
-                base_url=base_url, api_key=api_key or 'litellm-placeholder', http_client=http_client
+                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
         else:
             http_client = cached_async_http_client(provider='litellm')
             self._client = AsyncOpenAI(
-                base_url=base_url, api_key=api_key or 'litellm-placeholder', http_client=http_client
+                base_url=api_base, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
