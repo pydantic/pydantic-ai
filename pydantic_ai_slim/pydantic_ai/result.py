@@ -376,7 +376,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of the response data.
         """
-        if self._run_result is not None:
+        if self._run_result is not None:  # TODO: Coverage
             yield self._run_result.output
             await self._marked_completed()
         elif self._stream_response is not None:
@@ -384,7 +384,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 yield output
             await self._marked_completed(self._stream_response.get())
         else:
-            raise ValueError('No stream response or run result provided')
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -399,7 +399,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        if self._run_result is not None:
+        if self._run_result is not None:  # TODO: Coverage
             if not isinstance(self._run_result.output, str):
                 raise exceptions.UserError('stream_text() can only be used with text responses')
             yield self._run_result.output
@@ -409,7 +409,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 yield text
             await self._marked_completed(self._stream_response.get())
         else:
-            raise ValueError('No stream response or run result provided')
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
     async def stream_structured(
@@ -431,7 +431,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of the structured response message and whether that is the last message.
         """
-        if self._run_result is not None:
+        if self._run_result is not None:  # TODO: Coverage
             model_response = cast(_messages.ModelResponse, self.all_messages()[-1])
             yield model_response, True
             await self._marked_completed()
@@ -445,7 +445,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
             await self._marked_completed(msg)
         else:
-            raise ValueError('No stream response or run result provided')
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
@@ -458,7 +458,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed(self._stream_response.get())
             return output
         else:
-            raise ValueError('No stream response or run result provided')
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
@@ -466,21 +466,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        if self._run_result is not None:
+        if self._run_result is not None:  # TODO: Coverage
             return self._run_result.usage()
         elif self._stream_response is not None:
             return self._stream_response.usage()
         else:
-            raise ValueError('No stream response or run result provided')
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
-        if self._run_result is not None:
+        if self._run_result is not None:  # TODO: Coverage
             return self._run_result.timestamp()
         elif self._stream_response is not None:
             return self._stream_response.timestamp()
         else:
-            raise ValueError('No stream response or run result provided')
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
@@ -492,12 +492,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
-        if self._run_result is not None:
+        if self._run_result is not None:  # TODO: Coverage
             return self._run_result.output
         elif self._stream_response is not None:
             return await self._stream_response.validate_response_output(message, allow_partial=allow_partial)
         else:
-            raise ValueError('No stream response or run result provided')
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         self.is_complete = True
@@ -553,9 +553,9 @@ def _get_deferred_tool_requests(
     for part in parts:
         if isinstance(part, _messages.ToolCallPart):
             tool_def = tool_manager.get_tool_def(part.tool_name)
-            if tool_def is not None:
+            if tool_def is not None:  # pragma: no branch
                 if tool_def.kind == 'unapproved':
-                    approvals.append(part)
+                    approvals.append(part)  # TODO: Coverage
                 elif tool_def.kind == 'external':
                     calls.append(part)
 

@@ -1429,7 +1429,10 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart('get_price', {'fruit': 'banana'}, tool_call_id='get_price_banana'),
                     ToolCallPart('get_price', {'fruit': 'pear'}, tool_call_id='get_price_pear'),
                     ToolCallPart('get_price', {'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart('buy', {'fruit': 'banana'}, tool_call_id='buy_banana'),
                     ToolCallPart('buy', {'fruit': 'pear'}, tool_call_id='buy_pear'),
+                    ToolCallPart('buy', {'fruit': 'grape'}, tool_call_id='buy_grape'),
                 ]
             )
         else:
@@ -1475,9 +1478,12 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
                     ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
                     ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=25),
+                usage=RequestUsage(input_tokens=68, output_tokens=40),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1523,7 +1529,12 @@ def test_parallel_tool_return_with_deferred():
     )
     assert result.output == snapshot(
         DeferredToolRequests(
-            calls=[ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear')],
+            calls=[
+                ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
+            ],
         )
     )
 
@@ -1531,10 +1542,22 @@ def test_parallel_tool_return_with_deferred():
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             calls={
+                'buy_apple': ModelRetry('Apples are not available'),
+                'buy_banana': ToolReturnPart(
+                    tool_name='buy',
+                    content='I bought a banana',
+                    tool_call_id='buy_banana',
+                    metadata={'fruit': 'banana', 'price': 100.0},
+                ),
                 'buy_pear': ToolReturn(
                     return_value=True,
                     content='I bought a pear',
                     metadata={'fruit': 'pear', 'price': 100.0},
+                ),
+                'buy_grape': ToolReturn(
+                    return_value=True,
+                    content='I bought a grape',
+                    metadata={'fruit': 'grape', 'price': 100.0},
                 ),
             },
         ),
@@ -1555,9 +1578,12 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
                     ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
                     ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=25),
+                usage=RequestUsage(input_tokens=68, output_tokens=40),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1589,11 +1615,31 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                     ),
+                    RetryPromptPart(
+                        content='Apples are not available',
+                        tool_name='buy',
+                        tool_call_id='buy_apple',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='buy',
+                        content='I bought a banana',
+                        tool_call_id='buy_banana',
+                        metadata={'fruit': 'banana', 'price': 100.0},
+                        timestamp=IsDatetime(),
+                    ),
                     ToolReturnPart(
                         tool_name='buy',
                         content=True,
                         tool_call_id='buy_pear',
                         metadata={'fruit': 'pear', 'price': 100.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='buy',
+                        content=True,
+                        tool_call_id='buy_grape',
+                        metadata={'fruit': 'grape', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1607,11 +1653,15 @@ def test_parallel_tool_return_with_deferred():
                         content='I bought a pear',
                         timestamp=IsDatetime(),
                     ),
+                    UserPromptPart(
+                        content='I bought a grape',
+                        timestamp=IsDatetime(),
+                    ),
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=113, output_tokens=26),
+                usage=RequestUsage(input_tokens=133, output_tokens=41),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1622,18 +1672,11 @@ def test_parallel_tool_return_with_deferred():
 
 def test_deferred_tool_call_approved_fails():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        if len(messages) == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart('foo', {'x': 0}, tool_call_id='foo'),
-                ]
-            )
-        else:
-            return ModelResponse(
-                parts=[
-                    TextPart('Done!'),
-                ]
-            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart('foo', {'x': 0}, tool_call_id='foo'),
+            ]
+        )
 
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
@@ -1641,8 +1684,8 @@ def test_deferred_tool_call_approved_fails():
         return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
-    def foo(x: int) -> None:
-        raise CallDeferred
+    def foo(x: int) -> int:
+        return x + 1  # pragma: no cover
 
     result = agent.run_sync('foo')
     assert result.output == snapshot(
@@ -1665,8 +1708,9 @@ async def test_approval_required_toolset():
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
-                    ToolCallPart('foo', {'x': 1}, tool_call_id='foo'),
-                    ToolCallPart('bar', {'x': 2}, tool_call_id='bar'),
+                    ToolCallPart('foo', {'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart('foo', {'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart('bar', {'x': 3}, tool_call_id='bar'),
                 ]
             )
         else:
@@ -1704,10 +1748,11 @@ async def test_approval_required_toolset():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo'),
-                    ToolCallPart(tool_name='bar', args={'x': 2}, tool_call_id='bar'),
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart(tool_name='bar', args={'x': 3}, tool_call_id='bar'),
                 ],
-                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1715,7 +1760,7 @@ async def test_approval_required_toolset():
                 parts=[
                     ToolReturnPart(
                         tool_name='bar',
-                        content=6,
+                        content=9,
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
                     )
@@ -1724,14 +1769,20 @@ async def test_approval_required_toolset():
         ]
     )
     assert result.output == snapshot(
-        DeferredToolRequests(approvals=[ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id=IsStr())])
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+            ]
+        )
     )
 
     result = await agent.run(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             approvals={
-                'foo': True,
+                'foo1': True,
+                'foo2': False,
             },
         ),
     )
@@ -1747,10 +1798,11 @@ async def test_approval_required_toolset():
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo'),
-                    ToolCallPart(tool_name='bar', args={'x': 2}, tool_call_id='bar'),
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart(tool_name='bar', args={'x': 3}, tool_call_id='bar'),
                 ],
-                usage=RequestUsage(input_tokens=51, output_tokens=8),
+                usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1759,12 +1811,18 @@ async def test_approval_required_toolset():
                     ToolReturnPart(
                         tool_name='foo',
                         content=2,
-                        tool_call_id='foo',
+                        tool_call_id='foo1',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='foo',
+                        content='The tool call was denied.',
+                        tool_call_id='foo2',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
                         tool_name='bar',
-                        content=6,
+                        content=9,
                         tool_call_id='bar',
                         timestamp=IsDatetime(),
                     ),
@@ -1772,7 +1830,7 @@ async def test_approval_required_toolset():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=53, output_tokens=9),
+                usage=RequestUsage(input_tokens=59, output_tokens=13),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),

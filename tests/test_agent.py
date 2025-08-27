@@ -3,7 +3,7 @@ import re
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Callable, Union
 
@@ -1827,6 +1827,7 @@ def test_run_with_history_new():
     assert result3.output == snapshot('{"ret_a":"a-apple"}')
     assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result3.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
+    assert result3.timestamp() == IsNow(tz=timezone.utc)
 
 
 def test_run_with_history_new_structured():
@@ -2321,6 +2322,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('regular_tool', {'x': 1}),
                     ToolCallPart('another_tool', {'y': 2}),
+                    ToolCallPart('deferred_tool', {'x': 3}),
                 ],
             )
 
@@ -2337,6 +2339,13 @@ class TestMultipleToolCalls:
             """Another tool that should not be called."""
             tool_called.append('another_tool')
             return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
 
         result = agent.run_sync('test early strategy')
         messages = result.all_messages()
@@ -2361,6 +2370,12 @@ class TestMultipleToolCalls:
                 ),
                 ToolReturnPart(
                     tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturnPart(
+                    tool_name='deferred_tool',
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
@@ -2417,6 +2432,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('final_result', {'value': 'second'}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
+                    ToolCallPart('deferred_tool', {'x': 4}),
                 ],
             )
 
@@ -2433,6 +2449,13 @@ class TestMultipleToolCalls:
             """Another tool that should be called."""
             tool_called.append('another_tool')
             return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
 
         result = agent.run_sync('test exhaustive strategy')
 
@@ -2455,8 +2478,13 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args={'x': 4},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
-                    usage=RequestUsage(input_tokens=53, output_tokens=23),
+                    usage=RequestUsage(input_tokens=53, output_tokens=27),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -2484,10 +2512,16 @@ class TestMultipleToolCalls:
                             tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                         ),
                         RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                     ]
                 ),
@@ -2506,6 +2540,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
+                    ToolCallPart('deferred_tool', {'x': 5}),
                 ],
             )
 
@@ -2522,6 +2557,13 @@ class TestMultipleToolCalls:
             """A tool that should not be called."""
             tool_called.append('another_tool')
             return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
 
         result = agent.run_sync('test early strategy with final result in middle')
 
@@ -2544,8 +2586,13 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args={'x': 5},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
-                    usage=RequestUsage(input_tokens=58, output_tokens=18),
+                    usage=RequestUsage(input_tokens=58, output_tokens=22),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -2570,10 +2617,16 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
                             tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
-                            timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                     ]
                 ),
