@@ -1,6 +1,6 @@
 import json
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -33,8 +33,12 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from ..parts_from_messages import part_types_from_messages
+from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_usage import ResponseUsage
+
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -1078,14 +1082,46 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     assert result.output == snapshot('4')
 
 
-async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None, openai_api_key: str):
-    # The VCR cassette was manually modified to remove the input_tokens_details and output_tokens_details fields.
-    provider = OpenAIProvider(api_key=openai_api_key)
-    model = OpenAIResponsesModel('gpt-4o', provider=provider)
+async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ],
+        # Intentionally use model_construct so that input_tokens_details and output_tokens_details will not be set.
+        usage=ResponseUsage.model_construct(input_tokens=14, output_tokens=1, total_tokens=15),
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
 
     agent = Agent(model=model)
     result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='4')],
+                usage=RequestUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_request_id='123',
+            ),
+        ]
+    )
 
     assert result.usage() == snapshot(
-        RunUsage(input_tokens=14, output_tokens=9, details={'reasoning_tokens': 0}, requests=1)
+        RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
     )
