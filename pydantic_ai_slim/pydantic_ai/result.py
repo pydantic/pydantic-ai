@@ -376,7 +376,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of the response data.
         """
-        if self._run_result is not None:  # TODO: Coverage
+        if self._run_result is not None:
             yield self._run_result.output
             await self._marked_completed()
         elif self._stream_response is not None:
@@ -399,7 +399,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        if self._run_result is not None:  # TODO: Coverage
+        if self._run_result is not None:  # pragma: no cover
+            # We can't really get here, as `_run_result` is only set in `run_stream` when `CallToolsNode` produces `DeferredToolRequests` output
+            # as a result of a tool function raising `CallDeferred` or `ApprovalRequired`.
+            # That'll change if we ever support something like `raise EndRun(output: OutputT)` where `OutputT` could be `str`.
             if not isinstance(self._run_result.output, str):
                 raise exceptions.UserError('stream_text() can only be used with text responses')
             yield self._run_result.output
@@ -431,7 +434,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of the structured response message and whether that is the last message.
         """
-        if self._run_result is not None:  # TODO: Coverage
+        if self._run_result is not None:
             model_response = cast(_messages.ModelResponse, self.all_messages()[-1])
             yield model_response, True
             await self._marked_completed()
@@ -466,7 +469,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        if self._run_result is not None:  # TODO: Coverage
+        if self._run_result is not None:
             return self._run_result.usage()
         elif self._stream_response is not None:
             return self._stream_response.usage()
@@ -475,7 +478,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
-        if self._run_result is not None:  # TODO: Coverage
+        if self._run_result is not None:
             return self._run_result.timestamp()
         elif self._stream_response is not None:
             return self._stream_response.timestamp()
@@ -492,7 +495,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
-        if self._run_result is not None:  # TODO: Coverage
+        if self._run_result is not None:
             return self._run_result.output
         elif self._stream_response is not None:
             return await self._stream_response.validate_response_output(message, allow_partial=allow_partial)
