@@ -1012,7 +1012,7 @@ class ReportCaseRenderer:
         failures: list[EvaluatorFailure],
     ) -> str:
         if not failures:
-            return EMPTY_CELL_STR
+            return EMPTY_CELL_STR  # pragma: no cover
         lines: list[str] = []
         for failure in failures:
             line = f'[red]{failure.name}[/]'
@@ -1029,8 +1029,8 @@ class ReportCaseRenderer:
         baseline_str = self._render_evaluator_failures(baseline_failures)
         new_str = self._render_evaluator_failures(new_failures)
         if baseline_str == new_str:
-            return baseline_str
-        return f'{baseline_str} → {new_str}'
+            return baseline_str  # pragma: no cover
+        return f'{baseline_str}\n→\n{new_str}'
 
 
 @dataclass

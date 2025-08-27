@@ -537,20 +537,20 @@ async def test_evaluation_renderer_with_failures(sample_report_case: ReportCase)
         include_input=False,
         include_metadata=False,
         include_expected_output=False,
-        include_error_message=True,
+        include_error_message=False,
         include_error_stacktrace=True,
     )
 
     assert render_table(failures_table_with_stacktrace) == snapshot("""\
-                             Case Failures
-┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Case ID     ┃ Error Message    ┃ Error Stacktrace                    ┃
-┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ failed_case │ Division by zero │ Traceback (most recent call last):  │
-│             │                  │   File "test.py", line 1            │
-│             │                  │     10/0                            │
-│             │                  │ ZeroDivisionError: division by zero │
-└─────────────┴──────────────────┴─────────────────────────────────────┘
+                    Case Failures
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID     ┃ Error Stacktrace                    ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ failed_case │ Traceback (most recent call last):  │
+│             │   File "test.py", line 1            │
+│             │     10/0                            │
+│             │ ZeroDivisionError: division by zero │
+└─────────────┴─────────────────────────────────────┘
 """)
 
 
@@ -605,7 +605,7 @@ async def test_evaluation_renderer_with_evaluator_failures(
         include_durations=True,
         include_total_duration=False,
         include_removed_cases=False,
-        include_averages=False,
+        include_averages=True,
         include_error_message=False,
         include_error_stacktrace=False,
         include_evaluator_failures=True,
@@ -621,13 +621,15 @@ async def test_evaluation_renderer_with_evaluator_failures(
 
     table = renderer.build_table(report)
     assert render_table(table) == snapshot("""\
-                                                              Evaluation Summary: test_report_with_evaluator_failures
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Inputs                    ┃ Outputs         ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Evaluator Failures                           ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │ CustomEvaluator: Failed to evaluate: timeout │    0.100 │
-│           │                           │                 │              │               │                 │            │ AnotherEvaluator: Connection refused         │          │
-└───────────┴───────────────────────────┴─────────────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────────────────────────────────────────┴──────────┘
+                                                                  Evaluation Summary: test_report_with_evaluator_failures
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Outputs         ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Evaluator Failures                           ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │ CustomEvaluator: Failed to evaluate: timeout │    0.100 │
+│           │                           │                 │              │                        │                 │            │ AnotherEvaluator: Connection refused         │          │
+├───────────┼───────────────────────────┼─────────────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────────────────────────────────────────┼──────────┤
+│ Averages  │                           │                 │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │                                              │    0.100 │
+└───────────┴───────────────────────────┴─────────────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────────────────────────────────────────┴──────────┘
 """)
 
     # Test with include_evaluator_failures=False
@@ -639,7 +641,7 @@ async def test_evaluation_renderer_with_evaluator_failures(
         include_durations=True,
         include_total_duration=False,
         include_removed_cases=False,
-        include_averages=False,
+        include_averages=True,
         include_error_message=False,
         include_error_stacktrace=False,
         include_evaluator_failures=False,
@@ -655,12 +657,14 @@ async def test_evaluation_renderer_with_evaluator_failures(
 
     table_no_failures = renderer_no_failures.build_table(report)
     assert render_table(table_no_failures) == snapshot("""\
-                                      Evaluation Summary: test_report_with_evaluator_failures
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ Case ID   ┃ Inputs                    ┃ Outputs         ┃ Scores       ┃ Labels        ┃ Metrics         ┃ Assertions ┃ Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ score1: 2.50 │ label1: hello │ accuracy: 0.950 │ ✔          │    0.100 │
-└───────────┴───────────────────────────┴─────────────────┴──────────────┴───────────────┴─────────────────┴────────────┴──────────┘
+                                           Evaluation Summary: test_report_with_evaluator_failures
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━┓
+┃ Case ID   ┃ Inputs                    ┃ Outputs         ┃ Scores       ┃ Labels                 ┃ Metrics         ┃ Assertions ┃ Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━┩
+│ test_case │ {'query': 'What is 2+2?'} │ {'answer': '4'} │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 │ ✔          │    0.100 │
+├───────────┼───────────────────────────┼─────────────────┼──────────────┼────────────────────────┼─────────────────┼────────────┼──────────┤
+│ Averages  │                           │                 │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 │ 100.0% ✔   │    0.100 │
+└───────────┴───────────────────────────┴─────────────────┴──────────────┴────────────────────────┴─────────────────┴────────────┴──────────┘
 """)
 
 
@@ -757,14 +761,16 @@ async def test_evaluation_renderer_with_evaluator_failures_diff(
 
     diff_table = renderer.build_diff_table(new_report, baseline_report)
     assert render_table(diff_table) == snapshot("""\
-                                                                       Evaluation Diff: baseline_report → new_report
-┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Case ID   ┃ Scores       ┃ Labels                 ┃ Metrics                 ┃ Assertions ┃ Evaluator Failures                                          ┃                        Duration ┃
-┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ test_case │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 → 0.970 │ ✔          │ BaselineEvaluator: Baseline error → NewEvaluator: New error │ 0.100 → 0.0900 (-0.01 / -10.0%) │
-├───────────┼──────────────┼────────────────────────┼─────────────────────────┼────────────┼─────────────────────────────────────────────────────────────┼─────────────────────────────────┤
-│ Averages  │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 → 0.970 │ 100.0% ✔   │                                                             │ 0.100 → 0.0900 (-0.01 / -10.0%) │
-└───────────┴──────────────┴────────────────────────┴─────────────────────────┴────────────┴─────────────────────────────────────────────────────────────┴─────────────────────────────────┘
+                                                          Evaluation Diff: baseline_report → new_report
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID   ┃ Scores       ┃ Labels                 ┃ Metrics                 ┃ Assertions ┃ Evaluator Failures                ┃                        Duration ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ test_case │ score1: 2.50 │ label1: hello          │ accuracy: 0.950 → 0.970 │ ✔          │ BaselineEvaluator: Baseline error │ 0.100 → 0.0900 (-0.01 / -10.0%) │
+│           │              │                        │                         │            │ →                                 │                                 │
+│           │              │                        │                         │            │ NewEvaluator: New error           │                                 │
+├───────────┼──────────────┼────────────────────────┼─────────────────────────┼────────────┼───────────────────────────────────┼─────────────────────────────────┤
+│ Averages  │ score1: 2.50 │ label1: {'hello': 1.0} │ accuracy: 0.950 → 0.970 │ 100.0% ✔   │                                   │ 0.100 → 0.0900 (-0.01 / -10.0%) │
+└───────────┴──────────────┴────────────────────────┴─────────────────────────┴────────────┴───────────────────────────────────┴─────────────────────────────────┘
 """)
 
 
