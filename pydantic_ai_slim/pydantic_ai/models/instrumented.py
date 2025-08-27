@@ -236,6 +236,7 @@ class InstrumentationSettings:
             if response.provider_details and 'finish_reason' in response.provider_details:
                 output_message['finish_reason'] = response.provider_details['finish_reason']
             instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
+            system_instructions_attributes = self.system_instructions_attributes(instructions)
             attributes = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
                 'gen_ai.output.messages': json.dumps([output_message]),
@@ -245,17 +246,24 @@ class InstrumentationSettings:
                         'properties': {
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
-                            **({'gen_ai.system_instructions': {'type': 'array'}} if instructions else {}),
+                            **(
+                                {'gen_ai.system_instructions': {'type': 'array'}}
+                                if system_instructions_attributes
+                                else {}
+                            ),
                             'model_request_parameters': {'type': 'object'},
                         },
                     }
                 ),
             }
-            if instructions is not None and self.include_content:
-                attributes['gen_ai.system_instructions'] = json.dumps(
-                    [_otel_messages.TextPart(type='text', content=instructions)]
-                )
             span.set_attributes(attributes)
+
+    def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
+        if instructions and self.include_content:
+            return {
+                'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
+            }
+        return {}
 
     def _emit_events(self, span: Span, events: list[Event]) -> None:
         if self.event_mode == 'logs':

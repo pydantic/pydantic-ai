@@ -18,7 +18,6 @@ from pydantic_graph import Graph
 
 from .. import (
     _agent_graph,
-    _otel_messages,
     _output,
     _system_prompt,
     _utils,
@@ -688,11 +687,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             }
         else:
-            attrs = {'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(state.message_history))}
-            if settings.include_content and self._instructions:
-                attrs['gen_ai.system_instructions'] = json.dumps(
-                    [_otel_messages.TextPart(type='text', content=self._instructions)]
-                )
+            attrs = {
+                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(state.message_history)),
+                **settings.system_instructions_attributes(self._instructions),
+            }
 
         return {
             **usage.opentelemetry_attributes(),

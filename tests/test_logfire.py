@@ -816,7 +816,6 @@ def test_instructions_with_structured_output_exclude_content_v2(
                         'properties': {
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
-                            'gen_ai.system_instructions': {'type': 'array'},
                             'model_request_parameters': {'type': 'object'},
                         },
                     }
