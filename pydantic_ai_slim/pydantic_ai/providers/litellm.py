@@ -5,10 +5,21 @@ from typing import overload
 from httpx import AsyncClient as AsyncHTTPClient
 from openai import AsyncOpenAI
 
+from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles.amazon import amazon_model_profile
+from pydantic_ai.profiles.anthropic import anthropic_model_profile
+from pydantic_ai.profiles.cohere import cohere_model_profile
+from pydantic_ai.profiles.deepseek import deepseek_model_profile
+from pydantic_ai.profiles.google import google_model_profile
+from pydantic_ai.profiles.grok import grok_model_profile
+from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
-from pydantic_ai_slim.pydantic_ai.models import cached_async_http_client
 
 try:
     from openai import AsyncOpenAI
@@ -28,18 +39,45 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
 
     @property
     def base_url(self) -> str:
-        return self._base_url
+        return str(self.client.base_url)
 
     @property
     def client(self) -> AsyncOpenAI:
         return self._client
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
-        # For LiteLLM, we use a basic OpenAI profile since it's OpenAI-compatible
-        # Users can override this with their own profile if needed
-        profile = openai_model_profile(model_name)
+        # Map provider prefixes to their profile functions
+        provider_to_profile = {
+            'anthropic': anthropic_model_profile,
+            'openai': openai_model_profile,
+            'google': google_model_profile,
+            'mistralai': mistral_model_profile,
+            'mistral': mistral_model_profile,
+            'cohere': cohere_model_profile,
+            'amazon': amazon_model_profile,
+            'bedrock': amazon_model_profile,
+            'meta-llama': meta_model_profile,
+            'meta': meta_model_profile,
+            'groq': groq_model_profile,
+            'deepseek': deepseek_model_profile,
+            'moonshotai': moonshotai_model_profile,
+            'x-ai': grok_model_profile,
+            'qwen': qwen_model_profile,
+        }
 
-        # As LiteLLMProvider is used with OpenAIModel, which used to use OpenAIJsonSchemaTransformer,
+        profile = None
+
+        # Check if model name contains a provider prefix (e.g., "anthropic/claude-3")
+        if '/' in model_name:
+            provider_prefix, model_suffix = model_name.split('/', 1)
+            if provider_prefix in provider_to_profile:
+                profile = provider_to_profile[provider_prefix](model_suffix)
+
+        # If no profile found, default to OpenAI profile
+        if profile is None:
+            profile = openai_model_profile(model_name)
+
+        # As LiteLLMProvider is used with OpenAIModel, which uses OpenAIJsonSchemaTransformer,
         # we maintain that behavior
         return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
 
@@ -85,36 +123,20 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         """
         if openai_client is not None:
             self._client = openai_client
-            self._base_url = str(openai_client.base_url)
             return
-
-        # Set up LiteLLM configuration
-        if api_key:
-            # Store API key in LiteLLM's global config if needed
-            # LiteLLM will handle provider-specific API key names
-            pass
-
-        if custom_llm_provider:
-            # LiteLLM can auto-detect most providers, but this allows override
-            pass
 
         # Use api_base if provided, otherwise use a generic base URL
         # LiteLLM doesn't actually use this URL - it routes internally
-        self._base_url = api_base or 'https://api.litellm.ai/v1'
+        base_url = api_base or 'https://api.litellm.ai/v1'
 
         # Create OpenAI client that will be used with LiteLLM's completion function
         # The actual API calls will be intercepted and routed through LiteLLM
         if http_client is not None:
             self._client = AsyncOpenAI(
-                base_url=self._base_url, api_key=api_key or 'litellm-placeholder', http_client=http_client
+                base_url=base_url, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
         else:
             http_client = cached_async_http_client(provider='litellm')
             self._client = AsyncOpenAI(
-                base_url=self._base_url, api_key=api_key or 'litellm-placeholder', http_client=http_client
+                base_url=base_url, api_key=api_key or 'litellm-placeholder', http_client=http_client
             )
-
-        # Store configuration for LiteLLM
-        self._api_key = api_key
-        self._api_base = api_base
-        self._custom_llm_provider = custom_llm_provider
