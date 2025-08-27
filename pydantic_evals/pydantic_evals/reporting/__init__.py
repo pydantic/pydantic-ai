@@ -591,7 +591,7 @@ class _NumberRenderer:
             return None
 
         diff = new - old
-        if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):  # pragma: no cover
+        if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
             return None
         return self.diff_increase_style if diff > 0 else self.diff_decrease_style
 
