@@ -716,6 +716,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'openrouter',
         'together',
         'vercel',
+        'litellm',
     ):
         from .openai import OpenAIChatModel
 
