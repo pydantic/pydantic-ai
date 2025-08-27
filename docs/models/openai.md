@@ -563,3 +563,28 @@ result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ```
+
+### LiteLLM
+
+To use [LiteLLM](https://www.litellm.ai/), set the configs as outlined in the [doc](https://docs.litellm.ai/docs/set_keys). What specific configs you need to set depends on your setup. For example, if you are using a LiteLLM proxy server, then you need to set the `api_base` and `api_key` configs.
+
+Once you have the configs, use the [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] as follows:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.litellm import LiteLLMProvider
+
+model = OpenAIChatModel(
+    'openai/gpt-3.5-turbo',
+    provider=LiteLLMProvider(
+        api_base='<litellm-api-base-url>',
+        api_key='<litellm-api-key>'
+    )
+)
+agent = Agent(model)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+...
+```
