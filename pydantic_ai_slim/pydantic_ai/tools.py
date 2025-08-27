@@ -377,7 +377,7 @@ This type is used to define tools parameters (aka arguments) in [ToolDefinition]
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
 
-ToolKind: TypeAlias = Literal['function', 'output', 'deferred', 'unapproved']
+ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
 
 
@@ -420,13 +420,13 @@ class ToolDefinition:
 
     - `'function'`: a tool that will be executed by Pydantic AI during an agent run and has its result returned to the model
     - `'output'`: a tool that passes through an output value that ends the run
-    - `'deferred'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
+    - `'external'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
         When the model calls a deferred tool, the agent run ends with a `DeferredToolRequests` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
     # TODO: 'unapproved'
     """
 
     @property
     def defer(self) -> bool:
-        return self.kind in ('deferred', 'unapproved')
+        return self.kind in ('external', 'unapproved')
 
     __repr__ = _utils.dataclasses_no_defaults_repr

@@ -30,7 +30,6 @@ from .tools import (
     ToolApproved,
     ToolDefinition,
     ToolDenied,
-    ToolKind,
 )
 
 if TYPE_CHECKING:
@@ -688,10 +687,22 @@ async def process_function_tools(  # noqa: C901
 
     Because async iterators can't have return values, we use `output_parts` and `output_final_result` as output arguments.
     """
-    tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
+    tool_calls_by_kind: dict[Literal['output', 'function', 'deferred', 'unknown'], list[_messages.ToolCallPart]] = (
+        defaultdict(list)
+    )
     for call in tool_calls:
         tool_def = tool_manager.get_tool_def(call.tool_name)
-        kind = ('deferred' if tool_def.defer else tool_def.kind) if tool_def else 'unknown'
+        if tool_def:
+            if tool_def.defer:
+                kind = 'deferred'
+            elif tool_def.kind == 'output':
+                kind = 'output'
+            elif tool_def.kind == 'function':
+                kind = 'function'
+            else:
+                raise ValueError(f'Unknown tool kind: {tool_def.kind}')  # pragma: no cover
+        else:
+            kind = 'unknown'
         tool_calls_by_kind[kind].append(call)
 
     # First, we handle output tool calls

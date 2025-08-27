@@ -1174,7 +1174,7 @@ async def test_deferred_tool():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='deferred')
+        return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
     def my_tool(x: int) -> int:
@@ -1195,7 +1195,7 @@ async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='deferred')
+        return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
     def my_tool(x: int) -> int:

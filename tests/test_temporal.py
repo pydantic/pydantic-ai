@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import DeferredToolset, FunctionToolset
+from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 
 try:
     from temporalio import workflow
@@ -235,7 +235,7 @@ complex_agent = Agent(
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
         MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        DeferredToolset(tool_defs=[ToolDefinition(name='deferred')], id='deferred'),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
@@ -1002,9 +1002,9 @@ async def test_temporal_agent():
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
-    # Unwrapped 'deferred' toolset
-    assert isinstance(toolsets[4], DeferredToolset)
-    assert toolsets[4].id == 'deferred'
+    # Unwrapped 'external' toolset
+    assert isinstance(toolsets[4], ExternalToolset)
+    assert toolsets[4].id == 'external'
     assert toolsets[4] == complex_agent.toolsets[3]
 
     assert [

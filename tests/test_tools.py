@@ -29,7 +29,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolRequests, ToolOutput
 from pydantic_ai.tools import DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets.deferred import DeferredToolset
+from pydantic_ai.toolsets.external import ExternalToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
@@ -1262,7 +1262,7 @@ def test_tool_retries():
 
 
 def test_deferred_tool():
-    deferred_toolset = DeferredToolset(
+    deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
                 name='my_tool',
@@ -1285,7 +1285,7 @@ def test_deferred_tool_with_output_type():
     class MyModel(BaseModel):
         foo: str
 
-    deferred_toolset = DeferredToolset(
+    deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
                 name='my_tool',
@@ -1304,7 +1304,7 @@ def test_deferred_tool_with_tool_output_type():
     class MyModel(BaseModel):
         foo: str
 
-    deferred_toolset = DeferredToolset(
+    deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
                 name='my_tool',
@@ -1324,7 +1324,7 @@ def test_deferred_tool_with_tool_output_type():
 
 
 async def test_deferred_tool_without_output_type():
-    deferred_toolset = DeferredToolset(
+    deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
                 name='my_tool',
@@ -1388,7 +1388,7 @@ def test_parallel_tool_return_with_deferred():
             raise ModelRetry(f'Unknown fruit: {fruit}')
 
     async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
-        return replace(tool_def, kind='deferred')
+        return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
     def buy(fruit: str):
@@ -1576,7 +1576,7 @@ def test_deferred_tool_call_approved_fails():
     agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
-        return replace(tool_def, kind='deferred')
+        return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=defer)
     def foo(x: int) -> None:

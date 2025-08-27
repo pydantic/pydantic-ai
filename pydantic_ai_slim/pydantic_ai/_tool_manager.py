@@ -219,7 +219,7 @@ class ToolManager(Generic[AgentDepsT]):
                 if tool_def is not None:
                     if tool_def.kind == 'unapproved':
                         approvals.append(part)
-                    elif tool_def.kind == 'deferred':
+                    elif tool_def.kind == 'external':
                         calls.append(part)
 
         if not calls and not approvals:
