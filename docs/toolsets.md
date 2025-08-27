@@ -515,13 +515,13 @@ from typing import Union
 
 from pydantic_ai.output import DeferredToolRequests
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import DeferredToolset
+from pydantic_ai.toolsets import ExternalToolset
 from pydantic_ai.messages import ModelMessage
 
 def run_agent(
     messages: list[ModelMessage] = [], frontend_tools: list[ToolDefinition] = {}
 ) -> tuple[Union[PersonalizedGreeting, DeferredToolRequests], list[ModelMessage]]:
-    deferred_toolset = DeferredToolset(frontend_tools)
+    deferred_toolset = ExternalToolset(frontend_tools)
     result = agent.run_sync(
         toolsets=[deferred_toolset], # (1)!
         output_type=[agent.output_type, DeferredToolRequests], # (2)!
