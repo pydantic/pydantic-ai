@@ -551,12 +551,14 @@ def test_instructions_with_structured_output(
                     )
                 ),
                 'final_result': '{"content": "a"}',
+                'gen_ai.system_instructions': '[{"type": "text", "content": "Here are some instructions"}]',
                 'logfire.json_schema': IsJson(
                     snapshot(
                         {
                             'type': 'object',
                             'properties': {
                                 'pydantic_ai.all_messages': {'type': 'array'},
+                                'gen_ai.system_instructions': {'type': 'array'},
                                 'final_result': {'type': 'object'},
                             },
                         }

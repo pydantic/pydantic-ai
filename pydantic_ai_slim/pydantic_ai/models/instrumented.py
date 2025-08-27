@@ -251,7 +251,7 @@ class InstrumentationSettings:
                     }
                 ),
             }
-            if instructions is not None:
+            if instructions is not None and self.include_content:
                 attributes['gen_ai.system_instructions'] = json.dumps(
                     [_otel_messages.TextPart(type='text', content=instructions)]
                 )
