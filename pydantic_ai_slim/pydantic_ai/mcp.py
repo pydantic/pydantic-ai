@@ -869,7 +869,7 @@ metadata.
 """
 
 
-def mcp_server_discriminator(value: dict[str, Any]) -> str | None:
+def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:
     if 'url' in value:
         if value['url'].endswith('/sse'):
             return 'sse'
@@ -885,7 +885,7 @@ class MCPServerConfig(BaseModel):
                 Annotated[MCPServerStdio, Tag('stdio')]
                 | Annotated[MCPServerStreamableHTTP, Tag('streamable-http')]
                 | Annotated[MCPServerSSE, Tag('sse')],
-                Discriminator(mcp_server_discriminator),
+                Discriminator(_mcp_server_discriminator),
             ],
         ],
         Field(alias='mcpServers'),
