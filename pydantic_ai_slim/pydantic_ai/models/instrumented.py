@@ -240,6 +240,7 @@ class InstrumentationSettings:
             attributes = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
                 'gen_ai.output.messages': json.dumps([output_message]),
+                **system_instructions_attributes,
                 'logfire.json_schema': json.dumps(
                     {
                         'type': 'object',
