@@ -25,7 +25,6 @@ from .._run_context import RunContext
 from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
 from ..messages import (
-    AgentStreamEvent,
     FileUrl,
     FinalResultEvent,
     ModelMessage,
@@ -555,11 +554,11 @@ class StreamedResponse(ABC):
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
-    _event_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
+    _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
-    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
-        """Stream the response as an async iterable of [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s.
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This proxies the `_event_iterator()` and emits all events, while also checking for matches
         on the result schema and emitting a [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] if/when the
@@ -569,7 +568,7 @@ class StreamedResponse(ABC):
 
             async def iterator_with_final_event(
                 iterator: AsyncIterator[ModelResponseStreamEvent],
-            ) -> AsyncIterator[AgentStreamEvent]:
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
                 async for event in iterator:
                     yield event
                     if (

@@ -18,14 +18,13 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing_extensions import Self, assert_never, deprecated
 
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
 
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
     from mcp import types as mcp_types
-    from mcp.client.session import ClientSession, LoggingFnT
+    from mcp.client.session import ClientSession, ElicitationFnT, LoggingFnT
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
@@ -57,14 +56,49 @@ class MCPServer(AbstractToolset[Any], ABC):
     """
 
     tool_prefix: str | None
+    """A prefix to add to all tools that are registered with the server.
+
+    If not empty, will include a trailing underscore(`_`).
+
+    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
+    """
+
     log_level: mcp_types.LoggingLevel | None
+    """The log level to set when connecting to the server, if any.
+
+    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
+
+    If `None`, no log level will be set.
+    """
+
     log_handler: LoggingFnT | None
+    """A handler for logging messages from the server."""
+
     timeout: float
+    """The timeout in seconds to wait for the client to initialize."""
+
     read_timeout: float
+    """Maximum time in seconds to wait for new messages before timing out.
+
+    This timeout applies to the long-lived connection after it's established.
+    If no new messages are received within this time, the connection will be considered stale
+    and may be closed. Defaults to 5 minutes (300 seconds).
+    """
+
     process_tool_call: ProcessToolCallback | None
+    """Hook to customize tool calling and optionally pass extra metadata."""
+
     allow_sampling: bool
+    """Whether to allow MCP sampling through this client."""
+
     sampling_model: models.Model | None
+    """The model to use for sampling."""
+
     max_retries: int
+    """The maximum number of times to retry a tool call."""
+
+    elicitation_callback: ElicitationFnT | None = None
+    """Callback function to handle elicitation requests from the server."""
 
     _id: str | None
 
@@ -87,6 +121,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         allow_sampling: bool = True,
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
+        elicitation_callback: ElicitationFnT | None = None,
         *,
         id: str | None = None,
     ):
@@ -99,6 +134,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.allow_sampling = allow_sampling
         self.sampling_model = sampling_model
         self.max_retries = max_retries
+        self.elicitation_callback = elicitation_callback
 
         self._id = id or tool_prefix
 
@@ -247,6 +283,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                         read_stream=self._read_stream,
                         write_stream=self._write_stream,
                         sampling_callback=self._sampling_callback if self.allow_sampling else None,
+                        elicitation_callback=self.elicitation_callback,
                         logging_callback=self.log_handler,
                         read_timeout_seconds=timedelta(seconds=self.read_timeout),
                     )
@@ -404,46 +441,15 @@ class MCPServerStdio(MCPServer):
 
     # last fields are re-defined from the parent class so they appear as fields
     tool_prefix: str | None
-    """A prefix to add to all tools that are registered with the server.
-
-    If not empty, will include a trailing underscore(`_`).
-
-    e.g. if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
-    """
-
     log_level: mcp_types.LoggingLevel | None
-    """The log level to set when connecting to the server, if any.
-
-    See <https://modelcontextprotocol.io/specification/2025-03-26/server/utilities/logging#logging> for more details.
-
-    If `None`, no log level will be set.
-    """
-
     log_handler: LoggingFnT | None
-    """A handler for logging messages from the server."""
-
     timeout: float
-    """The timeout in seconds to wait for the client to initialize."""
-
     read_timeout: float
-    """Maximum time in seconds to wait for new messages before timing out.
-
-    This timeout applies to the long-lived connection after it's established.
-    If no new messages are received within this time, the connection will be considered stale
-    and may be closed. Defaults to 5 minutes (300 seconds).
-    """
-
     process_tool_call: ProcessToolCallback | None
-    """Hook to customize tool calling and optionally pass extra metadata."""
-
     allow_sampling: bool
-    """Whether to allow MCP sampling through this client."""
-
     sampling_model: models.Model | None
-    """The model to use for sampling."""
-
     max_retries: int
-    """The maximum number of times to retry a tool call."""
+    elicitation_callback: ElicitationFnT | None = None
 
     def __init__(
         self,
@@ -460,6 +466,7 @@ class MCPServerStdio(MCPServer):
         allow_sampling: bool = True,
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
+        elicitation_callback: ElicitationFnT | None = None,
         *,
         id: str | None = None,
     ):
@@ -479,6 +486,7 @@ class MCPServerStdio(MCPServer):
             allow_sampling: Whether to allow MCP sampling through this client.
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
+            elicitation_callback: Callback function to handle elicitation requests from the server.
             id: An optional unique ID for the MCP server. An MCP server needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the server's activities within the workflow.
         """
         self.command = command
@@ -496,6 +504,7 @@ class MCPServerStdio(MCPServer):
             allow_sampling,
             sampling_model,
             max_retries,
+            elicitation_callback,
             id=id,
         )
 
@@ -560,50 +569,15 @@ class _MCPServerHTTP(MCPServer):
 
     # last fields are re-defined from the parent class so they appear as fields
     tool_prefix: str | None
-    """A prefix to add to all tools that are registered with the server.
-
-    If not empty, will include a trailing underscore (`_`).
-
-    For example, if `tool_prefix='foo'`, then a tool named `bar` will be registered as `foo_bar`
-    """
-
     log_level: mcp_types.LoggingLevel | None
-    """The log level to set when connecting to the server, if any.
-
-    See <https://modelcontextprotocol.io/introduction#logging> for more details.
-
-    If `None`, no log level will be set.
-    """
-
     log_handler: LoggingFnT | None
-    """A handler for logging messages from the server."""
-
     timeout: float
-    """Initial connection timeout in seconds for establishing the connection.
-
-    This timeout applies to the initial connection setup and handshake.
-    If the connection cannot be established within this time, the operation will fail.
-    """
-
     read_timeout: float
-    """Maximum time in seconds to wait for new messages before timing out.
-
-    This timeout applies to the long-lived connection after it's established.
-    If no new messages are received within this time, the connection will be considered stale
-    and may be closed. Defaults to 5 minutes (300 seconds).
-    """
-
     process_tool_call: ProcessToolCallback | None
-    """Hook to customize tool calling and optionally pass extra metadata."""
-
     allow_sampling: bool
-    """Whether to allow MCP sampling through this client."""
-
     sampling_model: models.Model | None
-    """The model to use for sampling."""
-
     max_retries: int
-    """The maximum number of times to retry a tool call."""
+    elicitation_callback: ElicitationFnT | None = None
 
     def __init__(
         self,
@@ -621,6 +595,7 @@ class _MCPServerHTTP(MCPServer):
         allow_sampling: bool = True,
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
+        elicitation_callback: ElicitationFnT | None = None,
         **_deprecated_kwargs: Any,
     ):
         """Build a new MCP server.
@@ -639,6 +614,7 @@ class _MCPServerHTTP(MCPServer):
             allow_sampling: Whether to allow MCP sampling through this client.
             sampling_model: The model to use for sampling.
             max_retries: The maximum number of times to retry a tool call.
+            elicitation_callback: Callback function to handle elicitation requests from the server.
         """
         if 'sse_read_timeout' in _deprecated_kwargs:
             if read_timeout is not None:
@@ -668,6 +644,7 @@ class _MCPServerHTTP(MCPServer):
             allow_sampling,
             sampling_model,
             max_retries,
+            elicitation_callback,
             id=id,
         )
 

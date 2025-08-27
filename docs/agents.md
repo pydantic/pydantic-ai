@@ -115,7 +115,6 @@ The example below shows how to stream events and text output. You can also [stre
 import asyncio
 from collections.abc import AsyncIterable
 from datetime import date
-from typing import Union
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -123,7 +122,6 @@ from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     PartDeltaEvent,
     PartStartEvent,
     TextPartDelta,
@@ -152,7 +150,7 @@ output_messages: list[str] = []
 
 async def event_stream_handler(
     ctx: RunContext,
-    event_stream: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]],
+    event_stream: AsyncIterable[AgentStreamEvent],
 ):
     async for event in event_stream:
         if isinstance(event, PartStartEvent):

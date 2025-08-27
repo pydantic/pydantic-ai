@@ -292,6 +292,7 @@ def test_agent_to_cli_sync(mocker: MockerFixture, env: TestEnv):
         code_theme='monokai',
         prog_name='pydantic-ai',
         deps=None,
+        message_history=None,
     )
 
 
@@ -307,4 +308,44 @@ async def test_agent_to_cli_async(mocker: MockerFixture, env: TestEnv):
         code_theme='monokai',
         prog_name='pydantic-ai',
         deps=None,
+        message_history=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    # Create some test message history - cast to the proper base type
+    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+
+    await cli_agent.to_cli(message_history=test_messages)
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=test_messages,
+    )
+
+
+def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: TestEnv):
+    env.set('OPENAI_API_KEY', 'test')
+    mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
+
+    # Create some test message history - cast to the proper base type
+    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+
+    cli_agent.to_cli_sync(message_history=test_messages)
+    mock_run_chat.assert_awaited_once_with(
+        stream=True,
+        agent=IsInstance(Agent),
+        console=IsInstance(Console),
+        code_theme='monokai',
+        prog_name='pydantic-ai',
+        deps=None,
+        message_history=test_messages,
     )
