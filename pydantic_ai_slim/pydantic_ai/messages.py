@@ -130,8 +130,8 @@ class FileUrl(ABC):
     def __init__(
         self,
         url: str,
-        vendor_metadata: dict[str, Any] | None = None,
         force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         identifier: str | None = None,
     ) -> None:
