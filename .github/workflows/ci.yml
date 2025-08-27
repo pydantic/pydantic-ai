@@ -145,7 +145,6 @@ jobs:
             command: ""
           - name: all-extras
             command: "--all-extras"
-
     env:
       UV_PYTHON: ${{ matrix.python-version }}
       CI: true

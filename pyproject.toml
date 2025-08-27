@@ -236,7 +236,6 @@ filterwarnings = [
     # random resource warnings; I suspect these are coming from vendor SDKs when running examples..
     "ignore:unclosed <socket:ResourceWarning",
     "ignore:unclosed event loop:ResourceWarning",
-    "ignore:connection.*was deleted while still open:ResourceWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
