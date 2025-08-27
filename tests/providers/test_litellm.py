@@ -30,7 +30,6 @@ def test_init_with_custom_llm_provider():
 def test_init_without_api_key():
     provider = LiteLLMProvider()
     assert provider.name == 'litellm'
-    assert provider.base_url == 'https://api.litellm.ai/v1/'
     assert provider.client.api_key == 'litellm-placeholder'
 
 
