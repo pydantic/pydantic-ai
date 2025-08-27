@@ -150,8 +150,8 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_structured(debounce_by=None):
-            response_data = await result.validate_structured_output(structured_response, allow_partial=not last)
+        async for structured_response, last in result.stream_responses(debounce_by=None):
+            response_data = await result.validate_response_output(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -176,7 +176,7 @@ async def test_streamed_text_stream():
 
     async with agent.run_stream('Hello') as result:
         # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c async for c in result.stream()]
+        chunks: list[str] = [c async for c in result.stream_output()]
         # two chunks with `stream()` due to not-final vs. final
         assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
         assert result.is_complete
@@ -208,7 +208,7 @@ async def test_streamed_text_stream():
         return text.upper()
 
     async with agent.run_stream('Hello', output_type=TextOutput(upcase)) as result:
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 'THE ',
                 'THE CAT ',
@@ -221,7 +221,7 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
@@ -1081,7 +1081,7 @@ async def test_stream_structured_output():
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 CityLocation(city='Mexico '),
                 CityLocation(city='Mexico City'),
@@ -1359,7 +1359,7 @@ async def test_run_stream_event_stream_handler():
             events.append(event)
 
     async with test_agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
         )
 
