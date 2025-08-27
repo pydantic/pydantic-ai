@@ -42,28 +42,6 @@ try:
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
-# Check if Postgres is available
-try:
-    import psycopg
-
-    DBOS_DATABASE_URL = os.environ.get('DBOS_DATABASE_URL', 'postgresql://postgres:dbos@localhost:5432/postgres')
-    # Connect to Postgres to see if it's running
-    conn = None
-    try:
-        conn = psycopg.connect(
-            DBOS_DATABASE_URL,
-        )
-        cursor = conn.cursor()
-        cursor.execute('SELECT 1;')
-        cursor.close()
-    except Exception as error:  # pragma: lax no cover
-        pytest.skip(f'Postgres not available: {error}', allow_module_level=True)
-    finally:
-        if conn is not None:  # pragma: lax no cover
-            conn.close()
-except ImportError:  # pragma: lax no cover
-    pytest.skip('psycopg is not installed', allow_module_level=True)
-
 try:
     import logfire
     from logfire.testing import CaptureLogfire
@@ -118,6 +96,17 @@ def uninstrument_pydantic_ai() -> Iterator[None]:
         Agent.instrument_all(False)
 
 
+# Automatically clean up old DBOS sqlite files
+@pytest.fixture(autouse=True, scope='module')
+def cleanup_test_sqlite_file() -> Iterator[None]:
+    if os.path.exists('dbostest.sqlite'):
+        os.remove('dbostest.sqlite')  # pragma: lax no cover
+    yield
+
+    if os.path.exists('dbostest.sqlite'):
+        os.remove('dbostest.sqlite')  # pragma: lax no cover
+
+
 @contextmanager
 def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[None]:
     """Helper for asserting that a DBOS workflow fails with the expected error."""
@@ -129,8 +118,8 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
 
 DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
-    'database_url': DBOS_DATABASE_URL,
-    'system_database_url': DBOS_DATABASE_URL,
+    'database_url': 'sqlite:///dbostest.sqlite',
+    'system_database_url': 'sqlite:///dbostest.sqlite',
     'run_admin_server': False,
 }
 
