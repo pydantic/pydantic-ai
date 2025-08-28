@@ -648,7 +648,7 @@ def _process_response_from_parts(
         parts=items,
         model_name=model_name,
         usage=usage,
-        provider_request_id=vendor_id,
+        provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
     )

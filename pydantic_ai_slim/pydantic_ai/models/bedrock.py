@@ -301,9 +301,13 @@ class BedrockConverseModel(Model):
             input_tokens=response['usage']['inputTokens'],
             output_tokens=response['usage']['outputTokens'],
         )
-        vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
+        response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         return ModelResponse(
-            items, usage=u, model_name=self.model_name, provider_request_id=vendor_id, provider_name=self._provider.name
+            items,
+            usage=u,
+            model_name=self.model_name,
+            provider_response_id=response_id,
+            provider_name=self._provider.name,
         )
 
     @overload

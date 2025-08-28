@@ -289,7 +289,7 @@ class GroqModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             provider_name=self._provider.name,
         )
 

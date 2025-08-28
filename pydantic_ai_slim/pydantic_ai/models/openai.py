@@ -517,7 +517,7 @@ class OpenAIChatModel(Model):
             model_name=response.model,
             timestamp=timestamp,
             provider_details=vendor_details,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             provider_name=self._provider.name,
         )
 
@@ -831,7 +831,7 @@ class OpenAIResponsesModel(Model):
             items,
             usage=_map_usage(response),
             model_name=response.model,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
         )
