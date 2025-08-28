@@ -2,14 +2,15 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Generic, Literal, Union
+from typing import Annotated, Any, Callable, Generic, Literal, Union, cast
 
+from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
 
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import RetryPromptPart, ToolReturn, ToolReturnPart
+from pydantic_ai.messages import RetryPromptPart, ToolReturn
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
@@ -138,6 +139,8 @@ class ToolApproved:
 
     override_args: dict[str, Any] | None = None
 
+    kind: Literal['tool-approved'] = 'tool-approved'
+
 
 @dataclass
 class ToolDenied:
@@ -145,10 +148,33 @@ class ToolDenied:
 
     message: str = field(default='The tool call was denied.')
 
+    kind: Literal['tool-denied'] = 'tool-denied'
 
-DeferredToolApprovalResult: TypeAlias = Union[ToolApproved, ToolDenied]
+
+def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
+    if isinstance(x, dict):
+        if 'kind' in x:
+            return cast(str, x['kind'])
+        elif 'part_kind' in x:
+            return cast(str, x['part_kind'])
+    else:
+        if hasattr(x, 'kind'):
+            return cast(str, x.kind)
+        elif hasattr(x, 'part_kind'):
+            return cast(str, x.part_kind)
+    return None
+
+
+DeferredToolApprovalResult: TypeAlias = Annotated[Union[ToolApproved, ToolDenied], Discriminator('kind')]
 """TODO: Docstring."""
-DeferredToolCallResult: TypeAlias = Union[ToolReturn, ModelRetry, ToolReturnPart, RetryPromptPart]
+DeferredToolCallResult: TypeAlias = Annotated[
+    Union[
+        Annotated[ToolReturn, Tag('tool-return')],
+        Annotated[ModelRetry, Tag('model-retry')],
+        Annotated[RetryPromptPart, Tag('retry-prompt')],
+    ],
+    Discriminator(_deferred_tool_call_result_discriminator),
+]
 """TODO: Docstring."""
 DeferredToolResult = Union[DeferredToolApprovalResult, DeferredToolCallResult]
 """TODO: Docstring."""

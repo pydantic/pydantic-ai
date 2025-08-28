@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -21,15 +22,21 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    TextPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import Model, cached_async_http_client
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.output import DeferredToolRequests
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
+from pydantic_ai.usage import RequestUsage
 
 try:
     from temporalio import workflow
@@ -1535,3 +1542,160 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+hitl_agent = Agent(
+    model,
+    name='hitl_agent',
+    output_type=[str, DeferredToolRequests],
+    instructions='Just call tools without asking for confirmation.',
+)
+
+
+@hitl_agent.tool
+def delete_file(ctx: RunContext[None], path: str) -> bool:
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired
+    return True
+
+
+hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class HitlAgentWorkflow:
+    def __init__(self):
+        self._status: Literal['running', 'waiting_for_results', 'done'] = 'running'
+        self._deferred_tool_requests: DeferredToolRequests | None = None
+        self._deferred_tool_results: DeferredToolResults | None = None
+
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        while True:
+            result = await hitl_temporal_agent.run(
+                message_history=messages, deferred_tool_results=self._deferred_tool_results
+            )
+            messages = result.all_messages()
+
+            if isinstance(result.output, DeferredToolRequests):
+                self._deferred_tool_requests = result.output
+                self._deferred_tool_results = None
+                self._status = 'waiting_for_results'
+
+                await workflow.wait_condition(lambda: self._deferred_tool_results is not None)
+                self._status = 'running'
+            else:
+                self._status = 'done'
+                return result
+
+    @workflow.query
+    def get_status(self) -> Literal['running', 'waiting_for_results', 'done']:
+        return self._status
+
+    @workflow.query
+    def get_deferred_tool_requests(self) -> DeferredToolRequests | None:
+        return self._deferred_tool_requests
+
+    @workflow.signal
+    def set_deferred_tool_results(self, results: DeferredToolResults) -> None:
+        self._status = 'running'
+        self._deferred_tool_requests = None
+        self._deferred_tool_results = results
+
+
+async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[HitlAgentWorkflow],
+        plugins=[AgentPlugin(hitl_temporal_agent)],
+    ):
+        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+            HitlAgentWorkflow.run,
+            args=['Delete the file `.env`'],
+            id=HitlAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        while True:
+            await asyncio.sleep(1)
+            status = await workflow.query(HitlAgentWorkflow.get_status)  # pyright: ignore[reportUnknownMemberType]
+            if status == 'done':
+                break
+            elif status == 'waiting_for_results':
+                deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)  # pyright: ignore[reportUnknownMemberType]
+                assert deferred_tool_requests is not None
+
+                results = DeferredToolResults()
+                # Approve all calls
+                for tool_call in deferred_tool_requests.approvals:
+                    results.approvals[tool_call.tool_call_id] = True
+
+                await workflow.signal(HitlAgentWorkflow.set_deferred_tool_results, results)
+
+        result = await workflow.result()
+        assert result.output == snapshot('The file `.env` has been successfully deleted.')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Delete the file `.env`',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='Just call tools without asking for confirmation.',
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='delete_file',
+                            args='{"path":".env"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=51,
+                        output_tokens=15,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_request_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='delete_file',
+                            content=True,
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='Just call tools without asking for confirmation.',
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The file `.env` has been successfully deleted.')],
+                    usage=RequestUsage(
+                        input_tokens=75,
+                        output_tokens=11,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_request_id=IsStr(),
+                ),
+            ]
+        )

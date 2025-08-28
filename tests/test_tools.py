@@ -7,7 +7,7 @@ import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
@@ -28,7 +28,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolRequests, ToolOutput
-from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets.external import ExternalToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -1543,10 +1543,9 @@ def test_parallel_tool_return_with_deferred():
         deferred_tool_results=DeferredToolResults(
             calls={
                 'buy_apple': ModelRetry('Apples are not available'),
-                'buy_banana': ToolReturnPart(
-                    tool_name='buy',
+                'buy_banana': ToolReturn(
+                    return_value=True,
                     content='I bought a banana',
-                    tool_call_id='buy_banana',
                     metadata={'fruit': 'banana', 'price': 100.0},
                 ),
                 'buy_pear': ToolReturn(
@@ -1837,3 +1836,59 @@ async def test_approval_required_toolset():
         ]
     )
     assert result.output == snapshot('Done!')
+
+
+def test_deferred_tool_results_serializable():
+    results = DeferredToolResults(
+        calls={
+            'tool-return': ToolReturn(
+                return_value=1,
+                content='The tool call was approved.',
+                metadata={'foo': 'bar'},
+            ),
+            'model-retry': ModelRetry('The tool call was denied.'),
+            'retry-prompt-part': RetryPromptPart(
+                content='The tool call was denied.',
+                tool_name='foo',
+                tool_call_id='foo',
+            ),
+            'any': {'foo': 'bar'},
+        },
+        approvals={
+            'true': True,
+            'false': False,
+            'tool-approved': ToolApproved(override_args={'foo': 'bar'}),
+            'tool-denied': ToolDenied('The tool call was denied.'),
+        },
+    )
+    results_ta = TypeAdapter(DeferredToolResults)
+    serialized = results_ta.dump_python(results)
+    assert serialized == snapshot(
+        {
+            'calls': {
+                'tool-return': {
+                    'return_value': 1,
+                    'content': 'The tool call was approved.',
+                    'metadata': {'foo': 'bar'},
+                    'kind': 'tool-return',
+                },
+                'model-retry': {'message': 'The tool call was denied.', 'kind': 'model-retry'},
+                'retry-prompt-part': {
+                    'content': 'The tool call was denied.',
+                    'tool_name': 'foo',
+                    'tool_call_id': 'foo',
+                    'timestamp': IsDatetime(),
+                    'part_kind': 'retry-prompt',
+                },
+                'any': {'foo': 'bar'},
+            },
+            'approvals': {
+                'true': True,
+                'false': False,
+                'tool-approved': {'override_args': {'foo': 'bar'}, 'kind': 'tool-approved'},
+                'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
+            },
+        }
+    )
+    deserialized = results_ta.validate_python(serialized)
+    assert deserialized == results
