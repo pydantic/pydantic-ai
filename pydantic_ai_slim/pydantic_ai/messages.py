@@ -1207,6 +1207,15 @@ class ToolCallPartDelta:
                 )
             updated_args_delta = {**(delta.args_delta or {}), **self.args_delta}
             delta = replace(delta, args_delta=updated_args_delta)
+        elif self.args_delta is not None:
+            # Handle non-string, non-dict args_delta (e.g., numbers, booleans)
+            if isinstance(delta.args_delta, dict):
+                raise UnexpectedModelBehavior(
+                    f'Cannot apply non-JSON deltas to dict tool arguments ({delta=}, {self=})'
+                )
+            # Convert the non-string args_delta to string and concatenate
+            updated_args_delta = (delta.args_delta or '') + str(self.args_delta)
+            delta = replace(delta, args_delta=updated_args_delta)
 
         if self.tool_call_id:
             delta = replace(delta, tool_call_id=self.tool_call_id)
@@ -1234,6 +1243,13 @@ class ToolCallPartDelta:
                 raise UnexpectedModelBehavior(f'Cannot apply dict deltas to non-dict tool arguments ({part=}, {self=})')
             updated_dict = {**(part.args or {}), **self.args_delta}
             part = replace(part, args=updated_dict)
+        elif self.args_delta is not None:
+            # Handle non-string, non-dict args_delta (e.g., numbers, booleans)
+            if isinstance(part.args, dict):
+                raise UnexpectedModelBehavior(f'Cannot apply non-JSON deltas to dict tool arguments ({part=}, {self=})')
+            # Convert the non-string args_delta to string and concatenate
+            updated_json = (part.args or '') + str(self.args_delta)
+            part = replace(part, args=updated_json)
 
         if self.tool_call_id:
             part = replace(part, tool_call_id=self.tool_call_id)
