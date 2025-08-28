@@ -217,10 +217,8 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
             'name': 'error_case',
             'output': None,
             'scores': {},
-            'span_id': 'test-error-span-id',
             'task_duration': 0.05,
             'total_duration': 0.1,
-            'trace_id': 'test-error-trace-id',
         }
     )
 
