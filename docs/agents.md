@@ -634,7 +634,7 @@ except UsageLimitExceeded as e:
 ```
 
 !!! note
-    - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the exact number of tool executions within a run.
+    - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the exact number of successful tool executions within a run.
     - These limits are enforced at the final stage before the LLM is called. If your limits are stricter than your retry settings, the usage limit will be reached before all retries are attempted.
 
 #### Model (Run) Settings
