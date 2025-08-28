@@ -87,6 +87,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    # TODO(Marcelo): genai-prices needs to include Cerebras prices: https://github.com/pydantic/genai-prices/issues/132
+    pytest.mark.filterwarnings('ignore:The costs with provider "cerebras" and model:UserWarning'),
+    # NOTE(Marcelo): The following model is old, so we are probably not including it on `genai-prices`.
+    pytest.mark.filterwarnings(
+        'ignore:The costs with provider "openai" and model "gpt-4o-search-preview-2025-03-11":UserWarning'
+    ),
 ]
 
 
@@ -120,7 +126,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='gpt-4o-123',
+                model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='openai',
                 provider_request_id='123',
@@ -128,7 +134,7 @@ async def test_request_simple_success(allow_model_requests: None):
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                model_name='gpt-4o-123',
+                model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='openai',
                 provider_request_id='123',
@@ -155,18 +161,28 @@ async def test_request_simple_success(allow_model_requests: None):
     ]
 
 
-async def test_request_simple_usage(allow_model_requests: None):
-    c = completion_message(
-        ChatCompletionMessage(content='world', role='assistant'),
-        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
-    )
-    mock_client = MockOpenAI.create_mock(c)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+async def test_request_simple_usage(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(m)
 
-    result = await agent.run('Hello')
-    assert result.output == 'world'
-    assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=2, output_tokens=1))
+    result = await agent.run('Hello! How are you doing?')
+    assert result.output == snapshot(
+        "Hello! I'm just a computer program, so I don't have feelings, but I'm here and ready to help you. How can I assist you today?"
+    )
+    assert result.usage() == snapshot(
+        RunUsage(
+            requests=1,
+            input_tokens=14,
+            details={
+                'accepted_prediction_tokens': 0,
+                'audio_tokens': 0,
+                'reasoning_tokens': 0,
+                'rejected_prediction_tokens': 0,
+            },
+            output_tokens=30,
+            cost=Decimal('0.000335'),
+        )
+    )
 
 
 async def test_request_structured_response(allow_model_requests: None):
@@ -200,7 +216,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                model_name='gpt-4o-123',
+                model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
                 provider_request_id='123',
@@ -295,7 +311,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cache_read_tokens=1,
                     output_tokens=1,
                 ),
-                model_name='gpt-4o-123',
+                model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
                 provider_request_id='123',
@@ -323,7 +339,7 @@ async def test_request_tool_call(allow_model_requests: None):
                     cache_read_tokens=2,
                     output_tokens=2,
                 ),
-                model_name='gpt-4o-123',
+                model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
                 provider_request_id='123',
@@ -340,14 +356,16 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                model_name='gpt-4o-123',
+                model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
                 provider_request_id='123',
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3))
+    assert result.usage() == snapshot(
+        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, cost=Decimal('0.00004625'))
+    )
 
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
@@ -2273,6 +2291,8 @@ def test_model_profile_strict_not_supported():
     )
 
 
+# NOTE(Marcelo): You wouldn't do this because you'd use the GoogleModel. I'm unsure if this test brings any value.
+@pytest.mark.filterwarnings('ignore:The costs with provider "openai" and model "gemini-2.5-pro:UserWarning')
 async def test_compatible_api_with_tool_calls_without_id(allow_model_requests: None, gemini_api_key: str):
     provider = OpenAIProvider(
         openai_client=AsyncOpenAI(

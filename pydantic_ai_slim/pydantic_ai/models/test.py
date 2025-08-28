@@ -100,8 +100,6 @@ class TestModel(Model):
         self.custom_output_args = custom_output_args
         self.seed = seed
         self.last_model_request_parameters = None
-        self._model_name = 'test'
-        self._system = 'test'
         super().__init__(settings=settings, profile=profile)
 
     async def request(

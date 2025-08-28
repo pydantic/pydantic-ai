@@ -87,7 +87,7 @@ def completion_message(
         id='123',
         choices=choices,
         created=1704067200,  # 2024-01-01
-        model='gpt-4o-123',
+        model='gpt-4o',
         object='chat.completion',
         usage=usage,
     )
@@ -150,7 +150,7 @@ def response_message(
 ) -> responses.Response:
     return responses.Response(
         id='123',
-        model='gpt-4o-123',
+        model='gpt-4o',
         object='response',
         created_at=1704067200,  # 2024-01-01
         output=list(output_items),
