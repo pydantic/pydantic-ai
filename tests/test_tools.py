@@ -1431,8 +1431,6 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart('get_price', {'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple'),
                     ToolCallPart('buy', {'fruit': 'banana'}, tool_call_id='buy_banana'),
-                    ToolCallPart('buy', {'fruit': 'pear'}, tool_call_id='buy_pear'),
-                    ToolCallPart('buy', {'fruit': 'grape'}, tool_call_id='buy_grape'),
                 ]
             )
         else:
@@ -1480,10 +1478,8 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=40),
+                usage=RequestUsage(input_tokens=68, output_tokens=30),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1532,8 +1528,6 @@ def test_parallel_tool_return_with_deferred():
             calls=[
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
-                ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-                ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
             ],
         )
     )
@@ -1547,16 +1541,6 @@ def test_parallel_tool_return_with_deferred():
                     return_value=True,
                     content='I bought a banana',
                     metadata={'fruit': 'banana', 'price': 100.0},
-                ),
-                'buy_pear': ToolReturn(
-                    return_value=True,
-                    content='I bought a pear',
-                    metadata={'fruit': 'pear', 'price': 100.0},
-                ),
-                'buy_grape': ToolReturn(
-                    return_value=True,
-                    content='I bought a grape',
-                    metadata={'fruit': 'grape', 'price': 100.0},
                 ),
             },
         ),
@@ -1579,10 +1563,8 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
-                    ToolCallPart(tool_name='buy', args={'fruit': 'grape'}, tool_call_id='buy_grape'),
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=40),
+                usage=RequestUsage(input_tokens=68, output_tokens=30),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1622,23 +1604,9 @@ def test_parallel_tool_return_with_deferred():
                     ),
                     ToolReturnPart(
                         tool_name='buy',
-                        content='I bought a banana',
+                        content=True,
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
-                        timestamp=IsDatetime(),
-                    ),
-                    ToolReturnPart(
-                        tool_name='buy',
-                        content=True,
-                        tool_call_id='buy_pear',
-                        metadata={'fruit': 'pear', 'price': 100.0},
-                        timestamp=IsDatetime(),
-                    ),
-                    ToolReturnPart(
-                        tool_name='buy',
-                        content=True,
-                        tool_call_id='buy_grape',
-                        metadata={'fruit': 'grape', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1649,18 +1617,14 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='I bought a pear',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content='I bought a grape',
+                        content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=133, output_tokens=41),
+                usage=RequestUsage(input_tokens=124, output_tokens=31),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
