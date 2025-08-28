@@ -351,7 +351,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._output_toolset:
             self._output_toolset.max_retries = self._max_result_retries
 
-        self._function_toolset = _AgentFunctionToolset(tools, max_retries=self._max_tool_retries)
+        self._function_toolset = _AgentFunctionToolset(
+            tools, max_retries=self._max_tool_retries, output_schema=self._output_schema
+        )
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
             for toolset in toolsets or []
@@ -1320,7 +1322,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
         if some_tools := self._override_tools.get():
-            function_toolset = _AgentFunctionToolset(some_tools.value, max_retries=self._max_tool_retries)
+            function_toolset = _AgentFunctionToolset(
+                some_tools.value, max_retries=self._max_tool_retries, output_schema=self._output_schema
+            )
         else:
             function_toolset = self._function_toolset
         toolsets.append(function_toolset)
@@ -1417,6 +1421,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 @dataclasses.dataclass(init=False)
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
+    output_schema: _output.BaseOutputSchema[Any]
+
+    def __init__(
+        self,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
+        max_retries: int = 1,
+        *,
+        id: str | None = None,
+        output_schema: _output.BaseOutputSchema[Any],
+    ):
+        self.output_schema = output_schema
+        super().__init__(tools, max_retries, id=id)
+
     @property
     def id(self) -> str:
         return '<agent>'
@@ -1424,3 +1441,10 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         return 'the agent'
+
+    def add_tool(self, tool: Tool[AgentDepsT]) -> None:
+        if tool.requires_approval and not self.output_schema.allows_deferred_tools:
+            raise exceptions.UserError(
+                'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
+            )
+        super().add_tool(tool)

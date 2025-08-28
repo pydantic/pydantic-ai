@@ -157,7 +157,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 tool_call, allow_partial=allow_partial, wrap_validation_errors=False
             )
         elif deferred_tool_requests := _get_deferred_tool_requests(message.parts, self._tool_manager):
-            if not self._output_schema.allows_deferred_tool_requests:
+            if not self._output_schema.allows_deferred_tools:
                 raise exceptions.UserError(
                     'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
                 )

@@ -196,7 +196,7 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 
 @dataclass
 class BaseOutputSchema(ABC, Generic[OutputDataT]):
-    allows_deferred_tool_requests: bool
+    allows_deferred_tools: bool
 
     @abstractmethod
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
@@ -250,8 +250,8 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         raw_outputs = _flatten_output_spec(output_spec)
 
         outputs = [output for output in raw_outputs if output is not DeferredToolRequests]
-        allows_deferred_tool_requests = len(outputs) < len(raw_outputs)
-        if len(outputs) == 0 and allows_deferred_tool_requests:
+        allows_deferred_tools = len(outputs) < len(raw_outputs)
+        if len(outputs) == 0 and allows_deferred_tools:
             raise UserError('At least one output type must be provided other than `DeferredToolRequests`.')
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):
@@ -265,7 +265,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                     strict=output.strict,
                 ),
-                allows_deferred_tool_requests=allows_deferred_tool_requests,
+                allows_deferred_tools=allows_deferred_tools,
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
             if len(outputs) > 1:
@@ -278,7 +278,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                 ),
                 template=output.template,
-                allows_deferred_tool_requests=allows_deferred_tool_requests,
+                allows_deferred_tools=allows_deferred_tools,
             )
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
@@ -315,21 +315,19 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                 return ToolOrTextOutputSchema(
                     processor=text_output_schema,
                     toolset=toolset,
-                    allows_deferred_tool_requests=allows_deferred_tool_requests,
+                    allows_deferred_tools=allows_deferred_tools,
                 )
             else:
-                return PlainTextOutputSchema(
-                    processor=text_output_schema, allows_deferred_tool_requests=allows_deferred_tool_requests
-                )
+                return PlainTextOutputSchema(processor=text_output_schema, allows_deferred_tools=allows_deferred_tools)
 
         if len(tool_outputs) > 0:
-            return ToolOutputSchema(toolset=toolset, allows_deferred_tool_requests=allows_deferred_tool_requests)
+            return ToolOutputSchema(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
 
         if len(other_outputs) > 0:
             schema = OutputSchemaWithoutMode(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 toolset=toolset,
-                allows_deferred_tool_requests=allows_deferred_tool_requests,
+                allows_deferred_tools=allows_deferred_tools,
             )
             if default_mode:
                 schema = schema.with_default_mode(default_mode)
@@ -373,25 +371,19 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         self,
         processor: ObjectOutputProcessor[OutputDataT] | UnionOutputProcessor[OutputDataT],
         toolset: OutputToolset[Any] | None,
-        allows_deferred_tool_requests: bool,
+        allows_deferred_tools: bool,
     ):
-        super().__init__(allows_deferred_tool_requests)
+        super().__init__(allows_deferred_tools)
         self.processor = processor
         self._toolset = toolset
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         if mode == 'native':
-            return NativeOutputSchema(
-                processor=self.processor, allows_deferred_tool_requests=self.allows_deferred_tool_requests
-            )
+            return NativeOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
         elif mode == 'prompted':
-            return PromptedOutputSchema(
-                processor=self.processor, allows_deferred_tool_requests=self.allows_deferred_tool_requests
-            )
+            return PromptedOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
         elif mode == 'tool':
-            return ToolOutputSchema(
-                toolset=self.toolset, allows_deferred_tool_requests=self.allows_deferred_tool_requests
-            )
+            return ToolOutputSchema(toolset=self.toolset, allows_deferred_tools=self.allows_deferred_tools)
         else:
             assert_never(mode)
 
@@ -554,8 +546,8 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 class ToolOutputSchema(OutputSchema[OutputDataT]):
     _toolset: OutputToolset[Any] | None
 
-    def __init__(self, toolset: OutputToolset[Any] | None, allows_deferred_tool_requests: bool):
-        super().__init__(allows_deferred_tool_requests)
+    def __init__(self, toolset: OutputToolset[Any] | None, allows_deferred_tools: bool):
+        super().__init__(allows_deferred_tools)
         self._toolset = toolset
 
     @property
@@ -579,9 +571,9 @@ class ToolOrTextOutputSchema(ToolOutputSchema[OutputDataT], PlainTextOutputSchem
         self,
         processor: PlainTextOutputProcessor[OutputDataT] | None,
         toolset: OutputToolset[Any] | None,
-        allows_deferred_tool_requests: bool,
+        allows_deferred_tools: bool,
     ):
-        super().__init__(toolset=toolset, allows_deferred_tool_requests=allows_deferred_tool_requests)
+        super().__init__(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
         self.processor = processor
 
     @property

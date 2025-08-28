@@ -4617,3 +4617,16 @@ async def test_run_with_deferred_tool_results_errors():
                 calls={'run_me_too': 'Success', 'defer_me': 'Failure'},
             ),
         )
+
+
+def test_tool_requires_approval_error():
+    agent = Agent('test')
+
+    with pytest.raises(
+        UserError,
+        match='To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.',
+    ):
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file(path: str) -> None:
+            pass

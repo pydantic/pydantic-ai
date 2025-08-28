@@ -788,7 +788,7 @@ async def process_function_tools(  # noqa: C901
                 yield _messages.FunctionToolCallEvent(call)
 
     if not final_result and deferred_calls:
-        if not ctx.deps.output_schema.allows_deferred_tool_requests:
+        if not ctx.deps.output_schema.allows_deferred_tools:
             raise exceptions.UserError(
                 'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
             )
