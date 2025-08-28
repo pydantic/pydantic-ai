@@ -702,7 +702,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':
+    if provider == 'vertexai':  # pragma: no cover
         warnings.warn(
             "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
             DeprecationWarning,
