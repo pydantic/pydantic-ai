@@ -31,7 +31,6 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
-    HandleResponseEvent,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
