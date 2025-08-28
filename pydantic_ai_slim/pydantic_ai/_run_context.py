@@ -46,7 +46,7 @@ class RunContext(Generic[AgentDepsT]):
     """Number of retries so far."""
     run_step: int = 0
     """The current step in the run."""
-    resuming_after_deferred_tool_calls: bool = False
+    tool_call_approved: bool = False
     """Whether we are resuming a previous run that ended with deferred tool calls that we now have results for."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr

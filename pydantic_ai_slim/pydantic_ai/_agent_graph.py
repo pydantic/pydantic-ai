@@ -644,7 +644,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
-        resuming_after_deferred_tool_calls=ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None,
+        tool_call_approved=ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None,
     )
 
 
@@ -739,7 +739,7 @@ async def process_function_tools(  # noqa: C901
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
     deferred_tool_results: dict[str, DeferredToolResult] = {}
-    if build_run_context(ctx).resuming_after_deferred_tool_calls and ctx.deps.tool_call_results is not None:
+    if build_run_context(ctx).tool_call_approved and ctx.deps.tool_call_results is not None:
         deferred_tool_results = ctx.deps.tool_call_results
 
         # Deferred tool calls are "run" as well, by reading their value from the tool call results

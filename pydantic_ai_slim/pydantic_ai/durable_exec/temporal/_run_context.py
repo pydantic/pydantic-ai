@@ -40,6 +40,7 @@ class TemporalRunContext(RunContext[AgentDepsT]):
             'retries': ctx.retries,
             'tool_call_id': ctx.tool_call_id,
             'tool_name': ctx.tool_name,
+            'tool_call_approved': ctx.tool_call_approved,
             'retry': ctx.retry,
             'run_step': ctx.run_step,
         }

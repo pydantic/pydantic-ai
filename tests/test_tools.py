@@ -1295,7 +1295,7 @@ def test_tool_raises_approval_required():
 
     @agent.tool
     def my_tool(ctx: RunContext[None], x: int) -> int:
-        if not ctx.resuming_after_deferred_tool_calls:
+        if not ctx.tool_call_approved:
             raise ApprovalRequired
         return x * 42
 

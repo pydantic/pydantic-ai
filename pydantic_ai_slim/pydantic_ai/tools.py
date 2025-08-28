@@ -360,7 +360,7 @@ class Tool(Generic[AgentDepsT]):
         """
         base_tool_def = self.tool_def
 
-        if self.requires_approval and not ctx.resuming_after_deferred_tool_calls:
+        if self.requires_approval and not ctx.tool_call_approved:
             base_tool_def = replace(base_tool_def, kind='unapproved')
 
         if self.prepare is not None:
