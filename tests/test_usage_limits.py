@@ -8,10 +8,12 @@ import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
 from inline_snapshot import snapshot
 from inline_snapshot.extra import warns
+from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .conftest import IsNow, IsStr
@@ -147,7 +149,7 @@ async def test_multi_agent_usage_no_incr():
         delegate_result = await delegate_agent.run(sentence)
         delegate_usage = delegate_result.usage()
         run_1_usages.append(delegate_usage)
-        assert delegate_usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4, tool_calls=1))
+        assert delegate_usage == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=4))
         return delegate_result.output
 
     result1 = await controller_agent1.run('foobar')
@@ -161,12 +163,12 @@ async def test_multi_agent_usage_no_incr():
     async def delegate_to_other_agent2(ctx: RunContext[None], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage()
-        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9, tool_calls=2))
+        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9, tool_calls=1))
         return delegate_result.output
 
     result2 = await controller_agent2.run('foobar')
     assert result2.output == snapshot('{"delegate_to_other_agent2":0}')
-    assert result2.usage() == snapshot(RunUsage(requests=3, input_tokens=154, output_tokens=17, tool_calls=2))
+    assert result2.usage() == snapshot(RunUsage(requests=3, input_tokens=154, output_tokens=17, tool_calls=1))
 
     # confirm the usage from result2 is the sum of the usage from result1
     assert result2.usage() == functools.reduce(operator.add, run_1_usages)
@@ -260,3 +262,28 @@ def test_deprecated_usage_limits():
         snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
     ):
         assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
+
+
+async def test_output_tool_not_counted() -> None:
+    """Test that output tools are not counted in tool_calls usage metric."""
+    test_agent = Agent(TestModel())
+
+    @test_agent.tool_plain
+    async def regular_tool(x: str) -> str:
+        return f'{x}-processed'
+
+    class MyOutput(BaseModel):
+        result: str
+
+    result_regular = await test_agent.run('test')
+    assert result_regular.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
+
+    test_agent_with_output = Agent(TestModel(), output_type=ToolOutput(MyOutput))
+
+    @test_agent_with_output.tool_plain
+    async def another_regular_tool(x: str) -> str:
+        return f'{x}-processed'
+
+    result_output = await test_agent_with_output.run('test')
+
+    assert result_output.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=15, tool_calls=1))
