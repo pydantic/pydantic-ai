@@ -1776,14 +1776,14 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_weather',
+                            tool_name='get_weather_in_city',
                             args='{"city":"CDMX"}',
                             tool_call_id=IsStr(),
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=45,
-                        output_tokens=15,
+                        input_tokens=47,
+                        output_tokens=17,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1800,7 +1800,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     parts=[
                         RetryPromptPart(
                             content='Did you mean Mexico City?',
-                            tool_name='get_weather',
+                            tool_name='get_weather_in_city',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         )
@@ -1809,14 +1809,14 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='get_weather',
+                            tool_name='get_weather_in_city',
                             args='{"city":"Mexico City"}',
                             tool_call_id=IsStr(),
                         )
                     ],
                     usage=RequestUsage(
-                        input_tokens=81,
-                        output_tokens=15,
+                        input_tokens=87,
+                        output_tokens=17,
                         details={
                             'accepted_prediction_tokens': 0,
                             'audio_tokens': 0,
@@ -1832,7 +1832,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ModelRequest(
                     parts=[
                         ToolReturnPart(
-                            tool_name='get_weather',
+                            tool_name='get_weather_in_city',
                             content='sunny',
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
@@ -1842,7 +1842,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                 ModelResponse(
                     parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
                     usage=RequestUsage(
-                        input_tokens=106,
+                        input_tokens=116,
                         output_tokens=10,
                         details={
                             'accepted_prediction_tokens': 0,
