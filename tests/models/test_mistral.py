@@ -592,7 +592,7 @@ async def test_stream_structured_with_all_type(allow_model_requests: None):
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [dict(c) async for c in result.stream(debounce_by=None)]
+        v = [dict(c) async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
                 {'first': 'One'},
@@ -701,7 +701,7 @@ async def test_stream_result_type_primitif_dict(allow_model_requests: None):
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
                 {'first': 'O'},
@@ -756,7 +756,7 @@ async def test_stream_result_type_primitif_int(allow_model_requests: None):
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot([1, 1, 1])
         assert result.is_complete
         assert result.usage().input_tokens == 6
@@ -814,7 +814,7 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
                 [''],
@@ -906,7 +906,7 @@ async def test_stream_result_type_basemodel_with_default_params(allow_model_requ
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
                 MyTypedBaseModel(first='O', second=''),
@@ -990,7 +990,7 @@ async def test_stream_result_type_basemodel_with_required_params(allow_model_req
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(
             [
                 MyTypedBaseModel(first='One', second=''),
@@ -1355,7 +1355,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot([{'won': True}, {'won': True}])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
@@ -1458,7 +1458,7 @@ async def test_stream_tool_call(allow_model_requests: None):
 
     async with agent.run_stream('User prompt value') as result:
         assert not result.is_complete
-        v = [c async for c in result.stream(debounce_by=None)]
+        v = [c async for c in result.stream_output(debounce_by=None)]
         assert v == snapshot(['final ', 'final response', 'final response'])
         assert result.is_complete
         assert result.timestamp() == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)

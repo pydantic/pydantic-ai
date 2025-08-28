@@ -352,7 +352,7 @@ stateDiagram-v2
   Feedback --> [*]
 ```
 
-```python {title="genai_email_feedback.py" py="3.10" test="ci_only"}
+```python {title="genai_email_feedback.py" py="3.10"}
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass, field
@@ -384,7 +384,7 @@ class State:
 
 
 email_writer_agent = Agent(
-    'google-vertex:gemini-1.5-pro',
+    'google-gla:gemini-1.5-pro',
     output_type=Email,
     system_prompt='Write a welcome email to our tech blog.',
 )

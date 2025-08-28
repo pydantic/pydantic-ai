@@ -652,7 +652,7 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        chunks = [c async for c in result.stream(debounce_by=None)]
+        chunks = [c async for c in result.stream_output(debounce_by=None)]
 
         # The tool output doesn't echo any content to the stream, so we only get the final payload once when
         # the block starts and once when it ends.
