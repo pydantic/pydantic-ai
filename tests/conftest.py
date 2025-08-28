@@ -423,7 +423,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     try:
         from google.genai import _api_client
     except ImportError:
-        pytest.skip('google is not installed')
+        return  # do nothing if this isn't installed
 
     @dataclass
     class NoOpCredentials:
