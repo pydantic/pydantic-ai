@@ -123,9 +123,13 @@ class ToolManager(Generic[AgentDepsT]):
 
             if tool.tool_def.kind != 'output' and self.ctx.usage_limits is not None:
                 self.ctx.usage_limits.check_before_tool_call(self.ctx.usage)
+
+            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+
+            if tool.tool_def.kind != 'output':
                 self.ctx.usage.tool_calls += 1
 
-            return await self.toolset.call_tool(name, args_dict, ctx, tool)
+            return result
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
             current_retry = self.ctx.retries.get(name, 0)
