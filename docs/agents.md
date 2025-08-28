@@ -610,7 +610,7 @@ except UsageLimitExceeded as e:
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
-##### Capping tool calls exactly
+##### Capping tool calls
 
 If you need a precise guardrail on the number of tool invocations within a single run (including retries that actually re-execute the tool), use `tool_calls_limit`:
 
@@ -632,9 +632,6 @@ except UsageLimitExceeded as e:
     print(e)
     #> The next tool call would exceed the tool_calls_limit of 1 (tool_calls=1)
 ```
-
-!!! info
-    When you set an `output_type` (default Tool Output mode), the final result is produced by an "output tool" call. That single execution increments `tool_calls` by 1 even if no user-defined tools ran. If you use NativeOutput or TextOutput instead, `tool_calls` will remain 0 unless other tools execute.
 
 !!! note
     - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the exact number of tool executions within a run.
