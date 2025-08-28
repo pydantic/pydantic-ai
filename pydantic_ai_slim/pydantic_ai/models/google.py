@@ -559,6 +559,10 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif part.executable_code is not None:
+                    pass
+                elif part.code_execution_result is not None:
+                    pass
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
