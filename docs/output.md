@@ -573,7 +573,7 @@ agent = Agent(
 async def main():
     user_input = 'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.'
     async with agent.run_stream(user_input) as result:
-        async for profile in result.stream():
+        async for profile in result.stream_output():
             print(profile)
             #> {'name': 'Ben'}
             #> {'name': 'Ben'}
@@ -609,9 +609,9 @@ agent = Agent('openai:gpt-4o', output_type=UserProfile)
 async def main():
     user_input = 'My name is Ben, I was born on January 28th 1990, I like the chain the dog and the pyramid.'
     async with agent.run_stream(user_input) as result:
-        async for message, last in result.stream_structured(debounce_by=0.01):  # (1)!
+        async for message, last in result.stream_responses(debounce_by=0.01):  # (1)!
             try:
-                profile = await result.validate_structured_output(  # (2)!
+                profile = await result.validate_response_output(  # (2)!
                     message,
                     allow_partial=not last,
                 )
@@ -627,8 +627,8 @@ async def main():
             #> {'name': 'Ben', 'dob': date(1990, 1, 28), 'bio': 'Likes the chain the dog and the pyramid'}
 ```
 
-1. [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
-2. [`validate_structured_output`][pydantic_ai.result.StreamedRunResult.validate_structured_output] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
+1. [`stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] streams the data as [`ModelResponse`][pydantic_ai.messages.ModelResponse] objects, thus iteration can't fail with a `ValidationError`.
+2. [`validate_response_output`][pydantic_ai.result.StreamedRunResult.validate_response_output] validates the data, `allow_partial=True` enables pydantic's [`experimental_allow_partial` flag on `TypeAdapter`][pydantic.type_adapter.TypeAdapter.validate_json].
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
