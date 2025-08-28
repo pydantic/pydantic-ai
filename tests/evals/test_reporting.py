@@ -89,8 +89,6 @@ def sample_report_case(
         assertions={sample_assertion.name: sample_assertion},
         task_duration=0.1,
         total_duration=0.2,
-        trace_id='test-trace-id',
-        span_id='test-span-id',
     )
 
 
@@ -206,8 +204,6 @@ async def test_evaluation_renderer_with_baseline(sample_report: EvaluationReport
                 assertions={},
                 task_duration=0.15,
                 total_duration=0.25,
-                trace_id='test-trace-id',
-                span_id='test-span-id',
             )
         ],
         name='baseline_report',
@@ -264,8 +260,6 @@ async def test_evaluation_renderer_with_removed_cases(sample_report: EvaluationR
                 assertions={},
                 task_duration=0.1,
                 total_duration=0.15,
-                trace_id='test-trace-id-2',
-                span_id='test-span-id-2',
             )
         ],
         name='baseline_report',
@@ -412,8 +406,6 @@ async def test_report_case_aggregate_average():
             },
             task_duration=0.1,
             total_duration=0.2,
-            trace_id='test-trace-id-1',
-            span_id='test-span-id-1',
         ),
         ReportCase(
             name='case2',
@@ -449,8 +441,6 @@ async def test_report_case_aggregate_average():
             },
             task_duration=0.15,
             total_duration=0.25,
-            trace_id='test-trace-id-2',
-            span_id='test-span-id-2',
         ),
     ]
 

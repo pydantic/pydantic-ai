@@ -76,8 +76,6 @@ def sample_report_case(sample_evaluation_result: EvaluationResult[bool]) -> Repo
         assertions={sample_evaluation_result.name: sample_evaluation_result},
         task_duration=0.1,
         total_duration=0.2,
-        trace_id='test-trace-id',
-        span_id='test-span-id',
     )
 
 
@@ -122,8 +120,6 @@ async def test_report_add_case(
         assertions={},
         task_duration=0.1,
         total_duration=0.15,
-        trace_id='test-trace-id-2',
-        span_id='test-span-id-2',
     )
 
     # Add the case
@@ -194,8 +190,6 @@ async def test_report_with_error(mock_evaluator: Evaluator[TaskInput, TaskOutput
         assertions={error_output.name: error_output},
         task_duration=0.05,
         total_duration=0.1,
-        trace_id='test-error-trace-id',
-        span_id='test-error-span-id',
     )
 
     # Create a report with the error case
