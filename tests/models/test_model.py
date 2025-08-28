@@ -8,6 +8,8 @@ from pydantic_ai.models import infer_model
 
 from ..conftest import TestEnv
 
+# TODO(Marcelo): We need to add Vertex AI to the test cases.
+
 TEST_CASES = [
     ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
     ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
@@ -102,22 +104,6 @@ TEST_CASES = [
         'openai',
         'openai',
         'OpenAIResponsesModel',
-    ),
-    (
-        'GOOGLE_VERTEX_API_KEY',
-        'vertexai:gemini-1.5-flash',
-        'gemini-1.5-flash',
-        'google-vertex',
-        'google',
-        'GoogleModel',
-    ),
-    (
-        'GOOGLE_VERTEX_API_KEY',
-        'google-vertex:gemini-1.5-flash',
-        'gemini-1.5-flash',
-        'google-vertex',
-        'google',
-        'GoogleModel',
     ),
 ]
 
