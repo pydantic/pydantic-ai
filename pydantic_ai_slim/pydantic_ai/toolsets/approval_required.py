@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Callable
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from pydantic_ai.exceptions import ApprovalRequired
 
 from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition
@@ -13,12 +15,14 @@ from .wrapper import WrapperToolset
 class ApprovalRequiredToolset(WrapperToolset[AgentDepsT]):
     """TODO: Docstring."""
 
-    approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool] = lambda ctx, tool_def: True
+    approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition, dict[str, Any]], bool] = (
+        lambda ctx, tool_def, tool_args: True
+    )
 
-    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return {
-            name: replace(tool, tool_def=replace(tool.tool_def, kind='unapproved'))
-            if not ctx.tool_call_approved and self.approval_required_func(ctx, tool.tool_def)
-            else tool
-            for name, tool in (await super().get_tools(ctx)).items()
-        }
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        if not ctx.tool_call_approved and self.approval_required_func(ctx, tool.tool_def, tool_args):
+            raise ApprovalRequired
+
+        return await super().call_tool(name, tool_args, ctx, tool)

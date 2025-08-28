@@ -177,7 +177,9 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
 
     def approval_required(
         self,
-        approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition], bool] = lambda ctx, tool_def: True,
+        approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition, dict[str, Any]], bool] = (
+            lambda ctx, tool_def, tool_args: True
+        ),
     ) -> ApprovalRequiredToolset[AgentDepsT]:
         """TODO: Docstring."""
         from .approval_required import ApprovalRequiredToolset

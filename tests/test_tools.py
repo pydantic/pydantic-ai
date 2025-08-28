@@ -1693,7 +1693,7 @@ async def test_approval_required_toolset():
     def bar(x: int) -> int:
         return x * 3
 
-    toolset = toolset.approval_required(lambda ctx, tool_def: tool_def.name == 'foo')
+    toolset = toolset.approval_required(lambda ctx, tool_def, tool_args: tool_def.name == 'foo')
 
     agent = Agent(FunctionModel(llm), toolsets=[toolset], output_type=[str, DeferredToolRequests])
 
