@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Literal
 
+import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
@@ -18,7 +19,6 @@ from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     ModelMessage,
     ModelRequest,
     PartDeltaEvent,
@@ -42,18 +42,11 @@ try:
     from temporalio.worker import Worker
     from temporalio.workflow import ActivityConfig
 
-    from pydantic_ai.durable_exec.temporal import (
-        AgentPlugin,
-        LogfirePlugin,
-        PydanticAIPlugin,
-        TemporalAgent,
-    )
+    from pydantic_ai.durable_exec.temporal import AgentPlugin, LogfirePlugin, PydanticAIPlugin, TemporalAgent
     from pydantic_ai.durable_exec.temporal._function_toolset import TemporalFunctionToolset
     from pydantic_ai.durable_exec.temporal._mcp_server import TemporalMCPServer
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('temporal not installed', allow_module_level=True)
 
 try:
@@ -63,23 +56,17 @@ try:
     from logfire.testing import CaptureLogfire
     from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('logfire not installed', allow_module_level=True)
 
 try:
     from pydantic_ai.mcp import MCPServerStdio
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
-    import pytest
-
     pytest.skip('openai not installed', allow_module_level=True)
 
 
@@ -89,7 +76,6 @@ with workflow.unsafe.imports_passed_through():
     import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
 
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
-    import pytest
     from inline_snapshot import snapshot
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
@@ -165,7 +151,7 @@ async def client_with_logfire(temporal_env: WorkflowEnvironment) -> Client:
 
 
 # Can't use the `openai_api_key` fixture here because the workflow needs to be defined at the top level of the file.
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     provider=OpenAIProvider(
         api_key=os.getenv('OPENAI_API_KEY', 'mock-api-key'),
@@ -209,7 +195,7 @@ class Deps(BaseModel):
 
 async def event_stream_handler(
     ctx: RunContext[Deps],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     logfire.info(f'{ctx.run_step=}')
     async for event in stream:
@@ -220,8 +206,15 @@ async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
 
-def get_weather(city: str) -> str:
-    return 'sunny'
+class WeatherArgs(BaseModel):
+    city: str
+
+
+def get_weather(args: WeatherArgs) -> str:
+    if args.city == 'Mexico City':
+        return 'sunny'
+    else:
+        return 'unknown'  # pragma: no cover
 
 
 @dataclass
@@ -642,11 +635,11 @@ async def test_complex_agent_run_in_workflow(
 
 
 async def test_complex_agent_run(allow_model_requests: None):
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
     async def event_stream_handler(
         ctx: RunContext[Deps],
-        stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+        stream: AsyncIterable[AgentStreamEvent],
     ):
         async for event in stream:
             events.append(event)
@@ -1167,7 +1160,7 @@ async def test_temporal_agent_iter_in_workflow(allow_model_requests: None, clien
 
 async def simple_event_stream_handler(
     ctx: RunContext[None],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     pass
 

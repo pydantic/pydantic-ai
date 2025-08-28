@@ -171,6 +171,7 @@ async def test_simple_completion(allow_model_requests: None, huggingface_api_key
             usage=RequestUsage(input_tokens=30, output_tokens=29),
             model_name='Qwen/Qwen2.5-72B-Instruct-fast',
             timestamp=datetime(2025, 7, 8, 13, 42, 33, tzinfo=timezone.utc),
+            provider_name='huggingface',
             provider_request_id='chatcmpl-d445c0d473a84791af2acf356cc00df7',
         )
     )
@@ -238,6 +239,7 @@ async def test_request_structured_response(
             ],
             model_name='hf-model',
             timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            provider_name='huggingface',
             provider_request_id='123',
         )
     )
@@ -370,6 +372,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='huggingface',
                 provider_request_id='123',
             ),
             ModelRequest(
@@ -393,6 +396,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='huggingface',
                 provider_request_id='123',
             ),
             ModelRequest(
@@ -409,6 +413,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 parts=[TextPart(content='final response')],
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='huggingface',
                 provider_request_id='123',
             ),
         ]
@@ -550,7 +555,7 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {},
                 {'first': 'One'},
@@ -579,7 +584,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
@@ -656,6 +661,7 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                 usage=RequestUsage(input_tokens=269, output_tokens=15),
                 model_name='Qwen/Qwen2.5-VL-72B-Instruct',
                 timestamp=datetime(2025, 7, 8, 14, 4, 39, tzinfo=timezone.utc),
+                provider_name='huggingface',
                 provider_request_id='chatcmpl-49aa100effab4ca28514d5ccc00d7944',
             ),
         ]
@@ -722,6 +728,7 @@ async def test_hf_model_instructions(allow_model_requests: None, huggingface_api
                 usage=RequestUsage(input_tokens=26, output_tokens=2),
                 model_name='Qwen/Qwen2.5-72B-Instruct-fast',
                 timestamp=IsDatetime(),
+                provider_name='huggingface',
                 provider_request_id='chatcmpl-b3936940372c481b8d886e596dc75524',
             ),
         ]
@@ -813,6 +820,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 parts=[TextPart(content='invalid-response')],
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='huggingface',
                 provider_request_id='123',
             ),
             ModelRequest(
@@ -829,6 +837,7 @@ async def test_retry_prompt_without_tool_name(allow_model_requests: None):
                 parts=[TextPart(content='final-response')],
                 model_name='hf-model',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='huggingface',
                 provider_request_id='123',
             ),
         ]
@@ -959,6 +968,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=RequestUsage(input_tokens=15, output_tokens=1090),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
+                provider_name='huggingface',
                 provider_request_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
             ),
         ]
@@ -982,6 +992,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=RequestUsage(input_tokens=15, output_tokens=1090),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
+                provider_name='huggingface',
                 provider_request_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
             ),
             ModelRequest(
@@ -1000,6 +1011,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 usage=RequestUsage(input_tokens=691, output_tokens=1860),
                 model_name='Qwen/Qwen3-235B-A22B',
                 timestamp=IsDatetime(),
+                provider_name='huggingface',
                 provider_request_id='chatcmpl-35fdec1307634f94a39f7e26f52e12a7',
             ),
         ]

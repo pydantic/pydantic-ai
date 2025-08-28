@@ -82,6 +82,7 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 usage=RequestUsage(input_tokens=7, output_tokens=30),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -140,6 +141,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 usage=RequestUsage(input_tokens=551, output_tokens=132),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -165,6 +167,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 usage=RequestUsage(input_tokens=685, output_tokens=166),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -265,6 +268,7 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 usage=RequestUsage(input_tokens=417, output_tokens=69),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -289,6 +293,7 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                 usage=RequestUsage(input_tokens=509, output_tokens=108),
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -556,6 +561,7 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 usage=RequestUsage(input_tokens=13, output_tokens=71),
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -606,6 +612,7 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 usage=RequestUsage(input_tokens=12, output_tokens=882),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )
@@ -629,6 +636,7 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 usage=RequestUsage(input_tokens=12, output_tokens=882),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
             ModelRequest(
                 parts=[
@@ -649,6 +657,7 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 usage=RequestUsage(input_tokens=636, output_tokens=690),
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
+                provider_name='bedrock',
             ),
         ]
     )

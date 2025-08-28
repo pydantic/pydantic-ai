@@ -20,7 +20,6 @@ from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -67,6 +66,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -96,6 +96,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -109,6 +110,7 @@ async def test_streamed_text_response():
                     usage=RequestUsage(input_tokens=52, output_tokens=11),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
@@ -148,8 +150,8 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_structured(debounce_by=None):
-            response_data = await result.validate_structured_output(structured_response, allow_partial=not last)
+        async for structured_response, last in result.stream_responses(debounce_by=None):
+            response_data = await result.validate_response_output(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -174,7 +176,7 @@ async def test_streamed_text_stream():
 
     async with agent.run_stream('Hello') as result:
         # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c async for c in result.stream()]
+        chunks: list[str] = [c async for c in result.stream_output()]
         # two chunks with `stream()` due to not-final vs. final
         assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
         assert result.is_complete
@@ -206,7 +208,7 @@ async def test_streamed_text_stream():
         return text.upper()
 
     async with agent.run_stream('Hello', output_type=TextOutput(upcase)) as result:
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 'THE ',
                 'THE CAT ',
@@ -219,49 +221,56 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
                     usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
                     usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
@@ -785,6 +794,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 usage=RequestUsage(input_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -798,6 +808,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -901,6 +912,7 @@ async def test_iter_stream_responses():
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             kind='response',
+            provider_name='test',
         )
         for text in [
             '',
@@ -1069,7 +1081,7 @@ async def test_stream_structured_output():
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 CityLocation(city='Mexico '),
                 CityLocation(city='Mexico City'),
@@ -1258,11 +1270,9 @@ async def test_run_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(
-        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
-    ):
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -1301,11 +1311,9 @@ def test_run_sync_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(
-        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
-    ):
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
@@ -1344,16 +1352,14 @@ async def test_run_stream_event_stream_handler():
     async def ret_a(x: str) -> str:
         return f'{x}-apple'
 
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
-    async def event_stream_handler(
-        ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent]
-    ):
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
         async for event in stream:
             events.append(event)
 
     async with test_agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
         )
 

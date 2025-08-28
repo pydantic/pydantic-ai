@@ -29,6 +29,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * Anthropic
     * OpenAI
     * Groq
+    * Google
     """
 
     search_context_size: Literal['low', 'medium', 'high'] = 'medium'

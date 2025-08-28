@@ -79,7 +79,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -353,6 +353,7 @@ class MistralModel(Model):
             model_name=response.model,
             timestamp=timestamp,
             provider_request_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -378,6 +379,7 @@ class MistralModel(Model):
             _response=peekable_response,
             _model_name=self._model_name,
             _timestamp=timestamp,
+            _provider_name=self._provider.name,
         )
 
     @staticmethod
@@ -584,6 +586,7 @@ class MistralStreamedResponse(StreamedResponse):
     _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
+    _provider_name: str
 
     _delta_content: str = field(default='', init=False)
 
@@ -630,6 +633,11 @@ class MistralStreamedResponse(StreamedResponse):
     def model_name(self) -> MistralModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

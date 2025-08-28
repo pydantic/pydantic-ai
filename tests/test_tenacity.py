@@ -13,15 +13,13 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from tenacity import (
-        AsyncRetrying,
         RetryCallState,
-        Retrying,
         retry_if_exception_type,
         stop_after_attempt,
         wait_fixed,
     )
 
-    from pydantic_ai.retries import AsyncTenacityTransport, TenacityTransport, wait_retry_after
+    from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, TenacityTransport, wait_retry_after
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='install tenacity to run tenacity tests')
 
@@ -35,8 +33,8 @@ class TestTenacityTransport:
         mock_response = Mock(spec=httpx.Response)
         mock_transport.handle_request.return_value = mock_response
 
-        controller = Retrying(stop=stop_after_attempt(3), reraise=True)
-        transport = TenacityTransport(controller, mock_transport)
+        config = RetryConfig(stop=stop_after_attempt(3), reraise=True)
+        transport = TenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
         result = transport.handle_request(request)
@@ -56,13 +54,13 @@ class TestTenacityTransport:
             mock_response,
         ]
 
-        controller = Retrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.ConnectError),
             stop=stop_after_attempt(3),
             wait=wait_fixed(0.001),  # Very short wait for tests
             reraise=True,
         )
-        transport = TenacityTransport(controller, mock_transport)
+        transport = TenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
         result = transport.handle_request(request)
@@ -75,13 +73,13 @@ class TestTenacityTransport:
         mock_transport = Mock(spec=httpx.BaseTransport)
         mock_transport.handle_request.side_effect = httpx.ConnectError('Connection failed')
 
-        controller = Retrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.ConnectError),
             stop=stop_after_attempt(2),
             wait=wait_fixed(0.001),
             reraise=True,
         )
-        transport = TenacityTransport(controller, mock_transport)
+        transport = TenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
         with pytest.raises(httpx.ConnectError, match='Connection failed'):
@@ -97,8 +95,8 @@ class TestTenacityTransport:
         mock_transport.handle_request.return_value = mock_response
 
         validate_response = Mock()
-        controller = Retrying(stop=stop_after_attempt(3), reraise=True)
-        transport = TenacityTransport(controller, mock_transport, validate_response)
+        config = RetryConfig(stop=stop_after_attempt(3), reraise=True)
+        transport = TenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
         result = transport.handle_request(request)
@@ -120,19 +118,67 @@ class TestTenacityTransport:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
-        controller = Retrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             stop=stop_after_attempt(3),
             wait=wait_fixed(0.001),
             reraise=True,
         )
-        transport = TenacityTransport(controller, mock_transport, validate_response)
+        transport = TenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
         result = transport.handle_request(request)
 
         assert result is mock_response_success
         assert mock_transport.handle_request.call_count == 2
+
+    def test_raise_for_status_in_validate_response(self):
+        """Test that response.raise_for_status() works in validate_response callback."""
+        mock_transport = Mock(spec=httpx.BaseTransport)
+        mock_response_fail = Mock(spec=httpx.Response)
+        mock_response_fail.status_code = 429
+        mock_response_fail.is_success = False
+        mock_response_fail.is_error = True
+        mock_response_fail.request = None  # Initially None, will be set by transport
+
+        # Mock raise_for_status to check if request is set
+        def mock_raise_for_status():
+            if mock_response_fail.request is None:
+                raise RuntimeError(  # pragma: no cover
+                    'Cannot call `raise_for_status` as the request instance has not been set on this response.'
+                )
+            raise httpx.HTTPStatusError(
+                'Too Many Requests', request=mock_response_fail.request, response=mock_response_fail
+            )
+
+        mock_response_fail.raise_for_status = mock_raise_for_status
+
+        mock_response_success = Mock(spec=httpx.Response)
+        mock_response_success.status_code = 200
+        mock_response_success.is_success = True
+        mock_response_success.is_error = False
+        mock_response_success.raise_for_status = Mock()  # Should not raise
+
+        mock_transport.handle_request.side_effect = [mock_response_fail, mock_response_success]
+
+        config = RetryConfig(
+            retry=retry_if_exception_type(httpx.HTTPStatusError),
+            stop=stop_after_attempt(3),
+            wait=wait_fixed(0.001),
+            reraise=True,
+        )
+        transport = TenacityTransport(
+            config, mock_transport, validate_response=lambda response: response.raise_for_status()
+        )
+
+        request = httpx.Request('GET', 'https://example.com')
+        result = transport.handle_request(request)
+
+        assert result is mock_response_success
+        assert mock_transport.handle_request.call_count == 2
+        # Verify that the request was set on the failed response before raise_for_status was called
+        assert mock_response_fail.request is request
+        mock_response_success.raise_for_status.assert_called_once()
 
 
 class TestAsyncTenacityTransport:
@@ -144,8 +190,8 @@ class TestAsyncTenacityTransport:
         mock_response = Mock(spec=httpx.Response)
         mock_transport.handle_async_request.return_value = mock_response
 
-        controller = AsyncRetrying(stop=stop_after_attempt(3), reraise=True)
-        transport = AsyncTenacityTransport(controller, mock_transport)
+        config = RetryConfig(stop=stop_after_attempt(3), reraise=True)
+        transport = AsyncTenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
         result = await transport.handle_async_request(request)
@@ -165,13 +211,13 @@ class TestAsyncTenacityTransport:
             mock_response,
         ]
 
-        controller = AsyncRetrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.ConnectError),
             stop=stop_after_attempt(3),
             wait=wait_fixed(0.001),
             reraise=True,
         )
-        transport = AsyncTenacityTransport(controller, mock_transport)
+        transport = AsyncTenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
         result = await transport.handle_async_request(request)
@@ -184,13 +230,13 @@ class TestAsyncTenacityTransport:
         mock_transport = AsyncMock(spec=httpx.AsyncBaseTransport)
         mock_transport.handle_async_request.side_effect = httpx.ConnectError('Connection failed')
 
-        controller = AsyncRetrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.ConnectError),
             stop=stop_after_attempt(2),
             wait=wait_fixed(0.001),
             reraise=True,
         )
-        transport = AsyncTenacityTransport(controller, mock_transport)
+        transport = AsyncTenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
         with pytest.raises(httpx.ConnectError, match='Connection failed'):
@@ -206,8 +252,8 @@ class TestAsyncTenacityTransport:
         mock_transport.handle_async_request.return_value = mock_response
 
         validate_response = Mock()
-        controller = AsyncRetrying(stop=stop_after_attempt(3), reraise=True)
-        transport = AsyncTenacityTransport(controller, mock_transport, validate_response)
+        config = RetryConfig(stop=stop_after_attempt(3), reraise=True)
+        transport = AsyncTenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
         result = await transport.handle_async_request(request)
@@ -229,19 +275,67 @@ class TestAsyncTenacityTransport:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
-        controller = AsyncRetrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             stop=stop_after_attempt(3),
             wait=wait_fixed(0.001),
             reraise=True,
         )
-        transport = AsyncTenacityTransport(controller, mock_transport, validate_response)
+        transport = AsyncTenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
         result = await transport.handle_async_request(request)
 
         assert result is mock_response_success
         assert mock_transport.handle_async_request.call_count == 2
+
+    async def test_raise_for_status_in_validate_response(self):
+        """Test that response.raise_for_status() works in validate_response callback."""
+        mock_transport = AsyncMock(spec=httpx.AsyncBaseTransport)
+        mock_response_fail = Mock(spec=httpx.Response)
+        mock_response_fail.status_code = 429
+        mock_response_fail.is_success = False
+        mock_response_fail.is_error = True
+        mock_response_fail.request = None  # Initially None, will be set by transport
+
+        # Mock raise_for_status to check if request is set
+        def mock_raise_for_status():
+            if mock_response_fail.request is None:
+                raise RuntimeError(  # pragma: no cover
+                    'Cannot call `raise_for_status` as the request instance has not been set on this response.'
+                )
+            raise httpx.HTTPStatusError(
+                'Too Many Requests', request=mock_response_fail.request, response=mock_response_fail
+            )
+
+        mock_response_fail.raise_for_status = mock_raise_for_status
+
+        mock_response_success = Mock(spec=httpx.Response)
+        mock_response_success.status_code = 200
+        mock_response_success.is_success = True
+        mock_response_success.is_error = False
+        mock_response_success.raise_for_status = Mock()  # Should not raise
+
+        mock_transport.handle_async_request.side_effect = [mock_response_fail, mock_response_success]
+
+        config = RetryConfig(
+            retry=retry_if_exception_type(httpx.HTTPStatusError),
+            stop=stop_after_attempt(3),
+            wait=wait_fixed(0.001),
+            reraise=True,
+        )
+        transport = AsyncTenacityTransport(
+            config, mock_transport, validate_response=lambda response: response.raise_for_status()
+        )
+
+        request = httpx.Request('GET', 'https://example.com')
+        result = await transport.handle_async_request(request)
+
+        assert result is mock_response_success
+        assert mock_transport.handle_async_request.call_count == 2
+        # Verify that the request was set on the failed response before raise_for_status was called
+        assert mock_response_fail.request is request
+        mock_response_success.raise_for_status.assert_called_once()
 
 
 class TestWaitRetryAfter:
@@ -515,13 +609,13 @@ class TestIntegration:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
-        controller = AsyncRetrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             wait=wait_retry_after(max_wait=5),  # Short max_wait for tests
             stop=stop_after_attempt(3),
             reraise=True,
         )
-        transport = AsyncTenacityTransport(controller, mock_transport, validate_response)
+        transport = AsyncTenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
 
@@ -551,13 +645,13 @@ class TestIntegration:
             if response.status_code == 429:
                 raise httpx.HTTPStatusError('Rate limited', request=request, response=response)
 
-        controller = Retrying(
+        config = RetryConfig(
             retry=retry_if_exception_type(httpx.HTTPStatusError),
             wait=wait_retry_after(max_wait=0.1),  # Cap at 0.1 seconds for tests
             stop=stop_after_attempt(3),
             reraise=True,
         )
-        transport = TenacityTransport(controller, mock_transport, validate_response)
+        transport = TenacityTransport(config, mock_transport, validate_response)
 
         request = httpx.Request('GET', 'https://example.com')
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import itertools
 import json
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, cast
 from urllib.parse import urlparse
 
 from opentelemetry._events import (
@@ -18,8 +19,14 @@ from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provide
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
+from .. import _otel_messages
 from .._run_context import RunContext
-from ..messages import ModelMessage, ModelRequest, ModelResponse
+from ..messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+)
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
@@ -80,6 +87,8 @@ class InstrumentationSettings:
     event_logger: EventLogger = field(repr=False)
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
+    include_content: bool = True
+    version: Literal[1, 2] = 1
 
     def __init__(
         self,
@@ -90,6 +99,7 @@ class InstrumentationSettings:
         event_logger_provider: EventLoggerProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
+        version: Literal[1, 2] = 1,
     ):
         """Create instrumentation options.
 
@@ -109,6 +119,10 @@ class InstrumentationSettings:
             include_binary_content: Whether to include binary content in the instrumentation events.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
+            version: Version of the data format.
+                Version 1 is based on the legacy event-based OpenTelemetry GenAI spec.
+                Version 2 stores messages in the attributes `gen_ai.input.messages` and `gen_ai.output.messages`.
+                Version 2 is still WIP and experimental, but will become the default in Pydantic AI v1.
         """
         from pydantic_ai import __version__
 
@@ -122,6 +136,7 @@ class InstrumentationSettings:
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
+        self.version = version
 
         # As specified in the OpenTelemetry GenAI metrics spec:
         # https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-metrics/#metric-gen_aiclienttokenusage
@@ -178,6 +193,99 @@ class InstrumentationSettings:
         for event in events:
             event.body = InstrumentedModel.serialize_any(event.body)
         return events
+
+    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
+        result: list[_otel_messages.ChatMessage] = []
+        for message in messages:
+            if isinstance(message, ModelRequest):
+                for is_system, group in itertools.groupby(message.parts, key=lambda p: isinstance(p, SystemPromptPart)):
+                    message_parts: list[_otel_messages.MessagePart] = []
+                    for part in group:
+                        if hasattr(part, 'otel_message_parts'):
+                            message_parts.extend(part.otel_message_parts(self))
+                    result.append(
+                        _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
+                    )
+            elif isinstance(message, ModelResponse):  # pragma: no branch
+                result.append(_otel_messages.ChatMessage(role='assistant', parts=message.otel_message_parts(self)))
+        return result
+
+    def handle_messages(self, input_messages: list[ModelMessage], response: ModelResponse, system: str, span: Span):
+        if self.version == 1:
+            events = self.messages_to_otel_events(input_messages)
+            for event in self.messages_to_otel_events([response]):
+                events.append(
+                    Event(
+                        'gen_ai.choice',
+                        body={
+                            'index': 0,
+                            'message': event.body,
+                        },
+                    )
+                )
+            for event in events:
+                event.attributes = {
+                    GEN_AI_SYSTEM_ATTRIBUTE: system,
+                    **(event.attributes or {}),
+                }
+            self._emit_events(span, events)
+        else:
+            output_messages = self.messages_to_otel_messages([response])
+            assert len(output_messages) == 1
+            output_message = cast(_otel_messages.OutputMessage, output_messages[0])
+            if response.provider_details and 'finish_reason' in response.provider_details:
+                output_message['finish_reason'] = response.provider_details['finish_reason']
+            instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
+            system_instructions_attributes = self.system_instructions_attributes(instructions)
+            attributes = {
+                'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
+                'gen_ai.output.messages': json.dumps([output_message]),
+                **system_instructions_attributes,
+                'logfire.json_schema': json.dumps(
+                    {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            **(
+                                {'gen_ai.system_instructions': {'type': 'array'}}
+                                if system_instructions_attributes
+                                else {}
+                            ),
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    }
+                ),
+            }
+            span.set_attributes(attributes)
+
+    def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
+        if instructions and self.include_content:
+            return {
+                'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
+            }
+        return {}
+
+    def _emit_events(self, span: Span, events: list[Event]) -> None:
+        if self.event_mode == 'logs':
+            for event in events:
+                self.event_logger.emit(event)
+        else:
+            attr_name = 'events'
+            span.set_attributes(
+                {
+                    attr_name: json.dumps([InstrumentedModel.event_to_dict(event) for event in events]),
+                    'logfire.json_schema': json.dumps(
+                        {
+                            'type': 'object',
+                            'properties': {
+                                attr_name: {'type': 'array'},
+                                'model_request_parameters': {'type': 'object'},
+                            },
+                        }
+                    ),
+                }
+            )
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
@@ -269,7 +377,7 @@ class InstrumentedModel(WrapperModel):
                     # FallbackModel updates these span attributes.
                     attributes.update(getattr(span, 'attributes', {}))
                     request_model = attributes[GEN_AI_REQUEST_MODEL_ATTRIBUTE]
-                    system = attributes[GEN_AI_SYSTEM_ATTRIBUTE]
+                    system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
                     response_model = response.model_name or request_model
 
@@ -297,18 +405,7 @@ class InstrumentedModel(WrapperModel):
                     if not span.is_recording():
                         return
 
-                    events = self.instrumentation_settings.messages_to_otel_events(messages)
-                    for event in self.instrumentation_settings.messages_to_otel_events([response]):
-                        events.append(
-                            Event(
-                                'gen_ai.choice',
-                                body={
-                                    # TODO finish_reason
-                                    'index': 0,
-                                    'message': event.body,
-                                },
-                            )
-                        )
+                    self.instrumentation_settings.handle_messages(messages, response, system, span)
                     span.set_attributes(
                         {
                             **response.usage.opentelemetry_attributes(),
@@ -316,12 +413,6 @@ class InstrumentedModel(WrapperModel):
                         }
                     )
                     span.update_name(f'{operation} {request_model}')
-                    for event in events:
-                        event.attributes = {
-                            GEN_AI_SYSTEM_ATTRIBUTE: system,
-                            **(event.attributes or {}),
-                        }
-                    self._emit_events(span, events)
 
                 yield finish
         finally:
@@ -329,27 +420,6 @@ class InstrumentedModel(WrapperModel):
                 # We only want to record metrics after the span is finished,
                 # to prevent them from being redundantly recorded in the span itself by logfire.
                 record_metrics()
-
-    def _emit_events(self, span: Span, events: list[Event]) -> None:
-        if self.instrumentation_settings.event_mode == 'logs':
-            for event in events:
-                self.instrumentation_settings.event_logger.emit(event)
-        else:
-            attr_name = 'events'
-            span.set_attributes(
-                {
-                    attr_name: json.dumps([self.event_to_dict(event) for event in events]),
-                    'logfire.json_schema': json.dumps(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                attr_name: {'type': 'array'},
-                                'model_request_parameters': {'type': 'object'},
-                            },
-                        }
-                    ),
-                }
-            )
 
     @staticmethod
     def model_attributes(model: Model):

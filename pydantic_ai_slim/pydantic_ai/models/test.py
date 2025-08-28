@@ -131,6 +131,7 @@ class TestModel(Model):
             _model_name=self._model_name,
             _structured_response=model_response,
             _messages=messages,
+            _provider_name=self._system,
         )
 
     @property
@@ -263,6 +264,7 @@ class TestStreamedResponse(StreamedResponse):
     _model_name: str
     _structured_response: ModelResponse
     _messages: InitVar[Iterable[ModelMessage]]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     def __post_init__(self, _messages: Iterable[ModelMessage]):
@@ -304,6 +306,11 @@ class TestStreamedResponse(StreamedResponse):
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

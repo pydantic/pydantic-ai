@@ -240,10 +240,7 @@ class BedrockConverseModel(Model):
 
     @staticmethod
     def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        tool_spec: ToolSpecificationTypeDef = {
-            'name': f.name,
-            'inputSchema': {'json': f.parameters_json_schema},
-        }
+        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
 
         if f.description:  # pragma: no branch
             tool_spec['description'] = f.description
@@ -275,6 +272,7 @@ class BedrockConverseModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _event_stream=response,
+            _provider_name=self._provider.name,
         )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
@@ -304,7 +302,9 @@ class BedrockConverseModel(Model):
             output_tokens=response['usage']['outputTokens'],
         )
         vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, provider_request_id=vendor_id)
+        return ModelResponse(
+            items, usage=u, model_name=self.model_name, provider_request_id=vendor_id, provider_name=self._provider.name
+        )
 
     @overload
     async def _messages_create(
@@ -423,7 +423,7 @@ class BedrockConverseModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart) and part.content:
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(await self._map_user_prompt(part, document_count))
@@ -594,6 +594,7 @@ class BedrockStreamedResponse(StreamedResponse):
 
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
@@ -661,13 +662,18 @@ class BedrockStreamedResponse(StreamedResponse):
                         yield maybe_event
 
     @property
-    def timestamp(self) -> datetime:
-        return self._timestamp
-
-    @property
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
         return usage.RequestUsage(
