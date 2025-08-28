@@ -314,10 +314,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 span_id=span_id,
                 trace_id=trace_id,
             )
-            # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
-            eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))
-            # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            eval_span.set_attribute('averages', _REPORT_CASE_AGGREGATE_ADAPTER.dump_python(report.averages()))
         return report
 
     def evaluate_sync(
