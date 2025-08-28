@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import logfire_api
@@ -22,27 +23,14 @@ from .evaluator import (
 )
 
 if TYPE_CHECKING:
-    # TODO: pydantic_evals should not import from pydantic_ai...
-    #   Need to figure out a good way to sneak retry behavior into the evaluators..
-    # Well, the problem is that we probably want to use the retry stuff in both pydantic_ai and pydantic_evals ... ugh.
     from pydantic_ai.retries import RetryConfig
 
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
-
+_logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
+logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
 
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
 MetadataT = TypeVar('MetadataT', default=Any, contravariant=True)
-
-_logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
 
 
 async def run_evaluator(

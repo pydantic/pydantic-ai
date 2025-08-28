@@ -191,7 +191,6 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """The cases in the report."""
     failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
     """The failures in the report. These are cases where task execution raised an exception."""
-    # TODO: Need to add failures to the print-out
 
     span_id: str | None = None
     """The span ID of the evaluation."""
