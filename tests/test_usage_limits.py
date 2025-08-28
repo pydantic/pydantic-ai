@@ -11,6 +11,7 @@ from inline_snapshot.extra import warns
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -163,7 +164,7 @@ async def test_multi_agent_usage_no_incr():
     async def delegate_to_other_agent2(ctx: RunContext[None], sentence: str) -> int:
         delegate_result = await delegate_agent.run(sentence, usage=ctx.usage)
         delegate_usage = delegate_result.usage()
-        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9, tool_calls=1))
+        assert delegate_usage == snapshot(RunUsage(requests=2, input_tokens=102, output_tokens=9))
         return delegate_result.output
 
     result2 = await controller_agent2.run('foobar')
@@ -287,3 +288,23 @@ async def test_output_tool_not_counted() -> None:
     result_output = await test_agent_with_output.run('test')
 
     assert result_output.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=15, tool_calls=1))
+
+
+async def test_failed_tool_calls_not_counted() -> None:
+    """Test that failed tool calls (raising ModelRetry) are not counted."""
+    test_agent = Agent(TestModel())
+
+    call_count = 0
+
+    @test_agent.tool_plain
+    async def flaky_tool(x: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise ModelRetry('Temporary failure, please retry')
+        return f'{x}-success'
+
+    result = await test_agent.run('test')
+    # The tool was called twice (1 failure + 1 success), but only the successful call should be counted
+    assert call_count == 2
+    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
