@@ -1,3 +1,4 @@
+import warnings
 from importlib import import_module
 
 import pytest
@@ -6,8 +7,6 @@ from pydantic_ai import UserError
 from pydantic_ai.models import infer_model
 
 from ..conftest import TestEnv
-
-# TODO(Marcelo): We need to add Vertex AI to the test cases.
 
 TEST_CASES = [
     ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
@@ -104,6 +103,22 @@ TEST_CASES = [
         'openai',
         'OpenAIResponsesModel',
     ),
+    (
+        'GOOGLE_VERTEX_API_KEY',
+        'vertexai:gemini-1.5-flash',
+        'gemini-1.5-flash',
+        'google-vertex',
+        'google',
+        'GoogleModel',
+    ),
+    (
+        'GOOGLE_VERTEX_API_KEY',
+        'google-vertex:gemini-1.5-flash',
+        'gemini-1.5-flash',
+        'google-vertex',
+        'google',
+        'GoogleModel',
+    ),
 ]
 
 
@@ -124,7 +139,9 @@ def test_infer_model(
     try:
         model_module = import_module(f'pydantic_ai.models.{module_name}')
         expected_model = getattr(model_module, model_class_name)
-        m = infer_model(model_name)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            m = infer_model(model_name)
     except ImportError:
         pytest.skip(f'{model_name} dependencies not installed')
 

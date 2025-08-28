@@ -707,7 +707,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
             "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
             DeprecationWarning,
         )
-        provider = 'google-vertex'  # pragma: no cover
+        provider = 'google-vertex'
 
     if provider == 'cohere':
         from .cohere import CohereModel
