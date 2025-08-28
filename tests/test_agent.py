@@ -3096,6 +3096,7 @@ def test_image_url_serializable_missing_media_type():
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
                                 'media_type': 'image/jpeg',
+                                'identifier': 'a72e39',
                             },
                         ],
                         'timestamp': IsStr(),
