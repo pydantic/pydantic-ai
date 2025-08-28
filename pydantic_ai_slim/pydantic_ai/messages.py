@@ -437,7 +437,7 @@ class BinaryContent:
 
     identifier: str
     """Identifier for the binary content, such as a unique ID. generating one from the data if not explicitly set
-    
+
     This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
     and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
 
