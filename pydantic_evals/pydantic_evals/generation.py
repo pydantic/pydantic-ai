@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from typing_extensions import TypeVar
 
 from pydantic_ai import Agent, models
+from pydantic_ai.output import NativeOutput, StructuredDict
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators.evaluator import Evaluator
 
@@ -59,21 +60,16 @@ async def generate_dataset(
     """
     output_schema = dataset_type.model_json_schema_with_evaluators(custom_evaluator_types)
 
-    # TODO(DavidM): Update this once we add better response_format and/or ResultTool support to Pydantic AI
     agent = Agent(
         model,
-        system_prompt=(
-            f'Generate an object that is in compliance with this JSON schema:\n{output_schema}\n\n'
-            f'Include {n_examples} example cases.'
-            ' You must not include any characters in your response before the opening { of the JSON object, or after the closing }.'
-        ),
-        output_type=str,
+        system_prompt=f'Include {n_examples} example cases.',
+        output_type=NativeOutput(StructuredDict(output_schema)),
         retries=1,
     )
 
     result = await agent.run(extra_instructions or 'Please generate the object.')
     try:
-        result = dataset_type.from_text(result.output, fmt='json', custom_evaluator_types=custom_evaluator_types)
+        result = dataset_type.from_dict(result.output, custom_evaluator_types=custom_evaluator_types)
     except ValidationError as e:  # pragma: no cover
         print(f'Raw response from model:\n{result.output}')
         raise e
