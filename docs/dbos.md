@@ -108,7 +108,7 @@ async def main():
     #> Mexico City (Ciudad de México, CDMX)
 ```
 
-1. The original `Agent` cannot be used inside a deterministic DBOS workflow, but the `DBOSAgent` can. Workflow function declarations and `DBOSAgent` creations needs to happen before calling `DBOS.launch()` because DBOS requires all workflows to be registered before launch so that recovery can correctly find all workflows.
+1. The original `Agent` cannot be used inside a deterministic DBOS workflow, but the `DBOSAgent` can. Workflow function declarations and `DBOSAgent` creations need to happen before calling `DBOS.launch()` because DBOS requires all workflows to be registered before launch so that recovery can correctly find all workflows.
 2. [`DBOSAgent.run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run] works like [`Agent.run()`][pydantic_ai.Agent.run], but runs inside a DBOS workflow and wraps model requests, decorated tool calls, and MCP communication as DBOS steps.
 3. This assumes DBOS is using SQLite. To deploy your agent to production, we recommend using a Postgres server.
 4. The agent's `name` is used to uniquely identify its workflows.
@@ -125,13 +125,13 @@ There are a few considerations specific to agents and toolsets when using DBOS f
 
 ### Agent and Toolset Requirements
 
-To ensure that DBOS knows what code to run when a workflow fails or is interrupted and then restarted, each agent instance needs to have a name that's unique.
+To ensure that DBOS knows what code to run when a workflow fails or is interrupted and then restarted, each agent instance needs to have a unique name.
 
 Other than that, any agent and toolset will just work!
 
 ### Agent Run Context and Dependencies
 
-As DBOS checkpoints workflows and steps execution into a database, workflow inputs and outputs, and step outputs need to be serializable (JSON Pickleable). You may also want to keep the inputs and outputs small (usually less than 2MB).
+As DBOS checkpoints workflow and step execution into a database, workflow inputs and outputs, and step outputs need to be serializable (JSON pickleable). You may also want to keep the inputs and outputs small (the maximum size for a single field in PostgreSQL is 1 GB, but usually you want to keep the output size under 2 MB).
 
 ### Streaming
 
@@ -143,8 +143,37 @@ The event stream handler function will receive the agent [run context][pydantic_
 
 ## Step Configuration
 
-TBD
+DBOS step configuration, like retry policies, can be customized by passing [`StepConfig`][pydantic_ai.durable_exec.dbos.StepConfig] objects to the `DBOSAgent` constructor:
+
+- `mcp_step_config`: The DBOS step config to use for MCP server communication. If no config is provided, it disables DBOS step retries.
+- `model_step_config`: The DBOS step config to use for model request steps. If no config is provided, it disables DBOS step retries.
+
+For individual tools, you can annotate them with [`@DBOS.step`](https://docs.dbos.dev/python/reference/decorators#step) or [`@DBOS.workflow`](https://docs.dbos.dev/python/reference/decorators#workflow) decorators as needed. Decorated steps are just normal functions if called outside of DBOS workflows, which can be used in non-DBOS agents.
 
 ## Step Retries
 
-TBD
+On top of the automatic retries for request failures that DBOS will perform, Pydantic AI and various provider API clients also have their own request retry logic. Enabling these at the same time may cause the request to be retried more often than expected, with improper `Retry-After` handling.
+
+When using DBOS, it's recommended to not use [HTTP Request Retries](retries.md) and to turn off your provider API client's own retry logic, for example by setting `max_retries=0` on a [custom `OpenAIProvider` API client](models/openai.md#custom-openai-client).
+
+You can customize DBOS's retry policy using [step configuration](#step-configuration).
+
+## Observability with Logfire
+
+DBOS generates OpenTelemetry traces and events for each workflow and step execution, and Pydantic AI generates events for each agent run, model request and tool call. These can be sent to [Pydantic Logfire](logfire.md) to get a complete picture of what's happening in your application.
+
+To disable sending DBOS traces to Logfire, you can pass `disable_otlp=True` to the `DBOS` constructor. For example:
+
+
+```python {title="dbos_no_traces.py" test="skip"}
+from dbos import DBOS, DBOSConfig
+
+dbos_config: DBOSConfig = {
+    'name': 'pydantic_dbos_agent',
+    'system_database_url': 'sqlite:///dbostest.sqlite',
+    'disable_otlp': True  # (1)!
+}
+DBOS(config=dbos_config)
+```
+
+1. If `True`, disables OpenTelemetry tracing and logging for DBOS. Defaults to `False`.
