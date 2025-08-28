@@ -45,6 +45,7 @@ nav:
       - common-tools.md
       - retries.md
       - temporal.md
+      - dbos.md
       - MCP:
           - mcp/index.md
           - mcp/client.md
