@@ -628,10 +628,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     approval = ToolDenied()
                 tool_call_results[tool_call_id] = approval
 
-            for tool_call_id, result in deferred_tool_results.calls.items():
-                if not isinstance(result, _utils.get_union_args(DeferredToolCallResult)):
-                    result = _messages.ToolReturn(result)
-                tool_call_results[tool_call_id] = result
+            if calls := deferred_tool_results.calls:
+                call_result_types = _utils.get_union_args(DeferredToolCallResult)
+                for tool_call_id, result in calls.items():
+                    if not isinstance(result, call_result_types):
+                        result = _messages.ToolReturn(result)
+                    tool_call_results[tool_call_id] = result
 
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,

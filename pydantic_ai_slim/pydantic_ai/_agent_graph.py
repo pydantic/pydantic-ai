@@ -864,7 +864,7 @@ async def _call_tools(
         output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])
 
 
-async def _call_tool(  # noqa: C901
+async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
@@ -893,10 +893,6 @@ async def _call_tool(  # noqa: C901
             tool_call_result.tool_name = tool_call.tool_name
             tool_call_result.tool_call_id = tool_call.tool_call_id
             raise ToolRetryError(tool_call_result)
-        elif isinstance(tool_call_result, _messages.ToolReturnPart):
-            tool_call_result.tool_name = tool_call.tool_name
-            tool_call_result.tool_call_id = tool_call.tool_call_id
-            return tool_call_result, None
         else:
             tool_result = tool_call_result
     except ToolRetryError as e:
