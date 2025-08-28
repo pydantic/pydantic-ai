@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '412'
+      - '639'
       content-type:
       - application/json
       host:
@@ -18,12 +18,25 @@ interactions:
       messages:
       - content: Just call tools without asking for confirmation.
         role: system
-      - content: Delete the file `.env`
+      - content: Delete the file `.env` and create `test.txt`
         role: user
       model: gpt-4o
       stream: false
       tool_choice: auto
       tools:
+      - function:
+          description: ''
+          name: create_file
+          parameters:
+            additionalProperties: false
+            properties:
+              path:
+                type: string
+            required:
+            - path
+            type: object
+          strict: true
+        type: function
       - function:
           description: ''
           name: delete_file
@@ -47,13 +60,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1078'
+      - '1319'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '777'
+      - '737'
       openai-project:
       - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
@@ -74,28 +87,33 @@ interactions:
           role: assistant
           tool_calls:
           - function:
-              arguments: '{"path":".env"}'
+              arguments: '{"path": ".env"}'
               name: delete_file
-            id: call_Cph2RPOCb9iTlHFKJpDoGGJ3
+            id: call_jYdIdRZHxZTn5bWCq5jlMrJi
             type: function
-      created: 1756416039
-      id: chatcmpl-C9eKtagJXTE6zgbiTqrwka3p1HORH
+          - function:
+              arguments: '{"path": "test.txt"}'
+              name: create_file
+            id: call_TmlTVWQbzrXCZ4jNsCVNbNqu
+            type: function
+      created: 1756419063
+      id: chatcmpl-C9f7f1SbHRzcwlJwrYKdSonTRWPvV
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_46bff0e0c8
+      system_fingerprint: fp_df0f7b956c
       usage:
-        completion_tokens: 15
+        completion_tokens: 46
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 51
+        prompt_tokens: 71
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 66
+        total_tokens: 117
     status:
       code: 200
       message: OK
@@ -108,12 +126,12 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '668'
+      - '1109'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=R242yu_l_z7c_Zyfp3Y4V.Dg6IfXugFo16jFsBOX_Q4-1756416040-1.0.1.1-mnLu5T6rRYHqs510LMaxsIeBVZ.0A_9kLLrp39VwcuhZZoi3zFMWXztJX_l2f1l26SmCgMu0iaT_l6ys6JjQKENFI.VvF4Ajb8Ki4nxnrjM;
-        _cfuvid=S1.9tW2iDrUejaq6FRh21xbVgdrUS5JWZoBH7_NF2cQ-1756416040679-0.0.1.1-604800000
+      - __cf_bm=mLR5rPRuew3fXXRgovBj3Ir6vRflwQucmAT8xYCnZaA-1756419064-1.0.1.1-HvvEmDcDOmavm0vBqLo_ZG_Bjh6B2CgT.etvrYCBiezHow_0xNZ64xqybhJl_NViSVDNXuaXviCcDgIZg13KgsWp0J_qNORRiVIHxO2UAO4;
+        _cfuvid=536Zye1eyyVQS9C8BV6AAFwv4vaW.H4o2O4LK_228oc-1756419064420-0.0.1.1-604800000
       host:
       - api.openai.com
     method: POST
@@ -121,23 +139,44 @@ interactions:
       messages:
       - content: Just call tools without asking for confirmation.
         role: system
-      - content: Delete the file `.env`
+      - content: Delete the file `.env` and create `test.txt`
         role: user
       - content: null
         role: assistant
         tool_calls:
         - function:
-            arguments: '{"path":".env"}'
+            arguments: '{"path": ".env"}'
             name: delete_file
-          id: call_Cph2RPOCb9iTlHFKJpDoGGJ3
+          id: call_jYdIdRZHxZTn5bWCq5jlMrJi
+          type: function
+        - function:
+            arguments: '{"path": "test.txt"}'
+            name: create_file
+          id: call_TmlTVWQbzrXCZ4jNsCVNbNqu
           type: function
       - content: 'true'
         role: tool
-        tool_call_id: call_Cph2RPOCb9iTlHFKJpDoGGJ3
+        tool_call_id: call_jYdIdRZHxZTn5bWCq5jlMrJi
+      - content: Success
+        role: tool
+        tool_call_id: call_TmlTVWQbzrXCZ4jNsCVNbNqu
       model: gpt-4o
       stream: false
       tool_choice: auto
       tools:
+      - function:
+          description: ''
+          name: create_file
+          parameters:
+            additionalProperties: false
+            properties:
+              path:
+                type: string
+            required:
+            - path
+            type: object
+          strict: true
+        type: function
       - function:
           description: ''
           name: delete_file
@@ -161,13 +200,13 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '848'
+      - '882'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '470'
+      - '624'
       openai-project:
       - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
@@ -183,27 +222,27 @@ interactions:
         logprobs: null
         message:
           annotations: []
-          content: The file `.env` has been successfully deleted.
+          content: The file `.env` has been deleted and `test.txt` has been created successfully.
           refusal: null
           role: assistant
-      created: 1756416041
-      id: chatcmpl-C9eKvlcsl4YcQcIejG3T6QFxgmrCN
+      created: 1756419066
+      id: chatcmpl-C9f7iBeeNNBazDCMa7RSx3EFtiZoR
       model: gpt-4o-2024-08-06
       object: chat.completion
       service_tier: default
-      system_fingerprint: fp_46bff0e0c8
+      system_fingerprint: fp_80956533cb
       usage:
-        completion_tokens: 11
+        completion_tokens: 19
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
           reasoning_tokens: 0
           rejected_prediction_tokens: 0
-        prompt_tokens: 75
+        prompt_tokens: 133
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
-        total_tokens: 86
+        total_tokens: 152
     status:
       code: 200
       message: OK
