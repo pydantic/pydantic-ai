@@ -253,18 +253,6 @@ async def test_tool_call_limit() -> None:
     assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=103, output_tokens=14, tool_calls=1))
 
 
-def test_deprecated_usage_limits():
-    with warns(
-        snapshot(['DeprecationWarning: `request_tokens_limit` is deprecated, use `input_tokens_limit` instead'])
-    ):
-        assert UsageLimits(input_tokens_limit=100).request_tokens_limit == 100  # type: ignore
-
-    with warns(
-        snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
-    ):
-        assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
-
-
 async def test_output_tool_not_counted() -> None:
     """Test that output tools are not counted in tool_calls usage metric."""
     test_agent = Agent(TestModel())
@@ -308,3 +296,15 @@ async def test_failed_tool_calls_not_counted() -> None:
     # The tool was called twice (1 failure + 1 success), but only the successful call should be counted
     assert call_count == 2
     assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=176, output_tokens=29, tool_calls=1))
+
+
+def test_deprecated_usage_limits():
+    with warns(
+        snapshot(['DeprecationWarning: `request_tokens_limit` is deprecated, use `input_tokens_limit` instead'])
+    ):
+        assert UsageLimits(input_tokens_limit=100).request_tokens_limit == 100  # type: ignore
+
+    with warns(
+        snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
+    ):
+        assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
