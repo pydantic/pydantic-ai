@@ -1113,9 +1113,10 @@ async def test_google_url_input(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_google_url_input_force_download(allow_model_requests: None) -> None:  # pragma: lax no cover
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
-    m = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_url_input_force_download(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+) -> None:  # pragma: lax no cover
+    m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
 
     video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4', force_download=True)
