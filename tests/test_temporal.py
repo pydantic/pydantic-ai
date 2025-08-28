@@ -1731,7 +1731,7 @@ model_retry_agent = Agent(model, name='model_retry_agent')
 
 
 @model_retry_agent.tool_plain
-def get_weather(city: str) -> str:
+def get_weather_in_city(city: str) -> str:
     if city != 'Mexico City':
         raise ModelRetry('Did you mean Mexico City?')
     return 'sunny'
