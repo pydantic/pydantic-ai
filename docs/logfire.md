@@ -226,7 +226,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import set_tracer_provider
 
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent
 
 os.environ['OTEL_EXPORTER_OTLP_ENDPOINT'] = 'http://localhost:4318'
 exporter = OTLPSpanExporter()
@@ -296,7 +296,7 @@ By default, the global `TracerProvider` and `EventLoggerProvider` are used. Thes
 from opentelemetry.sdk._events import EventLoggerProvider
 from opentelemetry.sdk.trace import TracerProvider
 
-from pydantic_ai.agent import Agent, InstrumentationSettings
+from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(
     tracer_provider=TracerProvider(),
@@ -322,7 +322,7 @@ agent = Agent(model)
 ### Excluding binary content
 
 ```python {title="excluding_binary_content.py"}
-from pydantic_ai.agent import Agent, InstrumentationSettings
+from pydantic_ai import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
@@ -338,7 +338,7 @@ For privacy and security reasons, you may want to monitor your agent's behavior 
 When `include_content=False` is set, Pydantic AI will exclude sensitive content from OpenTelemetry events, including user prompts and model completions, tool call arguments and responses, and any other message content.
 
 ```python {title="excluding_sensitive_content.py"}
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)

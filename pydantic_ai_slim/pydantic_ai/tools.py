@@ -12,7 +12,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry
-from .messages import RetryPromptPart, ToolReturn
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (
     'AgentDepsT',
@@ -28,6 +28,7 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
+    'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
@@ -129,6 +130,23 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 * `'sphinx'` — [Sphinx-style](https://sphinx-rtd-tutorial.readthedocs.io/en/latest/docstrings.html#the-sphinx-docstring-format) docstrings.
 * `'auto'` — Automatically infer the format based on the structure of the docstring.
 """
+
+
+@dataclass
+class DeferredToolRequests:
+    """Tool calls that require approval or external execution.
+
+    This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+    Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
+
+    See [deferred tools docs](../tools.md#deferred-tools) for more information.
+    """
+
+    calls: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require external execution."""
+    approvals: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require human-in-the-loop approval."""
 
 
 @dataclass

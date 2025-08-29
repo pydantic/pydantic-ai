@@ -257,9 +257,8 @@ from dataclasses import replace
 
 from renamed_toolset import renamed_toolset
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
 
 descriptions = {
     'temperature_celsius': 'Get the temperature in degrees Celsius',
@@ -341,10 +340,8 @@ See the [Human-in-the-Loop Tool Approval](tools.md#human-in-the-loop-tool-approv
 ```python {title="approval_required_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
 from prepared_toolset import prepared_toolset
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolRequests
-from pydantic_ai.tools import DeferredToolResults
 
 approval_required_toolset = prepared_toolset.approval_required(lambda ctx, tool_def, tool_args: tool_def.name.startswith('temperature'))
 
@@ -404,9 +401,8 @@ from typing_extensions import Any
 
 from prepared_toolset import prepared_toolset
 
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import WrapperToolset, ToolsetTool
 
 LOG = []
@@ -498,8 +494,7 @@ Next, let's define a function that represents a hypothetical "run agent" API end
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
 from deferred_toolset_agent import agent, PersonalizedGreeting
 
-from pydantic_ai.output import DeferredToolRequests
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai import ToolDefinition, DeferredToolRequests, DeferredToolResults
 from pydantic_ai.toolsets import ExternalToolset
 from pydantic_ai.messages import ModelMessage
 
@@ -527,10 +522,8 @@ Now, imagine that the code below is implemented on the frontend, and `run_agent`
 ```python {title="deferred_tools.py" requires="deferred_toolset_agent.py,deferred_toolset_api.py"}
 from deferred_toolset_api import run_agent
 
-from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai import ModelRetry, ToolDefinition, DeferredToolRequests, DeferredToolResults
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
-from pydantic_ai.output import DeferredToolRequests
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 
 frontend_tool_definitions = [
     ToolDefinition(

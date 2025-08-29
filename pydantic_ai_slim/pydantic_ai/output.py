@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Generic, Literal
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
@@ -11,7 +11,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils
 from .messages import ToolCallPart
-from .tools import RunContext, ToolDefinition
+from .tools import DeferredToolRequests, RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -351,23 +351,6 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
-
-
-@dataclass
-class DeferredToolRequests:
-    """Tool calls that require approval or external execution.
-
-    This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
-
-    Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
-
-    See [deferred tools docs](../tools.md#deferred-tools) for more information.
-    """
-
-    calls: list[ToolCallPart] = field(default_factory=list)
-    """Tool calls that require external execution."""
-    approvals: list[ToolCallPart] = field(default_factory=list)
-    """Tool calls that require human-in-the-loop approval."""
 
 
 @deprecated('`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead')

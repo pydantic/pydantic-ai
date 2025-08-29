@@ -45,10 +45,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolRequests, StructuredDict, ToolOutput
+from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset

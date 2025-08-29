@@ -174,10 +174,9 @@ call needs.
 ```python {title="mcp_process_tool_call.py"}
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.mcp import CallToolFunc, MCPServerStdio, ToolResult
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
 
 
 async def process_tool_call(

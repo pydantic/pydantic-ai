@@ -86,7 +86,7 @@ import pytest
 
 from dirty_equals import IsNow, IsStr
 
-from pydantic_ai import models, capture_run_messages
+from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
     ModelResponse,
@@ -97,7 +97,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
     ModelRequest,
 )
-from pydantic_ai.usage import RequestUsage
 
 from fake_database import DatabaseConn
 from weather_app import run_weather_forecast, weather_agent

@@ -22,8 +22,7 @@ You'll generally want to pass [`ctx.usage`][pydantic_ai.RunContext.usage] to the
     Agent delegation doesn't need to use the same model for each agent. If you choose to use different models within a run, calculating the monetary cost from the final [`result.usage()`][pydantic_ai.agent.AgentRunResult.usage] of the run will not be possible, but you can still use [`UsageLimits`][pydantic_ai.usage.UsageLimits] to avoid unexpected costs.
 
 ```python {title="agent_delegation_simple.py"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, RunContext,  UsageLimits
 
 joke_selection_agent = Agent(  # (1)!
     'openai:gpt-4o',
@@ -186,9 +185,8 @@ from typing import Literal, Union
 from pydantic import BaseModel, Field
 from rich.prompt import Prompt
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, RunUsage, UsageLimits
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.usage import RunUsage, UsageLimits
 
 
 class FlightDetails(BaseModel):

@@ -116,7 +116,7 @@ import asyncio
 from collections.abc import AsyncIterable
 from datetime import date
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -128,7 +128,6 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 weather_agent = Agent(
     'openai:gpt-4o',
@@ -395,7 +394,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -406,7 +405,6 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 
 @dataclass
@@ -548,9 +546,7 @@ You can apply these settings by passing the `usage_limits` argument to the `run{
 Consider the following example, where we limit the number of response tokens:
 
 ```py
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
 agent = Agent('anthropic:claude-3-5-sonnet-latest')
 
@@ -578,9 +574,7 @@ Restricting the number of requests can be useful in preventing infinite loops or
 ```py
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
 
 
 class NeverOutputType(TypedDict):
@@ -636,9 +630,8 @@ For example, if you'd like to set the `temperature` setting to `0.0` to ensure l
 you can do the following:
 
 ```py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.settings import ModelSettings
 
 # 1. Model-level defaults
 model = OpenAIChatModel(
