@@ -272,7 +272,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
-        with _logfire.span('evaluate {name}', name=name) as eval_span, progress_bar or nullcontext():
+        with _logfire.span('evaluate {name}', name=name), progress_bar or nullcontext():
             task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
@@ -291,10 +291,6 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                     ]
                 ),
             )
-            # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
-            eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))
-            # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            eval_span.set_attribute('averages', _REPORT_CASE_AGGREGATE_ADAPTER.dump_python(report.averages()))
         return report
 
     def evaluate_sync(

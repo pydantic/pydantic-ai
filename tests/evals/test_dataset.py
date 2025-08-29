@@ -1151,76 +1151,9 @@ async def test_evaluate_async_logfire(
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.msg': 'evaluate mock_async_task',
                     'logfire.span_type': 'span',
-                    'cases': [
-                        {
-                            'name': 'case1',
-                            'inputs': {'query': 'What is 2+2?'},
-                            'metadata': {'difficulty': 'easy', 'category': 'general'},
-                            'expected_output': {'answer': '4', 'confidence': 1.0},
-                            'output': {'answer': '4', 'confidence': 1.0},
-                            'metrics': {},
-                            'attributes': {},
-                            'scores': {
-                                'confidence': {
-                                    'name': 'confidence',
-                                    'value': 1.0,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'labels': {},
-                            'assertions': {
-                                'correct': {
-                                    'name': 'correct',
-                                    'value': True,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'task_duration': 1.0,
-                            'total_duration': 6.0,
-                        },
-                        {
-                            'name': 'case2',
-                            'inputs': {'query': 'What is the capital of France?'},
-                            'metadata': {'difficulty': 'medium', 'category': 'geography'},
-                            'expected_output': {'answer': 'Paris', 'confidence': 1.0},
-                            'output': {'answer': 'Paris', 'confidence': 1.0},
-                            'metrics': {},
-                            'attributes': {},
-                            'scores': {
-                                'confidence': {
-                                    'name': 'confidence',
-                                    'value': 1.0,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'labels': {},
-                            'assertions': {
-                                'correct': {
-                                    'name': 'correct',
-                                    'value': True,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'task_duration': 1.0,
-                            'total_duration': 4.0,
-                        },
-                    ],
-                    'averages': {
-                        'name': 'Averages',
-                        'scores': {'confidence': 1.0},
-                        'labels': {},
-                        'metrics': {},
-                        'assertions': 1.0,
-                        'task_duration': 1.0,
-                        'total_duration': 5.0,
-                    },
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {'name': {}, 'cases': {'type': 'array'}, 'averages': {'type': 'object'}},
+                        'properties': {'name': {}},
                     },
                 },
             ),
