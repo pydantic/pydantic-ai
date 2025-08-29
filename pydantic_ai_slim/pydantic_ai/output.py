@@ -7,11 +7,11 @@ from typing import Any, Generic, Literal
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils
 from .messages import ToolCallPart
-from .tools import RunContext
+from .tools import RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -368,3 +368,16 @@ class DeferredToolRequests:
     """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
     """Tool calls that require human-in-the-loop approval."""
+
+
+@deprecated('`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead')
+class DeferredToolCalls(DeferredToolRequests):  # pragma: no cover
+    @property
+    @deprecated('`DeferredToolCalls.tool_calls` is deprecated, use `DeferredToolRequests.calls` instead')
+    def tool_calls(self) -> list[ToolCallPart]:
+        return self.calls
+
+    @property
+    @deprecated('`DeferredToolCalls.tool_defs` is deprecated')
+    def tool_defs(self) -> dict[str, ToolDefinition]:
+        return {}

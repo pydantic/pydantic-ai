@@ -47,6 +47,6 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
         raise NotImplementedError('External tools cannot be called directly')
 
 
-@deprecated('`DeferredToolset` was renamed to `ExternalToolset`')
+@deprecated('`DeferredToolset` is deprecated, use `ExternalToolset` instead')
 class DeferredToolset(ExternalToolset):
     """Deprecated alias for `ExternalToolset`."""
