@@ -327,7 +327,7 @@ class AnthropicModel(Model):
                 )
 
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,

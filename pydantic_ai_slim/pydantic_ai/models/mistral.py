@@ -348,7 +348,7 @@ class MistralModel(Model):
                 parts.append(tool)
 
         return ModelResponse(
-            parts,
+            parts=parts,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,

@@ -303,7 +303,7 @@ class BedrockConverseModel(Model):
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         return ModelResponse(
-            items,
+            parts=items,
             usage=u,
             model_name=self.model_name,
             provider_response_id=response_id,

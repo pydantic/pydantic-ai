@@ -59,7 +59,7 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests and collect coverage data
-	uv run coverage run -m pytest -n auto --dist=loadgroup
+	uv run coverage run -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
 	@uv run coverage report
 

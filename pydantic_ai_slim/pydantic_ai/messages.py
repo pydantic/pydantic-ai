@@ -15,10 +15,7 @@ from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUs
 from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
-from ._utils import (
-    generate_tool_call_id as _generate_tool_call_id,
-    now_utc as _now_utc,
-)
+from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
@@ -902,7 +899,7 @@ ModelResponsePart = Annotated[
 """A message part returned by a model."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
 

@@ -267,7 +267,7 @@ class HuggingFaceModel(Model):
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,

@@ -512,7 +512,7 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
@@ -828,7 +828,7 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
