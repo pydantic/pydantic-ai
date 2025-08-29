@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import httpx
@@ -59,9 +59,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+    MockChatCompletion = chat.ChatCompletion | Exception
+    MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
@@ -158,7 +157,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -166,7 +165,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -219,7 +218,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='groq',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -308,7 +307,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -332,7 +331,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -349,7 +348,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -384,7 +383,9 @@ async def test_stream_text(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world']
+        )
         assert result.is_complete
 
 
@@ -396,7 +397,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.', 'hello world.']
         )
         assert result.is_complete
@@ -443,7 +444,7 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {},
                 {'first': 'One'},
@@ -498,7 +499,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
@@ -529,7 +530,9 @@ async def test_no_delta(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world']
+        )
         assert result.is_complete
 
 
@@ -586,7 +589,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_request_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
             ),
             ModelRequest(
                 parts=[
@@ -611,7 +614,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_request_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
             ),
         ]
     )
@@ -690,7 +693,7 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_request_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
+                provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
             ),
         ]
     )
@@ -893,7 +896,7 @@ The current day is Tuesday.\
                 model_name='compound-beta',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_request_id='stub',
+                provider_response_id='stub',
             ),
         ]
     )
@@ -917,7 +920,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -939,7 +942,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_request_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
+                provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
             ),
             ModelRequest(
                 parts=[
@@ -956,7 +959,7 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_request_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
+                provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
             ),
         ]
     )

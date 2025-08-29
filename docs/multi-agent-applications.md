@@ -106,7 +106,7 @@ joke_selection_agent = Agent(
     ),
 )
 joke_generation_agent = Agent(
-    'gemini-1.5-flash',
+    'google-gla:gemini-1.5-flash',
     deps_type=ClientAndKey,  # (4)!
     output_type=list[str],
     system_prompt=(

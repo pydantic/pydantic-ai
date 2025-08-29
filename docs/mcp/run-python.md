@@ -52,7 +52,7 @@ Usage of `jsr:@pydantic/mcp-run-python` with Pydantic AI is described in the [cl
 
 As well as using this server with Pydantic AI, it can be connected to other MCP clients. For clarity, in this example we connect directly using the [Python MCP client](https://github.com/modelcontextprotocol/python-sdk).
 
-```python {title="mcp_run_python.py" py="3.10"}
+```python {title="mcp_run_python.py"}
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -127,7 +127,7 @@ As introduced in PEP 723, explained [here](https://packaging.python.org/en/lates
 
 This allows use of dependencies that aren't imported in the code, and is more explicit.
 
-```py {title="inline_script_metadata.py" py="3.10" requires="mcp_run_python.py"}
+```py {title="inline_script_metadata.py" requires="mcp_run_python.py"}
 from mcp import ClientSession
 from mcp.client.stdio import stdio_client
 

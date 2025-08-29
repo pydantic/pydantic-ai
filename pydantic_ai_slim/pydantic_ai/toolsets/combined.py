@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable
+from typing import Any
 
+import anyio
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
-from .._utils import get_async_lock
 from ..exceptions import UserError
 from .abstract import AbstractToolset, ToolsetTool
 
@@ -31,12 +31,12 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: asyncio.Lock = field(compare=False, init=False)
+    _enter_lock: anyio.Lock = field(compare=False, init=False)
     _entered_count: int = field(init=False)
     _exit_stack: AsyncExitStack | None = field(init=False)
 
     def __post_init__(self):
-        self._enter_lock = get_async_lock()
+        self._enter_lock = anyio.Lock()
         self._entered_count = 0
         self._exit_stack = None
 

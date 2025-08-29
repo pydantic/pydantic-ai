@@ -303,7 +303,7 @@ instrumentation_settings = InstrumentationSettings(
     event_logger_provider=EventLoggerProvider(),
 )
 
-agent = Agent('gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -315,7 +315,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 
 settings = InstrumentationSettings()
-model = InstrumentedModel('gpt-4o', settings)
+model = InstrumentedModel('openai:gpt-4o', settings)
 agent = Agent(model)
 ```
 
@@ -326,7 +326,7 @@ from pydantic_ai.agent import Agent, InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_binary_content=False)
 
-agent = Agent('gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```
@@ -343,7 +343,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 
 instrumentation_settings = InstrumentationSettings(include_content=False)
 
-agent = Agent('gpt-4o', instrument=instrumentation_settings)
+agent = Agent('openai:gpt-4o', instrument=instrumentation_settings)
 # or to instrument all agents:
 Agent.instrument_all(instrumentation_settings)
 ```

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from opentelemetry._events import (
@@ -236,26 +236,35 @@ class InstrumentationSettings:
             if response.provider_details and 'finish_reason' in response.provider_details:
                 output_message['finish_reason'] = response.provider_details['finish_reason']
             instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
+            system_instructions_attributes = self.system_instructions_attributes(instructions)
             attributes = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
                 'gen_ai.output.messages': json.dumps([output_message]),
+                **system_instructions_attributes,
                 'logfire.json_schema': json.dumps(
                     {
                         'type': 'object',
                         'properties': {
                             'gen_ai.input.messages': {'type': 'array'},
                             'gen_ai.output.messages': {'type': 'array'},
-                            **({'gen_ai.system_instructions': {'type': 'array'}} if instructions else {}),
+                            **(
+                                {'gen_ai.system_instructions': {'type': 'array'}}
+                                if system_instructions_attributes
+                                else {}
+                            ),
                             'model_request_parameters': {'type': 'object'},
                         },
                     }
                 ),
             }
-            if instructions is not None:
-                attributes['gen_ai.system_instructions'] = json.dumps(
-                    [_otel_messages.TextPart(type='text', content=instructions)]
-                )
             span.set_attributes(attributes)
+
+    def system_instructions_attributes(self, instructions: str | None) -> dict[str, str]:
+        if instructions and self.include_content:
+            return {
+                'gen_ai.system_instructions': json.dumps([_otel_messages.TextPart(type='text', content=instructions)]),
+            }
+        return {}
 
     def _emit_events(self, span: Span, events: list[Event]) -> None:
         if self.event_mode == 'logs':
@@ -357,7 +366,7 @@ class InstrumentedModel(WrapperModel):
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
-                if isinstance(value := model_settings.get(key), (float, int)):
+                if isinstance(value := model_settings.get(key), float | int):
                     attributes[f'gen_ai.request.{key}'] = value
 
         record_metrics: Callable[[], None] | None = None
