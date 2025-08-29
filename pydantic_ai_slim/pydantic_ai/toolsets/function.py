@@ -10,6 +10,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import (
     DocstringFormat,
+    GenerateToolJsonSchema,
     Tool,
     ToolFuncEither,
     ToolParams,
@@ -47,7 +48,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         id: str | None = None,
         docstring_format: DocstringFormat = 'auto',
         require_parameter_descriptions: bool = False,
-        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
     ):
         """Build a new function toolset.
 
@@ -154,7 +155,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing.
                 If `None`, the default value is determined by the toolset.
-            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+            schema_generator: The JSON schema generator class to use for this tool.
                 If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
@@ -211,7 +212,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             require_parameter_descriptions: If True, raise an error if a parameter description is missing.
                 If `None`, the default value is determined by the toolset.
-            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+            schema_generator: The JSON schema generator class to use for this tool.
                 If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
