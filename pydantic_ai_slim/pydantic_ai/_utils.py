@@ -4,34 +4,28 @@ import asyncio
 import functools
 import inspect
 import re
-import sys
 import time
 import uuid
-import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
-    TypeAlias,
-    TypeGuard,
     TypeIs,
-    get_args,
-    get_origin,
     is_typeddict,
 )
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 
-from pydantic_graph._utils import AbstractSpan, get_event_loop
+from pydantic_graph._utils import AbstractSpan
 
 from . import exceptions
 
@@ -96,7 +90,7 @@ class Some(Generic[T]):
     value: T
 
 
-Option: TypeAlias = Union[Some[T], None]
+Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
 
 
@@ -469,18 +463,3 @@ def get_union_args(tp: Any) -> tuple[Any, ...]:
         return get_args(tp)
     else:
         return ()
-
-
-# The `asyncio.Lock` `loop` argument was deprecated in 3.8 and removed in 3.10,
-# but 3.9 still needs it to have the intended behavior.
-
-if sys.version_info < (3, 10):
-
-    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', DeprecationWarning)
-            return asyncio.Lock(loop=get_event_loop())
-else:
-
-    def get_async_lock() -> asyncio.Lock:  # pragma: lax no cover
-        return asyncio.Lock()

@@ -14,10 +14,10 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, overload
 
 import httpx
-from typing_extensions import Literal, TypeAliasType, TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._output import OutputObjectDefinition

@@ -2,14 +2,14 @@ from __future__ import annotations as _annotations
 
 import inspect
 import re
-from collections.abc import AsyncIterator, Awaitable, Iterable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, Callable, Union
+from typing import Any, TypeAlias
 
-from typing_extensions import TypeAlias, assert_never, overload
+from typing_extensions import assert_never, overload
 
 from .. import _utils, usage
 from .._run_context import RunContext
@@ -238,12 +238,12 @@ DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 """A mapping of thinking call IDs to incremental changes."""
 
 # TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParameters], ...]
-FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
+FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
 
 # TODO: Change signature as indicated above
 StreamFunctionDef: TypeAlias = Callable[
-    [list[ModelMessage], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls, DeltaThinkingCalls]]
+    [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
 ]
 """A function used to generate a streamed response.
 
@@ -326,7 +326,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, (SystemPromptPart, UserPromptPart)):
+                if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())

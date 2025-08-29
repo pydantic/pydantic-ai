@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import Any, Union, cast
+from typing import Any, cast
 
 from ..conftest import raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -17,11 +17,10 @@ with try_import() as imports_successful:
     from openai.types.responses.response import ResponseUsage
     from openai.types.responses.response_output_item import ResponseOutputItem
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
-    MockResponse = Union[responses.Response, Exception]
-    MockResponseStreamEvent = Union[responses.ResponseStreamEvent, Exception]
+    MockChatCompletion = chat.ChatCompletion | Exception
+    MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
+    MockResponse = responses.Response | Exception
+    MockResponseStreamEvent = responses.ResponseStreamEvent | Exception
 
 
 @dataclass

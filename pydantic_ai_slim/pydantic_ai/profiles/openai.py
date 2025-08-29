@@ -11,7 +11,7 @@ from ._json_schema import JsonSchema, JsonSchemaTransformer
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-@dataclass
+@dataclass(kw_only=True)
 class OpenAIModelProfile(ModelProfile):
     """Profile for models used with `OpenAIChatModel`.
 

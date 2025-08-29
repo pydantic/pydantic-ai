@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 import anyio
 import anyio.to_thread
@@ -125,7 +125,7 @@ LatestBedrockModelNames = Literal[
 ]
 """Latest Bedrock models."""
 
-BedrockModelName = Union[str, LatestBedrockModelNames]
+BedrockModelName = str | LatestBedrockModelNames
 """Possible Bedrock model names.
 
 Since Bedrock supports a variety of date-stamped models, we explicitly list the latest models but allow any name in the type hints.
@@ -303,7 +303,7 @@ class BedrockConverseModel(Model):
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         return ModelResponse(
-            items,
+            parts=items,
             usage=u,
             model_name=self.model_name,
             provider_response_id=response_id,
@@ -490,7 +490,7 @@ class BedrockConverseModel(Model):
                         else:
                             # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
                             pass
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     else:
                         assert isinstance(item, ToolCallPart)
@@ -546,7 +546,7 @@ class BedrockConverseModel(Model):
                         content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
+                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
                     downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
                     format = downloaded_item['data_type']
                     if item.kind == 'image-url':

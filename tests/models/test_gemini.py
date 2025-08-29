@@ -8,13 +8,12 @@ from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
 from enum import IntEnum
-from typing import Annotated
+from typing import Annotated, Literal, TypeAlias
 
 import httpx
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
-from typing_extensions import Literal, TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.exceptions import ModelHTTPError

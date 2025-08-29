@@ -4,10 +4,10 @@ import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import Any, ClassVar, Generic, get_type_hints
+from typing import Any, ClassVar, Generic, get_origin, get_type_hints
 from uuid import uuid4
 
-from typing_extensions import Never, Self, TypeVar, get_origin
+from typing_extensions import Never, Self, TypeVar
 
 from . import _utils, exceptions
 

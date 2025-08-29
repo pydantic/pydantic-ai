@@ -141,10 +141,9 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    if sys.version_info >= (3, 10):  # pragma: lax no cover
-        mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
-        mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+    mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
+    mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -168,7 +167,7 @@ def test_docs_examples(  # noqa: C901
     dunder_name = prefix_settings.get('dunder_name', '__main__')
     requires = prefix_settings.get('requires')
 
-    ruff_target_version: str = 'py39'
+    ruff_target_version: str = 'py310'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
@@ -819,7 +818,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             else:
                 mock_fallback_models.append(mock_infer_model(m))
         return FallbackModel(*mock_fallback_models)
-    if isinstance(model, (FunctionModel, TestModel)):
+    if isinstance(model, FunctionModel | TestModel):
         return model
     else:
         model_name = model if isinstance(model, str) else model.model_name
