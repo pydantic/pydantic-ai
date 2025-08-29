@@ -118,7 +118,7 @@ class RunUsage(UsageBase):
     """Number of requests made to the LLM API."""
 
     tool_calls: int = 0
-    """Number of tool calls executed during the run."""
+    """Number of successful tool calls executed during the run."""
 
     input_tokens: int = 0
     """Total number of text input/prompt tokens."""
@@ -199,7 +199,7 @@ class UsageLimits:
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
     tool_calls_limit: int | None = None
-    """The maximum number of tool calls allowed to be executed."""
+    """The maximum number of successful tool calls allowed to be executed."""
     input_tokens_limit: int | None = None
     """The maximum number of input/prompt tokens allowed."""
     output_tokens_limit: int | None = None

@@ -50,6 +50,6 @@ class RunContext(Generic[AgentDepsT]):
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
     usage_limits: UsageLimits | None = None
-    """Usage limits for this run, if any."""
+    """Usage limits for the run."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
