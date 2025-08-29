@@ -15,13 +15,13 @@ import sys
 import time
 import traceback
 import warnings
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast
 
 import anyio
 import logfire_api
@@ -54,16 +54,6 @@ if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup  # pragma: lax no cover
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
 
 __all__ = (
     'Case',
@@ -665,7 +655,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
                 td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
                 config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-                # TODO: Replace with pydantic.with_config after pydantic 2.11 is released
+                # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
                 td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
                 return td
 
@@ -766,7 +756,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         See <https://github.com/json-schema-org/json-schema-spec/issues/828> for context, that seems to be the nearest
         there is to a spec for this.
         """
-        context = cast(Union[dict[str, Any], None], info.context)
+        context = cast(dict[str, Any] | None, info.context)
         if isinstance(context, dict) and (schema := context.get('$schema')):
             return {'$schema': schema} | nxt(self)
         else:
@@ -895,19 +885,16 @@ async def _run_task(
     task_run, task_output, duration, span_tree = await _run_once()
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        # TODO: Question: Should we make this metric-attributes functionality more user-configurable in some way before merging?
-        #   Note: the use of otel for collecting these metrics is the main reason why I think we should require at least otel as a dependency, if not logfire;
-        #   otherwise, we don't have a great way to get usage data from arbitrary frameworks.
-        #   Ideally we wouldn't need to hard-code the specific logic here, but I'm not sure a great way to expose it to
-        #   users. Maybe via an argument of type Callable[[SpanTree], dict[str, int | float]] or similar?
+        # Idea for making this more configurable: replace the following logic with a call to a user-provided function
+        #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
+        #   That way users can customize this logic. We'd default to a function that does the current thing but also
+        #   allow `None` to disable it entirely.
         for node in span_tree:
             if node.attributes.get('gen_ai.operation.name') == 'chat':
                 task_run.increment_metric('requests', 1)
             for k, v in node.attributes.items():
-                if not isinstance(v, (int, float)):
+                if not isinstance(v, int | float):
                     continue
-                # TODO: Revisit this choice to strip the prefix..
-                # TODO: Use the span-tracking-of-metrics functionality to simplify this implementation
                 if k.startswith('gen_ai.usage.details.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
                 elif k.startswith('gen_ai.usage.'):

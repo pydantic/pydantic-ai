@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import patch
@@ -72,7 +71,6 @@ async def mock_refresh_token():
     return 'my-token'
 
 
-@pytest.mark.skipif(sys.version_info < (3, 10), reason='Flaky test in 3.9')
 async def test_google_vertex_provider_service_account_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, allow_model_requests: None
 ):
@@ -86,7 +84,6 @@ async def test_google_vertex_provider_service_account_file(
     assert getattr(provider.client.auth, 'project_id') == 'my-project-id'
 
 
-@pytest.mark.skipif(sys.version_info < (3, 10), reason='Flaky test in 3.9')
 async def test_google_vertex_provider_service_account_file_info(
     monkeypatch: pytest.MonkeyPatch, allow_model_requests: None
 ):

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -242,9 +242,7 @@ async def test_run_evaluator():
     # Test with simple boolean result
     evaluator = SimpleEvaluator()
     results = await run_evaluator(evaluator, ctx)
-    adapter = TypeAdapter[Union[Sequence[EvaluationResult], EvaluatorFailure]](
-        Union[Sequence[EvaluationResult], EvaluatorFailure]
-    )
+    adapter = TypeAdapter[Sequence[EvaluationResult] | EvaluatorFailure](Sequence[EvaluationResult] | EvaluatorFailure)
     assert adapter.dump_python(results) == snapshot(
         [
             {

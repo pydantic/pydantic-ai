@@ -7,16 +7,17 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, overload
 
 import httpx
-from typing_extensions import Literal, TypeAliasType, TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._output import OutputObjectDefinition
@@ -684,19 +685,29 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     try:
         provider, model_name = model.split(':', maxsplit=1)
     except ValueError:
+        provider = None
         model_name = model
-        # TODO(Marcelo): We should deprecate this way.
         if model_name.startswith(('gpt', 'o1', 'o3')):
             provider = 'openai'
         elif model_name.startswith('claude'):
             provider = 'anthropic'
         elif model_name.startswith('gemini'):
             provider = 'google-gla'
+
+        if provider is not None:
+            warnings.warn(
+                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider}:{model_name}'.",
+                DeprecationWarning,
+            )
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':
-        provider = 'google-vertex'  # pragma: no cover
+    if provider == 'vertexai':  # pragma: no cover
+        warnings.warn(
+            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
+            DeprecationWarning,
+        )
+        provider = 'google-vertex'
 
     if provider == 'cohere':
         from .cohere import CohereModel

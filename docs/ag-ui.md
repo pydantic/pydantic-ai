@@ -119,7 +119,7 @@ This will expose the agent as an AG-UI server, and your frontend can start sendi
 
 This example uses [`Agent.to_ag_ui()`][pydantic_ai.agent.AbstractAgent.to_ag_ui] to turn the agent into a stand-alone ASGI application:
 
-```py {title="agent_to_ag_ui.py" py="3.10" hl_lines="4"}
+```py {title="agent_to_ag_ui.py" hl_lines="4"}
 from pydantic_ai import Agent
 
 agent = Agent('openai:gpt-4.1', instructions='Be fun!')
@@ -171,7 +171,7 @@ validate state contained in [`RunAgentInput.state`](https://docs.ag-ui.com/sdk/j
     If the `state` field's type is a Pydantic `BaseModel` subclass, the raw state dictionary on the request is automatically validated. If not, you can validate the raw value yourself in your dependencies dataclass's `__post_init__` method.
 
 
-```python {title="ag_ui_state.py" py="3.10"}
+```python {title="ag_ui_state.py"}
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
@@ -211,7 +211,7 @@ which returns a (subclass of)
 [`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent), which allows
 for custom events and state updates.
 
-```python {title="ag_ui_tool_events.py" py="3.10"}
+```python {title="ag_ui_tool_events.py"}
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
 from pydantic import BaseModel
 

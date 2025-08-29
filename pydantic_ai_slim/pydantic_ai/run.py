@@ -3,9 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from typing import Any, Generic, overload
-
-from typing_extensions import Literal
+from typing import Any, Generic, Literal, overload
 
 from pydantic_graph import End, GraphRun, GraphRunContext
 
