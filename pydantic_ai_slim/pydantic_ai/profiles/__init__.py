@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ModelProfile:
     """Describes how requests to and responses from specific models or families of models need to be constructed and processed to get the best results, independent of the model and provider classes used."""
 
