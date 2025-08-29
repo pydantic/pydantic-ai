@@ -677,19 +677,28 @@ async def process_function_tools(  # noqa: C901
                 'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
             },
         ):
-            tasks = [
-                asyncio.create_task(_call_function_tool(tool_manager, call), name=call.tool_name)
-                for call in calls_to_run
-            ]
+            if tool_manager.should_parallel_tool_call(calls_to_run):
+                tasks = [
+                    asyncio.create_task(_call_function_tool(tool_manager, call), name=call.tool_name)
+                    for call in calls_to_run
+                ]
 
-            pending = tasks
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = tasks.index(task)
-                    tool_part, tool_user_parts = task.result()
+                pending = tasks
+                while pending:
+                    done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        index = tasks.index(task)
+                        tool_part, tool_user_parts = task.result()
+                        yield _messages.FunctionToolResultEvent(tool_part)
+
+                        tool_parts_by_index[index] = tool_part
+                        user_parts_by_index[index] = tool_user_parts
+            else:
+                for call in calls_to_run:
+                    index = calls_to_run.index(call)
+
+                    tool_part, tool_user_parts = await _call_function_tool(tool_manager, call)
                     yield _messages.FunctionToolResultEvent(tool_part)
-
                     tool_parts_by_index[index] = tool_part
                     user_parts_by_index[index] = tool_user_parts
 

@@ -354,6 +354,9 @@ class ToolDefinition:
     description: str | None = None
     """The description of the tool."""
 
+    allow_parallel: bool = True
+    """Whether this tool can be called in parallel with other tools."""
+
     outer_typed_dict_key: str | None = None
     """The key in the outer [TypedDict] that wraps an output tool.
 
