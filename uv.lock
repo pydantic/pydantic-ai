@@ -2974,7 +2974,7 @@ wheels = [
 name = "pydantic-ai"
 source = { editable = "." }
 dependencies = [
-    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"] },
+    { name = "pydantic-ai-slim", extra = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"] },
 ]
 
 [package.optional-dependencies]
@@ -2983,9 +2983,6 @@ a2a = [
 ]
 examples = [
     { name = "pydantic-ai-examples" },
-]
-logfire = [
-    { name = "logfire" },
 ]
 
 [package.dev-dependencies]
@@ -3032,11 +3029,10 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "pydantic-ai-examples", marker = "extra == 'examples'", editable = "examples" },
-    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"], editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["ag-ui", "anthropic", "bedrock", "cli", "cohere", "evals", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "retries", "temporal", "vertexai"], editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["a2a", "examples", "logfire"]
+provides-extras = ["a2a", "examples"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3173,7 +3169,7 @@ huggingface = [
     { name = "huggingface-hub", extra = ["inference"] },
 ]
 logfire = [
-    { name = "logfire" },
+    { name = "logfire", extra = ["httpx"] },
 ]
 mcp = [
     { name = "mcp" },
@@ -3216,7 +3212,7 @@ requires-dist = [
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
+    { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.12.3" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.99.9" },

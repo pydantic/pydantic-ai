@@ -43,25 +43,15 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
-try:
-    from pydantic_ai.providers.google import GoogleProvider
-except ImportError:  # pragma: lax no cover
-    GoogleProvider = None
-
-
-try:
-    import logfire
-except ImportError:  # pragma: lax no cover
-    logfire = None
-
-
 with try_import() as imports_successful:
+    # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
+    import pydantic_ai_examples  # pyright: ignore[reportUnusedImport] # noqa: F401
+
     from pydantic_evals.reporting import EvaluationReport
 
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
-    pytest.mark.skipif(logfire is None or GoogleProvider is None, reason='logfire or google-provider not installed'),
 ]
 code_examples: dict[str, CodeExample] = {}
 

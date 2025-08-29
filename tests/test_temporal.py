@@ -81,7 +81,10 @@ except ImportError:  # pragma: lax no cover
 with workflow.unsafe.imports_passed_through():
     # Workaround for a race condition when running `logfire.info` inside an activity with attributes to serialize and pandas importable:
     # AttributeError: partially initialized module 'pandas' has no attribute '_pandas_parser_CAPI' (most likely due to a circular import)
-    import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+    try:
+        import pandas  # pyright: ignore[reportUnusedImport] # noqa: F401
+    except ImportError:  # pragma: lax no cover
+        pass
 
     # https://github.com/temporalio/sdk-python/blob/3244f8bffebee05e0e7efefb1240a75039903dda/tests/test_client.py#L112C1-L113C1
     from inline_snapshot import snapshot

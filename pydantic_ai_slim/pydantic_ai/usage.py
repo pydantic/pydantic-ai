@@ -122,11 +122,13 @@ class RunUsage(UsageBase):
 
     cache_write_tokens: int = 0
     """Total number of tokens written to the cache."""
+
     cache_read_tokens: int = 0
     """Total number of tokens read from the cache."""
 
     input_audio_tokens: int = 0
     """Total number of audio input tokens."""
+
     cache_audio_read_tokens: int = 0
     """Total number of audio tokens read from the cache."""
 
