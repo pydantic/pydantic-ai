@@ -152,170 +152,90 @@ async def test_instrumented_model(capfire: CaptureLogfire):
         ),
     )
 
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat my_model',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 16000000000,
+                'end_time': 2000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
-                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'allow_text_output': True,
+                    },
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
-                    'logfire.span_type': 'span',
-                    'gen_ai.response.model': 'my_model_123',
-                    'gen_ai.usage.input_tokens': 100,
-                    'gen_ai.usage.output_tokens': 200,
-                },
-            },
-        ]
-    )
-
-    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
-        [
-            {
-                'body': {'content': 'system_prompt', 'role': 'system'},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.system.message',
-                },
-                'timestamp': 2000000000,
-                'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 4000000000,
-                'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'content': 'tool_return_content', 'role': 'tool', 'id': 'tool_call_3', 'name': 'tool3'},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.tool.message',
-                },
-                'timestamp': 6000000000,
-                'observed_timestamp': 7000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {
-                    'content': """\
+                    'gen_ai.input.messages': [
+                        {'role': 'system', 'parts': [{'type': 'text', 'content': 'system_prompt'}]},
+                        {
+                            'role': 'user',
+                            'parts': [
+                                {'type': 'text', 'content': 'user_prompt'},
+                                {
+                                    'type': 'tool_call_response',
+                                    'id': 'tool_call_3',
+                                    'name': 'tool3',
+                                    'result': 'tool_return_content',
+                                },
+                                {
+                                    'type': 'tool_call_response',
+                                    'id': 'tool_call_4',
+                                    'name': 'tool4',
+                                    'result': """\
 retry_prompt1
 
 Fix the errors and try again.\
 """,
-                    'role': 'tool',
-                    'id': 'tool_call_4',
-                    'name': 'tool4',
-                },
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.tool.message',
-                },
-                'timestamp': 8000000000,
-                'observed_timestamp': 9000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {
-                    'content': """\
+                                },
+                                {
+                                    'type': 'text',
+                                    'content': """\
 Validation feedback:
 retry_prompt2
 
 Fix the errors and try again.\
 """,
-                    'role': 'user',
+                                },
+                            ],
+                        },
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text3'}]},
+                    ],
+                    'gen_ai.output.messages': [
+                        {
+                            'role': 'assistant',
+                            'parts': [
+                                {'type': 'text', 'content': 'text1'},
+                                {'type': 'tool_call', 'id': 'tool_call_1', 'name': 'tool1', 'arguments': 'args1'},
+                                {'type': 'tool_call', 'id': 'tool_call_2', 'name': 'tool2', 'arguments': {'args2': 3}},
+                                {'type': 'text', 'content': 'text2'},
+                            ],
+                            'finish_reason': 'stop',
+                        }
+                    ],
+                    'logfire.span_type': 'span',
+                    'gen_ai.response.model': 'my_model_123',
+                    'gen_ai.usage.input_tokens': 100,
+                    'gen_ai.usage.output_tokens': 200,
                 },
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 10000000000,
-                'observed_timestamp': 11000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'role': 'assistant', 'content': 'text3'},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 1,
-                    'event.name': 'gen_ai.assistant.message',
-                },
-                'timestamp': 12000000000,
-                'observed_timestamp': 13000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {
-                    'index': 0,
-                    'message': {
-                        'role': 'assistant',
-                        'content': [{'kind': 'text', 'text': 'text1'}, {'kind': 'text', 'text': 'text2'}],
-                        'tool_calls': [
-                            {
-                                'id': 'tool_call_1',
-                                'type': 'function',
-                                'function': {'name': 'tool1', 'arguments': 'args1'},
-                            },
-                            {
-                                'id': 'tool_call_2',
-                                'type': 'function',
-                                'function': {'name': 'tool2', 'arguments': {'args2': 3}},
-                            },
-                        ],
-                    },
-                },
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
-                'timestamp': 14000000000,
-                'observed_timestamp': 15000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
             },
         ]
     )
@@ -371,60 +291,47 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
             ]
         )
 
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat my_model',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 6000000000,
+                'end_time': 2000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
-                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'allow_text_output': True,
+                    },
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]}],
+                    'gen_ai.output.messages': [
+                        {'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1text2'}]}
+                    ],
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'my_model_123',
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                 },
-            },
-        ]
-    )
-
-    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
-        [
-            {
-                'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 2000000000,
-                'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1text2'}},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
-                'timestamp': 4000000000,
-                'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
             },
         ]
     )
@@ -458,24 +365,40 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 assert event == PartStartEvent(index=0, part=TextPart(content='text1'))
                 raise RuntimeError
 
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat my_model',
                 'context': {'trace_id': 1, 'span_id': 1, 'is_remote': False},
                 'parent': None,
                 'start_time': 1000000000,
-                'end_time': 7000000000,
+                'end_time': 3000000000,
                 'attributes': {
                     'gen_ai.operation.name': 'chat',
                     'gen_ai.system': 'my_system',
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
-                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'allow_text_output': True,
+                    },
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {
+                            'gen_ai.input.messages': {'type': 'array'},
+                            'gen_ai.output.messages': {'type': 'array'},
+                            'model_request_parameters': {'type': 'object'},
+                        },
+                    },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
+                    'gen_ai.input.messages': [{'role': 'user', 'parts': [{'type': 'text', 'content': 'user_prompt'}]}],
+                    'gen_ai.output.messages': [{'role': 'assistant', 'parts': [{'type': 'text', 'content': 'text1'}]}],
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'my_model_123',
                     'gen_ai.usage.input_tokens': 300,
@@ -485,7 +408,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 'events': [
                     {
                         'name': 'exception',
-                        'timestamp': 6000000000,
+                        'timestamp': 2000000000,
                         'attributes': {
                             'exception.type': 'RuntimeError',
                             'exception.message': '',
@@ -494,37 +417,6 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         },
                     }
                 ],
-            },
-        ]
-    )
-
-    assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
-        [
-            {
-                'body': {'content': 'user_prompt', 'role': 'user'},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {
-                    'gen_ai.system': 'my_system',
-                    'gen_ai.message.index': 0,
-                    'event.name': 'gen_ai.user.message',
-                },
-                'timestamp': 2000000000,
-                'observed_timestamp': 3000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
-            },
-            {
-                'body': {'index': 0, 'message': {'role': 'assistant', 'content': 'text1'}},
-                'severity_number': 9,
-                'severity_text': None,
-                'attributes': {'gen_ai.system': 'my_system', 'event.name': 'gen_ai.choice'},
-                'timestamp': 4000000000,
-                'observed_timestamp': 5000000000,
-                'trace_id': 1,
-                'span_id': 1,
-                'trace_flags': 1,
             },
         ]
     )
