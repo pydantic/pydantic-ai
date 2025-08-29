@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Literal, Union, assert_never
+from typing import Annotated, Any, Literal, assert_never
 
 from pydantic import ConfigDict, Discriminator, with_config
 from temporalio import activity, workflow
@@ -47,7 +48,7 @@ class _ToolReturn:
 
 
 _CallToolResult = Annotated[
-    Union[_ApprovalRequired, _CallDeferred, _ModelRetry, _ToolReturn],
+    _ApprovalRequired | _CallDeferred | _ModelRetry | _ToolReturn,
     Discriminator('kind'),
 ]
 

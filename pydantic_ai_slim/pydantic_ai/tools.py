@@ -1,19 +1,18 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Annotated, Any, Callable, Generic, Literal, Union, cast
+from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
-
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import RetryPromptPart, ToolReturn
+from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
+from .exceptions import ModelRetry
+from .messages import RetryPromptPart, ToolReturn
 
 __all__ = (
     'AgentDepsT',
@@ -38,12 +37,12 @@ __all__ = (
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
-SystemPromptFunc: TypeAlias = Union[
-    Callable[[RunContext[AgentDepsT]], str],
-    Callable[[RunContext[AgentDepsT]], Awaitable[str]],
-    Callable[[], str],
-    Callable[[], Awaitable[str]],
-]
+SystemPromptFunc: TypeAlias = (
+    Callable[[RunContext[AgentDepsT]], str]
+    | Callable[[RunContext[AgentDepsT]], Awaitable[str]]
+    | Callable[[], str]
+    | Callable[[], Awaitable[str]]
+)
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
 Usage `SystemPromptFunc[AgentDepsT]`.
@@ -59,7 +58,7 @@ ToolFuncPlain: TypeAlias = Callable[ToolParams, Any]
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither: TypeAlias = Union[ToolFuncContext[AgentDepsT, ToolParams], ToolFuncPlain[ToolParams]]
+ToolFuncEither: TypeAlias = ToolFuncContext[AgentDepsT, ToolParams] | ToolFuncPlain[ToolParams]
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
@@ -75,14 +74,12 @@ See [tool docs](../tools.md#tool-prepare) for more information.
 Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 
 ```python {noqa="I001"}
-from typing import Union
-
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.tools import ToolDefinition
 
 async def only_if_42(
     ctx: RunContext[int], tool_def: ToolDefinition
-) -> Union[ToolDefinition, None]:
+) -> ToolDefinition | None:
     if ctx.deps == 42:
         return tool_def
 
@@ -106,7 +103,6 @@ Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
 
 ```python {noqa="I001"}
 from dataclasses import replace
-from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -114,7 +110,7 @@ from pydantic_ai.tools import ToolDefinition
 
 async def turn_on_strict_if_openai(
     ctx: RunContext[None], tool_defs: list[ToolDefinition]
-) -> Union[list[ToolDefinition], None]:
+) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
@@ -169,18 +165,16 @@ def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
     return None
 
 
-DeferredToolApprovalResult: TypeAlias = Annotated[Union[ToolApproved, ToolDenied], Discriminator('kind')]
+DeferredToolApprovalResult: TypeAlias = Annotated[ToolApproved | ToolDenied, Discriminator('kind')]
 """Result for a tool call that required human-in-the-loop approval."""
 DeferredToolCallResult: TypeAlias = Annotated[
-    Union[
-        Annotated[ToolReturn, Tag('tool-return')],
-        Annotated[ModelRetry, Tag('model-retry')],
-        Annotated[RetryPromptPart, Tag('retry-prompt')],
-    ],
+    Annotated[ToolReturn, Tag('tool-return')]
+    | Annotated[ModelRetry, Tag('model-retry')]
+    | Annotated[RetryPromptPart, Tag('retry-prompt')],
     Discriminator(_deferred_tool_call_result_discriminator),
 ]
 """Result for a tool call that required external execution."""
-DeferredToolResult = Union[DeferredToolApprovalResult, DeferredToolCallResult]
+DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 """Result for a tool call that required approval or external execution."""
 
 
@@ -279,7 +273,6 @@ class Tool(Generic[AgentDepsT]):
         or with a custom prepare method:
 
         ```python {noqa="I001"}
-        from typing import Union
 
         from pydantic_ai import Agent, RunContext, Tool
         from pydantic_ai.tools import ToolDefinition
@@ -289,7 +282,7 @@ class Tool(Generic[AgentDepsT]):
 
         async def prep_my_tool(
             ctx: RunContext[int], tool_def: ToolDefinition
-        ) -> Union[ToolDefinition, None]:
+        ) -> ToolDefinition | None:
             # only register the tool if `deps == 42`
             if ctx.deps == 42:
                 return tool_def

@@ -2,11 +2,12 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import types
+from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import LogfireSpan
-from typing_extensions import ParamSpec, TypeAlias, TypeIs, get_args, get_origin
+from typing_extensions import ParamSpec, TypeIs
 from typing_inspection import typing_objects
 from typing_inspection.introspection import is_union_origin
 

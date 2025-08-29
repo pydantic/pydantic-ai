@@ -4,14 +4,14 @@ import asyncio
 import dataclasses
 import hashlib
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
-from typing_extensions import TypeGuard, TypeVar, assert_never
+from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._tool_manager import ToolManager
@@ -66,12 +66,12 @@ _HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.Model
 _HistoryProcessorAsyncWithCtx = Callable[
     [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
 ]
-HistoryProcessor = Union[
-    _HistoryProcessorSync,
-    _HistoryProcessorAsync,
-    _HistoryProcessorSyncWithCtx[DepsT],
-    _HistoryProcessorAsyncWithCtx[DepsT],
-]
+HistoryProcessor = (
+    _HistoryProcessorSync
+    | _HistoryProcessorAsync
+    | _HistoryProcessorSyncWithCtx[DepsT]
+    | _HistoryProcessorAsyncWithCtx[DepsT]
+)
 """A function that processes a list of model messages and returns a list of model messages.
 
 Can optionally accept a `RunContext` as a parameter.
@@ -166,7 +166,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], CallToolsNode[DepsT, NodeRunEndT]]:  # noqa UP007
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | CallToolsNode[DepsT, NodeRunEndT]:
         try:
             ctx_messages = get_captured_run_messages()
         except LookupError:
@@ -482,7 +482,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], End[result.FinalResult[NodeRunEndT]]]:  # noqa UP007
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         async with self.stream(ctx):
             pass
         assert self._next_node is not None, 'the stream should set `self._next_node` before it ends'
@@ -912,7 +912,7 @@ async def _call_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContentTypes):
+            elif isinstance(content, _messages.MultiModalContent):
                 if isinstance(content, _messages.BinaryContent):
                     identifier = content.identifier or multi_modal_content_identifier(content.data)
                 else:
@@ -929,15 +929,15 @@ async def _call_tool(
         )
 
     if (
-        isinstance(tool_return.return_value, _messages.MultiModalContentTypes)
+        isinstance(tool_return.return_value, _messages.MultiModalContent)
         or isinstance(tool_return.return_value, list)
         and any(
-            isinstance(content, _messages.MultiModalContentTypes)
+            isinstance(content, _messages.MultiModalContent)
             for content in tool_return.return_value  # type: ignore
         )
     ):
         raise exceptions.UserError(
-            f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContentTypes` objects. '
+            f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
             f'Please use `content` instead.'
         )
 

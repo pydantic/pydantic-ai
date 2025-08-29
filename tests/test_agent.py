@@ -2,10 +2,10 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Callable, Union
+from typing import Any, Union
 
 import httpx
 import pytest
@@ -417,8 +417,8 @@ def upcase(text: str) -> str:
 @pytest.mark.parametrize(
     'input_union_callable',
     [
-        lambda: Union[str, Foo],
-        lambda: Union[Foo, str],
+        lambda: Union[str, Foo],  # noqa: UP007
+        lambda: Union[Foo, str],  # noqa: UP007
         lambda: str | Foo,
         lambda: Foo | str,
         lambda: [Foo, str],
@@ -440,7 +440,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
-    agent: Agent[None, Union[str, Foo]] = Agent(m, output_type=union)
+    agent: Agent[None, str | Foo] = Agent(m, output_type=union)
 
     got_tool_call_name = 'unset'
 
@@ -491,11 +491,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.param('OutputType = Union[Foo, Bar]'),
         pytest.param('OutputType = [Foo, Bar]'),
         pytest.param('OutputType = [ToolOutput(Foo), ToolOutput(Bar)]'),
-        pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
-        pytest.param(
-            'OutputType: TypeAlias = Foo | Bar',
-            marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='Python 3.10+'),
-        ),
+        pytest.param('OutputType = Foo | Bar'),
+        pytest.param('OutputType: TypeAlias = Foo | Bar'),
         pytest.param(
             'type OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
         ),
@@ -616,7 +613,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Union[Foo, Bar]] = ToolOutput(Union[Foo, Bar], strict=False)  # type: ignore
+    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # type: ignore
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -2340,7 +2337,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2450,7 +2447,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -2558,7 +2555,7 @@ class TestMultipleToolCalls:
             tool_called.append('another_tool')
             return y
 
-        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
             return replace(tool_def, kind='external')
 
         @agent.tool_plain(prepare=defer)
@@ -3116,7 +3113,7 @@ def test_binary_content_serializable():
                 'model_name': 'test',
                 'provider_name': None,
                 'provider_details': None,
-                'provider_request_id': None,
+                'provider_response_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
             },
@@ -3171,7 +3168,7 @@ def test_image_url_serializable_missing_media_type():
                 'timestamp': IsStr(),
                 'provider_name': None,
                 'provider_details': None,
-                'provider_request_id': None,
+                'provider_response_id': None,
                 'kind': 'response',
             },
         ]
@@ -3232,7 +3229,7 @@ def test_image_url_serializable():
                 'timestamp': IsStr(),
                 'provider_name': None,
                 'provider_details': None,
-                'provider_request_id': None,
+                'provider_response_id': None,
                 'kind': 'response',
             },
         ]
@@ -3829,7 +3826,7 @@ def test_multimodal_tool_response_nested():
 
     with pytest.raises(
         UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContentTypes` objects. Please use `content` instead.",
+        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
 

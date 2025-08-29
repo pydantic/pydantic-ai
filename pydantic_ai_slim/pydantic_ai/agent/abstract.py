@@ -2,12 +2,12 @@ from __future__ import annotations as _annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from types import FrameType
-from typing import TYPE_CHECKING, Any, Callable, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast, overload
 
-from typing_extensions import Self, TypeAlias, TypeIs, TypeVar
+from typing_extensions import Self, TypeIs, TypeVar
 
 from pydantic_graph import End
 from pydantic_graph._utils import get_event_loop

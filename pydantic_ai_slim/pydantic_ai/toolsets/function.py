@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Callable, overload
+from typing import Any, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 

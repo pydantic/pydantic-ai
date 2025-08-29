@@ -254,7 +254,6 @@ To easily chain different modifications, you can also call [`prepared()`][pydant
 
 ```python {title="prepared_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py"}
 from dataclasses import replace
-from typing import Union
 
 from renamed_toolset import renamed_toolset
 
@@ -269,7 +268,7 @@ descriptions = {
     'current_time': 'Get the current time',
 }
 
-async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> Union[list[ToolDefinition], None]:
+async def add_descriptions(ctx: RunContext, tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
     return [
         replace(tool_def, description=description)
         if (description := descriptions.get(tool_def.name, None))
@@ -499,8 +498,6 @@ Next, let's define a function that represents a hypothetical "run agent" API end
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
 from deferred_toolset_agent import agent, PersonalizedGreeting
 
-from typing import Union
-
 from pydantic_ai.output import DeferredToolRequests
 from pydantic_ai.tools import DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import ExternalToolset
@@ -510,7 +507,7 @@ def run_agent(
     messages: list[ModelMessage] = [],
     frontend_tools: list[ToolDefinition] = {},
     deferred_tool_results: DeferredToolResults | None = None,
-) -> tuple[Union[PersonalizedGreeting, DeferredToolRequests], list[ModelMessage]]:
+) -> tuple[PersonalizedGreeting | DeferredToolRequests, list[ModelMessage]]:
     deferred_toolset = ExternalToolset(frontend_tools)
     result = agent.run_sync(
         toolsets=[deferred_toolset], # (1)!

@@ -525,7 +525,6 @@ Here's a simple `prepare` method that only includes the tool if the value of the
 As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestModel] to demonstrate the behavior without calling a real model.
 
 ```python {title="tool_only_if_42.py"}
-from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -535,7 +534,7 @@ agent = Agent('test')
 
 async def only_if_42(
     ctx: RunContext[int], tool_def: ToolDefinition
-) -> Union[ToolDefinition, None]:
+) -> ToolDefinition | None:
     if ctx.deps == 42:
         return tool_def
 
@@ -622,7 +621,6 @@ Here's an example that makes all tools strict if the model is an OpenAI model:
 
 ```python {title="agent_prepare_tools_customize.py" noqa="I001"}
 from dataclasses import replace
-from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -631,7 +629,7 @@ from pydantic_ai.models.test import TestModel
 
 async def turn_on_strict_if_openai(
     ctx: RunContext[None], tool_defs: list[ToolDefinition]
-) -> Union[list[ToolDefinition], None]:
+) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
@@ -661,7 +659,6 @@ _(This example is complete, it can be run "as is")_
 Here's another example that conditionally filters out the tools by name if the dependency (`ctx.deps`) is `True`:
 
 ```python {title="agent_prepare_tools_filter_out.py" noqa="I001"}
-from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import Tool, ToolDefinition
@@ -673,7 +670,7 @@ def launch_potato(target: str) -> str:
 
 async def filter_out_tools_by_name(
     ctx: RunContext[bool], tool_defs: list[ToolDefinition]
-) -> Union[list[ToolDefinition], None]:
+) -> list[ToolDefinition] | None:
     if ctx.deps:
         return [tool_def for tool_def in tool_defs if tool_def.name != 'launch_potato']
     return tool_defs

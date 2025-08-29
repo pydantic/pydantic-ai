@@ -6,19 +6,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import TypeAlias, deprecated
+from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
-from ._utils import (
-    generate_tool_call_id as _generate_tool_call_id,
-    now_utc as _now_utc,
-)
+from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
@@ -462,7 +459,8 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
+MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+UserContent: TypeAlias = str | MultiModalContent
 
 
 @dataclass(repr=False)
@@ -489,8 +487,6 @@ class ToolReturn:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-# Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
-MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
 _document_format_lookup: dict[str, DocumentFormat] = {
     'application/pdf': 'pdf',
     'text/plain': 'txt',
@@ -564,7 +560,7 @@ class UserPromptPart:
                 parts.append(
                     _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
                 )
-            elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+            elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 parts.append(
                     _otel_messages.MediaUrlPart(
                         type=part.kind,
@@ -755,7 +751,7 @@ class RetryPromptPart:
 
 
 ModelRequestPart = Annotated[
-    Union[SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart], pydantic.Discriminator('part_kind')
+    SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart, pydantic.Discriminator('part_kind')
 ]
 """A message part sent by Pydantic AI to a model."""
 
@@ -899,13 +895,13 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    Union[TextPart, ToolCallPart, BuiltinToolCallPart, BuiltinToolReturnPart, ThinkingPart],
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
 
@@ -940,7 +936,7 @@ class ModelResponse:
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    provider_request_id: str | None = None
+    provider_response_id: str | None = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def price(self) -> genai_types.PriceCalculation:
@@ -972,14 +968,14 @@ class ModelResponse:
                 body.setdefault('tool_calls', []).append(
                     {
                         'id': part.tool_call_id,
-                        'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
+                        'type': 'function',
                         'function': {
                             'name': part.tool_name,
                             **({'arguments': part.args} if settings.include_content else {}),
                         },
                     }
                 )
-            elif isinstance(part, (TextPart, ThinkingPart)):
+            elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
                 body.setdefault('content', []).append(
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
@@ -1028,14 +1024,19 @@ class ModelResponse:
         return self.provider_details
 
     @property
-    @deprecated('`vendor_id` is deprecated, use `provider_request_id` instead')
+    @deprecated('`vendor_id` is deprecated, use `provider_response_id` instead')
     def vendor_id(self) -> str | None:
-        return self.provider_request_id
+        return self.provider_response_id
+
+    @property
+    @deprecated('`provider_request_id` is deprecated, use `provider_response_id` instead')
+    def provider_request_id(self) -> str | None:
+        return self.provider_response_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
+ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
@@ -1245,7 +1246,7 @@ class ToolCallPartDelta:
 
 
 ModelResponsePartDelta = Annotated[
-    Union[TextPartDelta, ThinkingPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')
+    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta, pydantic.Discriminator('part_delta_kind')
 ]
 """A partial update (delta) for any model response part."""
 
@@ -1301,7 +1302,7 @@ class FinalResultEvent:
 
 
 ModelResponseStreamEvent = Annotated[
-    Union[PartStartEvent, PartDeltaEvent, FinalResultEvent], pydantic.Discriminator('event_kind')
+    PartStartEvent | PartDeltaEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
 ]
 """An event in the model response stream, starting a new part, applying a delta to an existing one, or indicating the final result."""
 
@@ -1369,10 +1370,10 @@ class BuiltinToolResultEvent:
 
 
 HandleResponseEvent = Annotated[
-    Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
+    FunctionToolCallEvent | FunctionToolResultEvent | BuiltinToolCallEvent | BuiltinToolResultEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[Union[ModelResponseStreamEvent, HandleResponseEvent], pydantic.Discriminator('event_kind')]
+AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""

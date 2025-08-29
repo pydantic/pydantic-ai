@@ -4,9 +4,7 @@ import dataclasses
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Generic, overload
-
-from typing_extensions import Literal
+from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import End, GraphRun, GraphRunContext
 
