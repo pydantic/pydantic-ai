@@ -10,7 +10,6 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import (
     DocstringFormat,
-    GenerateToolJsonSchema,
     Tool,
     ToolFuncEither,
     ToolParams,
@@ -33,10 +32,12 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     See [toolset docs](../toolsets.md#function-toolset) for more information.
     """
 
-    max_retries: int
     tools: dict[str, Tool[Any]]
+    max_retries: int
     _id: str | None
-    _default_require_parameter_descriptions: bool
+    docstring_format: DocstringFormat
+    require_parameter_descriptions: bool
+    schema_generator: type[GenerateJsonSchema]
 
     def __init__(
         self,
@@ -44,19 +45,30 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         max_retries: int = 1,
         *,
         id: str | None = None,
-        require_parameter_descriptions: bool | None = None,
+        docstring_format: DocstringFormat = 'auto',
+        require_parameter_descriptions: bool = False,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
     ):
         """Build a new function toolset.
 
         Args:
             tools: The tools to add to the toolset.
             max_retries: The maximum number of retries for each tool during a run.
-            id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal, in which case the ID will be used to identify the toolset's activities within the workflow.
-            require_parameter_descriptions: An optional default for all tools. If True, raise an error if a parameter description is missing. If `None`, defaults to False. Can be overridden when adding individual tools.
+            id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
+                in which case the ID will be used to identify the toolset's activities within the workflow.
+            docstring_format: Format of tool docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
+                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
+                Applies to all tools, unless overridden when adding a tool.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing. Defaults to False.
+                Applies to all tools, unless overridden when adding a tool.
+            schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+                Applies to all tools, unless overridden when adding a tool.
         """
         self.max_retries = max_retries
         self._id = id
-        self._default_require_parameter_descriptions = require_parameter_descriptions or False
+        self.docstring_format = docstring_format
+        self.require_parameter_descriptions = require_parameter_descriptions
+        self.schema_generator = schema_generator
 
         self.tools = {}
         for tool in tools:
@@ -80,9 +92,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
+        docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
-        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
@@ -94,9 +106,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
+        docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
-        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -139,9 +151,11 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
-                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None`, defaults to False.
+                If `None`, the default value is determined by the toolset.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing.
+                If `None`, the default value is determined by the toolset.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+                If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
@@ -172,9 +186,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         name: str | None = None,
         retries: int | None = None,
         prepare: ToolPrepareFunc[AgentDepsT] | None = None,
-        docstring_format: DocstringFormat = 'auto',
+        docstring_format: DocstringFormat | None = None,
         require_parameter_descriptions: bool | None = None,
-        schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
+        schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
@@ -194,14 +208,20 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 tool from a given step. This is useful if you want to customise a tool at call time,
                 or omit it completely from a step. See [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc].
             docstring_format: The format of the docstring, see [`DocstringFormat`][pydantic_ai.tools.DocstringFormat].
-                Defaults to `'auto'`, such that the format is inferred from the structure of the docstring.
-            require_parameter_descriptions: If True, raise an error if a parameter description is missing. If `None`, defaults to False.
+                If `None`, the default value is determined by the toolset.
+            require_parameter_descriptions: If True, raise an error if a parameter description is missing.
+                If `None`, the default value is determined by the toolset.
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
+                If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
         """
+        if docstring_format is None:
+            docstring_format = self.docstring_format
         if require_parameter_descriptions is None:
-            require_parameter_descriptions = self._default_require_parameter_descriptions
+            require_parameter_descriptions = self.require_parameter_descriptions
+        if schema_generator is None:
+            schema_generator = self.schema_generator
 
         tool = Tool[AgentDepsT](
             func,
