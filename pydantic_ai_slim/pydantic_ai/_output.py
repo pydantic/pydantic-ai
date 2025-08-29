@@ -3,9 +3,9 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
@@ -49,12 +49,12 @@ At some point, it may make sense to change the input to OutputValidatorFunc to b
 resolve these potential variance issues.
 """
 
-OutputValidatorFunc = Union[
-    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv],
-    Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]],
-    Callable[[OutputDataT_inv], OutputDataT_inv],
-    Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]],
-]
+OutputValidatorFunc = (
+    Callable[[RunContext[AgentDepsT], OutputDataT_inv], OutputDataT_inv]
+    | Callable[[RunContext[AgentDepsT], OutputDataT_inv], Awaitable[OutputDataT_inv]]
+    | Callable[[OutputDataT_inv], OutputDataT_inv]
+    | Callable[[OutputDataT_inv], Awaitable[OutputDataT_inv]]
+)
 """
 A function that always takes and returns the same type of data (which is the result type of an agent run), and:
 

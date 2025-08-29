@@ -14,13 +14,13 @@ import inspect
 import sys
 import time
 import warnings
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Callable, Generic, Literal, Union, cast
+from typing import Any, Generic, Literal, Union, cast
 
 import anyio
 import logfire_api
@@ -161,11 +161,6 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         self.evaluators = list(evaluators)
 
 
-# TODO: Consider making one or more of the following changes to this type:
-#  * Add `task: Callable[[InputsT], Awaitable[OutputT]` as a field
-#  * Add `inputs_type`, `output_type`, etc. as kwargs on `__init__`
-#  * Rename to `Evaluation`
-# TODO: Allow `task` to be sync _or_ async
 class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', arbitrary_types_allowed=True):
     """A dataset of test [cases][pydantic_evals.Case].
 
@@ -634,7 +629,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
                 td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
                 config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-                # TODO: Replace with pydantic.with_config after pydantic 2.11 is released
+                # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
                 td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
                 return td
 
@@ -735,7 +730,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         See <https://github.com/json-schema-org/json-schema-spec/issues/828> for context, that seems to be the nearest
         there is to a spec for this.
         """
-        context = cast(Union[dict[str, Any], None], info.context)
+        context = cast(dict[str, Any] | None, info.context)
         if isinstance(context, dict) and (schema := context.get('$schema')):
             return {'$schema': schema} | nxt(self)
         else:
@@ -857,9 +852,8 @@ async def _run_task(
             if node.attributes.get('gen_ai.operation.name') == 'chat':
                 task_run.increment_metric('requests', 1)
             for k, v in node.attributes.items():
-                if not isinstance(v, (int, float)):
+                if not isinstance(v, int | float):
                     continue
-                # TODO: Revisit this choice to strip the prefix..
                 if k.startswith('gen_ai.usage.details.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
                 elif k.startswith('gen_ai.usage.'):
