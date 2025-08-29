@@ -33,9 +33,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, cached_async_http_client
-from pydantic_ai.output import DeferredToolRequests
 from pydantic_ai.run import AgentRunResult
-from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage
 

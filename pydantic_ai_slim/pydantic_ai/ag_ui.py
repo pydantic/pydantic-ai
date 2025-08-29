@@ -45,9 +45,9 @@ from .messages import (
     UserPromptPart,
 )
 from .models import KnownModelName, Model
-from .output import DeferredToolRequests, OutputDataT, OutputSpec
+from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
-from .tools import AgentDepsT, ToolDefinition
+from .tools import AgentDepsT, DeferredToolRequests, ToolDefinition
 from .toolsets import AbstractToolset
 from .toolsets.external import ExternalToolset
 from .usage import RunUsage, UsageLimits

@@ -134,11 +134,10 @@ The `ModelResponse` message above indicates in the `model_name` field that the o
 You can configure different [`ModelSettings`][pydantic_ai.settings.ModelSettings] for each model in a fallback chain by passing the `settings` parameter when creating each model. This is particularly useful when different providers have different optimal configurations:
 
 ```python {title="fallback_model_per_settings.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.settings import ModelSettings
 
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
@@ -169,8 +168,7 @@ contains all the exceptions encountered during the `run` execution.
 === "Python >=3.11"
 
     ```python {title="fallback_model_failure.py" py="3.11"}
-    from pydantic_ai import Agent
-    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai import Agent, ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -196,8 +194,7 @@ contains all the exceptions encountered during the `run` execution.
     ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
     from exceptiongroup import catch
 
-    from pydantic_ai import Agent
-    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai import Agent, ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel

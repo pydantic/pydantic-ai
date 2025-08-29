@@ -11,8 +11,8 @@ from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.output import DeferredToolRequests, StructuredDict, TextOutput, ToolOutput
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
 MYPY = False

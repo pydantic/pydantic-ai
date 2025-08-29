@@ -88,7 +88,11 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalAgent
+from pydantic_ai.durable_exec.temporal import (
+    AgentPlugin,
+    PydanticAIPlugin,
+    TemporalAgent,
+)
 
 agent = Agent(
     'gpt-5',
@@ -207,9 +211,10 @@ Temporal generates telemetry events and metrics for each workflow and activity e
 To use Logfire with Temporal, you need to pass a [`LogfirePlugin`][pydantic_ai.durable_exec.temporal.LogfirePlugin] object to Temporal's `Client.connect()`:
 
 ```py {title="logfire_plugin.py" test="skip" noqa="F841"}
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, LogfirePlugin
-
 from temporalio.client import Client
+
+from pydantic_ai.durable_exec.temporal import LogfirePlugin, PydanticAIPlugin
+
 
 async def main():
     client = await Client.connect(

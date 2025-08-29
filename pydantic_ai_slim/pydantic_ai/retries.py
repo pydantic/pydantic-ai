@@ -134,8 +134,9 @@ class TenacityTransport(BaseTransport):
 
     Example:
         ```python
-        from httpx import Client, HTTPTransport, HTTPStatusError
-        from tenacity import stop_after_attempt, retry_if_exception_type
+        from httpx import Client, HTTPStatusError, HTTPTransport
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
         from pydantic_ai.retries import RetryConfig, TenacityTransport, wait_retry_after
 
         transport = TenacityTransport(
@@ -213,7 +214,8 @@ class AsyncTenacityTransport(AsyncBaseTransport):
     Example:
         ```python
         from httpx import AsyncClient, HTTPStatusError
-        from tenacity import stop_after_attempt, retry_if_exception_type
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
         from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
         transport = AsyncTenacityTransport(
@@ -292,7 +294,8 @@ def wait_retry_after(
     Example:
         ```python
         from httpx import AsyncClient, HTTPStatusError
-        from tenacity import stop_after_attempt, retry_if_exception_type
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
         from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
         transport = AsyncTenacityTransport(
