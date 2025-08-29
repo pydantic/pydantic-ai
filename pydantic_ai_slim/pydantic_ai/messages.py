@@ -938,7 +938,7 @@ class ModelResponse:
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    provider_request_id: str | None = None
+    provider_response_id: str | None = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def price(self) -> genai_types.PriceCalculation:
@@ -1026,9 +1026,14 @@ class ModelResponse:
         return self.provider_details
 
     @property
-    @deprecated('`vendor_id` is deprecated, use `provider_request_id` instead')
+    @deprecated('`vendor_id` is deprecated, use `provider_response_id` instead')
     def vendor_id(self) -> str | None:
-        return self.provider_request_id
+        return self.provider_response_id
+
+    @property
+    @deprecated('`provider_request_id` is deprecated, use `provider_response_id` instead')
+    def provider_request_id(self) -> str | None:
+        return self.provider_response_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 

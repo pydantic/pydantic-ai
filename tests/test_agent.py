@@ -3063,7 +3063,7 @@ def test_binary_content_serializable():
                 'model_name': 'test',
                 'provider_name': None,
                 'provider_details': None,
-                'provider_request_id': None,
+                'provider_response_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
             },
@@ -3118,7 +3118,7 @@ def test_image_url_serializable_missing_media_type():
                 'timestamp': IsStr(),
                 'provider_name': None,
                 'provider_details': None,
-                'provider_request_id': None,
+                'provider_response_id': None,
                 'kind': 'response',
             },
         ]
@@ -3179,7 +3179,7 @@ def test_image_url_serializable():
                 'timestamp': IsStr(),
                 'provider_name': None,
                 'provider_details': None,
-                'provider_request_id': None,
+                'provider_response_id': None,
                 'kind': 'response',
             },
         ]
