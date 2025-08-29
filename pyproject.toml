@@ -208,7 +208,7 @@ executionEnvironments = [
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
     "mcp-run-python/node_modules",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk requires Python 3.10+ so cannot be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
 ]
 extraPaths = ["mcp-run-python/stubs"]
 
@@ -252,7 +252,7 @@ include = [
 omit = [
     "tests/test_live.py",
     "tests/example_modules/*.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk requires Python 3.10+ so cannot be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

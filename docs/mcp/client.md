@@ -11,9 +11,6 @@ You need to either install [`pydantic-ai`](../install.md), or[`pydantic-ai-slim`
 pip/uv-add "pydantic-ai-slim[mcp]"
 ```
 
-!!! note
-    MCP integration requires Python 3.10 or higher.
-
 ## Usage
 
 Pydantic AI comes with two ways to connect to MCP servers:
@@ -38,7 +35,7 @@ You can use the [`async with agent`][pydantic_ai.Agent.__aenter__] context manag
 
 Before creating the Streamable HTTP client, we need to run a server that supports the Streamable HTTP transport.
 
-```python {title="streamable_http_server.py" py="3.10" dunder_name="not_main"}
+```python {title="streamable_http_server.py" dunder_name="not_main"}
 from mcp.server.fastmcp import FastMCP
 
 app = FastMCP()
@@ -53,7 +50,7 @@ if __name__ == '__main__':
 
 Then we can create the client:
 
-```python {title="mcp_streamable_http_client.py" py="3.10"}
+```python {title="mcp_streamable_http_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
@@ -71,7 +68,7 @@ async def main():
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 **What's happening here?**
 
@@ -113,7 +110,7 @@ deno run \
   jsr:@pydantic/mcp-run-python sse
 ```
 
-```python {title="mcp_sse_client.py" py="3.10"}
+```python {title="mcp_sse_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
@@ -132,13 +129,13 @@ async def main():
 2. Create an agent with the MCP server attached.
 3. Create a client session to connect to the server.
 
-_(This example is complete, it can be run "as is" with Python 3.10+ — you'll need to add `asyncio.run(main())` to run `main`)_
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### MCP "stdio" Server
 
 The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
 
-```python {title="mcp_stdio_client.py" py="3.10"}
+```python {title="mcp_stdio_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
@@ -174,7 +171,7 @@ the customisation of tool call requests and their responses.
 A common use case for this is to inject metadata to the requests which the server
 call needs.
 
-```python {title="mcp_process_tool_call.py" py="3.10"}
+```python {title="mcp_process_tool_call.py"}
 from typing import Any
 
 from pydantic_ai import Agent
@@ -214,7 +211,7 @@ When connecting to multiple MCP servers that might provide tools with the same n
 
 This allows you to use multiple servers that might have overlapping tool names without conflicts:
 
-```python {title="mcp_tool_prefix_http_client.py" py="3.10"}
+```python {title="mcp_tool_prefix_http_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
@@ -247,7 +244,7 @@ All HTTP-based MCP client classes
 parameter that lets you pass your own pre-configured
 [`httpx.AsyncClient`](https://www.python-httpx.org/async/).
 
-```python {title="mcp_custom_tls_client.py" py="3.10"}
+```python {title="mcp_custom_tls_client.py"}
 import httpx
 import ssl
 
@@ -324,7 +321,7 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
 
 ??? example "Sampling MCP Server"
 
-    ```python {title="generate_svg.py" py="3.10"}
+    ```python {title="generate_svg.py"}
     import re
     from pathlib import Path
 
@@ -362,7 +359,7 @@ Let's say we have an MCP server that wants to use sampling (in this case to gene
 
 Using this server with an `Agent` will automatically allow sampling:
 
-```python {title="sampling_mcp_client.py" py="3.10" requires="generate_svg.py"}
+```python {title="sampling_mcp_client.py" requires="generate_svg.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
@@ -378,11 +375,11 @@ async def main():
     #> Image file written to robot_punk.svg.
 ```
 
-_(This example is complete, it can be run "as is" with Python 3.10+)_
+_(This example is complete, it can be run "as is")_
 
 You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MCPServer.allow_sampling] when creating the server reference, e.g.:
 
-```python {title="sampling_disallowed.py" hl_lines="6" py="3.10"}
+```python {title="sampling_disallowed.py" hl_lines="6"}
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(
@@ -418,7 +415,7 @@ This allows for a more interactive and user-friendly experience, especially for 
 
 To enable elicitation, provide an [`elicitation_callback`][pydantic_ai.mcp.MCPServer.elicitation_callback] function when creating your MCP server instance:
 
-```python {title="restaurant_server.py" py="3.10"}
+```python {title="restaurant_server.py"}
 from mcp.server.fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
@@ -454,7 +451,7 @@ if __name__ == '__main__':
 
 This server demonstrates elicitation by requesting structured booking details from the client when the `book_table` tool is called. Here's how to create a client that handles these elicitation requests:
 
-```python {title="client_example.py" py="3.10" requires="restaurant_server.py" test="skip"}
+```python {title="client_example.py" requires="restaurant_server.py" test="skip"}
 import asyncio
 from typing import Any
 
