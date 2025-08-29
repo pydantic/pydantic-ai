@@ -221,10 +221,8 @@ async def test_evaluate_async(
                     'value': 1.0,
                 }
             },
-            'span_id': '0000000000000003',
             'task_duration': 1.0,
             'total_duration': 6.0,
-            'trace_id': '00000000000000000000000000000001',
         }
     )
 
@@ -273,10 +271,8 @@ async def test_evaluate_sync(
                     'value': 1.0,
                 }
             },
-            'span_id': '0000000000000003',
             'task_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
             'total_duration': IsNumber(),  # the runtime behavior is not deterministic due to threading
-            'trace_id': '00000000000000000000000000000001',
         }
     )
 
@@ -325,10 +321,8 @@ async def test_evaluate_with_concurrency(
                     'value': 1.0,
                 }
             },
-            'span_id': '0000000000000003',
             'task_duration': 1.0,
             'total_duration': 3.0,
-            'trace_id': '00000000000000000000000000000001',
         }
     )
 
@@ -409,8 +403,6 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
                 assertions={},
                 task_duration=1.0,
                 total_duration=3.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
             ),
             ReportCase(
                 name='case2',
@@ -425,8 +417,6 @@ async def test_increment_eval_metric(example_dataset: Dataset[TaskInput, TaskOut
                 assertions={},
                 task_duration=1.0,
                 total_duration=3.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
             ),
         ]
     )
@@ -468,8 +458,6 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 assertions={},
                 task_duration=1.0,
                 total_duration=6.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
             ),
             ReportCase(
                 name='case2',
@@ -494,8 +482,6 @@ async def test_repeated_name_outputs(example_dataset: Dataset[TaskInput, TaskOut
                 assertions={},
                 task_duration=1.0,
                 total_duration=4.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000007',
             ),
         ]
     )
@@ -534,8 +520,6 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                     assertions={},
                     task_duration=1.0,
                     total_duration=6.0,
-                    trace_id='00000000000000000000000000000001',
-                    span_id='0000000000000003',
                 ),
                 ReportCase(
                     name='case2',
@@ -557,12 +541,8 @@ async def test_report_round_trip_serialization(example_dataset: Dataset[TaskInpu
                     assertions={},
                     task_duration=1.0,
                     total_duration=4.0,
-                    trace_id='00000000000000000000000000000001',
-                    span_id='0000000000000007',
                 ),
             ],
-            span_id='0000000000000001',
-            trace_id='00000000000000000000000000000001',
         )
     )
 
@@ -601,8 +581,6 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 assertions={},
                 task_duration=5.0,
                 total_duration=7.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='0000000000000003',
             ),
             ReportCase(
                 name='case2',
@@ -617,8 +595,6 @@ async def test_genai_attribute_collection(example_dataset: Dataset[TaskInput, Ta
                 assertions={},
                 task_duration=5.0,
                 total_duration=7.0,
-                trace_id='00000000000000000000000000000001',
-                span_id='000000000000000b',
             ),
         ]
     )
@@ -1203,8 +1179,6 @@ async def test_evaluate_async_logfire(
                             },
                             'task_duration': 1.0,
                             'total_duration': 6.0,
-                            'trace_id': '00000000000000000000000000000001',
-                            'span_id': '0000000000000003',
                         },
                         {
                             'name': 'case2',
@@ -1233,8 +1207,6 @@ async def test_evaluate_async_logfire(
                             },
                             'task_duration': 1.0,
                             'total_duration': 4.0,
-                            'trace_id': '00000000000000000000000000000001',
-                            'span_id': '0000000000000007',
                         },
                     ],
                     'averages': {
