@@ -267,7 +267,7 @@ The following providers have dedicated documentation on Pydantic AI:
 
 ### Configuring data format
 
-Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with one caveat. The semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span. By default, Pydantic AI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
+Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/). Specifically, it follows version 1.37.0 of the conventions by default. To use [version 1.36.0](https://github.com/open-telemetry/semantic-conventions/blob/v1.36.0/docs/gen-ai/README.md) or older, pass [`InstrumentationSettings(version=1)`][pydantic_ai.models.instrumented.InstrumentationSettings] (the default is `version=2`). Moreover, those semantic conventions specify that messages should be captured as individual events (logs) that are children of the request span, whereas by default, Pydantic AI instead collects these events into a JSON array which is set as a single large attribute called `events` on the request span. To change this, use `event_mode='logs'`:
 
 ```python {title="instrumentation_settings_event_mode.py"}
 import logfire
@@ -275,16 +275,14 @@ import logfire
 from pydantic_ai import Agent
 
 logfire.configure()
-logfire.instrument_pydantic_ai(event_mode='logs')
+logfire.instrument_pydantic_ai(version=1, event_mode='logs')
 agent = Agent('openai:gpt-4o')
 result = agent.run_sync('What is the capital of France?')
 print(result.output)
 #> The capital of France is Paris.
 ```
 
-For now, this won't look as good in the Logfire UI, but we're working on it.
-
-If you have very long conversations, the `events` span attribute may be truncated. Using `event_mode='logs'` will help avoid this issue.
+This won't look as good in the Logfire UI, and will also be removed from Pydantic AI in a future release, but may be useful for backwards compatibility.
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
 
