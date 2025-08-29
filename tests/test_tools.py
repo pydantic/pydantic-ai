@@ -35,6 +35,13 @@ from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
 
+try:
+    import lark
+except ImportError:
+    lark_installed = False
+else:
+    lark_installed = True
+
 
 def test_tool_no_ctx():
     agent = Agent(TestModel())
@@ -1469,3 +1476,187 @@ def test_parallel_tool_return():
             ),
         ]
     )
+
+
+def test_function_text_format_regex_valid():
+    from pydantic_ai.tools import FunctionTextFormat
+
+    format = FunctionTextFormat(syntax='regex', grammar=r'\d+')
+    assert format.syntax == 'regex'
+    assert format.grammar == r'\d+'
+
+
+def test_function_text_format_regex_invalid():
+    from pydantic_ai.tools import FunctionTextFormat
+
+    with pytest.raises(ValueError, match='Regex is invalid'):
+        FunctionTextFormat(syntax='regex', grammar='[')
+
+
+@pytest.mark.skipif(not lark_installed, reason='lark not installed')
+def test_function_text_format_lark_valid():
+    from pydantic_ai.tools import FunctionTextFormat
+
+    format = FunctionTextFormat(syntax='lark', grammar='start: "hello"')
+    assert format.syntax == 'lark'
+    assert format.grammar == 'start: "hello"'
+
+
+@pytest.mark.skipif(not lark_installed, reason='lark not installed')
+def test_function_text_format_lark_invalid():
+    from pydantic_ai.tools import FunctionTextFormat
+
+    with pytest.raises(ValueError, match='Lark grammar is invalid'):
+        FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
+
+
+def test_function_text_format_lark_with_mock_grammar_error(monkeypatch):
+    from pydantic_ai.tools import FunctionTextFormat
+
+    if not lark_installed:
+        pytest.skip('lark not installed')
+
+    # Mock lark.Lark to always raise GrammarError
+    def mock_lark_init(*args, **kwargs):
+        from lark.exceptions import GrammarError
+
+        raise GrammarError('Invalid grammar')
+
+    monkeypatch.setattr('lark.Lark', mock_lark_init)
+
+    with pytest.raises(ValueError, match='Lark grammar is invalid'):
+        FunctionTextFormat(syntax='lark', grammar='start: "hello"')
+
+
+def test_function_text_format_lark_missing_dependency():
+    import sys
+    import warnings
+
+    from pydantic_ai.tools import FunctionTextFormat
+
+    # Temporarily remove lark from sys.modules if it exists
+    lark_module = sys.modules.pop('lark', None)
+    lark_exceptions_module = sys.modules.pop('lark.exceptions', None)
+
+    try:
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter('always')
+            FunctionTextFormat(syntax='lark', grammar='start: "hello"')
+
+            assert len(w) == 1
+            assert issubclass(w[0].category, UserWarning)
+            assert 'Cannot validate lark grammar' in str(w[0].message)
+    finally:
+        # Restore modules if they existed
+        if lark_module is not None:
+            sys.modules['lark'] = lark_module
+        if lark_exceptions_module is not None:
+            sys.modules['lark.exceptions'] = lark_exceptions_module
+
+
+def test_tool_definition_single_string_argument_name():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}},
+        'required': ['text'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name == 'text'
+    assert tool_def.only_takes_string_argument is True
+
+
+def test_tool_definition_multiple_arguments():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}, 'count': {'type': 'integer'}},
+        'required': ['text', 'count'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert tool_def.only_takes_string_argument is False
+
+
+def test_tool_definition_non_string_argument():
+    schema = {
+        'type': 'object',
+        'properties': {'count': {'type': 'integer'}},
+        'required': ['count'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert tool_def.only_takes_string_argument is False
+
+
+def test_tool_definition_no_required_fields():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}},
+        'required': [],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert tool_def.only_takes_string_argument is False
+
+
+def test_tool_definition_no_properties():
+    schema = {'type': 'object', 'properties': {}, 'required': [], 'additionalProperties': False}
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert tool_def.only_takes_string_argument is False
+
+
+def test_tool_definition_mismatched_properties_required():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}, 'extra': {'type': 'string'}},
+        'required': ['text'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert tool_def.only_takes_string_argument is False
+
+
+def test_agent_tool_with_text_format():
+    agent = Agent(TestModel())
+
+    @agent.tool(text_format='text')
+    def analyze_text(ctx: RunContext[None], text: str) -> str:
+        return f'Analyzed: {text}'
+
+    tool_def = agent._function_toolset.tools['analyze_text'].tool_def
+    assert tool_def.text_format == 'text'
+    assert tool_def.only_takes_string_argument is True
+
+
+def test_agent_tool_with_cfg_format():
+    from pydantic_ai.tools import FunctionTextFormat
+
+    agent = Agent(TestModel())
+
+    cfg = FunctionTextFormat(syntax='regex', grammar=r'\d+')
+
+    @agent.tool(text_format=cfg)
+    def parse_numbers(ctx: RunContext[None], numbers: str) -> str:
+        return f'Parsed: {numbers}'
+
+    tool_def = agent._function_toolset.tools['parse_numbers'].tool_def
+    assert tool_def.text_format == cfg
+    assert tool_def.text_format.syntax == 'regex'
+    assert tool_def.text_format.grammar == r'\d+'
+
+
+def test_agent_tool_plain_with_text_format():
+    agent = Agent(TestModel())
+
+    @agent.tool_plain(text_format='text')
+    def analyze_text(text: str) -> str:
+        return f'Analyzed: {text}'
+
+    tool_def = agent._function_toolset.tools['analyze_text'].tool_def
+    assert tool_def.text_format == 'text'
+    assert tool_def.only_takes_string_argument is True
