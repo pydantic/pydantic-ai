@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
@@ -90,7 +90,7 @@ __all__ = (
     'OpenAIModelName',
 )
 
-OpenAIModelName = Union[str, AllModels]
+OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
 
@@ -512,7 +512,7 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
@@ -582,7 +582,7 @@ class OpenAIChatModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         pass
                     else:
                         assert_never(item)
@@ -828,7 +828,7 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
@@ -1049,7 +1049,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,

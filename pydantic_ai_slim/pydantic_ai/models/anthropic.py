@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
@@ -99,7 +99,7 @@ except ImportError as _import_error:
 LatestAnthropicModelNames = ModelParam
 """Latest Anthropic models."""
 
-AnthropicModelName = Union[str, LatestAnthropicModelNames]
+AnthropicModelName = str | LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
@@ -290,7 +290,7 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
-            elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
+            elif isinstance(item, BetaWebSearchToolResultBlock | BetaCodeExecutionToolResultBlock):
                 items.append(
                     BuiltinToolReturnPart(
                         provider_name='anthropic',
@@ -327,7 +327,7 @@ class AnthropicModel(Model):
                 )
 
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
@@ -654,7 +654,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 pass
 
-            elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):  # pragma: no branch
+            elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
                 current_block = None
 
     @property

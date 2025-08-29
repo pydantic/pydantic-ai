@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import (
     BaseModel,
@@ -112,7 +112,7 @@ class EvaluatorSpec(BaseModel):
             return handler(self)
 
 
-class _SerializedEvaluatorSpec(RootModel[Union[str, dict[str, Any]]]):
+class _SerializedEvaluatorSpec(RootModel[str | dict[str, Any]]):
     """Internal class for handling the serialized form of an EvaluatorSpec.
 
     This is an auxiliary class used to serialize/deserialize instances of EvaluatorSpec

@@ -4,12 +4,12 @@ import dataclasses
 import inspect
 import json
 import warnings
-from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
+import anyio
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import TypeVar, deprecated
@@ -152,7 +152,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
-    _enter_lock: Lock = dataclasses.field(repr=False)
+    _enter_lock: anyio.Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
@@ -321,7 +321,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._instructions = ''
         self._instructions_functions = []
-        if isinstance(instructions, (str, Callable)):
+        if isinstance(instructions, str | Callable):
             instructions = [instructions]
         for instruction in instructions or []:
             if isinstance(instruction, str):
@@ -367,7 +367,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
 
-        self._enter_lock = _utils.get_async_lock()
+        self._enter_lock = anyio.Lock()
         self._entered_count = 0
         self._exit_stack = None
 

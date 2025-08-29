@@ -454,9 +454,4 @@ def _get_usage_checking_stream_response(
 
         return _usage_checking_iterator()
     else:
-        # TODO: Use `return aiter(stream_response)` once we drop support for Python 3.9
-        async def _iterator():
-            async for item in stream_response:
-                yield item
-
-        return _iterator()
+        return aiter(stream_response)

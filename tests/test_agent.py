@@ -2,10 +2,10 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import timezone
-from typing import Any, Callable, Union
+from typing import Any, Union
 
 import httpx
 import pytest
@@ -417,8 +417,8 @@ def upcase(text: str) -> str:
 @pytest.mark.parametrize(
     'input_union_callable',
     [
-        lambda: Union[str, Foo],
-        lambda: Union[Foo, str],
+        lambda: Union[str, Foo],  # noqa: UP007
+        lambda: Union[Foo, str],  # noqa: UP007
         lambda: str | Foo,
         lambda: Foo | str,
         lambda: [Foo, str],
@@ -440,7 +440,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
-    agent: Agent[None, Union[str, Foo]] = Agent(m, output_type=union)
+    agent: Agent[None, str | Foo] = Agent(m, output_type=union)
 
     got_tool_call_name = 'unset'
 
@@ -491,11 +491,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.param('OutputType = Union[Foo, Bar]'),
         pytest.param('OutputType = [Foo, Bar]'),
         pytest.param('OutputType = [ToolOutput(Foo), ToolOutput(Bar)]'),
-        pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
-        pytest.param(
-            'OutputType: TypeAlias = Foo | Bar',
-            marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='Python 3.10+'),
-        ),
+        pytest.param('OutputType = Foo | Bar'),
+        pytest.param('OutputType: TypeAlias = Foo | Bar'),
         pytest.param(
             'type OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
         ),
@@ -616,7 +613,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Union[Foo, Bar]] = ToolOutput(Union[Foo, Bar], strict=False)  # type: ignore
+    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # type: ignore
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -3776,7 +3773,7 @@ def test_multimodal_tool_response_nested():
 
     with pytest.raises(
         UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContentTypes` objects. Please use `content` instead.",
+        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
 
@@ -4345,13 +4342,13 @@ async def test_hitl_tool_approval():
 
     @dataclass
     class ApprovableToolsDeps:
-        tool_call_results: dict[str, Union[bool, str]] = field(default_factory=dict)
+        tool_call_results: dict[str, bool | str] = field(default_factory=dict)
 
     agent = Agent(model, output_type=[str, DeferredToolCalls], deps_type=ApprovableToolsDeps)
 
     async def defer_unless_approved(
         ctx: RunContext[ApprovableToolsDeps], tool_def: ToolDefinition
-    ) -> Union[ToolDefinition, None]:
+    ) -> ToolDefinition | None:
         # When restarting a run with message history ending on `ModelResponse`, run_step will be 0
         return tool_def if ctx.run_step == 0 else replace(tool_def, kind='deferred')
 
