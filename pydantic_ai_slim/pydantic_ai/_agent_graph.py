@@ -736,15 +736,15 @@ async def _call_function_tool(
 
     if isinstance(tool_result, _messages.ToolReturn):
         if (
-            isinstance(tool_result.return_value, _messages.MultiModalContentTypes)
+            isinstance(tool_result.return_value, _messages.MultiModalContent)
             or isinstance(tool_result.return_value, list)
             and any(
-                isinstance(content, _messages.MultiModalContentTypes)
+                isinstance(content, _messages.MultiModalContent)
                 for content in tool_result.return_value  # type: ignore
             )
         ):
             raise exceptions.UserError(
-                f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContentTypes` objects. '
+                f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
                 f'Please use `content` instead.'
             )
 
@@ -765,7 +765,7 @@ async def _call_function_tool(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
                     f'`ToolReturn` should be used directly.'
                 )
-            elif isinstance(content, _messages.MultiModalContentTypes):
+            elif isinstance(content, _messages.MultiModalContent):
                 if isinstance(content, _messages.BinaryContent):
                     identifier = content.identifier or multi_modal_content_identifier(content.data)
                 else:

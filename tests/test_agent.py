@@ -3773,7 +3773,7 @@ def test_multimodal_tool_response_nested():
 
     with pytest.raises(
         UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContentTypes` objects. Please use `content` instead.",
+        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
 

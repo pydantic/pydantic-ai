@@ -459,7 +459,8 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
+MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+UserContent: TypeAlias = str | MultiModalContent
 
 
 @dataclass(repr=False)
@@ -484,7 +485,6 @@ class ToolReturn:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-MultiModalContentTypes = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
 _document_format_lookup: dict[str, DocumentFormat] = {
     'application/pdf': 'pdf',
     'text/plain': 'txt',
