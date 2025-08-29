@@ -482,6 +482,8 @@ class ToolReturn:
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
+    kind: Literal['tool-return'] = 'tool-return'
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 

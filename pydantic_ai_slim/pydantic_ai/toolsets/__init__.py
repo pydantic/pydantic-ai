@@ -1,7 +1,8 @@
 from ._dynamic import ToolsetFunc
 from .abstract import AbstractToolset, ToolsetTool
+from .approval_required import ApprovalRequiredToolset
 from .combined import CombinedToolset
-from .deferred import DeferredToolset
+from .external import DeferredToolset, ExternalToolset  # pyright: ignore[reportDeprecated]
 from .filtered import FilteredToolset
 from .function import FunctionToolset
 from .prefixed import PrefixedToolset
@@ -14,6 +15,7 @@ __all__ = (
     'ToolsetFunc',
     'ToolsetTool',
     'CombinedToolset',
+    'ExternalToolset',
     'DeferredToolset',
     'FilteredToolset',
     'FunctionToolset',
@@ -21,4 +23,5 @@ __all__ = (
     'RenamedToolset',
     'PreparedToolset',
     'WrapperToolset',
+    'ApprovalRequiredToolset',
 )

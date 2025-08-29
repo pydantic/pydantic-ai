@@ -46,5 +46,7 @@ class RunContext(Generic[AgentDepsT]):
     """Number of retries so far."""
     run_step: int = 0
     """The current step in the run."""
+    tool_call_approved: bool = False
+    """Whether a tool call that required approval has now been approved."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr

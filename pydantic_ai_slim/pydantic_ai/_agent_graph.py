@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequen
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
@@ -24,7 +24,14 @@ from . import _output, _system_prompt, exceptions, messages as _messages, models
 from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
-from .tools import RunContext, ToolDefinition, ToolKind
+from .tools import (
+    DeferredToolResult,
+    RunContext,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+    ToolKind,
+)
 
 if TYPE_CHECKING:
     from .models.instrumented import InstrumentationSettings
@@ -115,9 +122,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
+    tool_call_results: dict[str, DeferredToolResult] | None
 
     tracer: Tracer
-    instrumentation_settings: InstrumentationSettings | None = None
+    instrumentation_settings: InstrumentationSettings | None
 
 
 class AgentNode(BaseNode[GraphAgentState, GraphAgentDeps[DepsT, Any], result.FinalResult[NodeRunEndT]]):
@@ -158,7 +166,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], CallToolsNode[DepsT, NodeRunEndT]]:  # noqa UP007
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | CallToolsNode[DepsT, NodeRunEndT]:
         try:
             ctx_messages = get_captured_run_messages()
         except LookupError:
@@ -184,26 +192,29 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             parts.extend(await self._sys_parts(run_context))
 
+        if (tool_call_results := ctx.deps.tool_call_results) is not None:
+            if messages and (last_message := messages[-1]) and isinstance(last_message, _messages.ModelRequest):
+                # If tool call results were provided, that means the previous run ended on deferred tool calls.
+                # That run would typically have ended on a `ModelResponse`, but if it had a mix of deferred tool calls and ones that could already be executed,
+                # a `ModelRequest` would already have been added to the history with the preliminary results, even if it wouldn't have been sent to the model yet.
+                # So now that we have all of the deferred results, we roll back to the last `ModelResponse` and store the contents of the `ModelRequest` on `deferred_tool_results` to be handled by `CallToolsNode`.
+                ctx.deps.tool_call_results = self._update_tool_call_results_from_model_request(
+                    tool_call_results, last_message
+                )
+                messages.pop()
+
+            if not messages:
+                raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
+
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
                 parts.extend(last_message.parts)
             elif isinstance(last_message, _messages.ModelResponse):
-                if self.user_prompt is None:
-                    # `CallToolsNode` requires the tool manager to be prepared for the run step
-                    # This will raise errors for any tool name conflicts
-                    ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
-
-                    # Skip ModelRequestNode and go directly to CallToolsNode
-                    return CallToolsNode[DepsT, NodeRunEndT](model_response=last_message)
-                elif any(isinstance(part, _messages.ToolCallPart) for part in last_message.parts):
-                    raise exceptions.UserError(
-                        'Cannot provide a new user prompt when the message history ends with '
-                        'a model response containing unprocessed tool calls. Either process the '
-                        'tool calls first (by calling `iter` with `user_prompt=None`) or append a '
-                        '`ModelRequest` with `ToolResultPart`s.'
-                    )
+                call_tools_node = await self._handle_message_history_model_response(ctx, last_message)
+                if call_tools_node is not None:
+                    return call_tools_node
 
         if self.user_prompt is not None:
             parts.append(_messages.UserPromptPart(self.user_prompt))
@@ -212,6 +223,74 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         next_message = _messages.ModelRequest(parts, instructions=instructions)
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
+
+    async def _handle_message_history_model_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        message: _messages.ModelResponse,
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | None:
+        unprocessed_tool_calls = any(isinstance(part, _messages.ToolCallPart) for part in message.parts)
+        if unprocessed_tool_calls:
+            if self.user_prompt is not None:
+                raise exceptions.UserError(
+                    'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+                )
+        else:
+            if ctx.deps.tool_call_results is not None:
+                raise exceptions.UserError(
+                    'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+                )
+
+        if unprocessed_tool_calls or self.user_prompt is None:
+            # `CallToolsNode` requires the tool manager to be prepared for the run step
+            # This will raise errors for any tool name conflicts
+            run_context = build_run_context(ctx)
+            ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+            # Skip ModelRequestNode and go directly to CallToolsNode
+            return CallToolsNode[DepsT, NodeRunEndT](model_response=message)
+
+    def _update_tool_call_results_from_model_request(
+        self, tool_call_results: dict[str, DeferredToolResult], message: _messages.ModelRequest
+    ) -> dict[str, DeferredToolResult]:
+        last_tool_return: _messages.ToolReturn | None = None
+        user_content: list[str | _messages.UserContent] = []
+        for part in message.parts:
+            if isinstance(part, _messages.ToolReturnPart):
+                if part.tool_call_id in tool_call_results:
+                    raise exceptions.UserError(
+                        f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                    )
+
+                last_tool_return = _messages.ToolReturn(return_value=part.content, metadata=part.metadata)
+                tool_call_results[part.tool_call_id] = last_tool_return
+            elif isinstance(part, _messages.RetryPromptPart):
+                if part.tool_call_id in tool_call_results:
+                    raise exceptions.UserError(
+                        f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                    )
+
+                tool_call_results[part.tool_call_id] = part
+            elif isinstance(part, _messages.UserPromptPart):
+                # Tools can return user parts via `ToolReturn.content` or by returning multi-modal content.
+                # These go together with a specific `ToolReturnPart`, but we don't have a way to know which,
+                # so (below) we just add them to the last one, matching the tool-results-before-user-parts order of the request.
+                if isinstance(part.content, str):
+                    user_content.append(part.content)
+                else:
+                    user_content.extend(part.content)
+            else:
+                raise exceptions.UserError(f'Unexpected message part type: {type(part)}')  # pragma: no cover
+
+        if user_content:
+            if last_tool_return is None:
+                raise exceptions.UserError(
+                    'Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.'
+                )
+            assert last_tool_return is not None
+            last_tool_return.content = user_content
+
+        return tool_call_results
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
@@ -403,7 +482,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
-    ) -> Union[ModelRequestNode[DepsT, NodeRunEndT], End[result.FinalResult[NodeRunEndT]]]:  # noqa UP007
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         async with self.stream(ctx):
             pass
         assert self._next_node is not None, 'the stream should set `self._next_node` before it ends'
@@ -506,13 +585,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         if output_final_result:
             final_result = output_final_result[0]
             self._next_node = self._handle_final_result(ctx, final_result, output_parts)
-        elif deferred_tool_calls := ctx.deps.tool_manager.get_deferred_tool_calls(tool_calls):
-            if not ctx.deps.output_schema.allows_deferred_tool_calls:
-                raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
-                )
-            final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_calls), None, None)
-            self._next_node = self._handle_final_result(ctx, final_result, output_parts)
         else:
             instructions = await ctx.deps.get_instructions(run_context)
             self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
@@ -572,6 +644,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
+        tool_call_approved=ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None,
     )
 
 
@@ -599,7 +672,10 @@ async def process_function_tools(  # noqa: C901
     tool_calls_by_kind: dict[ToolKind | Literal['unknown'], list[_messages.ToolCallPart]] = defaultdict(list)
     for call in tool_calls:
         tool_def = tool_manager.get_tool_def(call.tool_name)
-        kind = tool_def.kind if tool_def else 'unknown'
+        if tool_def:
+            kind = tool_def.kind
+        else:
+            kind = 'unknown'
         tool_calls_by_kind[kind].append(call)
 
     # First, we handle output tool calls
@@ -662,104 +738,175 @@ async def process_function_tools(  # noqa: C901
         ctx.state.increment_retries(ctx.deps.max_result_retries)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
-    for call in calls_to_run:
-        yield _messages.FunctionToolCallEvent(call)
+    deferred_tool_results: dict[str, DeferredToolResult] = {}
+    if build_run_context(ctx).tool_call_approved and ctx.deps.tool_call_results is not None:
+        deferred_tool_results = ctx.deps.tool_call_results
 
-    user_parts_by_index: dict[int, list[_messages.UserPromptPart]] = defaultdict(list)
+        # Deferred tool calls are "run" as well, by reading their value from the tool call results
+        calls_to_run.extend(tool_calls_by_kind['external'])
+        calls_to_run.extend(tool_calls_by_kind['unapproved'])
+
+        result_tool_call_ids = set(deferred_tool_results.keys())
+        tool_call_ids_to_run = {call.tool_call_id for call in calls_to_run}
+        if tool_call_ids_to_run != result_tool_call_ids:
+            raise exceptions.UserError(
+                'Tool call results need to be provided for all deferred tool calls. '
+                f'Expected: {tool_call_ids_to_run}, got: {result_tool_call_ids}'
+            )
+
+    deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
 
     if calls_to_run:
-        # Run all tool tasks in parallel
-        tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
-        with ctx.deps.tracer.start_as_current_span(
-            'running tools',
-            attributes={
-                'tools': [call.tool_name for call in calls_to_run],
-                'logfire.msg': f'running {len(calls_to_run)} tool{"" if len(calls_to_run) == 1 else "s"}',
-            },
+        async for event in _call_tools(
+            tool_manager,
+            calls_to_run,
+            deferred_tool_results,
+            ctx.deps.tracer,
+            output_parts,
+            deferred_calls,
         ):
-            tasks = [
-                asyncio.create_task(_call_function_tool(tool_manager, call), name=call.tool_name)
-                for call in calls_to_run
-            ]
+            yield event
 
-            pending = tasks
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    index = tasks.index(task)
-                    tool_part, tool_user_parts = task.result()
-                    yield _messages.FunctionToolResultEvent(tool_part)
-
-                    tool_parts_by_index[index] = tool_part
-                    user_parts_by_index[index] = tool_user_parts
-
-        # We append the results at the end, rather than as they are received, to retain a consistent ordering
-        # This is mostly just to simplify testing
-        for k in sorted(tool_parts_by_index):
-            output_parts.append(tool_parts_by_index[k])
-
-    # Finally, we handle deferred tool calls
-    for call in tool_calls_by_kind['deferred']:
+    # Finally, we handle deferred tool calls (unless they were already included in the run because results were provided)
+    if not deferred_tool_results:
         if final_result:
-            output_parts.append(
-                _messages.ToolReturnPart(
-                    tool_name=call.tool_name,
-                    content='Tool not executed - a final result was already processed.',
-                    tool_call_id=call.tool_call_id,
+            for call in [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]:
+                output_parts.append(
+                    _messages.ToolReturnPart(
+                        tool_name=call.tool_name,
+                        content='Tool not executed - a final result was already processed.',
+                        tool_call_id=call.tool_call_id,
+                    )
                 )
-            )
         else:
-            yield _messages.FunctionToolCallEvent(call)
+            for call in tool_calls_by_kind['external']:
+                deferred_calls['external'].append(call)
+                yield _messages.FunctionToolCallEvent(call)
 
-    for k in sorted(user_parts_by_index):
-        output_parts.extend(user_parts_by_index[k])
+            for call in tool_calls_by_kind['unapproved']:
+                deferred_calls['unapproved'].append(call)
+                yield _messages.FunctionToolCallEvent(call)
+
+    if not final_result and deferred_calls:
+        if not ctx.deps.output_schema.allows_deferred_tools:
+            raise exceptions.UserError(
+                'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+            )
+        deferred_tool_requests = _output.DeferredToolRequests(
+            calls=deferred_calls['external'],
+            approvals=deferred_calls['unapproved'],
+        )
+
+        final_result = result.FinalResult(cast(NodeRunEndT, deferred_tool_requests), None, None)
 
     if final_result:
         output_final_result.append(final_result)
 
 
-async def _call_function_tool(
+async def _call_tools(
+    tool_manager: ToolManager[DepsT],
+    tool_calls: list[_messages.ToolCallPart],
+    deferred_tool_results: dict[str, DeferredToolResult],
+    tracer: Tracer,
+    output_parts: list[_messages.ModelRequestPart],
+    output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+) -> AsyncIterator[_messages.HandleResponseEvent]:
+    tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
+    user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
+    deferred_calls_by_index: dict[int, Literal['external', 'unapproved']] = {}
+
+    for call in tool_calls:
+        yield _messages.FunctionToolCallEvent(call)
+
+    # Run all tool tasks in parallel
+    with tracer.start_as_current_span(
+        'running tools',
+        attributes={
+            'tools': [call.tool_name for call in tool_calls],
+            'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
+        },
+    ):
+        tasks = [
+            asyncio.create_task(
+                _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id)),
+                name=call.tool_name,
+            )
+            for call in tool_calls
+        ]
+
+        pending = tasks
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                index = tasks.index(task)
+                try:
+                    tool_part, tool_user_part = task.result()
+                except exceptions.CallDeferred:
+                    deferred_calls_by_index[index] = 'external'
+                except exceptions.ApprovalRequired:
+                    deferred_calls_by_index[index] = 'unapproved'
+                else:
+                    yield _messages.FunctionToolResultEvent(tool_part)
+
+                    tool_parts_by_index[index] = tool_part
+                    if tool_user_part:
+                        user_parts_by_index[index] = tool_user_part
+
+    # We append the results at the end, rather than as they are received, to retain a consistent ordering
+    # This is mostly just to simplify testing
+    for k in sorted(tool_parts_by_index):
+        output_parts.append(tool_parts_by_index[k])
+
+    for k in sorted(user_parts_by_index):
+        output_parts.append(user_parts_by_index[k])
+
+    for k in sorted(deferred_calls_by_index):
+        output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])
+
+
+async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
-) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, list[_messages.UserPromptPart]]:
+    tool_call_result: DeferredToolResult | None,
+) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]:
     try:
-        tool_result = await tool_manager.handle_call(tool_call)
+        if tool_call_result is None:
+            tool_result = await tool_manager.handle_call(tool_call)
+        elif isinstance(tool_call_result, ToolApproved):
+            if tool_call_result.override_args is not None:
+                tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
+            tool_result = await tool_manager.handle_call(tool_call)
+        elif isinstance(tool_call_result, ToolDenied):
+            return _messages.ToolReturnPart(
+                tool_name=tool_call.tool_name,
+                content=tool_call_result.message,
+                tool_call_id=tool_call.tool_call_id,
+            ), None
+        elif isinstance(tool_call_result, exceptions.ModelRetry):
+            m = _messages.RetryPromptPart(
+                content=tool_call_result.message,
+                tool_name=tool_call.tool_name,
+                tool_call_id=tool_call.tool_call_id,
+            )
+            raise ToolRetryError(m)
+        elif isinstance(tool_call_result, _messages.RetryPromptPart):
+            tool_call_result.tool_name = tool_call.tool_name
+            tool_call_result.tool_call_id = tool_call.tool_call_id
+            raise ToolRetryError(tool_call_result)
+        else:
+            tool_result = tool_call_result
     except ToolRetryError as e:
-        return (e.tool_retry, [])
-
-    tool_part = _messages.ToolReturnPart(
-        tool_name=tool_call.tool_name,
-        content=tool_result,
-        tool_call_id=tool_call.tool_call_id,
-    )
-    user_parts: list[_messages.UserPromptPart] = []
+        return e.tool_retry, None
 
     if isinstance(tool_result, _messages.ToolReturn):
-        if (
-            isinstance(tool_result.return_value, _messages.MultiModalContent)
-            or isinstance(tool_result.return_value, list)
-            and any(
-                isinstance(content, _messages.MultiModalContent)
-                for content in tool_result.return_value  # type: ignore
-            )
-        ):
-            raise exceptions.UserError(
-                f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
-                f'Please use `content` instead.'
-            )
-
-        tool_part.content = tool_result.return_value  # type: ignore
-        tool_part.metadata = tool_result.metadata
-        if tool_result.content:
-            user_parts.append(
-                _messages.UserPromptPart(
-                    content=tool_result.content,
-                    part_kind='user-prompt',
-                )
-            )
+        tool_return = tool_result
     else:
+        result_is_list = isinstance(tool_result, list)
+        contents = cast(list[Any], tool_result) if result_is_list else [tool_result]
 
-        def process_content(content: Any) -> Any:
+        return_values: list[Any] = []
+        user_contents: list[str | _messages.UserContent] = []
+        for content in contents:
             if isinstance(content, _messages.ToolReturn):
                 raise exceptions.UserError(
                     f'The return value of tool {tool_call.tool_name!r} contains invalid nested `ToolReturn` objects. '
@@ -771,23 +918,44 @@ async def _call_function_tool(
                 else:
                     identifier = multi_modal_content_identifier(content.url)
 
-                user_parts.append(
-                    _messages.UserPromptPart(
-                        content=[f'This is file {identifier}:', content],
-                        part_kind='user-prompt',
-                    )
-                )
-                return f'See file {identifier}'
+                return_values.append(f'See file {identifier}')
+                user_contents.extend([f'This is file {identifier}:', content])
+            else:
+                return_values.append(content)
 
-            return content
+        tool_return = _messages.ToolReturn(
+            return_value=return_values[0] if len(return_values) == 1 and not result_is_list else return_values,
+            content=user_contents,
+        )
 
-        if isinstance(tool_result, list):
-            contents = cast(list[Any], tool_result)
-            tool_part.content = [process_content(content) for content in contents]
-        else:
-            tool_part.content = process_content(tool_result)
+    if (
+        isinstance(tool_return.return_value, _messages.MultiModalContent)
+        or isinstance(tool_return.return_value, list)
+        and any(
+            isinstance(content, _messages.MultiModalContent)
+            for content in tool_return.return_value  # type: ignore
+        )
+    ):
+        raise exceptions.UserError(
+            f'The `return_value` of tool {tool_call.tool_name!r} contains invalid nested `MultiModalContent` objects. '
+            f'Please use `content` instead.'
+        )
 
-    return (tool_part, user_parts)
+    return_part = _messages.ToolReturnPart(
+        tool_name=tool_call.tool_name,
+        tool_call_id=tool_call.tool_call_id,
+        content=tool_return.return_value,  # type: ignore
+        metadata=tool_return.metadata,
+    )
+
+    user_part: _messages.UserPromptPart | None = None
+    if tool_return.content:
+        user_part = _messages.UserPromptPart(
+            content=tool_return.content,
+            part_kind='user-prompt',
+        )
+
+    return return_part, user_part
 
 
 @dataclasses.dataclass

@@ -920,5 +920,5 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
         elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
             if tool_def.kind == 'output':
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
-            elif tool_def.kind == 'deferred':
+            elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)
