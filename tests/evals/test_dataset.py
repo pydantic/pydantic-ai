@@ -1482,91 +1482,14 @@ async def test_evaluate_async_logfire(
                 'evaluate {name}',
                 {
                     'name': 'mock_async_task',
+                    'n_cases': 2,
+                    'assertion_pass_rate': 1.0,
                     'logfire.msg_template': 'evaluate {name}',
                     'logfire.msg': 'evaluate mock_async_task',
                     'logfire.span_type': 'span',
-                    'cases': [
-                        {
-                            'name': 'case1',
-                            'inputs': {'query': 'What is 2+2?'},
-                            'metadata': {'difficulty': 'easy', 'category': 'general'},
-                            'expected_output': {'answer': '4', 'confidence': 1.0},
-                            'output': {'answer': '4', 'confidence': 1.0},
-                            'metrics': {},
-                            'attributes': {},
-                            'scores': {
-                                'confidence': {
-                                    'name': 'confidence',
-                                    'value': 1.0,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'labels': {},
-                            'assertions': {
-                                'correct': {
-                                    'name': 'correct',
-                                    'value': True,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'task_duration': 1.0,
-                            'total_duration': 10.0,
-                            'trace_id': '00000000000000000000000000000001',
-                            'span_id': '0000000000000003',
-                            'evaluator_failures': [],
-                        },
-                        {
-                            'name': 'case2',
-                            'inputs': {'query': 'What is the capital of France?'},
-                            'metadata': {'difficulty': 'medium', 'category': 'geography'},
-                            'expected_output': {'answer': 'Paris', 'confidence': 1.0},
-                            'output': {'answer': 'Paris', 'confidence': 1.0},
-                            'metrics': {},
-                            'attributes': {},
-                            'scores': {
-                                'confidence': {
-                                    'name': 'confidence',
-                                    'value': 1.0,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'labels': {},
-                            'assertions': {
-                                'correct': {
-                                    'name': 'correct',
-                                    'value': True,
-                                    'reason': None,
-                                    'source': {'name': 'SimpleEvaluator', 'arguments': None},
-                                }
-                            },
-                            'task_duration': 1.0,
-                            'total_duration': 8.0,
-                            'trace_id': '00000000000000000000000000000001',
-                            'span_id': '0000000000000007',
-                            'evaluator_failures': [],
-                        },
-                    ],
-                    'failures': [],
-                    'averages': {
-                        'name': 'Averages',
-                        'scores': {'confidence': 1.0},
-                        'labels': {},
-                        'metrics': {},
-                        'assertions': 1.0,
-                        'task_duration': 1.0,
-                        'total_duration': 9.0,
-                    },
                     'logfire.json_schema': {
                         'type': 'object',
-                        'properties': {
-                            'name': {},
-                            'cases': {'type': 'array'},
-                            'failures': {'type': 'array'},
-                            'averages': {'type': 'object'},
-                        },
+                        'properties': {'name': {}, 'n_cases': {}, 'assertion_pass_rate': {}},
                     },
                 },
             ),

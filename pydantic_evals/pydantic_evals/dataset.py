@@ -282,7 +282,10 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
-        with _logfire.span('evaluate {name}', name=name) as eval_span, progress_bar or nullcontext():
+        with (
+            _logfire.span('evaluate {name}', name=name, n_cases=len(self.cases)) as eval_span,
+            progress_bar or nullcontext(),
+        ):
             task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
 
             async def _handle_case(case: Case[InputsT, OutputT, MetadataT], report_case_name: str):
@@ -320,15 +323,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                 span_id=span_id,
                 trace_id=trace_id,
             )
-            # TODO(DavidM): Address the following TODOs before V1...
-            # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
-            eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))
-            # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
-            eval_span.set_attribute('failures', _REPORT_CASE_FAILURES_ADAPTER.dump_python(report.failures))
-            # TODO(DavidM): Remove this 'averages' attribute once we compute it in the details panel
-            averages = report.averages()
-            if averages:
-                eval_span.set_attribute('averages', _REPORT_CASE_AGGREGATE_ADAPTER.dump_python(averages))
+            if (averages := report.averages()) is not None and averages.assertions is not None:
+                eval_span.set_attribute('assertion_pass_rate', averages.assertions)
         return report
 
     def evaluate_sync(
