@@ -2,7 +2,6 @@ from pathlib import Path
 from types import NoneType
 
 import logfire
-from pydantic_evals import Dataset
 
 from pydantic_ai_examples.evals import infer_time_range
 from pydantic_ai_examples.evals.custom_evaluators import (
@@ -12,6 +11,7 @@ from pydantic_ai_examples.evals.models import (
     TimeRangeInputs,
     TimeRangeResponse,
 )
+from pydantic_evals import Dataset
 
 logfire.configure(
     send_to_logfire='if-token-present',

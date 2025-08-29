@@ -132,10 +132,8 @@ class NativeOutput(Generic[OutputDataT]):
 
     Example:
     ```python {title="native_output.py" requires="tool_output.py"}
-    from tool_output import Fruit, Vehicle
-
     from pydantic_ai import Agent, NativeOutput
-
+    from tool_output import Fruit, Vehicle
 
     agent = Agent(
         'openai:gpt-4o',
@@ -181,9 +179,9 @@ class PromptedOutput(Generic[OutputDataT]):
     Example:
     ```python {title="prompted_output.py" requires="tool_output.py"}
     from pydantic import BaseModel
-    from tool_output import Vehicle
 
     from pydantic_ai import Agent, PromptedOutput
+    from tool_output import Vehicle
 
 
     class Device(BaseModel):
@@ -283,18 +281,17 @@ def StructuredDict(
     ```python {title="structured_dict.py"}
     from pydantic_ai import Agent, StructuredDict
 
-
     schema = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "age": {"type": "integer"}
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string'},
+            'age': {'type': 'integer'}
         },
-        "required": ["name", "age"]
+        'required': ['name', 'age']
     }
 
     agent = Agent('openai:gpt-4o', output_type=StructuredDict(schema))
-    result = agent.run_sync("Create a person")
+    result = agent.run_sync('Create a person')
     print(result.output)
     #> {'name': 'John Doe', 'age': 30}
     ```

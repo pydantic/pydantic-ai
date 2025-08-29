@@ -40,8 +40,9 @@ You can also use the direct API to work with function/tool calling.
 Even here we can use Pydantic to generate the JSON schema for the tool:
 
 ```python
+from typing import Literal
+
 from pydantic import BaseModel
-from typing_extensions import Literal
 
 from pydantic_ai import ToolDefinition
 from pydantic_ai.direct import model_request

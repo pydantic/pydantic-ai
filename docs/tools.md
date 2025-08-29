@@ -526,7 +526,7 @@ As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestM
 
 ```python {title="tool_only_if_42.py"}
 
-from pydantic_ai import Agent, RunContext,  ToolDefinition
+from pydantic_ai import Agent, RunContext, ToolDefinition
 
 agent = Agent('test')
 
@@ -728,7 +728,14 @@ Once you've gathered the user's approvals or denials, you can build a [`Deferred
 Here's an example that shows how to require approval for all file deletions, and for updates of specific protected files:
 
 ```python {title="tool_requires_approval.py"}
-from pydantic_ai import Agent, RunContext, ApprovalRequired, DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai import (
+    Agent,
+    ApprovalRequired,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDenied,
+)
 
 agent = Agent('openai:gpt-5', output_type=[str, DeferredToolRequests])
 
@@ -879,7 +886,14 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_ai import Agent, ModelRetry, RunContext, CallDeferred, DeferredToolRequests, DeferredToolResults
+from pydantic_ai import (
+    Agent,
+    CallDeferred,
+    DeferredToolRequests,
+    DeferredToolResults,
+    ModelRetry,
+    RunContext,
+)
 
 
 @dataclass
@@ -1046,7 +1060,6 @@ from langchain_community.tools import DuckDuckGoSearchRun
 from pydantic_ai import Agent
 from pydantic_ai.ext.langchain import tool_from_langchain
 
-
 search = DuckDuckGoSearchRun()
 search_tool = tool_from_langchain(search)
 
@@ -1070,7 +1083,6 @@ from langchain_community.agent_toolkits import SlackToolkit
 from pydantic_ai import Agent
 from pydantic_ai.ext.langchain import LangChainToolset
 
-
 toolkit = SlackToolkit()
 toolset = LangChainToolset(toolkit.get_tools())
 
@@ -1091,7 +1103,6 @@ import os
 
 from pydantic_ai import Agent
 from pydantic_ai.ext.aci import tool_from_aci
-
 
 tavily_search = tool_from_aci(
     'TAVILY__SEARCH',
@@ -1117,7 +1128,6 @@ import os
 
 from pydantic_ai import Agent
 from pydantic_ai.ext.aci import ACIToolset
-
 
 toolset = ACIToolset(
     [

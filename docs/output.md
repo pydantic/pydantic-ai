@@ -313,9 +313,8 @@ Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
 ```python {title="native_output.py" requires="tool_output.py"}
-from tool_output import Fruit, Vehicle
-
 from pydantic_ai import Agent, NativeOutput
+from tool_output import Fruit, Vehicle
 
 agent = Agent(
     'openai:gpt-4o',
@@ -346,9 +345,9 @@ To use this mode, you can wrap the output type(s) in the [`PromptedOutput`][pyda
 
 ```python {title="prompted_output.py" requires="tool_output.py"}
 from pydantic import BaseModel
-from tool_output import Vehicle
 
 from pydantic_ai import Agent, PromptedOutput
+from tool_output import Vehicle
 
 
 class Device(BaseModel):
@@ -399,19 +398,19 @@ from pydantic_ai import Agent, StructuredDict
 
 HumanDict = StructuredDict(
     {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "age": {"type": "integer"}
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string'},
+            'age': {'type': 'integer'}
         },
-        "required": ["name", "age"]
+        'required': ['name', 'age']
     },
-    name="Human",
-    description="A human with a name and age",
+    name='Human',
+    description='A human with a name and age',
 )
 
 agent = Agent('openai:gpt-4o', output_type=HumanDict)
-result = agent.run_sync("Create a person")
+result = agent.run_sync('Create a person')
 #> {'name': 'John Doe', 'age': 30}
 ```
 
@@ -546,7 +545,7 @@ Here's an example of streaming a user profile as it's built:
 ```python {title="streamed_user_profile.py" line_length="120"}
 from datetime import date
 
-from typing_extensions import TypedDict, NotRequired
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent
 

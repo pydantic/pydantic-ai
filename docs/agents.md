@@ -214,9 +214,9 @@ Unlike `run_stream()`, it always runs the agent graph to completion even if text
     To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step.
 
 ```python {title="run_events.py" requires="run_stream_events.py"}
-from run_stream_events import weather_agent, event_stream_handler, output_messages
-
 import asyncio
+
+from run_stream_events import event_stream_handler, output_messages, weather_agent
 
 
 async def main():

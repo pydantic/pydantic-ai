@@ -251,9 +251,9 @@ Here's an example of a fixture that overrides the model with `TestModel`:
 
 ```python {title="test_agent.py" requires="weather_app.py"}
 import pytest
-from weather_app import weather_agent
 
 from pydantic_ai.models.test import TestModel
+from weather_app import weather_agent
 
 
 @pytest.fixture
