@@ -822,7 +822,7 @@ print(result.all_messages())
             ),
         ],
         usage=RequestUsage(input_tokens=63, output_tokens=21),
-        model_name='gpt-4o',
+        model_name='gpt-5',
         timestamp=datetime.datetime(...),
     ),
     ModelRequest(
@@ -854,7 +854,7 @@ print(result.all_messages())
             )
         ],
         usage=RequestUsage(input_tokens=79, output_tokens=39),
-        model_name='gpt-4o',
+        model_name='gpt-5',
         timestamp=datetime.datetime(...),
     ),
 ]
