@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import warnings
 from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
@@ -141,6 +142,14 @@ class InstrumentationSettings:
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
+
+        if event_mode == 'logs' and version != 1:  # pragma: no cover
+            warnings.warn(
+                'event_mode is only relevant for version=1 which is deprecated and will be removed in a future release.',
+                stacklevel=2,
+            )
+            version = 1
+
         self.version = version
 
         # As specified in the OpenTelemetry GenAI metrics spec:
