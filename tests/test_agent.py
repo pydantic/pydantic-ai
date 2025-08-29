@@ -3049,7 +3049,7 @@ def test_binary_content_serializable():
                 'kind': 'request',
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text', 'citations': None}],
                 'usage': {
                     'input_tokens': 56,
                     'cache_write_tokens': 0,
@@ -3103,7 +3103,7 @@ def test_image_url_serializable_missing_media_type():
                 'kind': 'request',
             },
             {
-                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text'}],
+                'parts': [{'content': 'success (no tool calls)', 'part_kind': 'text', 'citations': None}],
                 'usage': {
                     'input_tokens': 51,
                     'cache_write_tokens': 0,

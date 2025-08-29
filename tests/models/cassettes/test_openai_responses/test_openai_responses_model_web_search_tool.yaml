@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '231'
+      - '246'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       input:
-      - content: What day is it today?
+      - content: What are the latest news in Iceland?
         role: user
       instructions: You are a helpful assistant.
       model: gpt-4o
@@ -33,13 +33,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2569'
+      - '5795'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '3632'
+      - '8810'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -47,39 +49,83 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1747227360
+      background: false
+      created_at: 1756110386
       error: null
-      id: resp_682492e0aab88191afcadcbbb85e1a490e7f27fcb18d04ed
+      id: resp_68ac1e32b0108192973c8cfec29c2e61014ed998995dd5ee
       incomplete_details: null
       instructions: You are a helpful assistant.
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
       model: gpt-4o-2024-08-06
       object: response
       output:
-      - id: ws_682492e1b7a08191b30170317ea7ee570e7f27fcb18d04ed
+      - action:
+          query: latest news in Iceland October 2023
+          type: search
+        id: ws_68ac1e339ee8819289d2eb5604ce44ce014ed998995dd5ee
         status: completed
         type: web_search_call
       - content:
-        - annotations: []
-          text: "Today is Wednesday, May 14, 2025.\n\n## Weather for San Francisco, CA:\nCurrent Conditions: Mostly clear,
-            50°F (10°C)\n\nDaily Forecast:\n* Wednesday, May 14: Low: 51°F (10°C), High: 65°F (18°C), Description: Areas of
-            low clouds early; otherwise, mostly sunny\n* Thursday, May 15: Low: 53°F (12°C), High: 66°F (19°C), Description:
-            Areas of low clouds, then sun\n* Friday, May 16: Low: 53°F (12°C), High: 64°F (18°C), Description: Partly sunny\n*
-            Saturday, May 17: Low: 52°F (11°C), High: 63°F (17°C), Description: Low clouds breaking for some sun; breezy in
-            the afternoon\n* Sunday, May 18: Low: 51°F (10°C), High: 68°F (20°C), Description: Clouds yielding to sun\n* Monday,
-            May 19: Low: 53°F (12°C), High: 68°F (20°C), Description: Sunny\n* Tuesday, May 20: Low: 52°F (11°C), High: 70°F
-            (21°C), Description: Mostly sunny\n "
+        - annotations:
+          - end_index: 651
+            start_index: 538
+            title: 2023–2025 Sundhnúkur eruptions
+            type: url_citation
+            url: https://en.wikipedia.org/wiki/2023%E2%80%932025_Sundhn%C3%BAkur_eruptions?utm_source=openai
+          - end_index: 1010
+            start_index: 904
+            title: 2024 Icelandic presidential election
+            type: url_citation
+            url: https://en.wikipedia.org/wiki/2024_Icelandic_presidential_election?utm_source=openai
+          - end_index: 1489
+            start_index: 1382
+            title: 2024 Icelandic parliamentary election
+            type: url_citation
+            url: https://en.wikipedia.org/wiki/2024_Icelandic_parliamentary_election?utm_source=openai
+          - end_index: 1849
+            start_index: 1761
+            title: Latest news - Iceland Monitor
+            type: url_citation
+            url: https://icelandmonitor.mbl.is/news/latest//?utm_source=openai
+          - end_index: 2142
+            start_index: 2054
+            title: Latest news - Iceland Monitor
+            type: url_citation
+            url: https://icelandmonitor.mbl.is/news/latest//?utm_source=openai
+          logprobs: []
+          text: "As of August 25, 2025, here are the latest developments in Iceland:\n\n**Volcanic Activity:**\n\nThe Reykjanes
+            Peninsula has experienced a series of volcanic eruptions since December 2023, collectively known as the 2023–2025
+            Sundhnúkur eruptions. The most recent eruption began on July 16, 2025, and lasted approximately 20 days. While
+            this eruption did not threaten infrastructure, it caused significant gas pollution that spread unusually far,
+            resulting in higher pollution levels in nearby towns and cities compared to previous eruptions. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2023%E2%80%932025_Sundhn%C3%BAkur_eruptions?utm_source=openai))\n\n**Political
+            Developments:**\n\n- **Presidential Election:** On June 1, 2024, entrepreneur Halla Tómasdóttir was elected President
+            of Iceland, succeeding Guðni Th. Jóhannesson, who did not seek a third term. Tómasdóttir assumed office on August
+            1, 2024. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2024_Icelandic_presidential_election?utm_source=openai))\n\n-
+            **Parliamentary Election:** Following the collapse of the coalition government in October 2024, parliamentary
+            elections were held on November 30, 2024. The Social Democratic Alliance, led by Kristrún Frostadóttir, won a
+            plurality of seats, marking a significant shift in Iceland's political landscape. Frostadóttir was sworn in as
+            Prime Minister on December 21, 2024. ([en.wikipedia.org](https://en.wikipedia.org/wiki/2024_Icelandic_parliamentary_election?utm_source=openai))\n\n**Environmental
+            and Cultural Events:**\n\n- **Geological Recognition:** In September 2024, the Reykjanes Peninsula and Vatnajökull
+            glacier were included in the International Geological Union's list of 100 geological heritage sites, highlighting
+            their global significance. ([icelandmonitor.mbl.is](https://icelandmonitor.mbl.is/news/latest//?utm_source=openai))\n\n-
+            **Peace Column Renovation:** Renovation work on the Peace Column in Viðey was completed in September 2024, ensuring
+            its readiness for illumination on October 9, coinciding with John Lennon's birthday. ([icelandmonitor.mbl.is](https://icelandmonitor.mbl.is/news/latest//?utm_source=openai))\n\nPlease
+            note that the situation, especially regarding volcanic activity, is subject to change. For the most current information,
+            consult local news sources and official government communications. "
           type: output_text
-        id: msg_682492e36ab08191813ec707a61c272f0e7f27fcb18d04ed
+        id: msg_68ac1e3616548192bc0265a336983d12014ed998995dd5ee
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
       previous_response_id: null
+      prompt_cache_key: null
       reasoning:
         effort: null
         summary: null
+      safety_identifier: null
       service_tier: default
       status: completed
       store: true
@@ -87,6 +133,7 @@ interactions:
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools:
       - search_context_size: medium
@@ -97,16 +144,17 @@ interactions:
           region: null
           timezone: null
           type: approximate
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 317
+        input_tokens: 319
         input_tokens_details:
           cached_tokens: 0
-        output_tokens: 286
+        output_tokens: 556
         output_tokens_details:
           reasoning_tokens: 0
-        total_tokens: 603
+        total_tokens: 875
       user: null
     status:
       code: 200

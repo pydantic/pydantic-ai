@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal, Union, cast, overload
 
+from anthropic.types.beta import BetaCitationsWebSearchResultLocation
 from typing_extensions import assert_never
 
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
@@ -33,6 +34,7 @@ from ..messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    URLCitation,
     UserPromptPart,
 )
 from ..profiles import ModelProfileSpec
@@ -289,7 +291,15 @@ class AnthropicModel(Model):
         items: list[ModelResponsePart] = []
         for item in response.content:
             if isinstance(item, BetaTextBlock):
-                items.append(TextPart(content=item.text))
+                if item.citations:
+                    citations = [
+                        URLCitation(url=citation.url, title=citation.title or citation.cited_text)
+                        for citation in item.citations
+                        if isinstance(citation, BetaCitationsWebSearchResultLocation)
+                    ]
+                else:
+                    citations = []
+                items.append(TextPart(content=item.text, citations=citations))
             elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
                 items.append(
                     BuiltinToolReturnPart(
