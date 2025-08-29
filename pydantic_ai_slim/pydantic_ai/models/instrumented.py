@@ -86,7 +86,7 @@ class InstrumentationSettings:
 
     tracer: Tracer = field(repr=False)
     event_logger: EventLogger = field(repr=False)
-    event_mode: Literal['attributes', 'logs'] = 'attributes'
+    event_mode: Literal['attributes', 'logs', None] = None
     include_binary_content: bool = True
     include_content: bool = True
     version: Literal[1, 2] = 1
@@ -99,7 +99,7 @@ class InstrumentationSettings:
         include_binary_content: bool = True,
         include_content: bool = True,
         version: Literal[1, 2] = 2,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
+        event_mode: Literal['attributes', 'logs', None] = None,
         event_logger_provider: EventLoggerProvider | None = None,
     ):
         """Create instrumentation options.
@@ -132,6 +132,14 @@ class InstrumentationSettings:
         """
         from pydantic_ai import __version__
 
+        if (event_mode is not None or event_logger_provider is not None) and version != 1:
+            warnings.warn(
+                'event_mode and event_logger_provider are only relevant for version=1 '
+                'which is deprecated and will be removed in a future release.',
+                stacklevel=2,
+            )
+            version = 1
+
         tracer_provider = tracer_provider or get_tracer_provider()
         meter_provider = meter_provider or get_meter_provider()
         event_logger_provider = event_logger_provider or get_event_logger_provider()
@@ -139,17 +147,9 @@ class InstrumentationSettings:
         self.tracer = tracer_provider.get_tracer(scope_name, __version__)
         self.meter = meter_provider.get_meter(scope_name, __version__)
         self.event_logger = event_logger_provider.get_event_logger(scope_name, __version__)
-        self.event_mode = event_mode
+        self.event_mode = event_mode or 'attributes'
         self.include_binary_content = include_binary_content
         self.include_content = include_content
-
-        if event_mode == 'logs' and version != 1:
-            warnings.warn(
-                'event_mode is only relevant for version=1 which is deprecated and will be removed in a future release.',
-                stacklevel=2,
-            )
-            version = 1
-
         self.version = version
 
         # As specified in the OpenTelemetry GenAI metrics spec:

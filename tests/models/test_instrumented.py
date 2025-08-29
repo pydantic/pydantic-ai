@@ -332,10 +332,11 @@ Fix the errors and try again.\
 
 
 async def test_instrumented_model_not_recording():
-    model = InstrumentedModel(
-        MyModel(),
-        InstrumentationSettings(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()),
-    )
+    with pytest.warns(UserWarning):
+        settings = InstrumentationSettings(
+            tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()
+        )
+    model = InstrumentedModel(MyModel(), settings)
 
     messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
     await model.request(
@@ -562,9 +563,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
 
 @pytest.mark.parametrize('instrumentation_version', [1, 2])
 async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instrumentation_version: Literal[1, 2]):
-    model = InstrumentedModel(
-        MyModel(), InstrumentationSettings(event_mode='attributes', version=instrumentation_version)
-    )
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(version=instrumentation_version))
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
@@ -1260,10 +1259,7 @@ def test_message_with_thinking_parts():
 
 
 def test_deprecated_event_mode_warning():
-    with pytest.warns(
-        UserWarning,
-        match='event_mode is only relevant for version=1 which is deprecated and will be removed in a future release',
-    ):
+    with pytest.warns(UserWarning):
         settings = InstrumentationSettings(event_mode='logs')
     assert settings.event_mode == 'logs'
     assert settings.version == 1
