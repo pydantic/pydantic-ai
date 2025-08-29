@@ -121,7 +121,6 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
             if return_type_origin is End:
                 end_edge = edge
             elif return_type_origin is BaseNode:
-                # TODO: Should we disallow this?
                 returns_base_node = True
             elif issubclass(return_type_origin, BaseNode):
                 next_node_edges[return_type.get_node_id()] = edge
