@@ -784,6 +784,7 @@ def test_instructions_with_structured_output_exclude_content_v2(
                                 'description': 'The final response which ends this conversation',
                                 'outer_typed_dict_key': None,
                                 'strict': None,
+                                'text_format': None,
                                 'kind': 'output',
                             }
                         ],
@@ -961,7 +962,8 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'factuality': 0.1,
                     'foo': 'bar',
                     'logfire.feedback.comment': 'the agent lied',
-                    'logfire.json_schema': '{"type":"object","properties":{"logfire.feedback.name":{},"factuality":{},"foo":{},"logfire.feedback.comment":{},"logfire.span_type":{}}}',
+                    'logfire.disable_console_log': True,
+                    'logfire.json_schema': '{"type":"object","properties":{"logfire.feedback.name":{},"factuality":{},"foo":{},"logfire.feedback.comment":{},"logfire.span_type":{},"logfire.disable_console_log":{}}}',
                 },
             },
         ]
