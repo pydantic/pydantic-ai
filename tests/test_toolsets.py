@@ -8,16 +8,28 @@ from unittest.mock import AsyncMock
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel, Field
 from typing_extensions import Self
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
+from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    RequestUsage,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
+from pydantic_ai.toolsets.agent import AgentToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.filtered import FilteredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -25,6 +37,8 @@ from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RunUsage
+
+from .conftest import IsDatetime, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -772,3 +786,142 @@ async def test_dynamic_toolset_empty():
         assert tools == {}
 
         assert toolset._toolset is None  # pyright: ignore[reportPrivateUsage]
+
+
+class FakeClient(BaseModel):
+    client: str = Field(default='test')
+
+
+class parent_agent_deps(BaseModel):
+    client: FakeClient
+
+
+class child_agent_deps(BaseModel):
+    client: FakeClient
+    name: str
+
+
+class child_agent_input(BaseModel):
+    name: str
+
+
+@pytest.fixture
+def child_agent() -> Agent[child_agent_deps, str]:
+    return Agent(TestModel(custom_output_text='child_agent_output'), deps_type=child_agent_deps)
+
+
+CHILD_AGENT_TOOL_NAME = 'call_child_agent'
+
+
+async def test_agent_toolset(child_agent: Agent[child_agent_deps, str]):
+    agent_toolset: AgentToolset[child_agent_deps] = AgentToolset[child_agent_deps]()
+    agent_toolset.add_agent(
+        agent=child_agent,
+        name=CHILD_AGENT_TOOL_NAME,
+    )
+    assert CHILD_AGENT_TOOL_NAME in agent_toolset.agent_tools
+
+    run_context = build_run_context(child_agent_deps(client=FakeClient(client='test'), name='test'))
+
+    tools = await agent_toolset.get_tools(run_context)
+
+    assert CHILD_AGENT_TOOL_NAME in tools
+
+    result = await agent_toolset.call_tool(CHILD_AGENT_TOOL_NAME, {}, run_context, tools[CHILD_AGENT_TOOL_NAME])
+
+    assert result == 'child_agent_output'
+
+
+async def test_agent_toolset_with_input(child_agent: Agent[child_agent_deps, str]):
+    async def input_func(child_deps: child_agent_deps, input: child_agent_input) -> str:
+        return input.name
+
+    agent_toolset: AgentToolset[child_agent_deps] = AgentToolset[child_agent_deps]()
+    agent_toolset.add_agent(
+        agent=child_agent,
+        input_type=child_agent_input,
+        user_prompt_func=input_func,
+        name=CHILD_AGENT_TOOL_NAME,
+    )
+    assert CHILD_AGENT_TOOL_NAME in agent_toolset.agent_tools
+
+    run_context = build_run_context(child_agent_deps(client=FakeClient(client='test'), name='test'))
+
+    tools = await agent_toolset.get_tools(run_context)
+
+    assert CHILD_AGENT_TOOL_NAME in tools
+
+    result = await agent_toolset.call_tool(
+        CHILD_AGENT_TOOL_NAME, {'name': 'test'}, run_context, tools[CHILD_AGENT_TOOL_NAME]
+    )
+
+    assert result == 'child_agent_output'
+
+    assert run_context.messages == snapshot([])
+
+
+async def test_agent_toolset_with_agent(child_agent: Agent[child_agent_deps, str]):
+    async def translate_deps_func(parent_deps: parent_agent_deps, input: child_agent_input) -> child_agent_deps:
+        return child_agent_deps(client=parent_deps.client, name=input.name)
+
+    child_agent_toolset: AgentToolset[parent_agent_deps] = AgentToolset[parent_agent_deps]()
+    child_agent_toolset.add_agent(
+        agent=child_agent,
+        input_type=child_agent_input,
+        deps_func=translate_deps_func,
+        name=CHILD_AGENT_TOOL_NAME,
+    )
+    assert CHILD_AGENT_TOOL_NAME in child_agent_toolset.agent_tools
+
+    parent_agent = Agent[parent_agent_deps, str](
+        TestModel(custom_output_text='parent_agent_output'),
+        deps_type=parent_agent_deps,
+        toolsets=[child_agent_toolset],
+    )
+
+    parent_deps = parent_agent_deps(client=FakeClient(client='test'))
+
+    result: AgentRunResult[str] = await parent_agent.run(user_prompt='test', deps=parent_deps)
+
+    assert result.output == 'parent_agent_output'
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='test',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='call_child_agent',
+                        args={'name': 'a'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=5),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='call_child_agent',
+                        content='child_agent_output',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='parent_agent_output')],
+                usage=RequestUsage(input_tokens=52, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
