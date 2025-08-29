@@ -28,7 +28,6 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
-    ModelResponsePart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -285,7 +284,7 @@ class MockMCPServer(AbstractToolset[Any]):
         return None  # pragma: lax no cover
 
 
-text_responses: dict[str, str | ModelResponsePart | list[ModelResponsePart]] = {
+text_responses: dict[str, str | ToolCallPart | list[ToolCallPart]] = {
     'Calculate the factorial of 15 and show your work': 'The factorial of 15 is **1,307,674,368,000**.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
@@ -794,10 +793,14 @@ async def stream_model_logic(  # noqa C901
             text_chunk = json_text[chunk_index : chunk_index + 15]
             yield {1: DeltaToolCall(json_args=text_chunk)}
 
-    async def stream_part_response(r: str | ToolCallPart) -> AsyncIterator[str | DeltaToolCalls]:
+    async def stream_part_response(r: str | ToolCallPart | list[ToolCallPart]) -> AsyncIterator[str | DeltaToolCalls]:
         if isinstance(r, str):
             async for chunk in stream_text_response(r):
                 yield chunk
+        elif isinstance(r, list):
+            for part in r:
+                async for chunk in stream_tool_call_response(part):
+                    yield chunk
         else:
             async for chunk in stream_tool_call_response(r):
                 yield chunk

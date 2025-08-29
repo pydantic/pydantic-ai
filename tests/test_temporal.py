@@ -1683,7 +1683,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_request_id=IsStr(),
+                    provider_response_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1721,7 +1721,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_request_id=IsStr(),
+                    provider_response_id=IsStr(),
                 ),
             ]
         )
@@ -1794,7 +1794,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_request_id=IsStr(),
+                    provider_response_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1827,7 +1827,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_request_id=IsStr(),
+                    provider_response_id=IsStr(),
                 ),
                 ModelRequest(
                     parts=[
@@ -1854,7 +1854,7 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
-                    provider_request_id=IsStr(),
+                    provider_response_id=IsStr(),
                 ),
             ]
         )
