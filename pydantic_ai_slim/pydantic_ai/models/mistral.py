@@ -79,7 +79,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -120,7 +120,7 @@ class MistralModel(Model):
     json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
 
     _model_name: MistralModelName = field(repr=False)
-    _system: str = field(default='mistral_ai', repr=False)
+    _provider: Provider[Mistral] = field(repr=False)
 
     def __init__(
         self,
@@ -147,13 +147,24 @@ class MistralModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
-        return self.client.sdk_configuration.get_server_details()[0]
+        return self._provider.base_url
+
+    @property
+    def model_name(self) -> MistralModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -184,16 +195,6 @@ class MistralModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> MistralModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     async def _completions_create(
         self,
@@ -351,7 +352,8 @@ class MistralModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -377,6 +379,7 @@ class MistralModel(Model):
             _response=peekable_response,
             _model_name=self._model_name,
             _timestamp=timestamp,
+            _provider_name=self._provider.name,
         )
 
     @staticmethod
@@ -583,6 +586,7 @@ class MistralStreamedResponse(StreamedResponse):
     _model_name: MistralModelName
     _response: AsyncIterable[MistralCompletionEvent]
     _timestamp: datetime
+    _provider_name: str
 
     _delta_content: str = field(default='', init=False)
 
@@ -629,6 +633,11 @@ class MistralStreamedResponse(StreamedResponse):
     def model_name(self) -> MistralModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

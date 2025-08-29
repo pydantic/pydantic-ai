@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -66,14 +66,14 @@ class GroqProvider(Provider[AsyncGroq]):
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | None = None, http_client: AsyncHTTPClient | None = None) -> None: ...
+    def __init__(self, *, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
         groq_client: AsyncGroq | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Groq provider.
 

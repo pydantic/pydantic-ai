@@ -391,6 +391,11 @@ def heroku_inference_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def cerebras_api_key() -> str:
+    return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
@@ -409,7 +414,7 @@ def bedrock_provider():
         pytest.skip('boto3 is not installed')
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI', False):
@@ -418,7 +423,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     try:
         from google.genai import _api_client
     except ImportError:
-        pytest.skip('google is not installed')
+        return  # do nothing if this isn't installed
 
     @dataclass
     class NoOpCredentials:
@@ -431,11 +436,11 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
             return False
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
+    mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
 
 
 @pytest.fixture()
-async def vertex_provider():  # pragma: lax no cover
+async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
     if not os.getenv('CI', False):
         pytest.skip('Requires properly configured local google vertex config to pass')
@@ -476,10 +481,10 @@ def model(
 
             return TestModel()
         elif request.param == 'openai':
-            from pydantic_ai.models.openai import OpenAIModel
+            from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
-            return OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+            return OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
         elif request.param == 'anthropic':
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider

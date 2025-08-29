@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Generic, cast
 
 from pydantic import ValidationError
-from typing_extensions import TypeVar
+from typing_extensions import TypeVar, deprecated
 
 from pydantic_ai._tool_manager import ToolManager
 
@@ -22,7 +22,7 @@ from ._output import (
     ToolOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
-from .messages import AgentStreamEvent
+from .messages import ModelResponseStreamEvent
 from .output import (
     OutputDataT,
     ToolOutput,
@@ -51,7 +51,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _usage_limits: UsageLimits | None
     _tool_manager: ToolManager[AgentDepsT]
 
-    _agent_stream_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
+    _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
 
     def __post_init__(self):
@@ -62,11 +62,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async for response in self.stream_responses(debounce_by=debounce_by):
             if self._raw_stream_response.final_result_event is not None:
                 try:
-                    yield await self._validate_response(response, allow_partial=True)
+                    yield await self.validate_response_output(response, allow_partial=True)
                 except ValidationError:
                     pass
         if self._raw_stream_response.final_result_event is not None:  # pragma: no branch
-            yield await self._validate_response(self._raw_stream_response.get())
+            yield await self.validate_response_output(self._raw_stream_response.get())
 
     async def stream_responses(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
         """Asynchronously stream the (unvalidated) model responses for the agent."""
@@ -127,9 +127,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         async for _ in self:
             pass
 
-        return await self._validate_response(self._raw_stream_response.get())
+        return await self.validate_response_output(self._raw_stream_response.get())
 
-    async def _validate_response(self, message: _messages.ModelResponse, *, allow_partial: bool = False) -> OutputDataT:
+    async def validate_response_output(
+        self, message: _messages.ModelResponse, *, allow_partial: bool = False
+    ) -> OutputDataT:
         """Validate a structured result message."""
         final_result_event = self._raw_stream_response.final_result_event
         if final_result_event is None:
@@ -221,8 +223,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 deltas.append(text)
                 yield ''.join(deltas)
 
-    def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
-        """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s."""
+    def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._agent_stream_iterator is None:
             self._agent_stream_iterator = _get_usage_checking_stream_response(
                 self._raw_stream_response, self._usage_limits, self.usage
@@ -245,9 +247,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     """Whether the stream has all been received.
 
     This is set to `True` when one of
-    [`stream`][pydantic_ai.result.StreamedRunResult.stream],
+    [`stream_output`][pydantic_ai.result.StreamedRunResult.stream_output],
     [`stream_text`][pydantic_ai.result.StreamedRunResult.stream_text],
-    [`stream_structured`][pydantic_ai.result.StreamedRunResult.stream_structured] or
+    [`stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] or
     [`get_output`][pydantic_ai.result.StreamedRunResult.get_output] completes.
     """
 
@@ -318,16 +320,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self.new_messages(output_tool_return_content=output_tool_return_content)
         )
 
+    @deprecated('`StreamedRunResult.stream` is deprecated, use `stream_output` instead.')
     async def stream(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
-        """Stream the response as an async iterable.
+        async for output in self.stream_output(debounce_by=debounce_by):
+            yield output
+
+    async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
+        """Stream the output as an async iterable.
 
         The pydantic validator for structured data will be called in
         [partial mode](https://docs.pydantic.dev/dev/concepts/experimental/#partial-validation)
         on each iteration.
 
         Args:
-            debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
-                Debouncing is particularly important for long structured responses to reduce the overhead of
+            debounce_by: by how much (if at all) to debounce/group the output chunks by. `None` means no debouncing.
+                Debouncing is particularly important for long structured outputs to reduce the overhead of
                 performing validation as each token is received.
 
         Returns:
@@ -354,7 +361,14 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             yield text
         await self._marked_completed(self._stream_response.get())
 
+    @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
     async def stream_structured(
+        self, *, debounce_by: float | None = 0.1
+    ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
+        async for msg, last in self.stream_responses(debounce_by=debounce_by):
+            yield msg, last
+
+    async def stream_responses(
         self, *, debounce_by: float | None = 0.1
     ) -> AsyncIterator[tuple[_messages.ModelResponse, bool]]:
         """Stream the response as an async iterable of Structured LLM Messages.
@@ -394,13 +408,17 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         """Get the timestamp of the response."""
         return self._stream_response.timestamp()
 
+    @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
+        return await self._stream_response.validate_response_output(message, allow_partial=allow_partial)
+
+    async def validate_response_output(
+        self, message: _messages.ModelResponse, *, allow_partial: bool = False
+    ) -> OutputDataT:
         """Validate a structured result message."""
-        return await self._stream_response._validate_response(  # pyright: ignore[reportPrivateUsage]
-            message, allow_partial=allow_partial
-        )
+        return await self._stream_response.validate_response_output(message, allow_partial=allow_partial)
 
     async def _marked_completed(self, message: _messages.ModelResponse) -> None:
         self.is_complete = True
@@ -426,7 +444,7 @@ def _get_usage_checking_stream_response(
     stream_response: models.StreamedResponse,
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
-) -> AsyncIterator[AgentStreamEvent]:
+) -> AsyncIterator[ModelResponseStreamEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():

@@ -13,7 +13,7 @@ from typing_extensions import assert_never
 from .. import UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
 from .._run_context import RunContext
-from ..builtin_tools import CodeExecutionTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
@@ -72,6 +72,7 @@ try:
         ToolConfigDict,
         ToolDict,
         ToolListUnionDict,
+        UrlContextDict,
     )
 
     from ..providers.google import GoogleProvider
@@ -144,7 +145,6 @@ class GoogleModel(Model):
     _model_name: GoogleModelName = field(repr=False)
     _provider: Provider[Client] = field(repr=False)
     _url: str | None = field(repr=False)
-    _system: str = field(default='google', repr=False)
 
     def __init__(
         self,
@@ -168,9 +168,7 @@ class GoogleModel(Model):
 
         if isinstance(provider, str):
             provider = GoogleProvider(vertexai=provider == 'google-vertex')
-
         self._provider = provider
-        self._system = provider.name
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -178,6 +176,16 @@ class GoogleModel(Model):
     @property
     def base_url(self) -> str:
         return self._provider.base_url
+
+    @property
+    def model_name(self) -> GoogleModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -209,9 +217,9 @@ class GoogleModel(Model):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self.system != 'google-gla':
+        if self._provider.name != 'google-gla':
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
-            config.update(
+            config.update(  # pragma: lax no cover
                 system_instruction=generation_config.get('system_instruction'),
                 tools=cast(list[ToolDict], generation_config.get('tools')),
                 # Annoyingly, GenerationConfigDict has fewer fields than GenerateContentConfigDict, and no extra fields are allowed.
@@ -255,16 +263,6 @@ class GoogleModel(Model):
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
-    @property
-    def model_name(self) -> GoogleModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
-
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolDict] | None:
         tools: list[ToolDict] = [
             ToolDict(function_declarations=[_function_declaration_from_tool(t)])
@@ -273,6 +271,8 @@ class GoogleModel(Model):
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 tools.append(ToolDict(google_search=GoogleSearchDict()))
+            elif isinstance(tool, UrlContextTool):
+                tools.append(ToolDict(url_context=UrlContextDict()))
             elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
                 tools.append(ToolDict(code_execution=ToolCodeExecutionDict()))
             else:  # pragma: no cover
@@ -377,23 +377,25 @@ class GoogleModel(Model):
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
         if not response.candidates or len(response.candidates) != 1:
             raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
-        if response.candidates[0].content is None or response.candidates[0].content.parts is None:
-            if response.candidates[0].finish_reason == 'SAFETY':
+        candidate = response.candidates[0]
+        if candidate.content is None or candidate.content.parts is None:
+            if candidate.finish_reason == 'SAFETY':
                 raise UnexpectedModelBehavior('Safety settings triggered', str(response))
             else:
                 raise UnexpectedModelBehavior(
                     'Content field missing from Gemini response', str(response)
                 )  # pragma: no cover
-        parts = response.candidates[0].content.parts or []
+        parts = candidate.content.parts or []
         vendor_id = response.response_id or None
         vendor_details: dict[str, Any] | None = None
-        finish_reason = response.candidates[0].finish_reason
+        finish_reason = candidate.finish_reason
         if finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': finish_reason.value}
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
             parts,
             response.model_version or self._model_name,
+            self._provider.name,
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
@@ -413,6 +415,7 @@ class GoogleModel(Model):
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
+            _provider_name=self._provider.name,
         )
 
     async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
@@ -522,6 +525,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GoogleModelName
     _response: AsyncIterator[GenerateContentResponse]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -529,10 +533,16 @@ class GeminiStreamedResponse(StreamedResponse):
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
-            if candidate.content is None:
-                raise UnexpectedModelBehavior('Streamed response has no content field')  # pragma: no cover
-            assert candidate.content.parts is not None
-            for part in candidate.content.parts:
+            if candidate.content is None or candidate.content.parts is None:
+                if candidate.finish_reason == 'STOP':  # pragma: no cover
+                    # Normal completion - skip this chunk
+                    continue
+                elif candidate.finish_reason == 'SAFETY':  # pragma: no cover
+                    raise UnexpectedModelBehavior('Safety settings triggered', str(chunk))
+                else:  # pragma: no cover
+                    raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
+            parts = candidate.content.parts or []
+            for part in parts:
                 if part.text is not None:
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
@@ -556,6 +566,11 @@ class GeminiStreamedResponse(StreamedResponse):
     def model_name(self) -> GoogleModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:
@@ -592,6 +607,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
 def _process_response_from_parts(
     parts: list[Part],
     model_name: GoogleModelName,
+    provider_name: str,
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
@@ -629,7 +645,12 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, model_name=model_name, usage=usage, provider_request_id=vendor_id, provider_details=vendor_details
+        parts=items,
+        model_name=model_name,
+        usage=usage,
+        provider_response_id=vendor_id,
+        provider_details=vendor_details,
+        provider_name=provider_name,
     )
 
 
@@ -657,7 +678,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
     if cached_content_token_count := metadata.cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := metadata.thoughts_token_count:
+    if thoughts_token_count := (metadata.thoughts_token_count or 0):
         details['thoughts_tokens'] = thoughts_token_count
 
     if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
@@ -690,7 +711,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
 
     return usage.RequestUsage(
         input_tokens=metadata.prompt_token_count or 0,
-        output_tokens=metadata.candidates_token_count or 0,
+        output_tokens=(metadata.candidates_token_count or 0) + thoughts_token_count,
         cache_read_tokens=cached_content_token_count or 0,
         input_audio_tokens=input_audio_tokens,
         output_audio_tokens=output_audio_tokens,

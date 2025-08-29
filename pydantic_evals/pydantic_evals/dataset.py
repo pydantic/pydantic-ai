@@ -50,16 +50,6 @@ if sys.version_info < (3, 11):
 else:
     ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
-# while waiting for https://github.com/pydantic/logfire/issues/745
-try:
-    import logfire._internal.stack_info
-except ImportError:
-    pass
-else:
-    from pathlib import Path
-
-    logfire._internal.stack_info.NON_USER_CODE_PREFIXES += (str(Path(__file__).parent.absolute()),)  # pyright: ignore[reportPrivateImportUsage]
-
 __all__ = (
     'Case',
     'Dataset',
@@ -297,6 +287,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         progress_bar.update(task_id, advance=1)
                     return result
 
+            if (context := eval_span.context) is None:  # pragma: no cover
+                trace_id = None
+                span_id = None
+            else:
+                trace_id = f'{context.trace_id:032x}'
+                span_id = f'{context.span_id:016x}'
             report = EvaluationReport(
                 name=name,
                 cases=await task_group_gather(
@@ -305,6 +301,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
                         for i, case in enumerate(self.cases, 1)
                     ]
                 ),
+                span_id=span_id,
+                trace_id=trace_id,
             )
             # TODO(DavidM): This attribute will be too big in general; remove it once we can use child spans in details panel:
             eval_span.set_attribute('cases', _REPORT_CASES_ADAPTER.dump_python(report.cases))
@@ -929,8 +927,8 @@ async def _run_task_and_evaluators(
 
         context = case_span.context
         if context is None:  # pragma: no cover
-            trace_id = ''
-            span_id = ''
+            trace_id = None
+            span_id = None
         else:
             trace_id = f'{context.trace_id:032x}'
             span_id = f'{context.span_id:016x}'

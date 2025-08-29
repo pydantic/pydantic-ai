@@ -40,14 +40,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 LatestGeminiModelNames = Literal[
     'gemini-2.0-flash',
@@ -108,10 +101,9 @@ class GeminiModel(Model):
     client: httpx.AsyncClient = field(repr=False)
 
     _model_name: GeminiModelName = field(repr=False)
-    _provider: Literal['google-gla', 'google-vertex'] | Provider[httpx.AsyncClient] | None = field(repr=False)
+    _provider: Provider[httpx.AsyncClient] = field(repr=False)
     _auth: AuthProtocol | None = field(repr=False)
     _url: str | None = field(repr=False)
-    _system: str = field(default='gemini', repr=False)
 
     def __init__(
         self,
@@ -132,11 +124,10 @@ class GeminiModel(Model):
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
-        self._provider = provider
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
-        self._system = provider.name
+        self._provider = provider
         self.client = provider.client
         self._url = str(self.client.base_url)
 
@@ -146,6 +137,16 @@ class GeminiModel(Model):
     def base_url(self) -> str:
         assert self._url is not None, 'URL not initialized'  # pragma: no cover
         return self._url  # pragma: no cover
+
+    @property
+    def model_name(self) -> GeminiModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -174,16 +175,6 @@ class GeminiModel(Model):
             messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
             yield await self._process_streamed_response(http_response, model_request_parameters)
-
-    @property
-    def model_name(self) -> GeminiModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> _GeminiTools | None:
         tools = [_function_from_abstract_tool(t) for t in model_request_parameters.tool_defs.values()]
@@ -237,7 +228,7 @@ class GeminiModel(Model):
             request_data['safetySettings'] = gemini_safety_settings
 
         if gemini_labels := model_settings.get('gemini_labels'):
-            if self._system == 'google-vertex':
+            if self._provider.name == 'google-vertex':
                 request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
@@ -314,6 +305,7 @@ class GeminiModel(Model):
             _model_name=self._model_name,
             _content=content,
             _stream=aiter_bytes,
+            _provider_name=self._provider.name,
         )
 
     async def _message_to_gemini_content(
@@ -434,6 +426,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GeminiModelName
     _content: bytearray
     _stream: AsyncIterator[bytes]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -503,6 +496,11 @@ class GeminiStreamedResponse(StreamedResponse):
     def model_name(self) -> GeminiModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:
@@ -692,7 +690,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, provider_request_id=vendor_id, provider_details=vendor_details
+        parts=items, usage=usage, model_name=model_name, provider_response_id=vendor_id, provider_details=vendor_details
     )
 
 
@@ -892,7 +890,7 @@ def _metadata_as_usage(response: _GeminiResponse) -> usage.RequestUsage:
 
     return usage.RequestUsage(
         input_tokens=metadata.get('prompt_token_count', 0),
-        output_tokens=metadata.get('candidates_token_count', 0),
+        output_tokens=metadata.get('candidates_token_count', 0) + thoughts_token_count,
         cache_read_tokens=cached_content_token_count,
         input_audio_tokens=input_audio_tokens,
         output_audio_tokens=output_audio_tokens,

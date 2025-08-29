@@ -243,6 +243,7 @@ plugins:
             - url: https://fastapi.tiangolo.com/objects.inv
             - url: https://typing-extensions.readthedocs.io/en/latest/objects.inv
             - url: https://rich.readthedocs.io/en/stable/objects.inv
+            - url: https://modelcontextprotocol.github.io/python-sdk/objects.inv
             # waiting for https://github.com/encode/httpx/discussions/3091#discussioncomment-11205594
   - llmstxt:
       enabled: !ENV [CI, false]

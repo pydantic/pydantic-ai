@@ -20,7 +20,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
     Each provider only supports a specific interface. A interface can be supported by multiple providers.
 
-    For example, the OpenAIModel interface can be supported by the OpenAIProvider and the DeepSeekProvider.
+    For example, the `OpenAIChatModel` interface can be supported by the `OpenAIProvider` and the `DeepSeekProvider`.
     """
 
     _client: InterfaceClient
@@ -95,6 +95,10 @@ def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
         from .mistral import MistralProvider
 
         return MistralProvider
+    elif provider == 'cerebras':
+        from .cerebras import CerebrasProvider
+
+        return CerebrasProvider
     elif provider == 'cohere':
         from .cohere import CohereProvider
 

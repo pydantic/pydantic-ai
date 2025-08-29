@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -12,7 +13,7 @@ OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 @dataclass
 class OpenAIModelProfile(ModelProfile):
-    """Profile for models used with OpenAIModel.
+    """Profile for models used with `OpenAIChatModel`.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
@@ -20,8 +21,12 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_strict_tool_definition: bool = True
     """This can be set by a provider or user if the OpenAI-"compatible" API doesn't support strict tool definitions."""
 
+    # TODO(Marcelo): Deprecate this in favor of `openai_unsupported_model_settings`.
     openai_supports_sampling_settings: bool = True
     """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
+
+    openai_unsupported_model_settings: Sequence[str] = ()
+    """A list of model settings that are not supported by the model."""
 
     # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
     # `tool_choice="required"`.  This flag lets the calling model know whether it's
