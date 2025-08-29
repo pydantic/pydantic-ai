@@ -49,7 +49,7 @@ Structured outputs (like tools) use Pydantic to build the JSON schema used for t
 
     Specifically, there are three valid uses of `output_type` where you'll need to do this:
 
-    1. When using a union of types, e.g. `output_type=Foo | Bar`, or in older Python, `output_type=Union[Foo, Bar]`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`. Alternatively, you can use a list: `output_type=[Foo, Bar]`.
+    1. When using a union of types, e.g. `output_type=Foo | Bar`. Until [PEP-747](https://peps.python.org/pep-0747/) "Annotating Type Forms" lands in Python 3.15, type checkers do not consider these a valid value for `output_type`. In addition to the generic parameters on the `Agent` constructor, you'll need to add `# type: ignore` to the line that passes the union to `output_type`. Alternatively, you can use a list: `output_type=[Foo, Bar]`.
     2. With mypy: When using a list, as a functionally equivalent alternative to a union, or because you're passing in [output functions](#output-functions). Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19142) with mypy to try and get this fixed.
     3. With mypy: when using an async output function. Pyright does handle this correctly, and we've filed [an issue](https://github.com/python/mypy/issues/19143) with mypy to try and get this fixed.
 
@@ -87,20 +87,18 @@ print(result.output)
 #> width=10 height=20 depth=30 units='cm'
 ```
 
-1. This could also have been a union: `output_type=Box | str` (or in older Python, `output_type=Union[Box, str]`). However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Box | str`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
 Here's an example of using a union return type, which will register multiple output tools and wrap non-object schemas in an object:
 
 ```python {title="colors_or_sizes.py"}
-from typing import Union
-
 from pydantic_ai import Agent
 
-agent = Agent[None, Union[list[str], list[int]]](
+agent = Agent[None, list[str] | list[int]](
     'openai:gpt-4o-mini',
-    output_type=Union[list[str], list[int]],  # type: ignore # (1)!
+    output_type=list[str] | list[int],  # type: ignore # (1)!
     system_prompt='Extract either colors or sizes from the shapes provided.',
 )
 
@@ -132,7 +130,6 @@ Here's an example of all of these features in action:
 
 ```python {title="output_functions.py"}
 import re
-from typing import Union
 
 from pydantic import BaseModel
 
@@ -179,7 +176,7 @@ def run_sql_query(query: str) -> list[Row]:
     raise ModelRetry(f"Unsupported query: '{query}'.")
 
 
-sql_agent = Agent[None, Union[list[Row], SQLFailure]](
+sql_agent = Agent[None, list[Row] | SQLFailure](
     'openai:gpt-4o',
     output_type=[run_sql_query, SQLFailure],
     instructions='You are a SQL agent that can run SQL queries on a database.',
@@ -211,7 +208,7 @@ class RouterFailure(BaseModel):
     explanation: str
 
 
-router_agent = Agent[None, Union[list[Row], RouterFailure]](
+router_agent = Agent[None, list[Row] | RouterFailure](
     'openai:gpt-4o',
     output_type=[hand_off_to_sql_agent, RouterFailure],
     instructions='You are a router to other agents. Never try to solve a problem yourself, just pass it on.',
@@ -306,7 +303,7 @@ print(repr(result.output))
 #> Fruit(name='banana', color='yellow')
 ```
 
-1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle` (or in older Python, `output_type=Union[Fruit | Vehicle]`). However, as `ToolOutput` is an object rather than a type, we have to use a list.
+1. If we were passing just `Fruit` and `Vehicle` without custom tool names, we could have used a union: `output_type=Fruit | Vehicle`. However, as `ToolOutput` is an object rather than a type, we have to use a list.
 
 _(This example is complete, it can be run "as is")_
 
@@ -334,7 +331,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Fruit | Vehicle` (or in older Python, `output_type=Union[Fruit, Vehicle]`). However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Fruit | Vehicle`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -384,7 +381,7 @@ print(repr(result.output))
 #> Vehicle(name='Ford Explorer', wheels=4)
 ```
 
-1. This could also have been a union: `output_type=Vehicle | Device` (or in older Python, `output_type=Union[Vehicle, Device]`). However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
+1. This could also have been a union: `output_type=Vehicle | Device`. However, as explained in the "Type checking considerations" section above, that would've required explicitly specifying the generic parameters on the `Agent` constructor and adding `# type: ignore` to this line in order to be type checked correctly.
 
 _(This example is complete, it can be run "as is")_
 
@@ -429,8 +426,6 @@ If you want the model to output plain text, do your own processing or validation
 Here's a simplified variant of the [SQL Generation example](examples/sql-gen.md):
 
 ```python {title="sql_gen.py"}
-from typing import Union
-
 from fake_database import DatabaseConn, QueryError
 from pydantic import BaseModel
 
@@ -445,7 +440,7 @@ class InvalidRequest(BaseModel):
     error_message: str
 
 
-Output = Union[Success, InvalidRequest]
+Output = Success | InvalidRequest
 agent = Agent[DatabaseConn, Output](
     'google-gla:gemini-1.5-flash',
     output_type=Output,  # type: ignore

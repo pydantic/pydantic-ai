@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
-from typing import Any, Callable
+from typing import Any
 
 from pydantic.errors import PydanticUserError
 from temporalio.client import ClientConfig, Plugin as ClientPlugin, WorkflowHistory
@@ -57,6 +57,8 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
                 runner,
                 restrictions=runner.restrictions.with_passthrough_modules(
                     'pydantic_ai',
+                    'pydantic',
+                    'pydantic_core',
                     'logfire',
                     'rich',
                     'httpx',

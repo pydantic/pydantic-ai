@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Literal, Union, cast
+from typing import Literal, cast
 
 from typing_extensions import assert_never
 
@@ -72,7 +72,7 @@ LatestCohereModelNames = Literal[
 ]
 """Latest Cohere models."""
 
-CohereModelName = Union[str, LatestCohereModelNames]
+CohereModelName = str | LatestCohereModelNames
 """Possible Cohere model names.
 
 Since Cohere supports a variety of date-stamped models, we explicitly list the latest models but
@@ -228,7 +228,7 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from cohere
                         pass
                     else:

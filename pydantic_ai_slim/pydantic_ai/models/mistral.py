@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 
 import pydantic_core
 from httpx import Timeout
@@ -90,7 +90,7 @@ LatestMistralModelNames = Literal[
 ]
 """Latest  Mistral models."""
 
-MistralModelName = Union[str, LatestMistralModelNames]
+MistralModelName = str | LatestMistralModelNames
 """Possible Mistral model names.
 
 Since Mistral supports a variety of date-stamped models, we explicitly list the most popular models but
@@ -348,7 +348,7 @@ class MistralModel(Model):
                 parts.append(tool)
 
         return ModelResponse(
-            parts,
+            parts=parts,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
@@ -515,7 +515,7 @@ class MistralModel(Model):
                         pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
-                    elif isinstance(part, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(part, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from mistral
                         pass
                     else:
@@ -576,7 +576,7 @@ class MistralModel(Model):
         return MistralUserMessage(content=content)
 
 
-MistralToolCallId = Union[str, None]
+MistralToolCallId = str | None
 
 
 @dataclass

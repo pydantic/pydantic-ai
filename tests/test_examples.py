@@ -43,25 +43,15 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 
-try:
-    from pydantic_ai.providers.google import GoogleProvider
-except ImportError:  # pragma: lax no cover
-    GoogleProvider = None
-
-
-try:
-    import logfire
-except ImportError:  # pragma: lax no cover
-    logfire = None
-
-
 with try_import() as imports_successful:
+    # We check whether pydantic_ai_examples is importable as a proxy for whether all extras are installed, as some docs examples require them
+    import pydantic_ai_examples  # pyright: ignore[reportUnusedImport] # noqa: F401
+
     from pydantic_evals.reporting import EvaluationReport
 
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
-    pytest.mark.skipif(logfire is None or GoogleProvider is None, reason='logfire or google-provider not installed'),
 ]
 code_examples: dict[str, CodeExample] = {}
 
@@ -141,10 +131,9 @@ def test_docs_examples(  # noqa: C901
 
     mocker.patch('pydantic_evals.dataset.EvaluationReport', side_effect=CustomEvaluationReport)
 
-    if sys.version_info >= (3, 10):  # pragma: lax no cover
-        mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
-        mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
-        mocker.patch('mcp.server.fastmcp.FastMCP')
+    mocker.patch('pydantic_ai.mcp.MCPServerSSE', return_value=MockMCPServer())
+    mocker.patch('pydantic_ai.mcp.MCPServerStreamableHTTP', return_value=MockMCPServer())
+    mocker.patch('mcp.server.fastmcp.FastMCP')
 
     env.set('OPENAI_API_KEY', 'testing')
     env.set('GEMINI_API_KEY', 'testing')
@@ -168,7 +157,7 @@ def test_docs_examples(  # noqa: C901
     dunder_name = prefix_settings.get('dunder_name', '__main__')
     requires = prefix_settings.get('requires')
 
-    ruff_target_version: str = 'py39'
+    ruff_target_version: str = 'py310'
     if python_version:
         python_version_info = tuple(int(v) for v in python_version.split('.'))
         if sys.version_info < python_version_info:
@@ -285,7 +274,7 @@ class MockMCPServer(AbstractToolset[Any]):
         return None  # pragma: lax no cover
 
 
-text_responses: dict[str, str | ToolCallPart] = {
+text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Calculate the factorial of 15 and show your work': 'The factorial of 15 is **1,307,674,368,000**.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
@@ -467,6 +456,20 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`': [
+        ToolCallPart(tool_name='delete_file', args={'path': '__init__.py'}, tool_call_id='delete_file'),
+        ToolCallPart(
+            tool_name='update_file',
+            args={'path': 'README.md', 'content': 'Hello, world!'},
+            tool_call_id='update_file_readme',
+        ),
+        ToolCallPart(tool_name='update_file', args={'path': '.env', 'content': ''}, tool_call_id='update_file_dotenv'),
+    ],
+    'Calculate the answer to the ultimate question of life, the universe, and everything': ToolCallPart(
+        tool_name='calculate_answer',
+        args={'question': 'the ultimate question of life, the universe, and everything'},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -587,6 +590,8 @@ async def model_logic(  # noqa: C901
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
+            elif isinstance(response, Sequence):
+                return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
 
@@ -738,6 +743,18 @@ async def model_logic(  # noqa: C901
                 )
             ]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file':
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    'I successfully deleted `__init__.py` and updated `README.md`, but was not able to delete `.env`.'
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
+        return ModelResponse(
+            parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
+        )
     else:
         sys.stdout.write(str(debug.format(messages, info)))
         raise RuntimeError(f'Unexpected message: {m}')
@@ -766,10 +783,16 @@ async def stream_model_logic(  # noqa C901
             text_chunk = json_text[chunk_index : chunk_index + 15]
             yield {1: DeltaToolCall(json_args=text_chunk)}
 
-    async def stream_part_response(r: str | ToolCallPart) -> AsyncIterator[str | DeltaToolCalls]:
+    async def stream_part_response(
+        r: str | ToolCallPart | Sequence[ToolCallPart],
+    ) -> AsyncIterator[str | DeltaToolCalls]:
         if isinstance(r, str):
             async for chunk in stream_text_response(r):
                 yield chunk
+        elif isinstance(r, Sequence):
+            for part in r:
+                async for chunk in stream_tool_call_response(part):
+                    yield chunk
         else:
             async for chunk in stream_tool_call_response(r):
                 yield chunk
@@ -819,7 +842,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
             else:
                 mock_fallback_models.append(mock_infer_model(m))
         return FallbackModel(*mock_fallback_models)
-    if isinstance(model, (FunctionModel, TestModel)):
+    if isinstance(model, FunctionModel | TestModel):
         return model
     else:
         model_name = model if isinstance(model, str) else model.model_name

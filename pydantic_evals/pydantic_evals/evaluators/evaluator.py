@@ -4,7 +4,7 @@ import inspect
 from abc import ABCMeta, abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import MISSING, dataclass, fields
-from typing import Any, Generic, Union, cast
+from typing import Any, Generic, cast
 
 from pydantic import (
     ConfigDict,
@@ -25,11 +25,12 @@ __all__ = (
     'EvaluationResult',
     'EvaluationScalar',
     'Evaluator',
+    'EvaluatorFailure',
     'EvaluatorOutput',
     'EvaluatorSpec',
 )
 
-EvaluationScalar = Union[bool, int, float, str]
+EvaluationScalar = bool | int | float | str
 """The most primitive output allowed as an output from an Evaluator.
 
 `int` and `float` are treated as scores, `str` as labels, and `bool` as assertions.
@@ -51,11 +52,11 @@ class EvaluationReason:
     reason: str | None = None
 
 
-EvaluatorOutput = Union[EvaluationScalar, EvaluationReason, Mapping[str, Union[EvaluationScalar, EvaluationReason]]]
+EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationScalar | EvaluationReason]
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 
-# TODO(DavidM): Add bound=EvaluationScalar to the following typevar after we upgrade to pydantic 2.11
+# TODO(DavidM): Add bound=EvaluationScalar to the following typevar once pydantic 2.11 is the min supported version
 EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
 """Type variable for the scalar result type of an evaluation."""
 
@@ -98,6 +99,16 @@ class EvaluationResult(Generic[EvaluationScalarT]):
                     continue
                 return cast(EvaluationResult[T], self)
         return None
+
+
+@dataclass
+class EvaluatorFailure:
+    """Represents a failure raised during the execution of an evaluator."""
+
+    name: str
+    error_message: str
+    error_stacktrace: str
+    source: EvaluatorSpec
 
 
 # Evaluators are contravariant in all of its parameters.
