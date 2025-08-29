@@ -134,7 +134,7 @@ def run_sync() -> None:
 
 async def run_stream() -> None:
     async with typed_agent.run_stream('testing', deps=MyDeps(foo=1, bar=2)) as streamed_result:
-        result_items = [chunk async for chunk in streamed_result.stream()]
+        result_items = [chunk async for chunk in streamed_result.stream_output()]
         assert_type(result_items, list[str])
 
 

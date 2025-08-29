@@ -113,6 +113,7 @@ def test_docs_examples(  # noqa: C901
     allow_model_requests: None,
     env: TestEnv,
     tmp_path_cwd: Path,
+    vertex_provider_auth: None,
 ):
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
@@ -157,6 +158,7 @@ def test_docs_examples(  # noqa: C901
     env.set('AWS_SECRET_ACCESS_KEY', 'testing')
     env.set('AWS_DEFAULT_REGION', 'us-east-1')
     env.set('VERCEL_AI_GATEWAY_API_KEY', 'testing')
+    env.set('CEREBRAS_API_KEY', 'testing')
 
     prefix_settings = example.prefix_settings()
     opt_test = prefix_settings.get('test', '')
@@ -304,6 +306,7 @@ text_responses: dict[str, str | ToolCallPart] = {
     'Who was Albert Einstein?': 'Albert Einstein was a German-born theoretical physicist.',
     'What was his most famous equation?': "Albert Einstein's most famous equation is (E = mc^2).",
     'What is the date?': 'Hello Frank, the date today is 2032-01-02.',
+    'What is this? https://ai.pydantic.dev': 'A Python agent framework for building Generative AI applications.',
     'Put my money on square eighteen': ToolCallPart(
         tool_name='roulette_wheel', args={'square': 18}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -806,12 +809,12 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
         mock_fallback_models: list[Model] = []
         for m in model.models:
             try:
-                from pydantic_ai.models.openai import OpenAIModel
+                from pydantic_ai.models.openai import OpenAIChatModel
             except ImportError:  # pragma: lax no cover
-                OpenAIModel = type(None)
+                OpenAIChatModel = type(None)
 
-            if isinstance(m, OpenAIModel):
-                # Raise an HTTP error for OpenAIModel
+            if isinstance(m, OpenAIChatModel):
+                # Raise an HTTP error for OpenAIChatModel
                 mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
             else:
                 mock_fallback_models.append(mock_infer_model(m))
