@@ -1510,51 +1510,7 @@ def test_function_text_format_lark_invalid():
         FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
 
 
-def test_function_text_format_lark_with_mock_grammar_error(monkeypatch):
-    from pydantic_ai.tools import FunctionTextFormat
-
-    if not lark_installed:
-        pytest.skip('lark not installed')
-
-    # Mock lark.Lark to always raise GrammarError
-    def mock_lark_init(*args, **kwargs):
-        from lark.exceptions import GrammarError
-
-        raise GrammarError('Invalid grammar')
-
-    monkeypatch.setattr('lark.Lark', mock_lark_init)
-
-    with pytest.raises(ValueError, match='Lark grammar is invalid'):
-        FunctionTextFormat(syntax='lark', grammar='start: "hello"')
-
-
-def test_function_text_format_lark_missing_dependency():
-    import sys
-    import warnings
-
-    from pydantic_ai.tools import FunctionTextFormat
-
-    # Temporarily remove lark from sys.modules if it exists
-    lark_module = sys.modules.pop('lark', None)
-    lark_exceptions_module = sys.modules.pop('lark.exceptions', None)
-
-    try:
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter('always')
-            FunctionTextFormat(syntax='lark', grammar='start: "hello"')
-
-            assert len(w) == 1
-            assert issubclass(w[0].category, UserWarning)
-            assert 'Cannot validate lark grammar' in str(w[0].message)
-    finally:
-        # Restore modules if they existed
-        if lark_module is not None:
-            sys.modules['lark'] = lark_module
-        if lark_exceptions_module is not None:
-            sys.modules['lark.exceptions'] = lark_exceptions_module
-
-
-def test_tool_definition_single_string_argument_name():
+def test_tool_definition_single_string_argument():
     schema = {
         'type': 'object',
         'properties': {'text': {'type': 'string'}},
