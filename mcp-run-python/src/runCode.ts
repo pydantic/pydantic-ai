@@ -1,6 +1,6 @@
 /* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
-import { preparePythonCode } from './prepareEnvCode.ts'
+import { preparePythonCode, toolInjectionCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
 
 export interface CodeFile {
@@ -9,9 +9,21 @@ export interface CodeFile {
   active: boolean
 }
 
+interface ElicitationResponse {
+  action: 'accept' | 'decline' | 'cancel'
+  content?: Record<string, unknown>
+}
+
+export interface RunCodeOptions {
+  elicitationCallback?: (message: string) => Promise<ElicitationResponse>
+  availableTools?: string[]
+  toolSchemas?: Record<string, Record<string, unknown>>
+}
+
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
+  options: RunCodeOptions = {},
 ): Promise<RunSuccess | RunError> {
   // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
   const realConsoleLog = console.log
@@ -69,8 +81,47 @@ export async function runCode(
     const { dependencies } = prepareStatus
     const activeFile = files.find((f) => f.active)! || files[0]
     try {
+      // Create globals for python execution
+      const globals = pyodide.toPy({ __name__: '__main__' })
+
+      // Setup tool injection if elicitation callback is provided
+      if (options.elicitationCallback && options.availableTools?.length) {
+        const toolModuleName = '_tool_injection'
+        pathlib
+          .Path(`${dirPath}/${toolModuleName}.py`)
+          .write_text(toolInjectionCode)
+
+        const toolInjectionModule = pyodide.pyimport(toolModuleName)
+
+        // Create Javascript callback wrapper that handles promises
+        const jsElicitationCallback = async (message: string): Promise<ElicitationResponse> => {
+          try {
+            const result = await options.elicitationCallback!(message)
+            return result
+          } catch (error) {
+            log('error', `Elicitation callback error: ${error}`)
+
+            return {
+              action: 'decline',
+              content: { error: `Elicitation failed: ${error}` },
+            }
+          }
+        }
+
+        // Convert to Python and inject tools
+        const pyCallback = pyodide.toPy(jsElicitationCallback)
+        const pyTools = pyodide.toPy(options.availableTools)
+        const pyToolSchemas = pyodide.toPy(options.toolSchemas || {})
+        toolInjectionModule.inject_tool_functions(globals, pyTools, pyCallback, pyToolSchemas)
+
+        log(
+          'info',
+          `Tool injection enabled for: ${options.availableTools.join(', ')}`,
+        )
+      }
+
       const rawValue = await pyodide.runPythonAsync(activeFile.content, {
-        globals: pyodide.toPy({ __name__: '__main__' }),
+        globals: globals,
         filename: activeFile.name,
       })
       runResult = {
@@ -116,6 +167,7 @@ export function asXml(runResult: RunSuccess | RunError): string {
       `<dependencies>${JSON.stringify(runResult.dependencies)}</dependencies>`,
     )
   }
+
   if (runResult.output.length) {
     xml.push('<output>')
     const escapeXml = escapeClosing('output')
@@ -144,9 +196,8 @@ function escapeClosing(closingTag: string): (str: string) => string {
   return (str) => str.replace(regex, onMatch)
 }
 
-// deno-lint-ignore no-explicit-any
-function formatError(err: any): string {
-  let errStr = err.toString()
+function formatError(err: unknown): string {
+  let errStr = String(err)
   errStr = errStr.replace(/^PythonError: +/, '')
   // remove frames from inside pyodide
   errStr = errStr.replace(
@@ -166,6 +217,5 @@ interface PrepareError {
 }
 interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
-  // deno-lint-ignore no-explicit-any
-  dump_json: (value: any) => string | null
+  dump_json: (value: unknown) => string | null
 }
