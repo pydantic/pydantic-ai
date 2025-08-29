@@ -702,17 +702,20 @@ If both per-tool `prepare` and agent-wide `prepare_tools` are used, the per-tool
 
 ## Deferred Tools
 
-Sometimes a tool called by the model should not or cannot be executed immediately inside the same agent run:
+There are a few scenarios where the model should be able to call a tool that should not or cannot be executed during the same agent run inside the same Python process:
 
 - it may need to be approved by the user first
 - it may depend on an upstream service, frontend, or user to provide the result
 - the result could take longer to generate than it's reasonable to keep the agent process running
 
-When the model calls such a tool, the call is considered to be "deferred", and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object containing information about the deferred tool calls. Once the approvals and/or results are ready, a new agent run can then be started with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object holding results for each tool call in `DeferredToolRequests`.
+To support these use cases, Pydantic AI provides the concept of deferred tools, which come in two flavors documented below:
 
-The next sections will explain how to cause calls to specific tools to be deferred. Note that supporting deferred tool calls requires you to add `DeferredToolRequests` to the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred.
+- tools that [require approval](#human-in-the-loop-tool-approval)
+- tools that are [executed externally](#external-tool-execution)
 
-If your agent can also be used in a context where no deferred tools are available, you will not want to include `DeferredToolRequests` in the `output_type` passed to the `Agent` constructor as you'd have to deal with that type everywhere you use the agent. Instead, you can pass the `toolsets` and `output_type` keyword arguments when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that while `toolsets` provided at this stage are additional to the toolsets provided to the constructor, the `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output types explicitly.
+When the model calls a deferred tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object containing information about the deferred tool calls. Once the approvals and/or results are ready, a new agent run can then be started with the original run's [message history](message-history.md) plus a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object holding results for each tool call in `DeferredToolRequests`, which will continue the original run where it left off.
+
+Note that handling deferred tool calls requires `DeferredToolRequests` to be in the `Agent`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. If your agent can also be used in a context where no deferred tools are available and you don't want to deal with that type everywhere you use the agent, you can instead pass the `output_type` argument when you run the agent using [`agent.run()`][pydantic_ai.agent.AbstractAgent.run], [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], or [`agent.iter()`][pydantic_ai.Agent.iter]. Note that the run-time `output_type` overrides the one specified at construction time (for type inference reasons), so you'll need to include the original output type explicitly.
 
 ### Human-in-the-Loop Tool Approval
 
@@ -863,20 +866,20 @@ print(result.all_messages())
 
 _(This example is complete, it can be run "as is")_
 
-### External Tools
+### External Tool Execution
 
 When the result of a tool call cannot be generated inside the same agent run in which it was called, the tool is considered to be external.
 Examples of external tools are client-side tools implemented by a web or app frontend, and slow tasks that are passed off to a background worker or external service instead of keeping the agent process running.
 
-If a tool is always executed externally and its definition is provided to your code along with a JSON schema for its arguments, see the [`ExternalToolset` documentation](toolsets.md#external-toolset). If the external tools are known up front and you don't have the arguments JSON schema handy, you can also define a tool function with the appropriate signature that does nothing but raise the [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] exception.
-
 If whether a tool call should be executed externally depends on the tool call arguments, the agent [run context][pydantic_ai.tools.RunContext] (e.g. [dependencies](dependencies.md) or message history), or how long the task is expected to take, you can define a tool function and conditionally raise the [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] exception. Before raising the exception, the tool function would typically schedule some background task and pass along the [`RunContext.tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] so that the result can be matched to the deferred tool call later.
+
+If a tool is always executed externally and its definition is provided to your code along with a JSON schema for its arguments, you can use an [`ExternalToolset`](toolsets.md#external-toolset). If the external tools are known up front and you don't have the arguments JSON schema handy, you can also define a tool function with the appropriate signature that does nothing but raise the [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] exception.
 
 When the model calls an external tool, the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID.
 
 Once the tool call results are ready, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
-Here's an example that shows how to pass a task that takes a while to complete to the background and return the result to the model once the task is complete:
+Here's an example that shows how to move a task that takes a while to complete to the background and return the result to the model once the task is complete:
 
 ```python {title="external_tool.py"}
 import asyncio
