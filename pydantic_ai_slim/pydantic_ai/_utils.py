@@ -71,13 +71,41 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     if schema.get('type') == 'object':
         return schema
     elif schema.get('$ref') is not None:
-        maybe_result = schema.get('$defs', {}).get(schema['$ref'][8:])  # This removes the initial "#/$defs/".
-
-        if "'$ref': '#/$defs/" in str(maybe_result):
-            return schema  # We can't remove the $defs because the schema contains other references
-        return maybe_result
+        ref = schema['$ref']
+        if ref.startswith('#/$defs/'):
+            ref_name = ref[8:]  # Remove "#/$defs/" prefix
+            defs = schema.get('$defs', {})
+            if ref_name in defs:
+                resolved = defs[ref_name]
+                # Check if the resolved schema contains nested references.
+                # This is necessary because if we inline a schema that itself contains
+                # $ref references, those references won't be resolvable without the $defs.
+                # The old code used fragile string matching; this uses proper recursive checking.
+                if _contains_ref(resolved):
+                    # Keep the $defs because they're needed for nested references
+                    return schema
+                return resolved
+        # For non-local refs or unresolvable refs, return the schema as-is
+        return schema
     else:
         raise UserError('Schema must be an object')
+
+
+def _contains_ref(obj: Any) -> bool:
+    """Recursively check if an object contains any $ref keys."""
+    if isinstance(obj, dict):
+        if '$ref' in obj:
+            return True
+        for v in obj.values():  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(v, (dict, list)) and _contains_ref(v):
+                return True
+        return False
+    elif isinstance(obj, list):
+        for item in obj:  # pyright: ignore[reportUnknownVariableType]
+            if isinstance(item, (dict, list)) and _contains_ref(item):
+                return True
+        return False
+    return False
 
 
 T = TypeVar('T')
