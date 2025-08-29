@@ -110,13 +110,13 @@ async def test_context_manager_initialization_error() -> None:
 async def test_aexit_called_more_times_than_aenter():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
-    with pytest.raises(UserError, match='MCPServer.__aexit__ called more times than __aenter__'):
+    with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
         await server.__aexit__(None, None, None)
 
     async with server:
         pass  # This will call __aenter__ and __aexit__ once each
 
-    with pytest.raises(UserError, match='MCPServer.__aexit__ called more times than __aenter__'):
+    with pytest.raises(ValueError, match='MCPServer.__aexit__ called more times than __aenter__'):
         await server.__aexit__(None, None, None)
 
 
