@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Literal, Union
+from typing import Any, Generic, Literal
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -42,7 +42,7 @@ StructuredOutputMode = Literal['tool', 'native', 'prompted']
 
 
 OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
+    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
 )
 """Definition of an output type or function.
 
@@ -54,10 +54,7 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Union[
-        Callable[[RunContext, str], Union[Awaitable[T_co], T_co]],
-        Callable[[str], Union[Awaitable[T_co], T_co]],
-    ],
+    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
     type_params=(T_co,),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
@@ -333,16 +330,13 @@ def StructuredDict(
 
 _OutputSpecItem = TypeAliasType(
     '_OutputSpecItem',
-    Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], NativeOutput[T_co], PromptedOutput[T_co], TextOutput[T_co]],
+    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
     type_params=(T_co,),
 )
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    Union[
-        _OutputSpecItem[T_co],
-        Sequence['OutputSpec[T_co]'],
-    ],
+    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.

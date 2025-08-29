@@ -1,7 +1,8 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from dirty_equals import IsInt, IsJson, IsList

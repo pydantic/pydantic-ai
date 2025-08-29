@@ -16,14 +16,13 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import date
-from typing import Annotated, Any, Union
+from typing import Annotated, Any, TypeAlias
 
 import asyncpg
 import logfire
 from annotated_types import MinLen
 from devtools import debug
 from pydantic import BaseModel, Field
-from typing_extensions import TypeAlias
 
 from pydantic_ai import Agent, ModelRetry, RunContext, format_as_xml
 
@@ -91,7 +90,7 @@ class InvalidRequest(BaseModel):
     error_message: str
 
 
-Response: TypeAlias = Union[Success, InvalidRequest]
+Response: TypeAlias = Success | InvalidRequest
 agent = Agent[Deps, Response](
     'google-gla:gemini-1.5-flash',
     # Type ignore while we wait for PEP-0747, nonetheless unions will work fine everywhere else
