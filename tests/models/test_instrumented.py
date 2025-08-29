@@ -1257,3 +1257,14 @@ def test_message_with_thinking_parts():
             },
         ]
     )
+
+
+def test_deprecated_event_mode_warning():
+    with pytest.warns(
+        UserWarning,
+        match='event_mode is only relevant for version=1 which is deprecated and will be removed in a future release',
+    ):
+        settings = InstrumentationSettings(event_mode='logs')
+    assert settings.event_mode == 'logs'
+    assert settings.version == 1
+    assert InstrumentationSettings().version == 2

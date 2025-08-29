@@ -143,7 +143,7 @@ class InstrumentationSettings:
         self.include_binary_content = include_binary_content
         self.include_content = include_content
 
-        if event_mode == 'logs' and version != 1:  # pragma: no cover
+        if event_mode == 'logs' and version != 1:
             warnings.warn(
                 'event_mode is only relevant for version=1 which is deprecated and will be removed in a future release.',
                 stacklevel=2,
