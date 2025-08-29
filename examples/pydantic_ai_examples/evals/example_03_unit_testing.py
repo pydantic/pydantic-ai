@@ -29,7 +29,9 @@ def evaluate_dataset():
     report = dataset.evaluate_sync(infer_time_range)
     print(report)
 
-    assertion_pass_rate = report.averages().assertions
+    averages = report.averages()
+    assert averages is not None
+    assertion_pass_rate = averages.assertions
     assert assertion_pass_rate is not None, 'There should be at least one assertion'
     assert assertion_pass_rate > 0.9, (
         f'The assertion pass rate was {assertion_pass_rate:.1%}; it should be above 90%.'
