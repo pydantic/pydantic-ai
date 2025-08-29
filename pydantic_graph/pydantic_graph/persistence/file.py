@@ -166,7 +166,6 @@ class FileStatePersistence(BaseStatePersistence[StateT, RunEndT]):
             await _graph_utils.run_in_executor(lock_file.unlink, missing_ok=True)
 
 
-# NOTE(Marcelo): Why is this necessary?
 async def _file_append_check(file: Path, content: bytes) -> bool:
     path = anyio.Path(file)
     if await path.exists():
