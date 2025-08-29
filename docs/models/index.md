@@ -168,8 +168,7 @@ contains all the exceptions encountered during the `run` execution.
 === "Python >=3.11"
 
     ```python {title="fallback_model_failure.py" py="3.11"}
-    from pydantic_ai import Agent
-    from pydantic_ai import ModelHTTPError
+    from pydantic_ai import Agent, ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -195,8 +194,7 @@ contains all the exceptions encountered during the `run` execution.
     ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
     from exceptiongroup import catch
 
-    from pydantic_ai import Agent
-    from pydantic_ai import ModelHTTPError
+    from pydantic_ai import Agent, ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
