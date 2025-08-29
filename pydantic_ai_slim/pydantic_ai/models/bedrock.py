@@ -610,60 +610,62 @@ class BedrockStreamedResponse(StreamedResponse):
         chunk: ConverseStreamOutputTypeDef
         tool_id: str | None = None
         async for chunk in _AsyncIteratorWrapper(self._event_stream):
-            # TODO(Marcelo): Switch this to `match` when we drop Python 3.9 support.
-            if 'messageStart' in chunk:
-                continue
-            if 'messageStop' in chunk:
-                continue
-            if 'metadata' in chunk:
-                if 'usage' in chunk['metadata']:  # pragma: no branch
-                    self._usage += self._map_usage(chunk['metadata'])
-                continue
-            if 'contentBlockStart' in chunk:
-                index = chunk['contentBlockStart']['contentBlockIndex']
-                start = chunk['contentBlockStart']['start']
-                if 'toolUse' in start:  # pragma: no branch
-                    tool_use_start = start['toolUse']
-                    tool_id = tool_use_start['toolUseId']
-                    tool_name = tool_use_start['name']
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=index,
-                        tool_name=tool_name,
-                        args=None,
-                        tool_call_id=tool_id,
-                    )
-                    if maybe_event:  # pragma: no branch
-                        yield maybe_event
-            if 'contentBlockDelta' in chunk:
-                index = chunk['contentBlockDelta']['contentBlockIndex']
-                delta = chunk['contentBlockDelta']['delta']
-                if 'reasoningContent' in delta:
-                    if text := delta['reasoningContent'].get('text'):
-                        yield self._parts_manager.handle_thinking_delta(
+            match chunk:
+                case {'messageStart': _}:
+                    continue
+                case {'messageStop': _}:
+                    continue
+                case {'metadata': metadata}:
+                    if 'usage' in metadata:  # pragma: no branch
+                        self._usage += self._map_usage(metadata)
+                    continue
+                case {'contentBlockStart': content_block_start}:
+                    index = content_block_start['contentBlockIndex']
+                    start = content_block_start['start']
+                    if 'toolUse' in start:  # pragma: no branch
+                        tool_use_start = start['toolUse']
+                        tool_id = tool_use_start['toolUseId']
+                        tool_name = tool_use_start['name']
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=index,
-                            content=text,
-                            signature=delta['reasoningContent'].get('signature'),
+                            tool_name=tool_name,
+                            args=None,
+                            tool_call_id=tool_id,
                         )
-                    else:  # pragma: no cover
-                        warnings.warn(
-                            f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
-                            'Please report this to the maintainers.',
-                            UserWarning,
+                        if maybe_event:  # pragma: no branch
+                            yield maybe_event
+                case {'contentBlockDelta': content_block_delta}:
+                    index = content_block_delta['contentBlockIndex']
+                    delta = content_block_delta['delta']
+                    if 'reasoningContent' in delta:
+                        if text := delta['reasoningContent'].get('text'):
+                            yield self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=index,
+                                content=text,
+                                signature=delta['reasoningContent'].get('signature'),
+                            )
+                        else:  # pragma: no cover
+                            warnings.warn(
+                                f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
+                                'Please report this to the maintainers.',
+                                UserWarning,
+                            )
+                    if 'text' in delta:
+                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    if 'toolUse' in delta:
+                        tool_use = delta['toolUse']
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=index,
+                            tool_name=tool_use.get('name'),
+                            args=tool_use.get('input'),
+                            tool_call_id=tool_id,
                         )
-                if 'text' in delta:
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
-                    if maybe_event is not None:  # pragma: no branch
-                        yield maybe_event
-                if 'toolUse' in delta:
-                    tool_use = delta['toolUse']
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=index,
-                        tool_name=tool_use.get('name'),
-                        args=tool_use.get('input'),
-                        tool_call_id=tool_id,
-                    )
-                    if maybe_event:  # pragma: no branch
-                        yield maybe_event
+                        if maybe_event:  # pragma: no branch
+                            yield maybe_event
+                case _:
+                    pass  # pyright wants match statements to be exhaustive
 
     @property
     def model_name(self) -> str:
