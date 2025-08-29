@@ -8,7 +8,7 @@ class Box(BaseModel):
     width: int
     height: int
     depth: int
-    units: str
+    units: int
 
 
 def transformers_example():
@@ -22,8 +22,8 @@ def transformers_example():
     chat_template = '{% for message in messages %}{{ message.role }}: {{ message.content }}{% endfor %}'
     hf_tokenizer.chat_template = chat_template
 
-    model = OutlinesModel.transformers(hf_model, hf_tokenizer, settings=ModelSettings(max_new_tokens=100))
-    agent = Agent(model, output_type=NativeOutput([Box]))
+    model = OutlinesModel.from_transformers(hf_model, hf_tokenizer, settings=ModelSettings(max_new_tokens=100))
+    agent = Agent(model, output_type=[Box])
 
     response = agent.run_sync('Give me the dimensions of a box')
     print("response.output: ", response.output)
@@ -47,7 +47,7 @@ def llama_cpp_example():
         n_ctx=2048,  # 2K context window
     )
 
-    model = OutlinesModel.llama_cpp(llama_model)
+    model = OutlinesModel.from_Somllama_cpp(llama_model)
     agent = Agent(model, output_type=NativeOutput([Box]))
 
     response = agent.run_sync('Give me the dimensions of a box')
@@ -62,6 +62,6 @@ def llama_cpp_example():
 
 
 if __name__ == "__main__":
-    #transformers_example()
-    llama_cpp_example()
+    transformers_example()
+    #llama_cpp_example()
     #existing()

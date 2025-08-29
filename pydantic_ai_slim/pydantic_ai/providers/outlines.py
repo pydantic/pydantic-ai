@@ -3,7 +3,6 @@ from __future__ import annotations as _annotations
 from typing import Any
 
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.profiles.outlines import outlines_model_profile
 from pydantic_ai.providers import Provider
 
 
@@ -27,4 +26,9 @@ class OutlinesProvider(Provider[Any]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         """The model profile for the named model, if available."""
-        return outlines_model_profile(model_name)
+        return ModelProfile(
+            supports_tools=False,
+            supports_json_schema_output=True,
+            supports_json_object_output=True,
+            default_structured_output_mode='native',
+        )
