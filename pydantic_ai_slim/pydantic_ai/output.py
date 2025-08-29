@@ -133,6 +133,7 @@ class NativeOutput(Generic[OutputDataT]):
     Example:
     ```python {title="native_output.py" requires="tool_output.py"}
     from pydantic_ai import Agent, NativeOutput
+
     from tool_output import Fruit, Vehicle
 
     agent = Agent(
@@ -181,6 +182,7 @@ class PromptedOutput(Generic[OutputDataT]):
     from pydantic import BaseModel
 
     from pydantic_ai import Agent, PromptedOutput
+
     from tool_output import Vehicle
 
 

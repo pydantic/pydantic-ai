@@ -60,6 +60,7 @@ from dataclasses import dataclass
 
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
 from pydantic_evals.evaluators.common import IsInstance
+
 from simple_eval_dataset import dataset
 
 dataset.add_evaluator(IsInstance(type_name='str'))  # (1)!
@@ -618,9 +619,10 @@ You can also write datasets as JSON files:
 ```python {title="generate_dataset_example_json.py" requires="generate_dataset_example.py"}
 from pathlib import Path
 
-from generate_dataset_example import AnswerOutput, MetadataType, QuestionInputs
 from pydantic_evals import Dataset
 from pydantic_evals.generation import generate_dataset
+
+from generate_dataset_example import AnswerOutput, MetadataType, QuestionInputs
 
 
 async def main():

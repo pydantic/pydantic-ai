@@ -124,10 +124,11 @@ Toolsets can be composed to dynamically filter which tools are available, modify
 [`CombinedToolset`][pydantic_ai.toolsets.CombinedToolset] takes a list of toolsets and lets them be used as one.
 
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
-from function_toolset import datetime_toolset, weather_toolset
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset
+
+from function_toolset import datetime_toolset, weather_toolset
 
 combined_toolset = CombinedToolset([weather_toolset, datetime_toolset])
 
@@ -149,9 +150,10 @@ _(This example is complete, it can be run "as is")_
 To easily chain different modifications, you can also call [`filtered()`][pydantic_ai.toolsets.AbstractToolset.filtered] on any toolset instead of directly constructing a `FilteredToolset`.
 
 ```python {title="filtered_toolset.py" requires="function_toolset.py,combined_toolset.py"}
-from combined_toolset import combined_toolset
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+
+from combined_toolset import combined_toolset
 
 filtered_toolset = combined_toolset.filtered(lambda ctx, tool_def: 'fahrenheit' not in tool_def.name)
 
@@ -173,10 +175,11 @@ _(This example is complete, it can be run "as is")_
 To easily chain different modifications, you can also call [`prefixed()`][pydantic_ai.toolsets.AbstractToolset.prefixed] on any toolset instead of directly constructing a `PrefixedToolset`.
 
 ```python {title="combined_toolset.py" requires="function_toolset.py"}
-from function_toolset import datetime_toolset, weather_toolset
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset
+
+from function_toolset import datetime_toolset, weather_toolset
 
 combined_toolset = CombinedToolset(
     [
@@ -210,9 +213,10 @@ _(This example is complete, it can be run "as is")_
 To easily chain different modifications, you can also call [`renamed()`][pydantic_ai.toolsets.AbstractToolset.renamed] on any toolset instead of directly constructing a `RenamedToolset`.
 
 ```python {title="renamed_toolset.py" requires="function_toolset.py,combined_toolset.py"}
-from combined_toolset import combined_toolset
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+
+from combined_toolset import combined_toolset
 
 renamed_toolset = combined_toolset.renamed(
     {
@@ -250,6 +254,7 @@ from dataclasses import replace
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 from pydantic_ai.models.test import TestModel
+
 from renamed_toolset import renamed_toolset
 
 descriptions = {
@@ -330,9 +335,10 @@ To easily chain different modifications, you can also call [`approval_required()
 See the [Human-in-the-Loop Tool Approval](tools.md#human-in-the-loop-tool-approval) documentation for more information on how to handle agent runs that call tools that require approval and how to pass in the results.
 
 ```python {title="approval_required_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
-from prepared_toolset import prepared_toolset
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
 from pydantic_ai.models.test import TestModel
+
+from prepared_toolset import prepared_toolset
 
 approval_required_toolset = prepared_toolset.approval_required(lambda ctx, tool_def, tool_args: tool_def.name.startswith('temperature'))
 
@@ -391,10 +397,11 @@ import asyncio
 
 from typing_extensions import Any
 
-from prepared_toolset import prepared_toolset
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import ToolsetTool, WrapperToolset
+
+from prepared_toolset import prepared_toolset
 
 LOG = []
 
@@ -483,10 +490,11 @@ print(repr(result.output))
 Next, let's define a function that represents a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model, a list of frontend tool definitions, and optional deferred tool results. This is where `ExternalToolset`, `DeferredToolRequests`, and `DeferredToolResults` come in:
 
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
-from deferred_toolset_agent import PersonalizedGreeting, agent
 from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.toolsets import ExternalToolset
+
+from deferred_toolset_agent import PersonalizedGreeting, agent
 
 
 def run_agent(
@@ -511,7 +519,6 @@ def run_agent(
 Now, imagine that the code below is implemented on the frontend, and `run_agent` stands in for an API call to the backend that runs the agent. This is where we actually execute the deferred tool calls and start a new run with the new result included:
 
 ```python {title="deferred_tools.py" requires="deferred_toolset_agent.py,deferred_toolset_api.py"}
-from deferred_toolset_api import run_agent
 from pydantic_ai import (
     DeferredToolRequests,
     DeferredToolResults,
@@ -519,6 +526,8 @@ from pydantic_ai import (
     ToolDefinition,
 )
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
+
+from deferred_toolset_api import run_agent
 
 frontend_tool_definitions = [
     ToolDefinition(
@@ -592,9 +601,10 @@ By default, the function will be called again ahead of each agent run step. If y
 from dataclasses import dataclass
 from typing import Literal
 
-from function_toolset import datetime_toolset, weather_toolset
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
+
+from function_toolset import datetime_toolset, weather_toolset
 
 
 @dataclass

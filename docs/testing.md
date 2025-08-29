@@ -253,6 +253,7 @@ Here's an example of a fixture that overrides the model with `TestModel`:
 import pytest
 
 from pydantic_ai.models.test import TestModel
+
 from weather_app import weather_agent
 
 

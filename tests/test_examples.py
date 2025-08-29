@@ -7,7 +7,7 @@ import shutil
 import ssl
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import FrameInfo
 from io import StringIO
 from pathlib import Path
@@ -57,14 +57,18 @@ pytestmark = [
 code_examples: dict[str, CodeExample] = {}
 
 
+@dataclass
 class ExamplesConfig(BaseExamplesConfig):
+    known_first_party: list[str] = field(default_factory=list)
+    known_local_folder: list[str] = field(default_factory=list)
+
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
-        return (
-            *config,
-            '--config',
-            'lint.isort.known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]',
-        )
+        if self.known_first_party:
+            config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
+        if self.known_local_folder:
+            config = (*config, '--config', f'lint.isort.known-local-folder = {self.known_local_folder}')
+        return config
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
@@ -179,8 +183,10 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
+    known_local_folder: list[str] = []
     if requires:
         for req in requires.split(','):
+            known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
                 (tmp_path_cwd / req).write_text(ex.source)
             else:  # pragma: no cover
@@ -205,6 +211,8 @@ def test_docs_examples(  # noqa: C901
         isort=True,
         upgrade=True,
         quotes='single',
+        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_local_folder=known_local_folder,
     )
     eval_example.print_callback = print_callback
     eval_example.include_print = custom_include_print

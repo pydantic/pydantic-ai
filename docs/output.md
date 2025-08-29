@@ -314,6 +314,7 @@ To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydant
 
 ```python {title="native_output.py" requires="tool_output.py"}
 from pydantic_ai import Agent, NativeOutput
+
 from tool_output import Fruit, Vehicle
 
 agent = Agent(
@@ -347,6 +348,7 @@ To use this mode, you can wrap the output type(s) in the [`PromptedOutput`][pyda
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, PromptedOutput
+
 from tool_output import Vehicle
 
 
