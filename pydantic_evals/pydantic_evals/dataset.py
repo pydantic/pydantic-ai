@@ -849,11 +849,10 @@ async def _run_task(
         _CURRENT_TASK_RUN.reset(token)
 
     if isinstance(span_tree, SpanTree):  # pragma: no branch
-        # TODO: Question: Should we make this metric-attributes functionality more user-configurable in some way before merging?
-        #   Note: the use of otel for collecting these metrics is the main reason why I think we should require at least otel as a dependency, if not logfire;
-        #   otherwise, we don't have a great way to get usage data from arbitrary frameworks.
-        #   Ideally we wouldn't need to hard-code the specific logic here, but I'm not sure a great way to expose it to
-        #   users. Maybe via an argument of type Callable[[SpanTree], dict[str, int | float]] or similar?
+        # Idea for making this more configurable: replace the following logic with a call to a user-provided function
+        #   of type Callable[[_TaskRun, SpanTree], None] or similar, (maybe no _TaskRun and just use the public APIs).
+        #   That way users can customize this logic. We'd default to a function that does the current thing but also
+        #   allow `None` to disable it entirely.
         for node in span_tree:
             if node.attributes.get('gen_ai.operation.name') == 'chat':
                 task_run.increment_metric('requests', 1)
