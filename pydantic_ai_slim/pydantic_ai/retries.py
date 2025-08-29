@@ -24,7 +24,7 @@ from httpx import (
 )
 
 try:
-    from tenacity import AsyncRetrying, RetryCallState, RetryError, Retrying, retry, wait_exponential
+    from tenacity import RetryCallState, RetryError, retry, wait_exponential
 except ImportError as _import_error:
     raise ImportError(
         'Please install `tenacity` to use the retries utilities, '
@@ -34,7 +34,7 @@ except ImportError as _import_error:
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import TypedDict
 
@@ -157,18 +157,7 @@ class TenacityTransport(BaseTransport):
         config: RetryConfig,
         wrapped: BaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
-        **kwargs: NoReturn,
     ):
-        # TODO: Remove the following checks (and **kwargs) during v1 release
-        if 'controller' in kwargs:  # pragma: no cover
-            raise TypeError('The `controller` argument has been renamed to `config`, and now requires a `RetryConfig`.')
-        if kwargs:  # pragma: no cover
-            raise TypeError(f'Unexpected keyword arguments: {", ".join(kwargs)}')
-        if isinstance(config, Retrying):  # pragma: no cover
-            raise ValueError(
-                'Passing a Retrying instance is no longer supported; the `config` argument must be a `pydantic_ai.retries.RetryConfig`.'
-            )
-
         self.config = config
         self.wrapped = wrapped or HTTPTransport()
         self.validate_response = validate_response
@@ -245,18 +234,7 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         config: RetryConfig,
         wrapped: AsyncBaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
-        **kwargs: NoReturn,
     ):
-        # TODO: Remove the following checks (and **kwargs) during v1 release
-        if 'controller' in kwargs:  # pragma: no cover
-            raise TypeError('The `controller` argument has been renamed to `config`, and now requires a `RetryConfig`.')
-        if kwargs:  # pragma: no cover
-            raise TypeError(f'Unexpected keyword arguments: {", ".join(kwargs)}')
-        if isinstance(config, AsyncRetrying):  # pragma: no cover
-            raise ValueError(
-                'Passing an AsyncRetrying instance is no longer supported; the `config` argument must be a `pydantic_ai.retries.RetryConfig`.'
-            )
-
         self.config = config
         self.wrapped = wrapped or AsyncHTTPTransport()
         self.validate_response = validate_response
