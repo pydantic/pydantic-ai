@@ -13,7 +13,10 @@ from .wrapper import WrapperToolset
 
 @dataclass
 class ApprovalRequiredToolset(WrapperToolset[AgentDepsT]):
-    """TODO: Docstring."""
+    """A toolset that requires (some) calls to tools it contains to be approved.
+
+    See [toolset docs](../toolsets.md#requiring-tool-approval) for more information.
+    """
 
     approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition, dict[str, Any]], bool] = (
         lambda ctx, tool_def, tool_args: True

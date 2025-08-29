@@ -361,11 +361,16 @@ See [output docs](../output.md) for more information.
 
 @dataclass
 class DeferredToolRequests:
-    """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+    """Tool calls that require approval or external execution.
 
-    See [deferred toolset docs](../toolsets.md#external-toolset) for more information.
-    # TODO: Docstring
+    This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+    Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
+
+    See [deferred tools docs](../tools.md#deferred-tools) for more information.
     """
 
     calls: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require external execution."""
     approvals: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require human-in-the-loop approval."""

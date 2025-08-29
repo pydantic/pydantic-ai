@@ -28,7 +28,7 @@ __all__ = (
 
 
 class ModelRetry(Exception):
-    """Exception raised when a tool function should be retried.
+    """Exception to raise when a tool function should be retried.
 
     The agent will return the message to the model and ask it to try calling the function/tool again.
     """
@@ -63,13 +63,19 @@ class ModelRetry(Exception):
 
 
 class CallDeferred(Exception):
-    """TODO: Docstring."""
+    """Exception to raise when a tool call should be deferred.
+
+    See [tools docs](../tools.md#deferred-tools) for more information.
+    """
 
     pass
 
 
 class ApprovalRequired(Exception):
-    """TODO: Docstring."""
+    """Exception to raise when a tool call requires human-in-the-loop approval.
+
+    See [tools docs](../tools.md#human-in-the-loop-tool-approval) for more information.
+    """
 
     pass
 

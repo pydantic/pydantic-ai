@@ -137,18 +137,20 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 
 @dataclass
 class ToolApproved:
-    """TODO: Docstring."""
+    """Indicates that a tool call has been approved and that the tool function should be executed."""
 
     override_args: dict[str, Any] | None = None
+    """Optional tool call arguments to use instead of the original arguments."""
 
     kind: Literal['tool-approved'] = 'tool-approved'
 
 
 @dataclass
 class ToolDenied:
-    """TODO: Docstring."""
+    """Indicates that a tool call has been denied and that a denial message should be returned to the model."""
 
-    message: str = field(default='The tool call was denied.')
+    message: str = 'The tool call was denied.'
+    """The message to return to the model."""
 
     kind: Literal['tool-denied'] = 'tool-denied'
 
@@ -168,7 +170,7 @@ def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
 
 
 DeferredToolApprovalResult: TypeAlias = Annotated[Union[ToolApproved, ToolDenied], Discriminator('kind')]
-"""TODO: Docstring."""
+"""Result for a tool call that required human-in-the-loop approval."""
 DeferredToolCallResult: TypeAlias = Annotated[
     Union[
         Annotated[ToolReturn, Tag('tool-return')],
@@ -177,17 +179,24 @@ DeferredToolCallResult: TypeAlias = Annotated[
     ],
     Discriminator(_deferred_tool_call_result_discriminator),
 ]
-"""TODO: Docstring."""
+"""Result for a tool call that required external execution."""
 DeferredToolResult = Union[DeferredToolApprovalResult, DeferredToolCallResult]
-"""TODO: Docstring."""
+"""Result for a tool call that required approval or external execution."""
 
 
 @dataclass
 class DeferredToolResults:
-    """TODO: Docstring."""
+    """Results for deferred tool calls from a previous run that required approval or external execution.
+
+    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
+
+    See [deferred tools docs](../tools.md#deferred-tools) for more information.
+    """
 
     calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict)
+    """Map of tool call IDs to results for tool calls that required external execution."""
     approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=dict)
+    """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
 
 
 A = TypeVar('A')
@@ -305,7 +314,8 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            requires_approval: TODO: Docstring
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -449,13 +459,17 @@ class ToolDefinition:
     - `'function'`: a tool that will be executed by Pydantic AI during an agent run and has its result returned to the model
     - `'output'`: a tool that passes through an output value that ends the run
     - `'external'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
-        When the model calls a deferred tool, the agent run ends with a `DeferredToolRequests` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
-    # TODO: Docstring: 'unapproved'
+        See the [tools documentation](../tools.md#deferred-tools) for more info.
+    - `'unapproved'`: a tool that requires human-in-the-loop approval.
+        See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
     """
 
     @property
     def defer(self) -> bool:
-        """TODO: Docstring."""
+        """Whether calls to this tool will be deferred.
+
+        See the [tools documentation](../tools.md#deferred-tools) for more info.
+        """
         return self.kind in ('external', 'unapproved')
 
     __repr__ = _utils.dataclasses_no_defaults_repr

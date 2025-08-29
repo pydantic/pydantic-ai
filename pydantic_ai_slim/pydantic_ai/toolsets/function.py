@@ -142,7 +142,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            requires_approval: TODO: Docstring
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(
@@ -200,7 +201,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            requires_approval: TODO: Docstring
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
         """
         tool = Tool[AgentDepsT](
             func,

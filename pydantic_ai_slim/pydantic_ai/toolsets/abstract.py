@@ -181,7 +181,10 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
             lambda ctx, tool_def, tool_args: True
         ),
     ) -> ApprovalRequiredToolset[AgentDepsT]:
-        """TODO: Docstring."""
+        """Returns a new toolset that requires (some) calls to tools it contains to be approved.
+
+        See [toolset docs](../toolsets.md#requiring-tool-approval) for more information.
+        """
         from .approval_required import ApprovalRequiredToolset
 
         return ApprovalRequiredToolset(self, approval_required_func)
