@@ -161,11 +161,6 @@ class Case(Generic[InputsT, OutputT, MetadataT]):
         self.evaluators = list(evaluators)
 
 
-# TODO: Consider making one or more of the following changes to this type:
-#  * Add `task: Callable[[InputsT], Awaitable[OutputT]` as a field
-#  * Add `inputs_type`, `output_type`, etc. as kwargs on `__init__`
-#  * Rename to `Evaluation`
-# TODO: Allow `task` to be sync _or_ async
 class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', arbitrary_types_allowed=True):
     """A dataset of test [cases][pydantic_evals.Case].
 
@@ -634,7 +629,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             def _make_typed_dict(cls_name_prefix: str, fields: dict[str, Any]) -> Any:
                 td = TypedDict(f'{cls_name_prefix}_{name}', fields)  # pyright: ignore[reportArgumentType]
                 config = ConfigDict(extra='forbid', arbitrary_types_allowed=True)
-                # TODO: Replace with pydantic.with_config after pydantic 2.11 is released
+                # TODO: Replace with pydantic.with_config once pydantic 2.11 is the min supported version
                 td.__pydantic_config__ = config  # pyright: ignore[reportAttributeAccessIssue]
                 return td
 
@@ -859,7 +854,6 @@ async def _run_task(
             for k, v in node.attributes.items():
                 if not isinstance(v, int | float):
                     continue
-                # TODO: Revisit this choice to strip the prefix..
                 if k.startswith('gen_ai.usage.details.'):
                     task_run.increment_metric(k.removeprefix('gen_ai.usage.details.'), v)
                 elif k.startswith('gen_ai.usage.'):

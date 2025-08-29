@@ -55,7 +55,7 @@ EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationS
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 
-# TODO(DavidM): Add bound=EvaluationScalar to the following typevar after we upgrade to pydantic 2.11
+# TODO(DavidM): Add bound=EvaluationScalar to the following typevar once pydantic 2.11 is the min supported version
 EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
 """Type variable for the scalar result type of an evaluation."""
 

@@ -966,7 +966,7 @@ class ModelResponse:
                 body.setdefault('tool_calls', []).append(
                     {
                         'id': part.tool_call_id,
-                        'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
+                        'type': 'function',
                         'function': {
                             'name': part.tool_name,
                             **({'arguments': part.args} if settings.include_content else {}),

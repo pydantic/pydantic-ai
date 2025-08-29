@@ -735,7 +735,6 @@ def _part_discriminator(v: Any) -> str:
 
 # See <https://ai.google.dev/api/caching#Part>
 # we don't currently support other part types
-# TODO discriminator
 _GeminiPartUnion = Annotated[
     Annotated[_GeminiTextPart, pydantic.Tag('text')]
     | Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')]

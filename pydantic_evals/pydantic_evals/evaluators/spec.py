@@ -17,7 +17,7 @@ from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapH
 if TYPE_CHECKING:
     # This import seems to fail on Pydantic 2.10.1 in CI
     from pydantic import ModelWrapValidatorHandler
-    # TODO: Try removing this when we update to pydantic 2.11
+    # TODO: Remove this once pydantic 2.11 is the min supported version
 
 
 class EvaluatorSpec(BaseModel):
