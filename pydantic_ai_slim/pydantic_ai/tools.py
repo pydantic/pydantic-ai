@@ -30,6 +30,8 @@ __all__ = (
     'ObjectJsonSchema',
     'ToolDefinition',
     'DeferredToolResults',
+    'ToolApproved',
+    'ToolDenied',
 )
 
 
@@ -448,11 +450,12 @@ class ToolDefinition:
     - `'output'`: a tool that passes through an output value that ends the run
     - `'external'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
         When the model calls a deferred tool, the agent run ends with a `DeferredToolRequests` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
-    # TODO: 'unapproved'
+    # TODO: Docstring: 'unapproved'
     """
 
     @property
     def defer(self) -> bool:
+        """TODO: Docstring."""
         return self.kind in ('external', 'unapproved')
 
     __repr__ = _utils.dataclasses_no_defaults_repr

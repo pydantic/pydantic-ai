@@ -16,7 +16,8 @@ TOOL_SCHEMA_VALIDATOR = SchemaValidator(schema=core_schema.any_schema())
 class ExternalToolset(AbstractToolset[AgentDepsT]):
     """A toolset that holds deferred tools whose results will be produced outside of the Pydantic AI agent run in which they were called.
 
-    See [toolset docs](../toolsets.md#deferred-toolset), [`ToolDefinition.kind`][pydantic_ai.tools.ToolDefinition.kind], and [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] for more information.
+    See [toolset docs](../toolsets.md#external-toolset), [`ToolDefinition.kind`][pydantic_ai.tools.ToolDefinition.kind], and [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] for more information.
+    # TODO: Docstring
     """
 
     tool_defs: list[ToolDefinition]

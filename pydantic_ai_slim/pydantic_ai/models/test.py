@@ -195,7 +195,10 @@ class TestModel(Model):
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             return ModelResponse(
-                parts=[ToolCallPart(name, self.gen_tool_args(args)) for name, args in tool_calls],
+                parts=[
+                    ToolCallPart(name, self.gen_tool_args(args), tool_call_id=f'pyd_ai_tool_call_id__{name}')
+                    for name, args in tool_calls
+                ],
                 model_name=self._model_name,
             )
 
@@ -220,6 +223,7 @@ class TestModel(Model):
                                 output_wrapper.value
                                 if isinstance(output_wrapper, _WrappedToolOutput) and output_wrapper.value is not None
                                 else self.gen_tool_args(tool),
+                                tool_call_id=f'pyd_ai_tool_call_id__{tool.name}',
                             )
                             for tool in output_tools
                             if tool.name in new_retry_names
@@ -250,11 +254,27 @@ class TestModel(Model):
             output_tool = output_tools[self.seed % len(output_tools)]
             if custom_output_args is not None:
                 return ModelResponse(
-                    parts=[ToolCallPart(output_tool.name, custom_output_args)], model_name=self._model_name
+                    parts=[
+                        ToolCallPart(
+                            output_tool.name,
+                            custom_output_args,
+                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                        )
+                    ],
+                    model_name=self._model_name,
                 )
             else:
                 response_args = self.gen_tool_args(output_tool)
-                return ModelResponse(parts=[ToolCallPart(output_tool.name, response_args)], model_name=self._model_name)
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            output_tool.name,
+                            response_args,
+                            tool_call_id=f'pyd_ai_tool_call_id__{output_tool.name}',
+                        )
+                    ],
+                    model_name=self._model_name,
+                )
 
 
 @dataclass

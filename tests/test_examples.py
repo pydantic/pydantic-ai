@@ -28,6 +28,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
+    ModelResponsePart,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
@@ -284,7 +285,7 @@ class MockMCPServer(AbstractToolset[Any]):
         return None  # pragma: lax no cover
 
 
-text_responses: dict[str, str | ToolCallPart] = {
+text_responses: dict[str, str | ModelResponsePart | list[ModelResponsePart]] = {
     'Calculate the factorial of 15 and show your work': 'The factorial of 15 is **1,307,674,368,000**.',
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
@@ -466,6 +467,20 @@ text_responses: dict[str, str | ToolCallPart] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'Delete `__init__.py`, write `Hello, world!` to `README.md`, and clear `.env`': [
+        ToolCallPart(tool_name='delete_file', args={'path': '__init__.py'}, tool_call_id='delete_file'),
+        ToolCallPart(
+            tool_name='update_file',
+            args={'path': 'README.md', 'content': 'Hello, world!'},
+            tool_call_id='update_file_readme',
+        ),
+        ToolCallPart(tool_name='update_file', args={'path': '.env', 'content': ''}, tool_call_id='update_file_dotenv'),
+    ],
+    'Calculate the answer to the ultimate question of life, the universe, and everything': ToolCallPart(
+        tool_name='calculate_answer',
+        args={'question': 'the ultimate question of life, the universe, and everything'},
+        tool_call_id='pyd_ai_tool_call_id',
+    ),
 }
 
 tool_responses: dict[tuple[str, str], str] = {
@@ -586,6 +601,8 @@ async def model_logic(  # noqa: C901
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
+            elif isinstance(response, list):
+                return ModelResponse(parts=response)
             else:
                 return ModelResponse(parts=[response])
 
@@ -736,6 +753,18 @@ async def model_logic(  # noqa: C901
                     tool_call_id='pyd_ai_tool_call_id',
                 )
             ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'update_file':
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    'I successfully deleted `__init__.py` and updated `README.md`, but was not able to delete `.env`.'
+                )
+            ]
+        )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'calculate_answer':
+        return ModelResponse(
+            parts=[TextPart('The answer to the ultimate question of life, the universe, and everything is 42.')]
         )
     else:
         sys.stdout.write(str(debug.format(messages, info)))

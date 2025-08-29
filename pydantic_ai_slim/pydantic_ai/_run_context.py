@@ -47,6 +47,6 @@ class RunContext(Generic[AgentDepsT]):
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False
-    """Whether we are resuming a previous run that ended with deferred tool calls that we now have results for."""
+    """TODO: Docstring"""
 
     __repr__ = _utils.dataclasses_no_defaults_repr

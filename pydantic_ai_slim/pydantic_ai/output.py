@@ -363,7 +363,8 @@ See [output docs](../output.md) for more information.
 class DeferredToolRequests:
     """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
 
-    See [deferred toolset docs](../toolsets.md#deferred-toolset) for more information.
+    See [deferred toolset docs](../toolsets.md#external-toolset) for more information.
+    # TODO: Docstring
     """
 
     calls: list[ToolCallPart] = field(default_factory=list)
