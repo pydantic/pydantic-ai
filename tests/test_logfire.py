@@ -837,7 +837,7 @@ def test_instrument_all():
     assert m.wrapped is model
     assert m.instrumentation_settings.event_mode == InstrumentationSettings().event_mode
 
-    options = InstrumentationSettings(event_mode='logs')
+    options = InstrumentationSettings(version=1, event_mode='logs')
     Agent.instrument_all(options)
     m = get_model()
     assert isinstance(m, InstrumentedModel)
