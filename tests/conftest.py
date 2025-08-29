@@ -7,20 +7,19 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
-from typing_extensions import TypeAlias
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models

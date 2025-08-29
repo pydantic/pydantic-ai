@@ -19,7 +19,6 @@ install: .uv .pre-commit .deno ## Install the package, dependencies, and pre-com
 
 .PHONY: install-all-python
 install-all-python: ## Install and synchronize an interpreter for every python version
-	UV_PROJECT_ENVIRONMENT=.venv39 uv sync --python 3.9 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv310 uv sync --python 3.10 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv311 uv sync --python 3.11 --frozen --all-extras --all-packages --group lint --group docs
 	UV_PROJECT_ENVIRONMENT=.venv312 uv sync --python 3.12 --frozen --all-extras --all-packages --group lint --group docs
@@ -60,13 +59,12 @@ typecheck-both: typecheck-pyright typecheck-mypy
 
 .PHONY: test
 test: ## Run tests and collect coverage data
-	uv run coverage run -m pytest -n auto --dist=loadgroup
+	uv run coverage run -m pytest -n auto --dist=loadgroup --durations=20
 	@uv run coverage combine
 	@uv run coverage report
 
 .PHONY: test-all-python
-test-all-python: ## Run tests on Python 3.9 to 3.13
-	UV_PROJECT_ENVIRONMENT=.venv39 uv run --python 3.9 --all-extras --all-packages coverage run -p -m pytest
+test-all-python: ## Run tests on Python 3.10 to 3.13
 	UV_PROJECT_ENVIRONMENT=.venv310 uv run --python 3.10 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv311 uv run --python 3.11 --all-extras --all-packages coverage run -p -m pytest
 	UV_PROJECT_ENVIRONMENT=.venv312 uv run --python 3.12 --all-extras --all-packages coverage run -p -m pytest

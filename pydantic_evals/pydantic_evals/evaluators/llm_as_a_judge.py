@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, models
-from pydantic_ai.messages import MultiModalContentTypes, UserContent
+from pydantic_ai.messages import MultiModalContent, UserContent
 from pydantic_ai.settings import ModelSettings
 
 __all__ = (
@@ -238,11 +238,11 @@ def _build_prompt(
             sections.append('<Input>\n')
             if isinstance(inputs, Sequence):
                 for item in inputs:  # type: ignore
-                    if isinstance(item, (str, MultiModalContentTypes)):
+                    if isinstance(item, str | MultiModalContent):
                         sections.append(item)
                     else:
                         sections.append(_stringify(item))
-            elif isinstance(inputs, MultiModalContentTypes):
+            elif isinstance(inputs, MultiModalContent):
                 sections.append(inputs)
             else:
                 sections.append(_stringify(inputs))

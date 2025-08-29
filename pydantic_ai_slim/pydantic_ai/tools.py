@@ -1,12 +1,12 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Literal, Union
+from typing import Any, Concatenate, Generic, Literal, TypeAlias
 
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
+from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
@@ -31,12 +31,12 @@ __all__ = (
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
-SystemPromptFunc: TypeAlias = Union[
-    Callable[[RunContext[AgentDepsT]], str],
-    Callable[[RunContext[AgentDepsT]], Awaitable[str]],
-    Callable[[], str],
-    Callable[[], Awaitable[str]],
-]
+SystemPromptFunc: TypeAlias = (
+    Callable[[RunContext[AgentDepsT]], str]
+    | Callable[[RunContext[AgentDepsT]], Awaitable[str]]
+    | Callable[[], str]
+    | Callable[[], Awaitable[str]]
+)
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
 Usage `SystemPromptFunc[AgentDepsT]`.
@@ -52,7 +52,7 @@ ToolFuncPlain: TypeAlias = Callable[ToolParams, Any]
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither: TypeAlias = Union[ToolFuncContext[AgentDepsT, ToolParams], ToolFuncPlain[ToolParams]]
+ToolFuncEither: TypeAlias = ToolFuncContext[AgentDepsT, ToolParams] | ToolFuncPlain[ToolParams]
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from datetime import timedelta
-from typing import Any, Callable, Literal, overload
+from typing import Any, Literal, overload
 
 from pydantic.errors import PydanticUserError
 from pydantic_core import PydanticSerializationError

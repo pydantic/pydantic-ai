@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from opentelemetry._events import (
@@ -366,7 +366,7 @@ class InstrumentedModel(WrapperModel):
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
-                if isinstance(value := model_settings.get(key), (float, int)):
+                if isinstance(value := model_settings.get(key), float | int):
                     attributes[f'gen_ai.request.{key}'] = value
 
         record_metrics: Callable[[], None] | None = None

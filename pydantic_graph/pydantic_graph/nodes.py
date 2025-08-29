@@ -4,10 +4,10 @@ import copy
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from functools import cache
-from typing import Any, ClassVar, Generic, get_type_hints
+from typing import Any, ClassVar, Generic, get_origin, get_type_hints
 from uuid import uuid4
 
-from typing_extensions import Never, Self, TypeVar, get_origin
+from typing_extensions import Never, Self, TypeVar
 
 from . import _utils, exceptions
 
@@ -121,7 +121,6 @@ class BaseNode(ABC, Generic[StateT, DepsT, NodeRunEndT]):
             if return_type_origin is End:
                 end_edge = edge
             elif return_type_origin is BaseNode:
-                # TODO: Should we disallow this?
                 returns_base_node = True
             elif issubclass(return_type_origin, BaseNode):
                 next_node_edges[return_type.get_node_id()] = edge

@@ -1,8 +1,8 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
 from textwrap import dedent
-from typing import Callable, Union
 
 from typing_extensions import Self
 
@@ -75,6 +75,6 @@ class ModelProfile:
         return replace(self, **non_default_attrs)
 
 
-ModelProfileSpec = Union[ModelProfile, Callable[[str], Union[ModelProfile, None]]]
+ModelProfileSpec = ModelProfile | Callable[[str], ModelProfile | None]
 
 DEFAULT_PROFILE = ModelProfile()
