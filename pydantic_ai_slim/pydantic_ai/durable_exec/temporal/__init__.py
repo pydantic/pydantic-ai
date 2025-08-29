@@ -57,6 +57,8 @@ class PydanticAIPlugin(ClientPlugin, WorkerPlugin):
                 runner,
                 restrictions=runner.restrictions.with_passthrough_modules(
                     'pydantic_ai',
+                    'pydantic',
+                    'pydantic_core',
                     'logfire',
                     'rich',
                     'httpx',

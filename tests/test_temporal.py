@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -21,15 +22,22 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
+    TextPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import Model, cached_async_http_client
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import DeferredToolset, FunctionToolset
+from pydantic_ai.output import DeferredToolRequests
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.tools import DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
+from pydantic_ai.usage import RequestUsage
 
 try:
     from temporalio import workflow
@@ -235,7 +243,7 @@ complex_agent = Agent(
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
         MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        DeferredToolset(tool_defs=[ToolDefinition(name='deferred')], id='deferred'),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
@@ -1002,9 +1010,9 @@ async def test_temporal_agent():
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
-    # Unwrapped 'deferred' toolset
-    assert isinstance(toolsets[4], DeferredToolset)
-    assert toolsets[4].id == 'deferred'
+    # Unwrapped 'external' toolset
+    assert isinstance(toolsets[4], ExternalToolset)
+    assert toolsets[4].id == 'external'
     assert toolsets[4] == complex_agent.toolsets[3]
 
     assert [
@@ -1535,3 +1543,318 @@ async def test_logfire_plugin(client: Client):
     plugin = LogfirePlugin(lambda: setup_logfire(metrics=False))
     new_client = await Client.connect(client.service_client.config.target_host, plugins=[plugin])
     assert new_client.service_client.config.runtime is None
+
+
+hitl_agent = Agent(
+    model,
+    name='hitl_agent',
+    output_type=[str, DeferredToolRequests],
+    instructions='Just call tools without asking for confirmation.',
+)
+
+
+@hitl_agent.tool
+def create_file(ctx: RunContext[None], path: str) -> None:
+    raise CallDeferred
+
+
+@hitl_agent.tool
+def delete_file(ctx: RunContext[None], path: str) -> bool:
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired
+    return True
+
+
+hitl_temporal_agent = TemporalAgent(hitl_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class HitlAgentWorkflow:
+    def __init__(self):
+        self._status: Literal['running', 'waiting_for_results', 'done'] = 'running'
+        self._deferred_tool_requests: DeferredToolRequests | None = None
+        self._deferred_tool_results: DeferredToolResults | None = None
+
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        while True:
+            result = await hitl_temporal_agent.run(
+                message_history=messages, deferred_tool_results=self._deferred_tool_results
+            )
+            messages = result.all_messages()
+
+            if isinstance(result.output, DeferredToolRequests):
+                self._deferred_tool_requests = result.output
+                self._deferred_tool_results = None
+                self._status = 'waiting_for_results'
+
+                await workflow.wait_condition(lambda: self._deferred_tool_results is not None)
+                self._status = 'running'
+            else:
+                self._status = 'done'
+                return result
+
+    @workflow.query
+    def get_status(self) -> Literal['running', 'waiting_for_results', 'done']:
+        return self._status
+
+    @workflow.query
+    def get_deferred_tool_requests(self) -> DeferredToolRequests | None:
+        return self._deferred_tool_requests
+
+    @workflow.signal
+    def set_deferred_tool_results(self, results: DeferredToolResults) -> None:
+        self._status = 'running'
+        self._deferred_tool_requests = None
+        self._deferred_tool_results = results
+
+
+async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[HitlAgentWorkflow],
+        plugins=[AgentPlugin(hitl_temporal_agent)],
+    ):
+        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+            HitlAgentWorkflow.run,
+            args=['Delete the file `.env` and create `test.txt`'],
+            id=HitlAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        while True:
+            await asyncio.sleep(1)
+            status = await workflow.query(HitlAgentWorkflow.get_status)  # pyright: ignore[reportUnknownMemberType]
+            if status == 'done':
+                break
+            elif status == 'waiting_for_results':  # pragma: no branch
+                deferred_tool_requests = await workflow.query(HitlAgentWorkflow.get_deferred_tool_requests)  # pyright: ignore[reportUnknownMemberType]
+                assert deferred_tool_requests is not None
+
+                results = DeferredToolResults()
+                # Approve all calls
+                for tool_call in deferred_tool_requests.approvals:
+                    results.approvals[tool_call.tool_call_id] = True
+
+                for tool_call in deferred_tool_requests.calls:
+                    results.calls[tool_call.tool_call_id] = 'Success'
+
+                await workflow.signal(HitlAgentWorkflow.set_deferred_tool_results, results)
+
+        result = await workflow.result()
+        assert result.output == snapshot(
+            'The file `.env` has been deleted and `test.txt` has been created successfully.'
+        )
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Delete the file `.env` and create `test.txt`',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    instructions='Just call tools without asking for confirmation.',
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='delete_file',
+                            args='{"path": ".env"}',
+                            tool_call_id='call_jYdIdRZHxZTn5bWCq5jlMrJi',
+                        ),
+                        ToolCallPart(
+                            tool_name='create_file',
+                            args='{"path": "test.txt"}',
+                            tool_call_id='call_TmlTVWQbzrXCZ4jNsCVNbNqu',
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=71,
+                        output_tokens=46,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name=IsStr(),
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_response_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='delete_file',
+                            content=True,
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                        ToolReturnPart(
+                            tool_name='create_file',
+                            content='Success',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        ),
+                    ],
+                    instructions='Just call tools without asking for confirmation.',
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='The file `.env` has been deleted and `test.txt` has been created successfully.'
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=133,
+                        output_tokens=19,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_response_id=IsStr(),
+                ),
+            ]
+        )
+
+
+model_retry_agent = Agent(model, name='model_retry_agent')
+
+
+@model_retry_agent.tool_plain
+def get_weather_in_city(city: str) -> str:
+    if city != 'Mexico City':
+        raise ModelRetry('Did you mean Mexico City?')
+    return 'sunny'
+
+
+model_retry_temporal_agent = TemporalAgent(model_retry_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class ModelRetryWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> AgentRunResult[str]:
+        result = await model_retry_temporal_agent.run(prompt)
+        return result
+
+
+async def test_temporal_agent_with_model_retry(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ModelRetryWorkflow],
+        plugins=[AgentPlugin(model_retry_temporal_agent)],
+    ):
+        workflow = await client.start_workflow(  # pyright: ignore[reportUnknownMemberType]
+            ModelRetryWorkflow.run,
+            args=['What is the weather in CDMX?'],
+            id=ModelRetryWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        result = await workflow.result()
+        assert result.output == snapshot('The weather in Mexico City is currently sunny.')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='What is the weather in CDMX?',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_weather_in_city',
+                            args='{"city":"CDMX"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=47,
+                        output_tokens=17,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_response_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        RetryPromptPart(
+                            content='Did you mean Mexico City?',
+                            tool_name='get_weather_in_city',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_weather_in_city',
+                            args='{"city":"Mexico City"}',
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=87,
+                        output_tokens=17,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_response_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_weather_in_city',
+                            content='sunny',
+                            tool_call_id=IsStr(),
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
+                    usage=RequestUsage(
+                        input_tokens=116,
+                        output_tokens=10,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_response_id=IsStr(),
+                ),
+            ]
+        )

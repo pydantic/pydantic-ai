@@ -1,15 +1,13 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from copy import copy
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Generic, cast
+from typing import Generic, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import TypeVar, deprecated
-
-from pydantic_ai._tool_manager import ToolManager
 
 from . import _utils, exceptions, messages as _messages, models
 from ._output import (
@@ -22,11 +20,14 @@ from ._output import (
     ToolOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
+from ._tool_manager import ToolManager
 from .messages import ModelResponseStreamEvent
 from .output import (
+    DeferredToolRequests,
     OutputDataT,
     ToolOutput,
 )
+from .run import AgentRunResult
 from .usage import RunUsage, UsageLimits
 
 __all__ = (
@@ -155,12 +156,12 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             return await self._tool_manager.handle_call(
                 tool_call, allow_partial=allow_partial, wrap_validation_errors=False
             )
-        elif deferred_tool_calls := self._tool_manager.get_deferred_tool_calls(message.parts):
-            if not self._output_schema.allows_deferred_tool_calls:
+        elif deferred_tool_requests := _get_deferred_tool_requests(message.parts, self._tool_manager):
+            if not self._output_schema.allows_deferred_tools:
                 raise exceptions.UserError(
-                    'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
+                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
                 )
-            return cast(OutputDataT, deferred_tool_calls)
+            return cast(OutputDataT, deferred_tool_requests)
         elif isinstance(self._output_schema, TextOutputSchema):
             text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
@@ -233,15 +234,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         return self._agent_stream_iterator
 
 
-@dataclass
+@dataclass(init=False)
 class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     """Result of a streamed run that returns structured data via a tool call."""
 
     _all_messages: list[_messages.ModelMessage]
     _new_message_index: int
 
-    _stream_response: AgentStream[AgentDepsT, OutputDataT]
-    _on_complete: Callable[[], Awaitable[None]]
+    _stream_response: AgentStream[AgentDepsT, OutputDataT] | None = None
+    _on_complete: Callable[[], Awaitable[None]] | None = None
+
+    _run_result: AgentRunResult[OutputDataT] | None = None
 
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
@@ -252,6 +255,39 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
     [`stream_responses`][pydantic_ai.result.StreamedRunResult.stream_responses] or
     [`get_output`][pydantic_ai.result.StreamedRunResult.get_output] completes.
     """
+
+    @overload
+    def __init__(
+        self,
+        all_messages: list[_messages.ModelMessage],
+        new_message_index: int,
+        stream_response: AgentStream[AgentDepsT, OutputDataT] | None,
+        on_complete: Callable[[], Awaitable[None]] | None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        all_messages: list[_messages.ModelMessage],
+        new_message_index: int,
+        *,
+        run_result: AgentRunResult[OutputDataT],
+    ) -> None: ...
+
+    def __init__(
+        self,
+        all_messages: list[_messages.ModelMessage],
+        new_message_index: int,
+        stream_response: AgentStream[AgentDepsT, OutputDataT] | None = None,
+        on_complete: Callable[[], Awaitable[None]] | None = None,
+        run_result: AgentRunResult[OutputDataT] | None = None,
+    ) -> None:
+        self._all_messages = all_messages
+        self._new_message_index = new_message_index
+
+        self._stream_response = stream_response
+        self._on_complete = on_complete
+        self._run_result = run_result
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.
@@ -340,9 +376,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of the response data.
         """
-        async for output in self._stream_response.stream_output(debounce_by=debounce_by):
-            yield output
-        await self._marked_completed(self._stream_response.get())
+        if self._run_result is not None:
+            yield self._run_result.output
+            await self._marked_completed()
+        elif self._stream_response is not None:
+            async for output in self._stream_response.stream_output(debounce_by=debounce_by):
+                yield output
+            await self._marked_completed(self._stream_response.get())
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -357,9 +399,20 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
-            yield text
-        await self._marked_completed(self._stream_response.get())
+        if self._run_result is not None:  # pragma: no cover
+            # We can't really get here, as `_run_result` is only set in `run_stream` when `CallToolsNode` produces `DeferredToolRequests` output
+            # as a result of a tool function raising `CallDeferred` or `ApprovalRequired`.
+            # That'll change if we ever support something like `raise EndRun(output: OutputT)` where `OutputT` could be `str`.
+            if not isinstance(self._run_result.output, str):
+                raise exceptions.UserError('stream_text() can only be used with text responses')
+            yield self._run_result.output
+            await self._marked_completed()
+        elif self._stream_response is not None:
+            async for text in self._stream_response.stream_text(delta=delta, debounce_by=debounce_by):
+                yield text
+            await self._marked_completed(self._stream_response.get())
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     @deprecated('`StreamedRunResult.stream_structured` is deprecated, use `stream_responses` instead.')
     async def stream_structured(
@@ -381,20 +434,34 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Returns:
             An async iterable of the structured response message and whether that is the last message.
         """
-        # if the message currently has any parts with content, yield before streaming
-        async for msg in self._stream_response.stream_responses(debounce_by=debounce_by):
-            yield msg, False
+        if self._run_result is not None:
+            model_response = cast(_messages.ModelResponse, self.all_messages()[-1])
+            yield model_response, True
+            await self._marked_completed()
+        elif self._stream_response is not None:
+            # if the message currently has any parts with content, yield before streaming
+            async for msg in self._stream_response.stream_responses(debounce_by=debounce_by):
+                yield msg, False
 
-        msg = self._stream_response.get()
-        yield msg, True
+            msg = self._stream_response.get()
+            yield msg, True
 
-        await self._marked_completed(msg)
+            await self._marked_completed(msg)
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
-        output = await self._stream_response.get_output()
-        await self._marked_completed(self._stream_response.get())
-        return output
+        if self._run_result is not None:
+            output = self._run_result.output
+            await self._marked_completed()
+            return output
+        elif self._stream_response is not None:
+            output = await self._stream_response.get_output()
+            await self._marked_completed(self._stream_response.get())
+            return output
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def usage(self) -> RunUsage:
         """Return the usage of the whole run.
@@ -402,28 +469,45 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         !!! note
             This won't return the full usage until the stream is finished.
         """
-        return self._stream_response.usage()
+        if self._run_result is not None:
+            return self._run_result.usage()
+        elif self._stream_response is not None:
+            return self._stream_response.usage()
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
-        return self._stream_response.timestamp()
+        if self._run_result is not None:
+            return self._run_result.timestamp()
+        elif self._stream_response is not None:
+            return self._stream_response.timestamp()
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
     @deprecated('`validate_structured_output` is deprecated, use `validate_response_output` instead.')
     async def validate_structured_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
-        return await self._stream_response.validate_response_output(message, allow_partial=allow_partial)
+        return await self.validate_response_output(message, allow_partial=allow_partial)
 
     async def validate_response_output(
         self, message: _messages.ModelResponse, *, allow_partial: bool = False
     ) -> OutputDataT:
         """Validate a structured result message."""
-        return await self._stream_response.validate_response_output(message, allow_partial=allow_partial)
+        if self._run_result is not None:
+            return self._run_result.output
+        elif self._stream_response is not None:
+            return await self._stream_response.validate_response_output(message, allow_partial=allow_partial)
+        else:
+            raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    async def _marked_completed(self, message: _messages.ModelResponse) -> None:
+    async def _marked_completed(self, message: _messages.ModelResponse | None = None) -> None:
         self.is_complete = True
-        self._all_messages.append(message)
-        await self._on_complete()
+        if message is not None:
+            self._all_messages.append(message)
+        if self._on_complete is not None:
+            await self._on_complete()
 
 
 @dataclass(repr=False)
@@ -455,3 +539,25 @@ def _get_usage_checking_stream_response(
         return _usage_checking_iterator()
     else:
         return aiter(stream_response)
+
+
+def _get_deferred_tool_requests(
+    parts: Iterable[_messages.ModelResponsePart], tool_manager: ToolManager[AgentDepsT]
+) -> DeferredToolRequests | None:
+    """Get the deferred tool requests from the model response parts."""
+    approvals: list[_messages.ToolCallPart] = []
+    calls: list[_messages.ToolCallPart] = []
+
+    for part in parts:
+        if isinstance(part, _messages.ToolCallPart):
+            tool_def = tool_manager.get_tool_def(part.tool_name)
+            if tool_def is not None:  # pragma: no branch
+                if tool_def.kind == 'unapproved':
+                    approvals.append(part)
+                elif tool_def.kind == 'external':
+                    calls.append(part)
+
+    if not calls and not approvals:
+        return None
+
+    return DeferredToolRequests(calls=calls, approvals=approvals)

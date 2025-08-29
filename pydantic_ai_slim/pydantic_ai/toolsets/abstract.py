@@ -12,6 +12,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..tools import ToolDefinition, ToolsPrepareFunc
 
 if TYPE_CHECKING:
+    from .approval_required import ApprovalRequiredToolset
     from .filtered import FilteredToolset
     from .prefixed import PrefixedToolset
     from .prepared import PreparedToolset
@@ -174,3 +175,17 @@ class AbstractToolset(ABC, Generic[AgentDepsT]):
         from .renamed import RenamedToolset
 
         return RenamedToolset(self, name_map)
+
+    def approval_required(
+        self,
+        approval_required_func: Callable[[RunContext[AgentDepsT], ToolDefinition, dict[str, Any]], bool] = (
+            lambda ctx, tool_def, tool_args: True
+        ),
+    ) -> ApprovalRequiredToolset[AgentDepsT]:
+        """Returns a new toolset that requires (some) calls to tools it contains to be approved.
+
+        See [toolset docs](../toolsets.md#requiring-tool-approval) for more information.
+        """
+        from .approval_required import ApprovalRequiredToolset
+
+        return ApprovalRequiredToolset(self, approval_required_func)

@@ -45,11 +45,11 @@ from .messages import (
     UserPromptPart,
 )
 from .models import KnownModelName, Model
-from .output import DeferredToolCalls, OutputDataT, OutputSpec
+from .output import DeferredToolRequests, OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import AgentDepsT, ToolDefinition
 from .toolsets import AbstractToolset
-from .toolsets.deferred import DeferredToolset
+from .toolsets.external import ExternalToolset
 from .usage import RunUsage, UsageLimits
 
 try:
@@ -342,7 +342,7 @@ async def run_ag_ui(
 
         async with agent.iter(
             user_prompt=None,
-            output_type=[output_type or agent.output_type, DeferredToolCalls],
+            output_type=[output_type or agent.output_type, DeferredToolRequests],
             message_history=messages,
             model=model,
             deps=deps,
@@ -680,7 +680,7 @@ class _ToolCallNotFoundError(_RunError, ValueError):
         )
 
 
-class _AGUIFrontendToolset(DeferredToolset[AgentDepsT]):
+class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
     def __init__(self, tools: list[AGUITool]):
         super().__init__(
             [

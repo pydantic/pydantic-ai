@@ -453,13 +453,22 @@ def strip_markdown_fences(text: str) -> str:
     return text
 
 
+def _unwrap_annotated(tp: Any) -> Any:
+    origin = get_origin(tp)
+    while typing_objects.is_annotated(origin):
+        tp = tp.__origin__
+        origin = get_origin(tp)
+    return tp
+
+
 def get_union_args(tp: Any) -> tuple[Any, ...]:
     """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
+    tp = _unwrap_annotated(tp)
     origin = get_origin(tp)
     if is_union_origin(origin):
-        return get_args(tp)
+        return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
     else:
         return ()

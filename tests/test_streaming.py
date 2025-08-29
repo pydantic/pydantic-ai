@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.agent import AgentRun
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -34,13 +35,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, PromptedOutput, TextOutput
+from pydantic_ai.output import DeferredToolRequests, PromptedOutput, TextOutput
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition
 from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
-from .conftest import IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -1170,50 +1171,128 @@ def test_function_tool_event_tool_call_id_properties():
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
 
 
-async def test_deferred_tool():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+async def test_tool_raises_call_deferred():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
-    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='deferred')
-
-    @agent.tool_plain(prepare=prepare_tool)
+    @agent.tool_plain()
     def my_tool(x: int) -> int:
-        return x + 1  # pragma: no cover
+        raise CallDeferred
 
     async with agent.run_stream('Hello') as result:
         assert not result.is_complete
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
+        )
+        assert await result.get_output() == snapshot(
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            )
+        )
+        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+        assert responses == snapshot(
+            [
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                )
+            ]
+        )
+        assert await result.validate_response_output(responses[0]) == snapshot(
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+        )
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.is_complete
+
+
+async def test_tool_raises_approval_required():
+    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"x": 1}', tool_call_id='my_tool')}
+        else:
+            yield 'Done!'
+
+    agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x * 42
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.is_complete
+        messages = result.all_messages()
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolCalls(
-                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                tool_defs={
-                    'my_tool': ToolDefinition(
-                        name='my_tool',
-                        parameters_json_schema={
-                            'additionalProperties': False,
-                            'properties': {'x': {'type': 'integer'}},
-                            'required': ['x'],
-                            'type': 'object',
-                        },
-                        kind='deferred',
-                    )
-                },
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())],
             )
         )
         assert result.is_complete
 
+    async with agent.run_stream(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved(override_args={'x': 2})}),
+    ) as result:
+        assert not result.is_complete
+        output = await result.get_output()
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='my_tool')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=3),
+                    model_name='function::llm',
+                    timestamp=IsDatetime(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool',
+                            content=84,
+                            tool_call_id='my_tool',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Done!')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::llm',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+        assert output == snapshot('Done!')
+        assert result.is_complete
+
 
 async def test_deferred_tool_iter():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='deferred')
+        return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
     def my_tool(x: int) -> int:
         return x + 1  # pragma: no cover
 
-    outputs: list[str | DeferredToolCalls] = []
+    @agent.tool_plain(requires_approval=True)
+    def my_other_tool(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    outputs: list[str | DeferredToolRequests] = []
     events: list[Any] = []
 
     async with agent.iter('test') as run:
@@ -1231,20 +1310,9 @@ async def test_deferred_tool_iter():
 
     assert outputs == snapshot(
         [
-            DeferredToolCalls(
-                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                tool_defs={
-                    'my_tool': ToolDefinition(
-                        name='my_tool',
-                        parameters_json_schema={
-                            'additionalProperties': False,
-                            'properties': {'x': {'type': 'integer'}},
-                            'required': ['x'],
-                            'type': 'object',
-                        },
-                        kind='deferred',
-                    )
-                },
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
             )
         ]
     )
@@ -1255,8 +1323,61 @@ async def test_deferred_tool_iter():
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
         ]
+    )
+
+
+async def test_tool_raises_call_deferred_approval_required_iter():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred
+
+    @agent.tool_plain
+    def my_other_tool(x: int) -> int:
+        raise ApprovalRequired
+
+    events: list[Any] = []
+
+    async with agent.iter('test') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+            if agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
+        ]
+    )
+
+    assert run.result is not None
+    assert run.result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
+        )
     )
 
 

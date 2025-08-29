@@ -3,7 +3,8 @@ from __future__ import annotations as _annotations
 import dataclasses
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from typing import Any, Generic, Literal, overload
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
 from pydantic_graph import End, GraphRun, GraphRunContext
 
@@ -14,8 +15,10 @@ from . import (
     usage as _usage,
 )
 from .output import OutputDataT
-from .result import FinalResult
 from .tools import AgentDepsT
+
+if TYPE_CHECKING:
+    from .result import FinalResult
 
 
 @dataclasses.dataclass(repr=False)
@@ -346,3 +349,9 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    def timestamp(self) -> datetime:
+        """Return the timestamp of last response."""
+        model_response = self.all_messages()[-1]
+        assert isinstance(model_response, _messages.ModelResponse)
+        return model_response.timestamp
