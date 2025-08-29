@@ -31,13 +31,13 @@ A trace is generated for the agent run, and spans are emitted for each model req
 
 ## Using Logfire
 
-To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev). The Logfire Python SDK is included with pydantic-ai:
+To use Logfire, you'll need a Logfire [account](https://logfire.pydantic.dev). The Logfire Python SDK is included with `pydantic-ai`:
 
 ```bash
 pip/uv-add pydantic-ai
 ```
 
-Or if you're using the slim package, you can install it with the logfire optional group:
+Or if you're using the slim package, you can install it with the `logfire` optional group:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[logfire]"

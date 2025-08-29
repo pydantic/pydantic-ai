@@ -8,20 +8,14 @@ pip/uv-add pydantic-ai
 
 (Requires Python 3.10+)
 
-This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models
-included in Pydantic AI. If you want to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
+This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models included in Pydantic AI.
+If you want to install only those dependencies required to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
 
 ## Use with Pydantic Logfire
 
 Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
 
-Since Logfire is now included as a core dependency in `pydantic-ai`, you can start using it immediately:
-
-```bash
-pip/uv-add pydantic-ai
-```
-
-From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configure Logfire.
+Logfire comes included with `pydantic-ai` (but not the ["slim" version](#slim-install)), so you can typically start using it immediately by following the [Logfire setup docs](logfire.md#using-logfire).
 
 ## Running Examples
 
@@ -46,7 +40,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 
 `pydantic-ai-slim` has the following optional groups:
 
-* `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"} (included in main package)
+* `logfire` — installs [`logfire`](logfire.md) [PyPI ↗](https://pypi.org/project/logfire){:target="_blank"}
 * `evals` — installs [`pydantic-evals`](evals.md) [PyPI ↗](https://pypi.org/project/pydantic-evals){:target="_blank"}
 * `openai` — installs `openai` [PyPI ↗](https://pypi.org/project/openai){:target="_blank"}
 * `vertexai` — installs `google-auth` [PyPI ↗](https://pypi.org/project/google-auth){:target="_blank"} and `requests` [PyPI ↗](https://pypi.org/project/requests){:target="_blank"}
@@ -71,5 +65,3 @@ You can also install dependencies for multiple models and use cases, for example
 ```bash
 pip/uv-add "pydantic-ai-slim[openai,vertexai,logfire]"
 ```
-
-Note: If using the main `pydantic-ai` package, logfire is already included.
