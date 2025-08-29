@@ -11,7 +11,7 @@ from typing_extensions import TypeAliasType, TypeVar
 
 from . import _utils
 from .messages import ToolCallPart
-from .tools import RunContext, ToolDefinition
+from .tools import FunctionTextFormat, RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -112,6 +112,8 @@ class ToolOutput(Generic[OutputDataT]):
     """The maximum number of retries for the tool."""
     strict: bool | None
     """Whether to use strict mode for the tool."""
+    text_format: Literal['text'] | FunctionTextFormat | None = None
+    """Whether to invoke the function with free-form function calling for tool calls."""
 
     def __init__(
         self,
@@ -121,12 +123,14 @@ class ToolOutput(Generic[OutputDataT]):
         description: str | None = None,
         max_retries: int | None = None,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ):
         self.output = type_
         self.name = name
         self.description = description
         self.max_retries = max_retries
         self.strict = strict
+        self.text_format = text_format
 
 
 @dataclass(init=False)

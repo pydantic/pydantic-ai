@@ -28,7 +28,7 @@ from .output import (
     ToolOutput,
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
-from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
+from .tools import FunctionTextFormat, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 if TYPE_CHECKING:
@@ -591,6 +591,7 @@ class OutputObjectDefinition:
     name: str | None = None
     description: str | None = None
     strict: bool | None = None
+    text_format: Literal['text'] | FunctionTextFormat | None = None
 
 
 @dataclass(init=False)
@@ -621,6 +622,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
         name: str | None = None,
         description: str | None = None,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
     ):
         if inspect.isfunction(output) or inspect.ismethod(output):
             self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
@@ -663,6 +665,7 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             description=description,
             json_schema=json_schema,
             strict=strict,
+            text_format=text_format,
         )
 
     async def process(
@@ -920,11 +923,13 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             name = None
             description = None
             strict = None
+            text_format = None
             if isinstance(output, ToolOutput):
                 # do we need to error on conflicts here? (DavidM): If this is internal maybe doesn't matter, if public, use overloads
                 name = output.name
                 description = output.description
                 strict = output.strict
+                text_format = output.text_format
 
                 output = output.output
 
@@ -932,7 +937,9 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             if strict is None:
                 strict = default_strict
 
-            processor = ObjectOutputProcessor(output=output, description=description, strict=strict)
+            processor = ObjectOutputProcessor(
+                output=output, description=description, strict=strict, text_format=text_format
+            )
             object_def = processor.object_def
 
             if name is None:
@@ -957,6 +964,7 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
                 description=description,
                 parameters_json_schema=object_def.json_schema,
                 strict=object_def.strict,
+                text_format=object_def.text_format,
                 outer_typed_dict_key=processor.outer_typed_dict_key,
                 kind='output',
             )
