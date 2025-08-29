@@ -135,6 +135,7 @@ class FunctionModel(Model):
             assert isinstance(response_, ModelResponse), response_
             response = response_
         response.model_name = self._model_name
+        response.provider_name = self._system
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
             response.usage = _estimate_usage(chain(messages, [response]))
@@ -169,6 +170,7 @@ class FunctionModel(Model):
             model_request_parameters=model_request_parameters,
             _model_name=self._model_name,
             _iter=response_stream,
+            _provider_name=self._system,
         )
 
     @property
@@ -261,6 +263,7 @@ class FunctionStreamedResponse(StreamedResponse):
     _model_name: str
     _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _provider_name: str
 
     def __post_init__(self):
         self._usage += _estimate_usage([])
@@ -305,9 +308,9 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
-    def provider_name(self) -> None:
+    def provider_name(self) -> str:
         """Get the provider name."""
-        return None
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

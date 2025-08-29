@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass, fields
+from decimal import Decimal
 
 from typing_extensions import deprecated, overload
 
@@ -19,6 +20,7 @@ class UsageBase:
 
     cache_write_tokens: int = 0
     """Number of tokens written to the cache."""
+
     cache_read_tokens: int = 0
     """Number of tokens read from the cache."""
 
@@ -27,8 +29,10 @@ class UsageBase:
 
     input_audio_tokens: int = 0
     """Number of audio input tokens."""
+
     cache_audio_read_tokens: int = 0
     """Number of audio tokens read from the cache."""
+
     output_audio_tokens: int = 0
     """Number of audio output tokens."""
 
@@ -122,16 +126,21 @@ class RunUsage(UsageBase):
 
     cache_write_tokens: int = 0
     """Total number of tokens written to the cache."""
+
     cache_read_tokens: int = 0
     """Total number of tokens read from the cache."""
 
     input_audio_tokens: int = 0
     """Total number of audio input tokens."""
+
     cache_audio_read_tokens: int = 0
     """Total number of audio tokens read from the cache."""
 
     output_tokens: int = 0
     """Total number of text output/completion tokens."""
+
+    cost: Decimal = Decimal('0.0')
+    """Total cost of the run."""
 
     details: dict[str, int] = dataclasses.field(default_factory=dict)
     """Any extra details returned by the model."""
@@ -169,6 +178,9 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
     slf.input_audio_tokens += incr_usage.input_audio_tokens
     slf.cache_audio_read_tokens += incr_usage.cache_audio_read_tokens
     slf.output_tokens += incr_usage.output_tokens
+
+    if isinstance(slf, RunUsage) and isinstance(incr_usage, RunUsage):
+        slf.cost += incr_usage.cost
 
     for key, value in incr_usage.details.items():
         slf.details[key] = slf.details.get(key, 0) + value
