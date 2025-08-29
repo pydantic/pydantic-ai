@@ -2,10 +2,10 @@
 # pyright: reportUnnecessaryTypeIgnoreComment=false
 
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Callable, TypeAlias, Union
+from typing import Any, TypeAlias
 
 from typing_extensions import assert_type
 
@@ -84,7 +84,7 @@ def ok_tool_plain(x: str) -> dict[str, str]:
 
 
 @typed_agent.tool_plain
-async def ok_json_list(x: str) -> list[Union[str, int]]:
+async def ok_json_list(x: str) -> list[str | int]:
     return [x, 1]
 
 
@@ -157,14 +157,14 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[call-overload]
-assert_type(union_agent, Agent[None, Union[Foo, Bar]])
+union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[call-overload]
+assert_type(union_agent, Agent[None, Foo | Bar])
 
 
 def run_sync3() -> None:
     result = union_agent.run_sync('testing')
-    assert_type(result, AgentRunResult[Union[Foo, Bar]])
-    assert_type(result.output, Union[Foo, Bar])
+    assert_type(result, AgentRunResult[Foo | Bar])
+    assert_type(result.output, Foo | Bar)
 
 
 MyUnion: TypeAlias = 'Foo | Bar'

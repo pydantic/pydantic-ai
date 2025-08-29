@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol, Union, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import uuid4
 
 import httpx
@@ -51,7 +51,7 @@ LatestGeminiModelNames = Literal[
 ]
 """Latest Gemini models."""
 
-GeminiModelName = Union[str, LatestGeminiModelNames]
+GeminiModelName = str | LatestGeminiModelNames
 """Possible Gemini model names.
 
 Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
@@ -615,7 +615,7 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
-        elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+        elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
             # This is currently never returned from gemini
             pass
         else:
@@ -737,14 +737,12 @@ def _part_discriminator(v: Any) -> str:
 # we don't currently support other part types
 # TODO discriminator
 _GeminiPartUnion = Annotated[
-    Union[
-        Annotated[_GeminiTextPart, pydantic.Tag('text')],
-        Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')],
-        Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')],
-        Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')],
-        Annotated[_GeminiFileDataPart, pydantic.Tag('file_data')],
-        Annotated[_GeminiThoughtPart, pydantic.Tag('thought')],
-    ],
+    Annotated[_GeminiTextPart, pydantic.Tag('text')]
+    | Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')]
+    | Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')]
+    | Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')]
+    | Annotated[_GeminiFileDataPart, pydantic.Tag('file_data')]
+    | Annotated[_GeminiThoughtPart, pydantic.Tag('thought')],
     pydantic.Discriminator(_part_discriminator),
 ]
 

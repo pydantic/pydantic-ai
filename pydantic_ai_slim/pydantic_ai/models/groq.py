@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
@@ -88,7 +88,7 @@ PreviewGroqModelNames = Literal[
 ]
 """Preview Groq models from <https://console.groq.com/docs/models#preview-models>."""
 
-GroqModelName = Union[str, ProductionGroqModelNames, PreviewGroqModelNames]
+GroqModelName = str | ProductionGroqModelNames | PreviewGroqModelNames
 """Possible Groq model names.
 
 Since Groq supports a variety of models and the list changes frequencly, we explicitly list the named models as of 2025-03-31
@@ -347,7 +347,7 @@ class GroqModel(Model):
                     elif isinstance(item, ThinkingPart):
                         # Skip thinking parts when mapping to Groq messages
                         continue
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from groq
                         pass
                     else:

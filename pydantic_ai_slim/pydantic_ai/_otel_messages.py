@@ -5,10 +5,10 @@ Based on https://github.com/lmolkova/semantic-conventions/blob/eccd1f806e426a32c
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import JsonValue
-from typing_extensions import NotRequired, TypeAlias, TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 
 class TextPart(TypedDict):

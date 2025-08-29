@@ -1,11 +1,11 @@
 import os
 from collections.abc import Iterator
 from functools import partial
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import httpx
 import pytest
-from typing_extensions import TypedDict, get_args
+from typing_extensions import TypedDict
 
 from pydantic_ai.models import KnownModelName
 

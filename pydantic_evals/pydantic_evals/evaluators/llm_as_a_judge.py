@@ -238,7 +238,7 @@ def _build_prompt(
             sections.append('<Input>\n')
             if isinstance(inputs, Sequence):
                 for item in inputs:  # type: ignore
-                    if isinstance(item, (str, MultiModalContentTypes)):
+                    if isinstance(item, str | MultiModalContentTypes):
                         sections.append(item)
                     else:
                         sections.append(_stringify(item))

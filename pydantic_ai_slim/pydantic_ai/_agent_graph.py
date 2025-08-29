@@ -4,14 +4,14 @@ import asyncio
 import dataclasses
 import hashlib
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, Union, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, Union, cast
 
 from opentelemetry.trace import Tracer
-from typing_extensions import TypeGuard, TypeVar, assert_never
+from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._tool_manager import ToolManager
@@ -59,12 +59,12 @@ _HistoryProcessorSyncWithCtx = Callable[[RunContext[DepsT], list[_messages.Model
 _HistoryProcessorAsyncWithCtx = Callable[
     [RunContext[DepsT], list[_messages.ModelMessage]], Awaitable[list[_messages.ModelMessage]]
 ]
-HistoryProcessor = Union[
-    _HistoryProcessorSync,
-    _HistoryProcessorAsync,
-    _HistoryProcessorSyncWithCtx[DepsT],
-    _HistoryProcessorAsyncWithCtx[DepsT],
-]
+HistoryProcessor = (
+    _HistoryProcessorSync
+    | _HistoryProcessorAsync
+    | _HistoryProcessorSyncWithCtx[DepsT]
+    | _HistoryProcessorAsyncWithCtx[DepsT]
+)
 """A function that processes a list of model messages and returns a list of model messages.
 
 Can optionally accept a `RunContext` as a parameter.

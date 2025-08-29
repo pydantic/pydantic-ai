@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from io import StringIO
-from typing import Any, Callable, Generic, Literal, Protocol, cast
+from typing import Any, Generic, Literal, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console

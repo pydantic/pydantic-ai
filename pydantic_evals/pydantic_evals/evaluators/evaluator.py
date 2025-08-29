@@ -4,7 +4,7 @@ import inspect
 from abc import ABCMeta, abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import MISSING, dataclass, fields
-from typing import Any, Generic, Union, cast
+from typing import Any, Generic, cast
 
 from pydantic import (
     ConfigDict,
@@ -29,7 +29,7 @@ __all__ = (
     'EvaluatorSpec',
 )
 
-EvaluationScalar = Union[bool, int, float, str]
+EvaluationScalar = bool | int | float | str
 """The most primitive output allowed as an output from an Evaluator.
 
 `int` and `float` are treated as scores, `str` as labels, and `bool` as assertions.
@@ -51,7 +51,7 @@ class EvaluationReason:
     reason: str | None = None
 
 
-EvaluatorOutput = Union[EvaluationScalar, EvaluationReason, Mapping[str, Union[EvaluationScalar, EvaluationReason]]]
+EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationScalar | EvaluationReason]
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 

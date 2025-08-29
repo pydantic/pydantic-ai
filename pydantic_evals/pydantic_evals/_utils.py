@@ -2,9 +2,9 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 import anyio
 from typing_extensions import ParamSpec, TypeIs

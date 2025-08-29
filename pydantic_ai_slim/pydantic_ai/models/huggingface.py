@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
@@ -88,7 +88,7 @@ LatestHuggingFaceModelNames = Literal[
 """Latest Hugging Face models."""
 
 
-HuggingFaceModelName = Union[str, LatestHuggingFaceModelNames]
+HuggingFaceModelName = str | LatestHuggingFaceModelNames
 """Possible Hugging Face model names.
 
 You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
@@ -320,7 +320,7 @@ class HuggingFaceModel(Model):
                         # please open an issue. The below code is the code to send thinking to the provider.
                         # texts.append(f'<think>\n{item.content}\n</think>')
                         pass
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from huggingface
                         pass
                     else:

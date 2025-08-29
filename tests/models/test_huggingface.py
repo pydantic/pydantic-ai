@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 from unittest.mock import Mock
 
 import pytest
@@ -67,8 +67,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
-    MockChatCompletion = Union[ChatCompletionOutput, Exception]
-    MockStreamEvent = Union[ChatCompletionStreamOutput, Exception]
+    MockChatCompletion = ChatCompletionOutput | Exception
+    MockStreamEvent = ChatCompletionStreamOutput | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),
