@@ -690,7 +690,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, provider_request_id=vendor_id, provider_details=vendor_details
+        parts=items, usage=usage, model_name=model_name, provider_response_id=vendor_id, provider_details=vendor_details
     )
 
 

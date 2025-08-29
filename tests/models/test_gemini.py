@@ -1491,7 +1491,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
         ]
     )
@@ -1518,7 +1518,7 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
             ),
             ModelRequest(
                 parts=[
@@ -1688,7 +1688,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1714,7 +1714,7 @@ async def test_gemini_tool_config_any_with_tool_without_args(allow_model_request
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1765,7 +1765,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1791,7 +1791,7 @@ async def test_gemini_tool_output(allow_model_requests: None, gemini_api_key: st
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1849,7 +1849,7 @@ It's the capital of Mexico and one of the largest metropolitan areas in the worl
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id='TT9IaNfGN_DmqtsPzKnE4AE',
+                provider_response_id='TT9IaNfGN_DmqtsPzKnE4AE',
             ),
         ]
     )
@@ -1915,7 +1915,7 @@ async def test_gemini_native_output(allow_model_requests: None, gemini_api_key: 
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1970,7 +1970,7 @@ async def test_gemini_native_output_multiple(allow_model_requests: None, gemini_
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2018,7 +2018,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2068,7 +2068,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -2095,7 +2095,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='models/gemini-2.5-pro-preview-05-06',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -2149,7 +2149,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )

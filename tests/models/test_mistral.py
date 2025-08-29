@@ -221,7 +221,7 @@ async def test_multiple_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -230,7 +230,7 @@ async def test_multiple_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -273,7 +273,7 @@ async def test_three_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -282,7 +282,7 @@ async def test_three_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -291,7 +291,7 @@ async def test_three_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -408,7 +408,7 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -469,7 +469,7 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -529,7 +529,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1092,7 +1092,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1116,7 +1116,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1134,7 +1134,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -1237,7 +1237,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1261,7 +1261,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1285,7 +1285,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -1809,7 +1809,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='fce6d16a4e5940edb24ae16dd0369947',
+                provider_response_id='fce6d16a4e5940edb24ae16dd0369947',
             ),
             ModelRequest(
                 parts=[
@@ -1838,7 +1838,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='26e7de193646460e8904f8e604a60dc1',
+                provider_response_id='26e7de193646460e8904f8e604a60dc1',
             ),
         ]
     )
@@ -1877,7 +1877,7 @@ async def test_image_url_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -1911,7 +1911,7 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -1948,7 +1948,7 @@ async def test_pdf_url_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -1979,7 +1979,7 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -2056,7 +2056,7 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -2084,7 +2084,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+                provider_response_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
             ),
         ]
     )
@@ -2143,7 +2143,7 @@ These suggestions are meant to help you think through pedestrian safety. Differe
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+                provider_response_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
             ),
             ModelRequest(
                 parts=[
@@ -2159,7 +2159,7 @@ These suggestions are meant to help you think through pedestrian safety. Differe
                 model_name='mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_request_id='a088e80a476e44edaaa959a1ff08f358',
+                provider_response_id='a088e80a476e44edaaa959a1ff08f358',
             ),
         ]
     )
