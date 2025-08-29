@@ -99,7 +99,7 @@ class InstrumentationSettings:
         event_logger_provider: EventLoggerProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2] = 1,
+        version: Literal[1, 2] = 2,
     ):
         """Create instrumentation options.
 
