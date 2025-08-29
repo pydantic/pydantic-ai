@@ -1547,10 +1547,11 @@ def test_tool_definition_non_string_argument():
 
 
 def test_tool_definition_no_required_fields():
+    required: list[str] = []
     schema = {
         'type': 'object',
         'properties': {'text': {'type': 'string'}},
-        'required': [],
+        'required': required,
         'additionalProperties': False,
     }
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
@@ -1559,7 +1560,9 @@ def test_tool_definition_no_required_fields():
 
 
 def test_tool_definition_no_properties():
-    schema = {'type': 'object', 'properties': {}, 'required': [], 'additionalProperties': False}
+    required: list[str] = []
+    properties: dict[str, dict[str, str]] = {}
+    schema = {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
     assert tool_def.single_string_argument_name is None
     assert tool_def.only_takes_string_argument is False
@@ -1602,8 +1605,6 @@ def test_agent_tool_with_cfg_format():
 
     tool_def = agent._function_toolset.tools['parse_numbers'].tool_def
     assert tool_def.text_format == cfg
-    assert tool_def.text_format.syntax == 'regex'
-    assert tool_def.text_format.grammar == r'\d+'
 
 
 def test_agent_tool_plain_with_text_format():
