@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Union
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal
 
 import pydantic
 from typing_extensions import TypeVar
@@ -95,7 +95,7 @@ class EndSnapshot(Generic[StateT, RunEndT]):
         return self.result
 
 
-Snapshot = Union[NodeSnapshot[StateT, RunEndT], EndSnapshot[StateT, RunEndT]]
+Snapshot = NodeSnapshot[StateT, RunEndT] | EndSnapshot[StateT, RunEndT]
 """A step in the history of a graph run.
 
 [`Graph.run`][pydantic_graph.graph.Graph.run] returns a list of these steps describing the execution of the graph,

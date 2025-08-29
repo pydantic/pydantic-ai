@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from dataclasses import Field, dataclass, replace
 from http import HTTPStatus
 from typing import (
     Any,
-    Callable,
     ClassVar,
     Final,
     Generic,
@@ -515,7 +514,7 @@ async def _handle_tool_result_event(
     content = result.content
     if isinstance(content, BaseEvent):
         yield content
-    elif isinstance(content, (str, bytes)):  # pragma: no branch
+    elif isinstance(content, str | bytes):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(content, Iterable):  # pragma: no branch

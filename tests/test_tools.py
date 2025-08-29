@@ -1,7 +1,8 @@
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Annotated, Any, Callable, Literal, Union
+from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
@@ -569,7 +570,7 @@ def test_repeat_tool_by_rename():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -593,7 +594,7 @@ def test_repeat_tool():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -667,7 +668,7 @@ def test_init_plain_tool_invalid():
         ('{"a": 1, "b": "c"}', {'a': 1, 'b': 'c'}),
     ],
 )
-def test_tool_call_part_args_as_dict(args: Union[str, dict[str, Any]], expected: dict[str, Any]):
+def test_tool_call_part_args_as_dict(args: str | dict[str, Any], expected: dict[str, Any]):
     part = ToolCallPart(tool_name='foo', args=args)
     result = part.args_as_dict()
     assert result == expected
@@ -733,7 +734,7 @@ def test_dynamic_cls_tool():
         def tool_function(self, x: int, y: str) -> str:
             return f'{self.spam} {x} {y}'
 
-        async def prepare_tool_def(self, ctx: RunContext[int]) -> Union[ToolDefinition, None]:
+        async def prepare_tool_def(self, ctx: RunContext[int]) -> ToolDefinition | None:
             if ctx.deps != 42:
                 return await super().prepare_tool_def(ctx)
 
@@ -748,7 +749,7 @@ def test_dynamic_cls_tool():
 def test_dynamic_plain_tool_decorator():
     agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps != 42:
             return tool_def
 
@@ -766,7 +767,7 @@ def test_dynamic_plain_tool_decorator():
 def test_dynamic_tool_decorator():
     agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps != 42:
             return tool_def
 
@@ -813,7 +814,7 @@ def test_dynamic_tool_use_messages():
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if len(ctx.messages) < 5:
             return tool_def
 
@@ -1021,7 +1022,7 @@ def test_schema_generator():
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: Annotated[Union[str, None], WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
+    def my_tool(x: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
         return x  # pragma: no cover
 
     agent.tool_plain(name='my_tool_1')(my_tool)
@@ -1093,9 +1094,7 @@ def test_tool_parameters_with_attribute_docstrings():
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tool_defs(
-        ctx: RunContext[int], tool_defs: list[ToolDefinition]
-    ) -> Union[list[ToolDefinition], None]:
+    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
@@ -1231,9 +1230,7 @@ def test_tool_retries():
     prepare_retries: list[int] = []
     call_retries: list[int] = []
 
-    async def prepare_tool_defs(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
-    ) -> Union[list[ToolDefinition], None]:
+    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         nonlocal prepare_tools_retries
         retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
@@ -1241,7 +1238,7 @@ def test_tool_retries():
 
     agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
 
-    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         return tool_def

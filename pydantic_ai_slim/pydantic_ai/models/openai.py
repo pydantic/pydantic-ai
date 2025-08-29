@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
@@ -90,7 +90,7 @@ __all__ = (
     'OpenAIModelName',
 )
 
-OpenAIModelName = Union[str, AllModels]
+OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
 
@@ -409,13 +409,6 @@ class OpenAIChatModel(Model):
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
 
-        # TODO(Marcelo): Deprecate this in favor of `openai_unsupported_model_settings`.
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIChatModelSettings()
-        )
-
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -437,13 +430,13 @@ class OpenAIChatModel(Model):
                 web_search_options=web_search_options or NOT_GIVEN,
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
                 prediction=model_settings.get('openai_prediction', NOT_GIVEN),
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
-                presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=sampling_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=sampling_settings.get('logit_bias', NOT_GIVEN),
-                logprobs=sampling_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=sampling_settings.get('openai_top_logprobs', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -512,12 +505,12 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
             provider_details=vendor_details,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             provider_name=self._provider.name,
         )
 
@@ -582,7 +575,7 @@ class OpenAIChatModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         pass
                     else:
                         assert_never(item)
@@ -828,10 +821,10 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
         )
@@ -918,11 +911,9 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIResponsesModelSettings()
-        )
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -936,8 +927,8 @@ class OpenAIResponsesModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 stream=stream,
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
@@ -1049,7 +1040,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,

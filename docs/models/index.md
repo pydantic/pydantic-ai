@@ -118,7 +118,7 @@ print(response.all_messages())
         model_name='claude-3-5-sonnet-latest',
         timestamp=datetime.datetime(...),
         kind='response',
-        provider_request_id=None,
+        provider_response_id=None,
     ),
 ]
 """

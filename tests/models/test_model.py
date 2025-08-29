@@ -1,3 +1,4 @@
+import warnings
 from importlib import import_module
 
 import pytest
@@ -124,7 +125,9 @@ def test_infer_model(
     try:
         model_module = import_module(f'pydantic_ai.models.{module_name}')
         expected_model = getattr(model_module, model_class_name)
-        m = infer_model(model_name)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            m = infer_model(model_name)
     except ImportError:
         pytest.skip(f'{model_name} dependencies not installed')
 

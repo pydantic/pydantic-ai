@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from io import StringIO
-from typing import Any, Callable, Generic, Literal, Protocol, cast
+from typing import Any, Generic, Literal, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console
@@ -863,7 +863,7 @@ class ReportCaseRenderer:
         return rendered_new if rendered_baseline == rendered_new else f'{rendered_baseline} → {rendered_new}'
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EvaluationRenderer:
     """A class for rendering an EvalReport or the diff between two EvalReports."""
 
@@ -887,7 +887,6 @@ class EvaluationRenderer:
     metric_configs: dict[str, RenderNumberConfig]
     duration_config: RenderNumberConfig
 
-    # TODO: Make this class kw-only so we can reorder the kwargs
     # Data to include
     include_reasons: bool  # only applies to reports, not to diffs
 

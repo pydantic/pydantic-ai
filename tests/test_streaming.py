@@ -7,7 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
-from typing import Any, Union
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -935,7 +935,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, Union[OutputType, NotOutputType]]('test', output_type=Union[OutputType, NotOutputType])
+    agent = Agent[None, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
