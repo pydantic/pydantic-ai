@@ -389,8 +389,8 @@ class ModelRequestParameters:
 class Model(ABC):
     """Abstract class for a model."""
 
-    _profile: ModelProfileSpec | None
-    _settings: ModelSettings | None
+    _profile: ModelProfileSpec | None = None
+    _settings: ModelSettings | None = None
 
     def __init__(
         self,
