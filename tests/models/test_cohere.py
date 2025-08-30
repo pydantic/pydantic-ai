@@ -330,6 +330,7 @@ async def test_request_tool_call(allow_model_requests: None):
             input_tokens=5,
             output_tokens=3,
             details={'input_tokens': 4, 'output_tokens': 2},
+            tool_calls=1,
         )
     )
 

@@ -112,7 +112,7 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
 
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1236, output_tokens=298))
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=1236, output_tokens=298, tool_calls=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(

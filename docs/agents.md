@@ -539,7 +539,7 @@ _(This example is complete, it can be run "as is")_
 #### Usage Limits
 
 Pydantic AI offers a [`UsageLimits`][pydantic_ai.usage.UsageLimits] structure to help you limit your
-usage (tokens and/or requests) on model runs.
+usage (tokens, requests, and tool calls) on model runs.
 
 You can apply these settings by passing the `usage_limits` argument to the `run{_sync,_stream}` functions.
 
@@ -610,8 +610,31 @@ except UsageLimitExceeded as e:
 1. This tool has the ability to retry 5 times before erroring, simulating a tool that might get stuck in a loop.
 2. This run will error after 3 requests, preventing the infinite tool calling.
 
+##### Capping tool calls
+
+If you need a limit on the number of successful tool invocations within a single run, use `tool_calls_limit`:
+
+```py
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.usage import UsageLimits
+
+agent = Agent('anthropic:claude-3-5-sonnet-latest')
+
+@agent.tool_plain
+def do_work() -> str:
+    return 'ok'
+
+try:
+    # Allow at most one executed tool call in this run
+    agent.run_sync('Please call the tool twice', usage_limits=UsageLimits(tool_calls_limit=1))
+except UsageLimitExceeded as e:
+    print(e)
+    #> The next tool call would exceed the tool_calls_limit of 1 (tool_calls=1)
+```
+
 !!! note
-    - Usage limits are especially relevant if you've registered many tools. The `request_limit` can be used to prevent the model from calling them in a loop too many times.
+    - Usage limits are especially relevant if you've registered many tools. Use `request_limit` to bound the number of model turns, and `tool_calls_limit` to cap the number of successful tool executions within a run.
     - These limits are enforced at the final stage before the LLM is called. If your limits are stricter than your retry settings, the usage limit will be reached before all retries are attempted.
 
 #### Model (Run) Settings
