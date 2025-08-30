@@ -137,10 +137,13 @@ print('python code here')
     return {}
   })
 
-  server.tool(
+  server.registerTool(
     'run_python_code',
-    toolDescription,
-    { python_code: z.string().describe('Python code to run') },
+    {
+      title: 'Run Python Code',
+      description: toolDescription,
+      inputSchema: { python_code: z.string().describe('Python code to run') },
+    },
     async ({ python_code }: { python_code: string }) => {
       const logPromises: Promise<void>[] = []
       const result = await runCode(
