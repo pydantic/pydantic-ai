@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import json
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
@@ -10,12 +11,13 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from pydantic import BaseModel, HttpUrl
 from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -835,3 +837,83 @@ It accepts a run context, the original tool call function, a tool name, and argu
 Allows wrapping an MCP server tool call to customize it, including adding extra request
 metadata.
 """
+
+
+class StdioOptions(BaseModel):
+    command: str
+    args: Sequence[str] = ()
+    env: dict[str, Any] | None = None
+
+
+class ServerOptions(BaseModel):
+    type: Literal['sse', 'http', 'streamable-http', 'streamable_http']
+    url: HttpUrl
+    headers: dict[str, Any] | None = None
+
+
+def load_mcp_servers(
+    config_path: str | None = None,
+    /,
+    *,
+    mcp_config: dict[str, Any] = {},
+    timeout: float = 5,
+    read_timeout: float = 5 * 60,
+    max_retries: int = 1,
+) -> list[MCPServer]:
+    """Load MCP servers from configuration file.
+
+    Args:
+        config_path (str): The path to the MCP configuration file.
+        mcp_config (dict): A dictionary containing the MCP server configuration. If provided, `config_path` is ignored.
+        timeout (float): The timeout in seconds to wait for the client to initialize.
+        read_timeout (float): Maximum time in seconds to wait for new messages before timing out.
+        max_retries (int): The maximum number of times to retry a tool call.
+
+    Returns:
+        list[MCPServer]: A list of MCP servers.
+    """
+    mcp_servers: list[MCPServer] = []
+    if not mcp_config:
+        path = Path(config_path)  # pragma: no cover
+        config = json.loads(path.read_text(encoding='utf-8'))  # pragma: no cover
+    else:
+        config = mcp_config
+
+    for name, server in config.get('mcpServers', {}).items():
+        if 'command' in server:
+            options = StdioOptions(**server)
+            mcp_server = MCPServerStdio(
+                command=options.command,
+                args=options.args,
+                env=options.env,
+                id=name,
+                timeout=timeout,
+                read_timeout=read_timeout,
+                max_retries=max_retries,
+            )
+        else:
+            options = ServerOptions(**server)
+            if options.type == 'sse':
+                mcp_server = MCPServerSSE(
+                    url=options.url,
+                    headers=options.headers,
+                    id=name,
+                    timeout=timeout,
+                    read_timeout=read_timeout,
+                    max_retries=max_retries,
+                )
+            elif options.type in ('http', 'streamable-http', 'streamable_http'):
+                mcp_server = MCPServerStreamableHTTP(
+                    url=options.url,
+                    headers=options.headers,
+                    id=name,
+                    timeout=timeout,
+                    read_timeout=read_timeout,
+                    max_retries=max_retries,
+                )
+            else:
+                raise ValueError(f'Invalid MCP server type for {name!r}')
+
+        mcp_servers.append(mcp_server)
+
+    return mcp_servers
