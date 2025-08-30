@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -18,18 +18,18 @@ class SimulatedLangChainTool:
 
     def run(
         self,
-        tool_input: Union[str, dict[str, Any]],
-        verbose: Union[bool, None] = None,
-        start_color: Union[str, None] = 'green',
-        color: Union[str, None] = 'green',
+        tool_input: str | dict[str, Any],
+        verbose: bool | None = None,
+        start_color: str | None = 'green',
+        color: str | None = 'green',
         callbacks: Any = None,
         *,
-        tags: Union[list[str], None] = None,
-        metadata: Union[dict[str, Any], None] = None,
-        run_name: Union[str, None] = None,
-        run_id: Union[Any, None] = None,
-        config: Union[Any, None] = None,
-        tool_call_id: Union[str, None] = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        run_name: str | None = None,
+        run_id: Any | None = None,
+        config: Any | None = None,
+        tool_call_id: str | None = None,
         **kwargs: Any,
     ) -> Any:
         if isinstance(tool_input, dict):

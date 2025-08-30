@@ -1,8 +1,5 @@
 # Durable Execution with Temporal
 
-!!! note
-    Durable execution support is in beta and the public interface is subject to change based on user feedback. We expect it to be stable by the release of Pydantic AI v1 at the end of August. Questions and feedback are welcome in [GitHub issues](https://github.com/pydantic/pydantic-ai/issues) and the [`#pydantic-ai` Slack channel](https://logfire.pydantic.dev/docs/join-slack/).
-
 Pydantic AI allows you to build durable agents that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. Durable agents have full support for [streaming](agents.md#streaming-all-events) and [MCP](mcp/client.md), with the added benefit of fault tolerance.
 
 [Temporal](https://temporal.io) is a popular [durable execution](https://docs.temporal.io/evaluate/understanding-temporal#durable-execution) platform that's natively supported by Pydantic AI.
@@ -91,7 +88,11 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalAgent
+from pydantic_ai.durable_exec.temporal import (
+    AgentPlugin,
+    PydanticAIPlugin,
+    TemporalAgent,
+)
 
 agent = Agent(
     'gpt-5',
@@ -168,7 +169,7 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
 
-Specifically, only the `deps`, `retries`, `tool_call_id`, `tool_name`, `retry`, and `run_step` fields are available by default, and trying to access `model`, `usage`, `prompt`, `messages`, or `tracer` will raise an error.
+Specifically, only the `deps`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, and `run_step` fields are available by default, and trying to access `model`, `usage`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
 
 ### Streaming
@@ -210,9 +211,10 @@ Temporal generates telemetry events and metrics for each workflow and activity e
 To use Logfire with Temporal, you need to pass a [`LogfirePlugin`][pydantic_ai.durable_exec.temporal.LogfirePlugin] object to Temporal's `Client.connect()`:
 
 ```py {title="logfire_plugin.py" test="skip" noqa="F841"}
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, LogfirePlugin
-
 from temporalio.client import Client
+
+from pydantic_ai.durable_exec.temporal import LogfirePlugin, PydanticAIPlugin
+
 
 async def main():
     client = await Client.connect(

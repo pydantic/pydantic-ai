@@ -115,22 +115,19 @@ The example below shows how to stream events and text output. You can also [stre
 import asyncio
 from collections.abc import AsyncIterable
 from datetime import date
-from typing import Union
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     PartDeltaEvent,
     PartStartEvent,
     TextPartDelta,
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 weather_agent = Agent(
     'openai:gpt-4o',
@@ -152,7 +149,7 @@ output_messages: list[str] = []
 
 async def event_stream_handler(
     ctx: RunContext,
-    event_stream: AsyncIterable[Union[AgentStreamEvent, HandleResponseEvent]],
+    event_stream: AsyncIterable[AgentStreamEvent],
 ):
     async for event in event_stream:
         if isinstance(event, PartStartEvent):
@@ -217,9 +214,9 @@ Unlike `run_stream()`, it always runs the agent graph to completion even if text
     To get the best of both worlds, at the expense of some additional complexity, you can use [`agent.iter()`][pydantic_ai.agent.AbstractAgent.iter] as described in the next section, which lets you [iterate over the agent graph](#iterating-over-an-agents-graph) and [stream both events and output](#streaming-all-events-and-output) at every step.
 
 ```python {title="run_events.py" requires="run_stream_events.py"}
-from run_stream_events import weather_agent, event_stream_handler, output_messages
-
 import asyncio
+
+from run_stream_events import event_stream_handler, output_messages, weather_agent
 
 
 async def main():
@@ -397,7 +394,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -408,7 +405,6 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPartDelta,
 )
-from pydantic_ai.tools import RunContext
 
 
 @dataclass
@@ -550,9 +546,7 @@ You can apply these settings by passing the `usage_limits` argument to the `run{
 Consider the following example, where we limit the number of response tokens:
 
 ```py
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, UsageLimitExceeded, UsageLimits
 
 agent = Agent('anthropic:claude-3-5-sonnet-latest')
 
@@ -580,9 +574,7 @@ Restricting the number of requests can be useful in preventing infinite loops or
 ```py
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry
-from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai import Agent, ModelRetry, UsageLimitExceeded, UsageLimits
 
 
 class NeverOutputType(TypedDict):
@@ -638,12 +630,11 @@ For example, if you'd like to set the `temperature` setting to `0.0` to ensure l
 you can do the following:
 
 ```py
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai import Agent, ModelSettings
+from pydantic_ai.models.openai import OpenAIChatModel
 
 # 1. Model-level defaults
-model = OpenAIModel(
+model = OpenAIChatModel(
     'gpt-4o',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )

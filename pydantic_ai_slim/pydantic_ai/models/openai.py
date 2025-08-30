@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
@@ -82,13 +82,15 @@ except ImportError as _import_error:
 
 __all__ = (
     'OpenAIModel',
+    'OpenAIChatModel',
     'OpenAIResponsesModel',
     'OpenAIModelSettings',
+    'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
 
-OpenAIModelName = Union[str, AllModels]
+OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
 
@@ -101,7 +103,7 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 """
 
 
-class OpenAIModelSettings(ModelSettings, total=False):
+class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
     # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -139,7 +141,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """
 
 
-class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
+@deprecated('Use `OpenAIChatModelSettings` instead.')
+class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
+    """Deprecated alias for `OpenAIChatModelSettings`."""
+
+
+class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -185,7 +192,7 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
 
 
 @dataclass(init=False)
-class OpenAIModel(Model):
+class OpenAIChatModel(Model):
     """A model that uses the OpenAI API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
@@ -204,18 +211,20 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -229,18 +238,20 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -253,18 +264,20 @@ class OpenAIModel(Model):
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -322,7 +335,7 @@ class OpenAIModel(Model):
     ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
         return model_response
@@ -337,7 +350,7 @@ class OpenAIModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, True, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
@@ -347,7 +360,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: Literal[True],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[ChatCompletionChunk]: ...
 
@@ -356,7 +369,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: Literal[False],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion: ...
 
@@ -364,7 +377,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: bool,
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
@@ -392,11 +405,9 @@ class OpenAIModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIModelSettings()
-        )
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -419,13 +430,13 @@ class OpenAIModel(Model):
                 web_search_options=web_search_options or NOT_GIVEN,
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
                 prediction=model_settings.get('openai_prediction', NOT_GIVEN),
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
-                presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=sampling_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=sampling_settings.get('logit_bias', NOT_GIVEN),
-                logprobs=sampling_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=sampling_settings.get('openai_top_logprobs', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -494,12 +505,12 @@ class OpenAIModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
             provider_details=vendor_details,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             provider_name=self._provider.name,
         )
 
@@ -564,7 +575,7 @@ class OpenAIModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         pass
                     else:
                         assert_never(item)
@@ -636,9 +647,7 @@ class OpenAIModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -704,6 +713,16 @@ class OpenAIModel(Model):
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
+
+
+@deprecated(
+    '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
+    "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
+    "require a feature that the Responses API doesn't support yet like audio."
+)
+@dataclass(init=False)
+class OpenAIModel(OpenAIChatModel):
+    """Deprecated alias for `OpenAIChatModel`."""
 
 
 @dataclass(init=False)
@@ -802,10 +821,10 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
         )
@@ -892,11 +911,9 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIResponsesModelSettings()
-        )
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -910,8 +927,8 @@ class OpenAIResponsesModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 stream=stream,
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
@@ -1023,7 +1040,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
@@ -1349,11 +1366,21 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             ).items()
             if isinstance(value, int)
         }
-        details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+        # Handle vLLM compatibility - some providers don't include token details
+        if getattr(response_usage, 'input_tokens_details', None) is not None:
+            cache_read_tokens = response_usage.input_tokens_details.cached_tokens
+        else:
+            cache_read_tokens = 0
+
+        if getattr(response_usage, 'output_tokens_details', None) is not None:
+            details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+        else:
+            details['reasoning_tokens'] = 0
+
         return usage.RequestUsage(
             input_tokens=response_usage.input_tokens,
             output_tokens=response_usage.output_tokens,
-            cache_read_tokens=response_usage.input_tokens_details.cached_tokens,
+            cache_read_tokens=cache_read_tokens,
             details=details,
         )
     else:

@@ -35,7 +35,6 @@ Here's what the UI looks like for the weather agent:
 
 {{ video('c549d8d8827ded15f326f998e428e6c3', 6) }}
 
-Note, to run the UI, you'll need Python 3.10+.
 
 ```bash
 pip install gradio>=5.9.0

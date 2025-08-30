@@ -4,9 +4,8 @@ WARNING: running these tests will make use of the relevant API tokens (and cost 
 """
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Callable
 
 import httpx
 import pytest
@@ -22,10 +21,10 @@ pytestmark = [
 
 
 def openai(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
+    return OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(http_client=http_client))
 
 
 def gemini(_: httpx.AsyncClient, _tmp_path: Path) -> Model:
@@ -67,10 +66,10 @@ def anthropic(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 
 
 def ollama(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    return OpenAIModel(
+    return OpenAIChatModel(
         'qwen2:0.5b', provider=OpenAIProvider(base_url='http://localhost:11434/v1/', http_client=http_client)
     )
 

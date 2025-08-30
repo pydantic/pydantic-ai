@@ -1,6 +1,8 @@
 from __future__ import annotations as _annotations
 
 import re
+import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -10,9 +12,9 @@ from ._json_schema import JsonSchema, JsonSchemaTransformer
 OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
 
-@dataclass
+@dataclass(kw_only=True)
 class OpenAIModelProfile(ModelProfile):
-    """Profile for models used with OpenAIModel.
+    """Profile for models used with `OpenAIChatModel`.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
@@ -22,6 +24,9 @@ class OpenAIModelProfile(ModelProfile):
 
     openai_supports_sampling_settings: bool = True
     """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
+
+    openai_unsupported_model_settings: Sequence[str] = ()
+    """A list of model settings that are not supported by the model."""
 
     # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
     # `tool_choice="required"`.  This flag lets the calling model know whether it's
@@ -33,6 +38,14 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    def __post_init__(self):  # pragma: no cover
+        if not self.openai_supports_sampling_settings:
+            warnings.warn(
+                'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
+                'Use `openai_unsupported_model_settings` instead.',
+                DeprecationWarning,
+            )
+
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
@@ -40,6 +53,19 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
     # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
     # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
+
+    if is_reasoning_model:
+        openai_unsupported_model_settings = (
+            'temperature',
+            'top_p',
+            'presence_penalty',
+            'frequency_penalty',
+            'logit_bias',
+            'logprobs',
+            'top_logprobs',
+        )
+    else:
+        openai_unsupported_model_settings = ()
 
     # The o1-mini model doesn't support the `system` role, so we default to `user`.
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
@@ -49,7 +75,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
-        openai_supports_sampling_settings=not is_reasoning_model,
+        openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
     )
 
@@ -84,7 +110,7 @@ _STRICT_COMPATIBLE_STRING_FORMATS = [
 _sentinel = object()
 
 
-@dataclass
+@dataclass(init=False)
 class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     """Recursively handle the schema to make it compatible with OpenAI strict mode.
 

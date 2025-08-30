@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, Literal, Union
+from typing import Any, Generic, Literal
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils
 from .messages import ToolCallPart
-from .tools import RunContext, ToolDefinition
+from .tools import DeferredToolRequests, RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -42,7 +42,7 @@ StructuredOutputMode = Literal['tool', 'native', 'prompted']
 
 
 OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
+    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
 )
 """Definition of an output type or function.
 
@@ -54,10 +54,7 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Union[
-        Callable[[RunContext, str], Union[Awaitable[T_co], T_co]],
-        Callable[[str], Union[Awaitable[T_co], T_co]],
-    ],
+    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
     type_params=(T_co,),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
@@ -135,10 +132,9 @@ class NativeOutput(Generic[OutputDataT]):
 
     Example:
     ```python {title="native_output.py" requires="tool_output.py"}
-    from tool_output import Fruit, Vehicle
-
     from pydantic_ai import Agent, NativeOutput
 
+    from tool_output import Fruit, Vehicle
 
     agent = Agent(
         'openai:gpt-4o',
@@ -184,9 +180,10 @@ class PromptedOutput(Generic[OutputDataT]):
     Example:
     ```python {title="prompted_output.py" requires="tool_output.py"}
     from pydantic import BaseModel
-    from tool_output import Vehicle
 
     from pydantic_ai import Agent, PromptedOutput
+
+    from tool_output import Vehicle
 
 
     class Device(BaseModel):
@@ -286,18 +283,17 @@ def StructuredDict(
     ```python {title="structured_dict.py"}
     from pydantic_ai import Agent, StructuredDict
 
-
     schema = {
-        "type": "object",
-        "properties": {
-            "name": {"type": "string"},
-            "age": {"type": "integer"}
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string'},
+            'age': {'type': 'integer'}
         },
-        "required": ["name", "age"]
+        'required': ['name', 'age']
     }
 
     agent = Agent('openai:gpt-4o', output_type=StructuredDict(schema))
-    result = agent.run_sync("Create a person")
+    result = agent.run_sync('Create a person')
     print(result.output)
     #> {'name': 'John Doe', 'age': 30}
     ```
@@ -333,16 +329,13 @@ def StructuredDict(
 
 _OutputSpecItem = TypeAliasType(
     '_OutputSpecItem',
-    Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], NativeOutput[T_co], PromptedOutput[T_co], TextOutput[T_co]],
+    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
     type_params=(T_co,),
 )
 
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    Union[
-        _OutputSpecItem[T_co],
-        Sequence['OutputSpec[T_co]'],
-    ],
+    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.
@@ -359,12 +352,14 @@ See [output docs](../output.md) for more information.
 """
 
 
-@dataclass
-class DeferredToolCalls:
-    """Container for calls of deferred tools. This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+@deprecated('`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead')
+class DeferredToolCalls(DeferredToolRequests):  # pragma: no cover
+    @property
+    @deprecated('`DeferredToolCalls.tool_calls` is deprecated, use `DeferredToolRequests.calls` instead')
+    def tool_calls(self) -> list[ToolCallPart]:
+        return self.calls
 
-    See [deferred toolset docs](../toolsets.md#deferred-toolset) for more information.
-    """
-
-    tool_calls: list[ToolCallPart]
-    tool_defs: dict[str, ToolDefinition]
+    @property
+    @deprecated('`DeferredToolCalls.tool_defs` is deprecated')
+    def tool_defs(self) -> dict[str, ToolDefinition]:
+        return {}

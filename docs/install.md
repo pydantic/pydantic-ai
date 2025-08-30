@@ -6,22 +6,16 @@ Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pyd
 pip/uv-add pydantic-ai
 ```
 
-(Requires Python 3.9+)
+(Requires Python 3.10+)
 
-This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models
-included in Pydantic AI. If you want to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
+This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models included in Pydantic AI.
+If you want to install only those dependencies required to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
 
 ## Use with Pydantic Logfire
 
 Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
 
-To use Logfire with Pydantic AI, install `pydantic-ai` or `pydantic-ai-slim` with the `logfire` optional group:
-
-```bash
-pip/uv-add "pydantic-ai[logfire]"
-```
-
-From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configure Logfire.
+Logfire comes included with `pydantic-ai` (but not the ["slim" version](#slim-install)), so you can typically start using it immediately by following the [Logfire setup docs](logfire.md#using-logfire).
 
 ## Running Examples
 
@@ -38,7 +32,7 @@ To run the examples, follow instructions in the [examples docs](examples/index.m
 ## Slim Install
 
 If you know which model you're going to use and want to avoid installing superfluous packages, you can use the [`pydantic-ai-slim`](https://pypi.org/project/pydantic-ai-slim/) package.
-For example, if you're using just [`OpenAIModel`][pydantic_ai.models.openai.OpenAIModel], you would run:
+For example, if you're using just [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you would run:
 
 ```bash
 pip/uv-add "pydantic-ai-slim[openai]"

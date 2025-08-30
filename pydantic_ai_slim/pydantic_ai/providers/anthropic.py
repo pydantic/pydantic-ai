@@ -1,10 +1,9 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import Union, overload
+from typing import TypeAlias, overload
 
 import httpx
-from typing_extensions import TypeAlias
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -21,7 +20,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-AsyncAnthropicClient: TypeAlias = Union[AsyncAnthropic, AsyncAnthropicBedrock]
+AsyncAnthropicClient: TypeAlias = AsyncAnthropic | AsyncAnthropicBedrock
 
 
 class AnthropicProvider(Provider[AsyncAnthropicClient]):
