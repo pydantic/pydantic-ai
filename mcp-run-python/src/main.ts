@@ -15,7 +15,104 @@ import { z } from 'zod'
 import { asXml, runCode } from './runCode.ts'
 import { Buffer } from 'node:buffer'
 
-const VERSION = '0.0.13'
+const VERSION = '0.0.14'
+
+// Constants for tool discovery and elicitation
+const EMPTY_TOOLS_RESULT = { toolNames: [], toolSchemas: {} }
+
+const ELICIT_RESPONSE_SCHEMA = z.object({
+  action: z.enum(['accept', 'decline', 'cancel']),
+  content: z.optional(z.record(z.string(), z.unknown())),
+})
+
+// Schema for elicitation responses
+const ELICITATION_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: {
+      type: 'string',
+      enum: ['accept', 'decline', 'cancel'],
+      description: 'Action to take with the elicitation request',
+    },
+    content: {
+      type: 'object',
+      additionalProperties: true,
+      description: 'Content of the response, varies by request type',
+    },
+  },
+  required: ['action'],
+}
+
+// Schema for tool discovery responses
+const TOOL_DISCOVERY_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: {
+      type: 'string',
+      enum: ['accept', 'decline', 'cancel'],
+      description: 'Action to take with the tool discovery request',
+    },
+    content: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'string',
+          description: 'JSON string containing tool_names and tool_schemas',
+        },
+      },
+      description: 'Tool discovery result data',
+    },
+  },
+  required: ['action'],
+}
+
+// Schema for tool execution responses
+const TOOL_EXECUTION_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    action: {
+      type: 'string',
+      enum: ['accept', 'decline', 'cancel'],
+      description: 'Action to take with the tool execution request',
+    },
+    content: {
+      type: 'object',
+      properties: {
+        result: {
+          type: 'string',
+          description: 'JSON string containing tool execution result',
+        },
+        error: {
+          type: 'string',
+          description: 'Error message if execution failed',
+        },
+        retry: {
+          type: 'string',
+          description: 'JSON string containing retry information if tool needs retry',
+        },
+      },
+      description: 'Tool execution result or error information',
+    },
+  },
+  required: ['action'],
+}
+
+/*
+ * Generic elicitation request helper
+ */
+function makeElicitationRequest(
+  server: McpServer,
+  message: string,
+  requestedSchema: Record<string, unknown> = ELICITATION_RESPONSE_SCHEMA,
+): Promise<z.infer<typeof ELICIT_RESPONSE_SCHEMA>> {
+  return server.server.request(
+    {
+      method: 'elicitation/create',
+      params: { message, requestedSchema },
+    },
+    ELICIT_RESPONSE_SCHEMA,
+  )
+}
 
 export async function main() {
   const { args } = Deno
@@ -52,6 +149,56 @@ options:
 }
 
 /*
+ * Discover available tools via elicitation
+ */
+async function discoverAvailableTools(
+  server: McpServer,
+): Promise<{ toolNames: string[]; toolSchemas: Record<string, Record<string, unknown>> }> {
+  try {
+    const result = await makeElicitationRequest(
+      server,
+      JSON.stringify({ action: 'discover_tools' }),
+      TOOL_DISCOVERY_RESPONSE_SCHEMA,
+    )
+
+    if (result.action === 'accept' && result.content?.data) {
+      const data = JSON.parse(result.content.data as string)
+      return {
+        toolNames: data.tool_names || [],
+        toolSchemas: data.tool_schemas || {},
+      }
+    }
+  } catch (error) {
+    console.warn('Tool discovery failed:', error)
+  }
+
+  return EMPTY_TOOLS_RESULT
+}
+
+/*
+ * Create elicitation callback for tool execution
+ */
+function createToolExecutionCallback(
+  server: McpServer,
+): (message: string) => Promise<z.infer<typeof ELICIT_RESPONSE_SCHEMA>> {
+  return async (message: string) => {
+    try {
+      return await makeElicitationRequest(
+        server,
+        message,
+        TOOL_EXECUTION_RESPONSE_SCHEMA,
+      )
+    } catch (error) {
+      console.error('Tool execution failed:', error)
+      return {
+        action: 'decline',
+        content: { error: `Tool execution failed: ${error}` },
+      }
+    }
+  }
+}
+
+/*
  * Create an MCP server with the `run_python_code` tool registered.
  */
 function createServer(): McpServer {
@@ -83,6 +230,19 @@ with a comment of the form:
 print('python code here')
 `
 
+  const toolInjectionDescription =
+    `When 'available_tools' parameter is provided, those tool functions will be injected into the Python environment.
+Tools can be called directly as Python functions:
+
+Example:
+  web_search("pydantic ai")
+  calculate(operation="add", x=5, y=3)
+  get_weather(city="San Francisco")
+
+Tool names with hyphens are converted to underscores (e.g., 'web-search' becomes 'web_search').
+All injected tools are available in the global namespace.
+`
+
   let setLogLevel: LoggingLevel = 'emergency'
 
   server.server.setRequestHandler(SetLevelRequestSchema, (request) => {
@@ -91,20 +251,71 @@ print('python code here')
   })
 
   server.tool(
+    'discover_available_tools',
+    'Discover what tools are available for injection into Python code execution environment. Call this before writing Python code to know which tools you can use.',
+    {},
+    async () => {
+      // Discover available tools via elicitation
+      const { toolNames: availableTools, toolSchemas } = await discoverAvailableTools(server)
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                available_tools: availableTools,
+                tool_schemas: toolSchemas,
+                usage_note:
+                  "These tools will be available as Python functions when you run Python code. Tool names with hyphens become underscores (e.g., 'web-search' -> 'web_search').",
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      }
+    },
+  )
+
+  server.tool(
     'run_python_code',
-    toolDescription,
-    { python_code: z.string().describe('Python code to run') },
+    toolDescription + toolInjectionDescription,
+    {
+      python_code: z.string().describe('Python code to run'),
+    },
     async ({ python_code }: { python_code: string }) => {
       const logPromises: Promise<void>[] = []
-      const result = await runCode([{
-        name: 'main.py',
-        content: python_code,
-        active: true,
-      }], (level, data) => {
-        if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
-          logPromises.push(server.server.sendLoggingMessage({ level, data }))
-        }
-      })
+
+      // Discover available tools via elicitation
+      const { toolNames: availableTools, toolSchemas } = await discoverAvailableTools(server)
+
+      // Create elicitation callback for tool execution if tools are available
+      let elicitationCallback: ((message: string) => Promise<z.infer<typeof ELICIT_RESPONSE_SCHEMA>>) | undefined
+
+      if (availableTools.length > 0) {
+        elicitationCallback = createToolExecutionCallback(server)
+      }
+
+      const result = await runCode(
+        [
+          {
+            name: 'main.py',
+            content: python_code,
+            active: true,
+          },
+        ],
+        (level, data) => {
+          if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
+            logPromises.push(server.server.sendLoggingMessage({ level, data }))
+          }
+        },
+        {
+          elicitationCallback,
+          availableTools: availableTools,
+          toolSchemas: toolSchemas,
+        },
+      )
       await Promise.all(logPromises)
       return {
         content: [{ type: 'text', text: asXml(result) }],
@@ -118,44 +329,53 @@ print('python code here')
  * Define some QOL functions for both the SSE and Streamable HTTP server implementation
  */
 function httpGetUrl(req: http.IncomingMessage): URL {
-  return new URL(
-    req.url ?? '',
-    `http://${req.headers.host ?? 'unknown'}`,
-  )
+  return new URL(req.url ?? '', `http://${req.headers.host ?? 'unknown'}`)
 }
 
 function httpGetBody(req: http.IncomingMessage): Promise<JSON> {
   // https://nodejs.org/en/learn/modules/anatomy-of-an-http-transaction#request-body
   return new Promise((resolve) => {
-    // deno-lint-ignore no-explicit-any
-    const bodyParts: any[] = []
+    const bodyParts: Uint8Array[] = []
     let body
-    req.on('data', (chunk) => {
-      bodyParts.push(chunk)
-    }).on('end', () => {
-      body = Buffer.concat(bodyParts).toString()
-      resolve(JSON.parse(body))
-    })
+    req
+      .on('data', (chunk) => {
+        bodyParts.push(chunk)
+      })
+      .on('end', () => {
+        body = Buffer.concat(bodyParts).toString()
+        resolve(JSON.parse(body))
+      })
   })
 }
 
-function httpSetTextResponse(res: http.ServerResponse, status: number, text: string) {
+function httpSetTextResponse(
+  res: http.ServerResponse,
+  status: number,
+  text: string,
+) {
   res.setHeader('Content-Type', 'text/plain')
   res.statusCode = status
   res.end(`${text}\n`)
 }
 
-function httpSetJsonResponse(res: http.ServerResponse, status: number, text: string, code: number) {
+function httpSetJsonResponse(
+  res: http.ServerResponse,
+  status: number,
+  text: string,
+  code: number,
+) {
   res.setHeader('Content-Type', 'application/json')
   res.statusCode = status
-  res.write(JSON.stringify({
-    jsonrpc: '2.0',
-    error: {
-      code: code,
-      message: text,
-    },
-    id: null,
-  }))
+  res.write(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      error: {
+        code: code,
+        message: text,
+      },
+      id: null,
+    }),
+  )
   res.end()
 }
 
@@ -220,7 +440,12 @@ function runStreamableHttp(port: number) {
 
         await mcpServer.connect(transport)
       } else {
-        httpSetJsonResponse(res, 400, 'Bad Request: No valid session ID provided', -32000)
+        httpSetJsonResponse(
+          res,
+          400,
+          'Bad Request: No valid session ID provided',
+          -32000,
+        )
         return
       }
 
@@ -277,7 +502,11 @@ function runSse(port: number) {
       if (transport) {
         await transport.handlePostMessage(req, res)
       } else {
-        httpSetTextResponse(res, 400, `No transport found for sessionId '${sessionId}'`)
+        httpSetTextResponse(
+          res,
+          400,
+          `No transport found for sessionId '${sessionId}'`,
+        )
       }
     } else if (pathMatch) {
       httpSetTextResponse(res, 405, 'Method not allowed')
@@ -315,13 +544,18 @@ a = numpy.array([1, 2, 3])
 print('numpy array:', a)
 a
 `
-  const result = await runCode([{
-    name: 'warmup.py',
-    content: code,
-    active: true,
-  }], (level, data) =>
-    // use warn to avoid recursion since console.log is patched in runCode
-    console.error(`${level}: ${data}`))
+  const result = await runCode(
+    [
+      {
+        name: 'warmup.py',
+        content: code,
+        active: true,
+      },
+    ],
+    (level, data) =>
+      // use warn to avoid recursion since console.log is patched in runCode
+      console.error(`${level}: ${data}`),
+  )
   console.log('Tool return value:')
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
