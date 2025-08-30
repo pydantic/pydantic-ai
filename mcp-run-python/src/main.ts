@@ -90,21 +90,29 @@ print('python code here')
     return {}
   })
 
-  server.tool(
+  server.registerTool(
     'run_python_code',
-    toolDescription,
-    { python_code: z.string().describe('Python code to run') },
+    {
+      title: 'Run Python Code',
+      description: toolDescription,
+      inputSchema: { python_code: z.string().describe('Python code to run') },
+    },
     async ({ python_code }: { python_code: string }) => {
       const logPromises: Promise<void>[] = []
-      const result = await runCode([{
-        name: 'main.py',
-        content: python_code,
-        active: true,
-      }], (level, data) => {
-        if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
-          logPromises.push(server.server.sendLoggingMessage({ level, data }))
-        }
-      })
+      const result = await runCode(
+        [
+          {
+            name: 'main.py',
+            content: python_code,
+            active: true,
+          },
+        ],
+        (level, data) => {
+          if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
+            logPromises.push(server.server.sendLoggingMessage({ level, data }))
+          }
+        },
+      )
       await Promise.all(logPromises)
       return {
         content: [{ type: 'text', text: asXml(result) }],
@@ -118,10 +126,7 @@ print('python code here')
  * Define some QOL functions for both the SSE and Streamable HTTP server implementation
  */
 function httpGetUrl(req: http.IncomingMessage): URL {
-  return new URL(
-    req.url ?? '',
-    `http://${req.headers.host ?? 'unknown'}`,
-  )
+  return new URL(req.url ?? '', `http://${req.headers.host ?? 'unknown'}`)
 }
 
 function httpGetBody(req: http.IncomingMessage): Promise<JSON> {
@@ -130,32 +135,45 @@ function httpGetBody(req: http.IncomingMessage): Promise<JSON> {
     // deno-lint-ignore no-explicit-any
     const bodyParts: any[] = []
     let body
-    req.on('data', (chunk) => {
-      bodyParts.push(chunk)
-    }).on('end', () => {
-      body = Buffer.concat(bodyParts).toString()
-      resolve(JSON.parse(body))
-    })
+    req
+      .on('data', (chunk) => {
+        bodyParts.push(chunk)
+      })
+      .on('end', () => {
+        body = Buffer.concat(bodyParts).toString()
+        resolve(JSON.parse(body))
+      })
   })
 }
 
-function httpSetTextResponse(res: http.ServerResponse, status: number, text: string) {
+function httpSetTextResponse(
+  res: http.ServerResponse,
+  status: number,
+  text: string,
+) {
   res.setHeader('Content-Type', 'text/plain')
   res.statusCode = status
   res.end(`${text}\n`)
 }
 
-function httpSetJsonResponse(res: http.ServerResponse, status: number, text: string, code: number) {
+function httpSetJsonResponse(
+  res: http.ServerResponse,
+  status: number,
+  text: string,
+  code: number,
+) {
   res.setHeader('Content-Type', 'application/json')
   res.statusCode = status
-  res.write(JSON.stringify({
-    jsonrpc: '2.0',
-    error: {
-      code: code,
-      message: text,
-    },
-    id: null,
-  }))
+  res.write(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      error: {
+        code: code,
+        message: text,
+      },
+      id: null,
+    }),
+  )
   res.end()
 }
 
@@ -220,7 +238,12 @@ function runStreamableHttp(port: number) {
 
         await mcpServer.connect(transport)
       } else {
-        httpSetJsonResponse(res, 400, 'Bad Request: No valid session ID provided', -32000)
+        httpSetJsonResponse(
+          res,
+          400,
+          'Bad Request: No valid session ID provided',
+          -32000,
+        )
         return
       }
 
@@ -277,7 +300,11 @@ function runSse(port: number) {
       if (transport) {
         await transport.handlePostMessage(req, res)
       } else {
-        httpSetTextResponse(res, 400, `No transport found for sessionId '${sessionId}'`)
+        httpSetTextResponse(
+          res,
+          400,
+          `No transport found for sessionId '${sessionId}'`,
+        )
       }
     } else if (pathMatch) {
       httpSetTextResponse(res, 405, 'Method not allowed')
@@ -315,13 +342,18 @@ a = numpy.array([1, 2, 3])
 print('numpy array:', a)
 a
 `
-  const result = await runCode([{
-    name: 'warmup.py',
-    content: code,
-    active: true,
-  }], (level, data) =>
-    // use warn to avoid recursion since console.log is patched in runCode
-    console.error(`${level}: ${data}`))
+  const result = await runCode(
+    [
+      {
+        name: 'warmup.py',
+        content: code,
+        active: true,
+      },
+    ],
+    (level, data) =>
+      // use warn to avoid recursion since console.log is patched in runCode
+      console.error(`${level}: ${data}`),
+  )
   console.log('Tool return value:')
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
