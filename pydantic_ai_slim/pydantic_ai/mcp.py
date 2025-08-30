@@ -895,7 +895,7 @@ def load_mcp_servers(
             options = ServerOptions(**server)
             if options.type == 'sse':
                 mcp_server = MCPServerSSE(
-                    url=options.url,
+                    url=options.url._url.unicode_string(),
                     headers=options.headers,
                     id=name,
                     timeout=timeout,
@@ -904,7 +904,7 @@ def load_mcp_servers(
                 )
             elif options.type in ('http', 'streamable-http', 'streamable_http'):
                 mcp_server = MCPServerStreamableHTTP(
-                    url=options.url,
+                    url=options.url._url.unicode_string(),
                     headers=options.headers,
                     id=name,
                     timeout=timeout,
