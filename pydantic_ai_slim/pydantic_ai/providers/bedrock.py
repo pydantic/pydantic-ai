@@ -28,7 +28,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BedrockModelProfile(ModelProfile):
     """Profile for models used with BedrockModel.
 

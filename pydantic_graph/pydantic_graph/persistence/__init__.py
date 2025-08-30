@@ -41,7 +41,7 @@ SnapshotStatus = Literal['created', 'pending', 'running', 'success', 'error']
 """
 
 
-@dataclass
+@dataclass(kw_only=True)
 class NodeSnapshot(Generic[StateT, RunEndT]):
     """History step describing the execution of a node in a graph."""
 
@@ -66,7 +66,7 @@ class NodeSnapshot(Generic[StateT, RunEndT]):
             self.id = self.node.get_snapshot_id()
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EndSnapshot(Generic[StateT, RunEndT]):
     """History step describing the end of a graph run."""
 

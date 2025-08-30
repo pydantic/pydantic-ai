@@ -367,7 +367,7 @@ KnownModelName = TypeAliasType(
 """
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
@@ -552,6 +552,7 @@ class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
     model_request_parameters: ModelRequestParameters
+
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)

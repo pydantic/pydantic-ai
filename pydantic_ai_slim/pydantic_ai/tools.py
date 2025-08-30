@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -132,7 +132,7 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 """
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeferredToolRequests:
     """Tool calls that require approval or external execution.
 
@@ -149,7 +149,7 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ToolApproved:
     """Indicates that a tool call has been approved and that the tool function should be executed."""
 
@@ -165,6 +165,8 @@ class ToolDenied:
 
     message: str = 'The tool call was denied.'
     """The message to return to the model."""
+
+    _: KW_ONLY
 
     kind: Literal['tool-denied'] = 'tool-denied'
 
@@ -196,7 +198,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 """Result for a tool call that required approval or external execution."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
@@ -430,7 +432,7 @@ ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ToolDefinition:
     """Definition of a tool passed to a model.
 

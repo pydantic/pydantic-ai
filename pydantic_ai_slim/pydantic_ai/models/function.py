@@ -4,7 +4,7 @@ import inspect
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
 from typing import Any, TypeAlias
@@ -44,8 +44,8 @@ class FunctionModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    function: FunctionDef | None = None
-    stream_function: StreamFunctionDef | None = None
+    function: FunctionDef | None
+    stream_function: StreamFunctionDef | None
 
     _model_name: str = field(repr=False)
     _system: str = field(default='function', repr=False)
@@ -120,10 +120,10 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         agent_info = AgentInfo(
-            model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
-            model_request_parameters.output_tools,
-            model_settings,
+            function_tools=model_request_parameters.function_tools,
+            allow_text_output=model_request_parameters.allow_text_output,
+            output_tools=model_request_parameters.output_tools,
+            model_settings=model_settings,
         )
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -149,10 +149,10 @@ class FunctionModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
-            model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
-            model_request_parameters.output_tools,
-            model_settings,
+            function_tools=model_request_parameters.function_tools,
+            allow_text_output=model_request_parameters.allow_text_output,
+            output_tools=model_request_parameters.output_tools,
+            model_settings=model_settings,
         )
 
         assert self.stream_function is not None, (
@@ -182,7 +182,7 @@ class FunctionModel(Model):
         return self._system
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class AgentInfo:
     """Information about an agent.
 
@@ -212,13 +212,17 @@ class DeltaToolCall:
 
     name: str | None = None
     """Incremental change to the name of the tool."""
+
     json_args: str | None = None
     """Incremental change to the arguments as JSON"""
+
+    _: KW_ONLY
+
     tool_call_id: str | None = None
     """Incremental change to the tool call ID."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeltaThinkingPart:
     """Incremental change to a thinking part.
 

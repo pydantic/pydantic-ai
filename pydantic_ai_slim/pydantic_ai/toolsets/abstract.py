@@ -35,7 +35,7 @@ class SchemaValidatorProt(Protocol):
     ) -> Any: ...
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ToolsetTool(Generic[AgentDepsT]):
     """Definition of a tool available on a toolset.
 

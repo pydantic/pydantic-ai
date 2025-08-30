@@ -730,7 +730,7 @@ class GraphRun(Generic[StateT, DepsT, RunEndT]):
                 stack.enter_context(_logfire.span('run node {node_id}', node_id=node_id, node=node))
 
             async with self.persistence.record_run(node_snapshot_id):
-                ctx = GraphRunContext(self.state, self.deps)
+                ctx = GraphRunContext(state=self.state, deps=self.deps)
                 self._next_node = await node.run(ctx)
 
         if isinstance(self._next_node, End):

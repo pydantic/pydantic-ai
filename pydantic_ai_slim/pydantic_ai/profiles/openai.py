@@ -110,7 +110,7 @@ _STRICT_COMPATIBLE_STRING_FORMATS = [
 _sentinel = object()
 
 
-@dataclass
+@dataclass(init=False)
 class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     """Recursively handle the schema to make it compatible with OpenAI strict mode.
 

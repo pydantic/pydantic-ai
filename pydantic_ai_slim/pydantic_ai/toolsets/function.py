@@ -19,7 +19,7 @@ from ..tools import (
 from .abstract import AbstractToolset, ToolsetTool
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a function toolset tool that keeps track of the function to call."""
 
@@ -40,8 +40,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     def __init__(
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
-        max_retries: int = 1,
         *,
+        max_retries: int = 1,
         id: str | None = None,
     ):
         """Build a new function toolset.

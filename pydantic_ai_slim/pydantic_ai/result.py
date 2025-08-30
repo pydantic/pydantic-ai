@@ -42,7 +42,7 @@ T = TypeVar('T')
 """An invariant TypeVar."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
     _output_schema: OutputSchema[OutputDataT]
@@ -516,8 +516,10 @@ class FinalResult(Generic[OutputDataT]):
 
     output: OutputDataT
     """The final result data."""
+
     tool_name: str | None = None
     """Name of the final output tool; `None` if the output came from unstructured text content."""
+
     tool_call_id: str | None = None
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
 

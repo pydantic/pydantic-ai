@@ -117,7 +117,7 @@ class MistralModel(Model):
     """
 
     client: Mistral = field(repr=False)
-    json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
+    json_mode_schema_prompt: str
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)
