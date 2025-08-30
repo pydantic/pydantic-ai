@@ -902,7 +902,7 @@ def load_mcp_servers(
                     read_timeout=read_timeout,
                     max_retries=max_retries,
                 )
-            elif options.type in ('http', 'streamable-http', 'streamable_http'):
+            else:
                 mcp_server = MCPServerStreamableHTTP(
                     url=options.url,
                     headers=options.headers,
@@ -911,8 +911,6 @@ def load_mcp_servers(
                     read_timeout=read_timeout,
                     max_retries=max_retries,
                 )
-            else:
-                raise ValueError(f'Invalid MCP server type for {name!r}')
 
         mcp_servers.append(mcp_server)
 
