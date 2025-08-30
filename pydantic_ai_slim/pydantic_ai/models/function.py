@@ -241,11 +241,9 @@ DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 """A mapping of thinking call IDs to incremental changes."""
 
-# TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParameters], ...]
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
 
-# TODO: Change signature as indicated above
 StreamFunctionDef: TypeAlias = Callable[
     [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
 ]
