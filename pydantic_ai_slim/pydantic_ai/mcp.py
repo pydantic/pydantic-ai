@@ -17,7 +17,7 @@ import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel
 from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -847,12 +847,12 @@ class StdioOptions(BaseModel):
 
 class ServerOptions(BaseModel):
     type: Literal['sse', 'http', 'streamable-http', 'streamable_http']
-    url: HttpUrl
+    url: str
     headers: dict[str, Any] | None = None
 
 
 def load_mcp_servers(
-    config_path: str | None = None,
+    config_path: str = '',
     /,
     *,
     mcp_config: dict[str, Any] = {},
@@ -895,7 +895,7 @@ def load_mcp_servers(
             options = ServerOptions(**server)
             if options.type == 'sse':
                 mcp_server = MCPServerSSE(
-                    url=options.url._url.unicode_string(),
+                    url=options.url,
                     headers=options.headers,
                     id=name,
                     timeout=timeout,
@@ -904,7 +904,7 @@ def load_mcp_servers(
                 )
             elif options.type in ('http', 'streamable-http', 'streamable_http'):
                 mcp_server = MCPServerStreamableHTTP(
-                    url=options.url._url.unicode_string(),
+                    url=options.url,
                     headers=options.headers,
                     id=name,
                     timeout=timeout,

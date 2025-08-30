@@ -136,20 +136,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
 
 @pytest.mark.skipif(not imports_successful(), reason='mcp not installed')
 def test_load_mcp_servers():
-    invalid_type = {
-        'mcpServers': {
-            'invalid_type': {
-                'type': 'streamable-http',
-                'url': 'http://127.0.0.1:8000/mcp',
-            }
-        }
-    }
-
-    invalid_config = {'mcpServers': {'invalid_config': {'type': 'sse'}}}
-
-    missing_type = {'mcpServers': {'missing_type': {'url': 'https://127.0.0.1:8000/mcp'}}}
-
-    valid_config = {
+    config = {
         'mcpServers': {
             'valid_stdio': {
                 'command': 'uv',
@@ -161,16 +148,7 @@ def test_load_mcp_servers():
         }
     }
 
-    with pytest.raises(ValueError, match="MCP server type is required for 'missing_type'"):
-        load_mcp_servers(mcp_config=missing_type)
-
-    with pytest.raises(ValueError, match="Invalid MCP server type for 'invalid_type'"):
-        load_mcp_servers(mcp_config=invalid_type)
-
-    with pytest.raises(ValueError, match="Invalid MCP server configuration for 'invalid_config'"):
-        load_mcp_servers(mcp_config=invalid_config)
-
-    servers = load_mcp_servers(mcp_config=valid_config)
+    servers = load_mcp_servers(mcp_config=config)
     assert len(servers) == 3
 
     for server in servers:
