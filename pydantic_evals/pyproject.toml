@@ -50,7 +50,7 @@ requires-python = ">=3.10"
 dependencies = [
     "rich>=13.9.4",
     "logfire-api>=3.14.1",
-    "pydantic>=2.12.0a1",
+    "pydantic==2.12.0a1",
     "pydantic-ai-slim=={{ version }}",
     "anyio>=0",
     "eval-type-backport>=0; python_version < '3.11'",
