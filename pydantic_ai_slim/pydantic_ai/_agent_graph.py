@@ -151,11 +151,13 @@ def is_agent_node(
     return isinstance(node, AgentNode)
 
 
-@dataclasses.dataclass(kw_only=True)
+@dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
 
     user_prompt: str | Sequence[_messages.UserContent] | None
+
+    _: dataclasses.KW_ONLY
 
     instructions: str | None
     instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
@@ -308,22 +310,18 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             ):
                                 updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.SystemPromptPart(
-                                    content=updated_part_content, dynamic_ref=part.dynamic_ref
+                                    updated_part_content, dynamic_ref=part.dynamic_ref
                                 )
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
-        messages: list[_messages.ModelRequestPart] = [
-            _messages.SystemPromptPart(content=p) for p in self.system_prompts
-        ]
+        messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self.system_prompts]
         for sys_prompt_runner in self.system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
             if sys_prompt_runner.dynamic:
-                messages.append(
-                    _messages.SystemPromptPart(content=prompt, dynamic_ref=sys_prompt_runner.function.__qualname__)
-                )
+                messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
             else:
-                messages.append(_messages.SystemPromptPart(content=prompt))
+                messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
 
@@ -633,7 +631,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             ctx.state.increment_retries(ctx.deps.max_result_retries, e)
             return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
         else:
-            return self._handle_final_result(ctx, result.FinalResult(result_data, None, None), [])
+            return self._handle_final_result(ctx, result.FinalResult(result_data), [])
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:

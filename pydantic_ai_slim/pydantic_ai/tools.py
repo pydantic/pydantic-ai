@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -149,7 +149,7 @@ class DeferredToolRequests:
     """Tool calls that require human-in-the-loop approval."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ToolApproved:
     """Indicates that a tool call has been approved and that the tool function should be executed."""
 
@@ -165,6 +165,8 @@ class ToolDenied:
 
     message: str = 'The tool call was denied.'
     """The message to return to the model."""
+
+    _: KW_ONLY
 
     kind: Literal['tool-denied'] = 'tool-denied'
 

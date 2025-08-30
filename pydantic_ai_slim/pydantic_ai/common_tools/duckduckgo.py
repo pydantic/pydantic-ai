@@ -1,5 +1,5 @@
 import functools
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 
 import anyio
 import anyio.to_thread
@@ -36,19 +36,17 @@ class DuckDuckGoResult(TypedDict):
 duckduckgo_ta = TypeAdapter(list[DuckDuckGoResult])
 
 
-@dataclass(init=False)
+@dataclass
 class DuckDuckGoSearchTool:
     """The DuckDuckGo search tool."""
 
     client: DDGS
     """The DuckDuckGo search client."""
 
+    _: KW_ONLY
+
     max_results: int | None
     """The maximum number of results. If None, returns results only from the first response."""
-
-    def __init__(self, client: DDGS, *, max_results: int | None = None):
-        self.client = client
-        self.max_results = max_results
 
     async def __call__(self, query: str) -> list[DuckDuckGoResult]:
         """Searches DuckDuckGo for the given query and returns the results.

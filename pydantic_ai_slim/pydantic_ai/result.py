@@ -516,8 +516,10 @@ class FinalResult(Generic[OutputDataT]):
 
     output: OutputDataT
     """The final result data."""
+
     tool_name: str | None = None
     """Name of the final output tool; `None` if the output came from unstructured text content."""
+
     tool_call_id: str | None = None
     """ID of the tool call that produced the final output; `None` if the output came from unstructured text content."""
 
