@@ -78,7 +78,7 @@ Can optionally accept a `RunContext` as a parameter.
 """
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True)
 class GraphAgentState:
     """State kept across the execution of the agent graph."""
 
@@ -99,7 +99,7 @@ class GraphAgentState:
                 raise exceptions.UnexpectedModelBehavior(message)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True)
 class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     """Dependencies/config passed to the agent graph."""
 
@@ -151,7 +151,7 @@ def is_agent_node(
     return isinstance(node, AgentNode)
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(kw_only=True)
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
 
@@ -308,18 +308,22 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             ):
                                 updated_part_content = await runner.run(run_context)
                                 msg.parts[i] = _messages.SystemPromptPart(
-                                    updated_part_content, dynamic_ref=part.dynamic_ref
+                                    content=updated_part_content, dynamic_ref=part.dynamic_ref
                                 )
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
-        messages: list[_messages.ModelRequestPart] = [_messages.SystemPromptPart(p) for p in self.system_prompts]
+        messages: list[_messages.ModelRequestPart] = [
+            _messages.SystemPromptPart(content=p) for p in self.system_prompts
+        ]
         for sys_prompt_runner in self.system_prompt_functions:
             prompt = await sys_prompt_runner.run(run_context)
             if sys_prompt_runner.dynamic:
-                messages.append(_messages.SystemPromptPart(prompt, dynamic_ref=sys_prompt_runner.function.__qualname__))
+                messages.append(
+                    _messages.SystemPromptPart(content=prompt, dynamic_ref=sys_prompt_runner.function.__qualname__)
+                )
             else:
-                messages.append(_messages.SystemPromptPart(prompt))
+                messages.append(_messages.SystemPromptPart(content=prompt))
         return messages
 
 
@@ -359,8 +363,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
     request: _messages.ModelRequest
 
-    _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(default=None, repr=False)
-    _did_stream: bool = field(default=False, repr=False)
+    _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
+    _did_stream: bool = field(repr=False, init=False, default=False)
 
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -389,13 +393,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             self._did_stream = True
             ctx.state.usage.requests += 1
             agent_stream = result.AgentStream[DepsT, T](
-                streamed_response,
-                ctx.deps.output_schema,
-                model_request_parameters,
-                ctx.deps.output_validators,
-                build_run_context(ctx),
-                ctx.deps.usage_limits,
-                ctx.deps.tool_manager,
+                _raw_stream_response=streamed_response,
+                _output_schema=ctx.deps.output_schema,
+                _model_request_parameters=model_request_parameters,
+                _output_validators=ctx.deps.output_validators,
+                _run_ctx=build_run_context(ctx),
+                _usage_limits=ctx.deps.usage_limits,
+                _tool_manager=ctx.deps.tool_manager,
             )
             yield agent_stream
             # In case the user didn't manually consume the full stream, ensure it is fully consumed here,
@@ -475,9 +479,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
 
     model_response: _messages.ModelResponse
 
-    _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, repr=False)
+    _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
-        default=None, repr=False
+        default=None, init=False, repr=False
     )
 
     async def run(

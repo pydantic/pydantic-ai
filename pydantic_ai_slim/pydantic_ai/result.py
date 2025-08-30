@@ -42,7 +42,7 @@ T = TypeVar('T')
 """An invariant TypeVar."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _raw_stream_response: models.StreamedResponse
     _output_schema: OutputSchema[OutputDataT]

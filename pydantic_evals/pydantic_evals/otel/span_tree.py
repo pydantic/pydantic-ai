@@ -78,7 +78,7 @@ class SpanQuery(TypedDict, total=False):
     no_ancestor_has: SpanQuery
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class SpanNode:
     """A node in the span tree; provides references to parents/children for easy traversal and queries."""
 
@@ -426,7 +426,7 @@ class SpanNode:
 SpanPredicate = Callable[[SpanNode], bool]
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class SpanTree:
     """A container that builds a hierarchy of SpanNode objects from a list of finished spans.
 

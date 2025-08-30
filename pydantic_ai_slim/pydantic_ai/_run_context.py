@@ -18,7 +18,7 @@ AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
 
-@dataclasses.dataclass(repr=False)
+@dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 

@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 __all__ = ('function_schema',)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionSchema:
     """Internal information about a function schema."""
 

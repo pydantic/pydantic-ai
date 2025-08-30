@@ -44,8 +44,8 @@ class FunctionModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    function: FunctionDef | None = None
-    stream_function: StreamFunctionDef | None = None
+    function: FunctionDef | None
+    stream_function: StreamFunctionDef | None
 
     _model_name: str = field(repr=False)
     _system: str = field(default='function', repr=False)

@@ -101,7 +101,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
     def ctx(self) -> GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]]:
         """The current context of the agent run."""
         return GraphRunContext[_agent_graph.GraphAgentState, _agent_graph.GraphAgentDeps[AgentDepsT, Any]](
-            self._graph_run.state, self._graph_run.deps
+            state=self._graph_run.state, deps=self._graph_run.deps
         )
 
     @property

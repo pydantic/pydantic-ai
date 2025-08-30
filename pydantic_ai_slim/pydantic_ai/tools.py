@@ -132,7 +132,7 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 """
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeferredToolRequests:
     """Tool calls that require approval or external execution.
 
@@ -196,7 +196,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 """Result for a tool call that required approval or external execution."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
@@ -430,7 +430,7 @@ ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ToolDefinition:
     """Definition of a tool passed to a model.
 

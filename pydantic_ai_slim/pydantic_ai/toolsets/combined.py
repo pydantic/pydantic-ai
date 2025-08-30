@@ -14,7 +14,7 @@ from ..exceptions import UserError
 from .abstract import AbstractToolset, ToolsetTool
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a combined toolset tools that keeps track of the source toolset and tool."""
 
@@ -31,14 +31,9 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: anyio.Lock = field(compare=False, init=False)
-    _entered_count: int = field(init=False)
-    _exit_stack: AsyncExitStack | None = field(init=False)
-
-    def __post_init__(self):
-        self._enter_lock = anyio.Lock()
-        self._entered_count = 0
-        self._exit_stack = None
+    _enter_lock: anyio.Lock = field(compare=False, init=False, default_factory=anyio.Lock)
+    _entered_count: int = field(init=False, default=0)
+    _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
     @property
     def id(self) -> str | None:

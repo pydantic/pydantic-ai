@@ -1428,13 +1428,13 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
-        max_retries: int = 1,
         *,
+        max_retries: int = 1,
         id: str | None = None,
         output_schema: _output.BaseOutputSchema[Any],
     ):
         self.output_schema = output_schema
-        super().__init__(tools, max_retries, id=id)
+        super().__init__(tools, max_retries=max_retries, id=id)
 
     @property
     def id(self) -> str:
