@@ -11,12 +11,13 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontext
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from pydantic import BaseModel, HttpUrl
 from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -838,21 +839,35 @@ metadata.
 """
 
 
+class StdioOptions(BaseModel):
+    command: str
+    args: Sequence[str] = ()
+    env: dict[str, Any] | None = None
+
+
+class ServerOptions(BaseModel):
+    type: Literal['sse', 'http', 'streamable-http', 'streamable_http']
+    url: HttpUrl
+    headers: dict[str, Any] | None = None
+
+
 def load_mcp_servers(
-    config_path: str = '',
+    config_path: str | None = None,
     /,
     *,
     mcp_config: dict[str, Any] = {},
-    server_options: dict[str, Any] = {},
-    stdio_options: dict[str, Any] = {},
+    timeout: float = 5,
+    read_timeout: float = 5 * 60,
+    max_retries: int = 1,
 ) -> list[MCPServer]:
     """Load MCP servers from configuration file.
 
     Args:
         config_path (str): The path to the MCP configuration file.
         mcp_config (dict): A dictionary containing the MCP server configuration. If provided, `config_path` is ignored.
-        server_options (dict): Additional options to pass to the `MCPServerSSE` or `MCPServerStreamableHTTP`.
-        stdio_options (dict): Additional options to pass to the `MCPServerStdio`.
+        timeout (float): The timeout in seconds to wait for the client to initialize.
+        read_timeout (float): Maximum time in seconds to wait for new messages before timing out.
+        max_retries (int): The maximum number of times to retry a tool call.
 
     Returns:
         list[MCPServer]: A list of MCP servers.
@@ -866,22 +881,38 @@ def load_mcp_servers(
 
     for name, server in config.get('mcpServers', {}).items():
         if 'command' in server:
+            options = StdioOptions(**server)
             mcp_server = MCPServerStdio(
-                command=server['command'], args=server.get('args', []), env=server.get('env'), id=name, **stdio_options
+                command=options.command,
+                args=options.args,
+                env=options.env,
+                id=name,
+                timeout=timeout,
+                read_timeout=read_timeout,
+                max_retries=max_retries,
             )
-        elif 'url' in server:
-            if not server.get('type'):
-                raise ValueError(f'MCP server type is required for {name!r}')
-            elif server.get('type') == 'sse':
-                mcp_server = MCPServerSSE(url=server['url'], headers=server.get('headers'), id=name, **server_options)
-            elif server.get('type') == 'http':
+        else:
+            options = ServerOptions(**server)
+            if options.type == 'sse':
+                mcp_server = MCPServerSSE(
+                    url=options.url,
+                    headers=options.headers,
+                    id=name,
+                    timeout=timeout,
+                    read_timeout=read_timeout,
+                    max_retries=max_retries,
+                )
+            elif options.type in ('http', 'streamable-http', 'streamable_http'):
                 mcp_server = MCPServerStreamableHTTP(
-                    url=server['url'], headers=server.get('headers'), id=name, **server_options
+                    url=options.url,
+                    headers=options.headers,
+                    id=name,
+                    timeout=timeout,
+                    read_timeout=read_timeout,
+                    max_retries=max_retries,
                 )
             else:
                 raise ValueError(f'Invalid MCP server type for {name!r}')
-        else:
-            raise ValueError(f'Invalid MCP server configuration for {name!r}')
 
         mcp_servers.append(mcp_server)
 
