@@ -2,6 +2,16 @@
 
 --8<-- "docs/.partials/index-header.html"
 
+!!! info "🎉 Pydantic AI V1 Beta Released!"
+    We'd love your feedback as we prepare for V1:
+
+    ```bash
+    pip install pydantic-ai==1.0.0b1
+    ```
+
+    - 🐛 [Report issues on GitHub](https://github.com/pydantic/pydantic-ai/issues)
+    - 💬 [Join our Slack](https://logfire.pydantic.dev/docs/join-slack/)
+
 FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev).
 
 Similarly, virtually every agent framework and LLM library in Python uses Pydantic Validation, yet when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
