@@ -2,6 +2,8 @@
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.ts'
 import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
+import * as path from 'node:path'
+import { tmpdir } from 'node:os'
 
 export interface CodeFile {
   name: string
@@ -9,9 +11,14 @@ export interface CodeFile {
   active: boolean
 }
 
+export function getRootDir(): string {
+  return path.join(tmpdir(), 'mcp_run_python')
+}
+
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
+  mountDir: string | null,
 ): Promise<RunSuccess | RunError> {
   // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
   const realConsoleLog = console.log
@@ -29,6 +36,18 @@ export async function runCode(
       output.push(msg)
     },
   })
+
+  // Mount file system
+  if (mountDir != null) {
+    // Ensure emscriptem directory is created
+    pyodide.FS.mkdirTree(mountDir)
+    // Mount local directory
+    pyodide.FS.mount(
+      pyodide.FS.filesystems.NODEFS,
+      { root: getRootDir() },
+      mountDir,
+    )
+  }
 
   // see https://github.com/pyodide/pyodide/discussions/5512
   const origLoadPackage = pyodide.loadPackage
