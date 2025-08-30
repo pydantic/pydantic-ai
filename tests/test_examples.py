@@ -7,7 +7,7 @@ import shutil
 import ssl
 import sys
 from collections.abc import AsyncIterator, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from inspect import FrameInfo
 from io import StringIO
 from pathlib import Path
@@ -18,6 +18,7 @@ import pytest
 from _pytest.mark import ParameterSet
 from devtools import debug
 from pytest_examples import CodeExample, EvalExample, find_examples
+from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
 from pytest_mock import MockerFixture
 from rich.console import Console
 
@@ -54,6 +55,20 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='extras not installed'),
 ]
 code_examples: dict[str, CodeExample] = {}
+
+
+@dataclass
+class ExamplesConfig(BaseExamplesConfig):
+    known_first_party: list[str] = field(default_factory=list)
+    known_local_folder: list[str] = field(default_factory=list)
+
+    def ruff_config(self) -> tuple[str, ...]:
+        config = super().ruff_config()
+        if self.known_first_party:  # pragma: no branch
+            config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
+        if self.known_local_folder:
+            config = (*config, '--config', f'lint.isort.known-local-folder = {self.known_local_folder}')
+        return config
 
 
 def find_filter_examples() -> Iterable[ParameterSet]:
@@ -168,8 +183,10 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip') and opt_lint.startswith('skip'):
         pytest.skip('both running code and lint skipped')
 
+    known_local_folder: list[str] = []
     if requires:
         for req in requires.split(','):
+            known_local_folder.append(Path(req).stem)
             if ex := code_examples.get(req):
                 (tmp_path_cwd / req).write_text(ex.source)
             else:  # pragma: no cover
@@ -187,7 +204,16 @@ def test_docs_examples(  # noqa: C901
 
     line_length = int(prefix_settings.get('line_length', '88'))
 
-    eval_example.set_config(ruff_ignore=ruff_ignore, target_version=ruff_target_version, line_length=line_length)  # type: ignore[reportArgumentType]
+    eval_example.config = ExamplesConfig(
+        ruff_ignore=ruff_ignore,
+        target_version=ruff_target_version,  # type: ignore[reportArgumentType]
+        line_length=line_length,
+        isort=True,
+        upgrade=True,
+        quotes='single',
+        known_first_party=['pydantic_ai', 'pydantic_evals', 'pydantic_graph'],
+        known_local_folder=known_local_folder,
+    )
     eval_example.print_callback = print_callback
     eval_example.include_print = custom_include_print
 

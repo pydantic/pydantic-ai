@@ -43,24 +43,24 @@ This example uses [`run_ag_ui()`][pydantic_ai.ag_ui.run_ag_ui] and performs its 
 This can be modified to work with any web framework.
 
 ```py {title="run_ag_ui.py"}
+import json
+from http import HTTPStatus
+
 from ag_ui.core import RunAgentInput
 from fastapi import FastAPI
-from http import HTTPStatus
 from fastapi.requests import Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
-import json
 
 from pydantic_ai import Agent
-from pydantic_ai.ag_ui import run_ag_ui, SSE_CONTENT_TYPE
-
+from pydantic_ai.ag_ui import SSE_CONTENT_TYPE, run_ag_ui
 
 agent = Agent('openai:gpt-4.1', instructions='Be fun!')
 
 app = FastAPI()
 
 
-@app.post("/")
+@app.post('/')
 async def run_agent(request: Request) -> Response:
     accept = request.headers.get('accept', SSE_CONTENT_TYPE)
     try:
@@ -97,12 +97,11 @@ from starlette.responses import Response
 from pydantic_ai import Agent
 from pydantic_ai.ag_ui import handle_ag_ui_request
 
-
 agent = Agent('openai:gpt-4.1', instructions='Be fun!')
 
 app = FastAPI()
 
-@app.post("/")
+@app.post('/')
 async def run_agent(request: Request) -> Response:
     return await handle_ag_ui_request(agent, request)
 ```

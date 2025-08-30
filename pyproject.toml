@@ -160,7 +160,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph"]
 # weird issue with ruff thinking fasta2a is still editable
 known-third-party = ["fasta2a"]
 

@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Tag
@@ -12,7 +12,7 @@ from typing_extensions import ParamSpec, Self, TypeVar
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry
-from .messages import RetryPromptPart, ToolReturn
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (
     'AgentDepsT',
@@ -28,6 +28,7 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
+    'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
@@ -131,7 +132,24 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 """
 
 
-@dataclass
+@dataclass(kw_only=True)
+class DeferredToolRequests:
+    """Tool calls that require approval or external execution.
+
+    This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+    Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
+
+    See [deferred tools docs](../tools.md#deferred-tools) for more information.
+    """
+
+    calls: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require external execution."""
+    approvals: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require human-in-the-loop approval."""
+
+
+@dataclass(kw_only=True)
 class ToolApproved:
     """Indicates that a tool call has been approved and that the tool function should be executed."""
 
@@ -147,6 +165,8 @@ class ToolDenied:
 
     message: str = 'The tool call was denied.'
     """The message to return to the model."""
+
+    _: KW_ONLY
 
     kind: Literal['tool-denied'] = 'tool-denied'
 
@@ -178,7 +198,7 @@ DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
 """Result for a tool call that required approval or external execution."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeferredToolResults:
     """Results for deferred tool calls from a previous run that required approval or external execution.
 
@@ -412,7 +432,7 @@ ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ToolDefinition:
     """Definition of a tool passed to a model.
 

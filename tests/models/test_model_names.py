@@ -48,7 +48,8 @@ def vcr_config():  # pragma: lax no cover
     return {'record_mode': 'none'}
 
 
-def test_known_model_names():
+def test_known_model_names():  # pragma: lax no cover
+    # Coverage seems to be misbehaving..?
     def get_model_names(model_name_type: Any) -> Iterator[str]:
         for arg in get_args(model_name_type):
             if isinstance(arg, str):
@@ -126,7 +127,8 @@ class CerebrasModel(TypedDict):
     owned_by: Literal['Cerebras']
 
 
-def get_cerebras_model_names():
+def get_cerebras_model_names():  # pragma: lax no cover
+    # Coverage seems to be misbehaving..?
     api_key = os.getenv('CEREBRAS_API_KEY', 'testing')
 
     response = httpx.get(

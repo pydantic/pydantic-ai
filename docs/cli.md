@@ -115,7 +115,13 @@ Both `Agent.to_cli()` and `Agent.to_cli_sync()` support a `message_history` para
 
 ```python {title="agent_with_history.py" test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, UserPromptPart, TextPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
 
 agent = Agent('openai:gpt-4.1')
 

@@ -46,7 +46,7 @@ OutputT = TypeVar('OutputT', default=Any)
 MetadataT = TypeVar('MetadataT', default=Any)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     """A single case in an evaluation report."""
 
@@ -71,14 +71,15 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     task_duration: float
     total_duration: float  # includes evaluator execution time
 
-    # TODO(DavidM): Drop these once we can reference child spans in details panel:
-    trace_id: str | None
-    span_id: str | None
+    trace_id: str | None = None
+    """The trace ID of the case span."""
+    span_id: str | None = None
+    """The span ID of the case span."""
 
     evaluator_failures: list[EvaluatorFailure] = field(default_factory=list)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
     """A single case in an evaluation report that failed due to an error during task execution."""
 
@@ -92,11 +93,14 @@ class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
     """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
 
     error_message: str
+    """The message of the exception that caused the failure."""
     error_stacktrace: str
+    """The stacktrace of the exception that caused the failure."""
 
-    # TODO(DavidM): Drop these once we can reference child spans in details panel:
-    trace_id: str | None
-    span_id: str | None
+    trace_id: str | None = None
+    """The trace ID of the case span."""
+    span_id: str | None = None
+    """The span ID of the case span."""
 
 
 ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
@@ -180,7 +184,7 @@ class ReportCaseAggregate(BaseModel):
         )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """A report of the results of evaluating a model on a set of cases."""
 
@@ -192,11 +196,10 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
     """The failures in the report. These are cases where task execution raised an exception."""
 
-    span_id: str | None = None
-    """The span ID of the evaluation."""
-
     trace_id: str | None = None
     """The trace ID of the evaluation."""
+    span_id: str | None = None
+    """The span ID of the evaluation."""
 
     def averages(self) -> ReportCaseAggregate | None:
         if self.cases:
@@ -373,7 +376,7 @@ class RenderValueConfig(TypedDict, total=False):
     diff_style: str
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _ValueRenderer:
     value_formatter: str | Callable[[Any], str] = '{}'
     diff_checker: Callable[[Any, Any], bool] | None = lambda x, y: x != y
@@ -488,7 +491,7 @@ class RenderNumberConfig(TypedDict, total=False):
     """
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _NumberRenderer:
     """See documentation of `RenderNumberConfig` for more details about the parameters here."""
 
@@ -619,7 +622,7 @@ _DEFAULT_DURATION_CONFIG = RenderNumberConfig(
 T = TypeVar('T')
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ReportCaseRenderer:
     include_input: bool
     include_metadata: bool
