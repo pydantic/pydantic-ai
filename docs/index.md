@@ -38,15 +38,15 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
 - **Graph Support**:
   [Pydantic Graph](graph.md) provides a powerful way to define graphs using typing hints, this is useful in complex applications where standard control flow can degrade to spaghetti code.
 
-**Sign up to *The Pydantic Stack* newsletter, with updates & tutorials on Logfire, Pydantic AI and Pydantic:**
+**Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
 
-  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" style="display: flex; align-items: center; gap: 10px; max-width: 85%;">
+  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
       <input
       type="email"
       id="email_input"
       name="email"
-      class="md-input"
-      style="border-bottom: none; flex: 1;"
+      class="md-input md-input--stretch"
+      style="flex: 1; background: var(--md-default-bg-color); color: var(--md-default-fg-color);"
       required
       placeholder="Email"
       data-1p-ignore
@@ -55,7 +55,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
       data-bwignore="true"
       />
       <input type="hidden" id="source_input" name="source" value="pydantic-ai" />
-      <button type="submit" class="md-button" style="width: fit-content;">Subscribe</button>
+      <button type="submit" class="md-button md-button--primary">Subscribe</button>
   </form>
 
 ## Hello World Example
