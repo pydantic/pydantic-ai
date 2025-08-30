@@ -225,6 +225,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -252,6 +253,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -278,6 +280,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
