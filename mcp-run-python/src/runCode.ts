@@ -1,9 +1,10 @@
 /* eslint @typescript-eslint/no-explicit-any: off */
 import { loadPyodide } from 'pyodide'
 import { preparePythonCode } from './prepareEnvCode.ts'
-import type { LoggingLevel } from '@modelcontextprotocol/sdk/types.js'
-import * as path from 'node:path'
-import { tmpdir } from 'node:os'
+import { type LoggingLevel, SetLevelRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import * as path from '@std/path'
+import z from 'zod'
 
 export interface CodeFile {
   name: string
@@ -11,13 +12,10 @@ export interface CodeFile {
   active: boolean
 }
 
-export function getRootDir(): string {
-  return path.join(tmpdir(), 'mcp_run_python')
-}
-
 export async function runCode(
   files: CodeFile[],
   log: (level: LoggingLevel, data: string) => void,
+  rootDir: string | null,
   mountDir: string | null,
 ): Promise<RunSuccess | RunError> {
   // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
@@ -38,13 +36,13 @@ export async function runCode(
   })
 
   // Mount file system
-  if (mountDir != null) {
+  if (mountDir != null && rootDir != null) {
     // Ensure emscriptem directory is created
     pyodide.FS.mkdirTree(mountDir)
     // Mount local directory
     pyodide.FS.mount(
       pyodide.FS.filesystems.NODEFS,
-      { root: getRootDir() },
+      { root: rootDir },
       mountDir,
     )
   }
@@ -65,6 +63,7 @@ export async function runCode(
   await pyodide.loadPackage(['micropip', 'pydantic'])
   const sys = pyodide.pyimport('sys')
 
+  // This is in the virtual in-memory emscriptem file system
   const dirPath = '/tmp/mcp_run_python'
   sys.path.append(dirPath)
   const pathlib = pyodide.pyimport('pathlib')
@@ -187,4 +186,104 @@ interface PreparePyEnv {
   prepare_env: (files: CodeFile[]) => Promise<PrepareSuccess | PrepareError>
   // deno-lint-ignore no-explicit-any
   dump_json: (value: any) => string | null
+}
+
+// list of log levels to use for level comparison
+const LogLevels: LoggingLevel[] = [
+  'debug',
+  'info',
+  'notice',
+  'warning',
+  'error',
+  'critical',
+  'alert',
+  'emergency',
+]
+
+/*
+ * Resolve a mountDir cli option to a specific directory
+ */
+export function resolveMountDir(mountDir: string): string {
+  // Base dir created by emscriptem
+  // See https://emscripten.org/docs/api_reference/Filesystem-API.html#file-system-api
+  const baseDir = '/home/web_user'
+
+  if (mountDir.trim() === '') {
+    return path.join(baseDir, 'persistent')
+  }
+
+  if (path.isAbsolute(mountDir)) {
+    return mountDir
+  }
+
+  // relative path
+  return path.join(baseDir, mountDir)
+}
+
+export function registerCodeFunctions(server: McpServer, rootDir: string | null, mount: string | boolean) {
+  // Resolve CLI mount option
+  let mountDirDescription: string
+  let mountDir: string | null
+  if (mount !== false) {
+    // Resolve mounted directory
+    mountDir = resolveMountDir(typeof mount === 'string' ? mount : '')
+    mountDirDescription = `To store files permanently use the directory at: ${mountDir}\n`
+  } else {
+    mountDir = null
+    mountDirDescription = ''
+  }
+
+  const toolDescription = `Tool to execute Python code and return stdout, stderr, and return value.
+
+The code may be async, and the value on the last line will be returned as the return value.
+
+The code will be executed with Python 3.12.
+${mountDirDescription}
+Dependencies may be defined via PEP 723 script metadata, e.g. to install "pydantic", the script should start
+with a comment of the form:
+
+# /// script
+# dependencies = ['pydantic']
+# ///
+print('python code here')
+`
+  let setLogLevel: LoggingLevel = 'emergency'
+
+  server.server.setRequestHandler(SetLevelRequestSchema, (request) => {
+    setLogLevel = request.params.level
+    return {}
+  })
+
+  // Main tool to run code
+  server.registerTool(
+    'run_python_code',
+    {
+      title: 'Run Python Code',
+      description: toolDescription,
+      inputSchema: { python_code: z.string().describe('Python code to run') },
+    },
+    async ({ python_code }: { python_code: string }) => {
+      const logPromises: Promise<void>[] = []
+      const result = await runCode(
+        [
+          {
+            name: 'main.py',
+            content: python_code,
+            active: true,
+          },
+        ],
+        (level, data) => {
+          if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
+            logPromises.push(server.server.sendLoggingMessage({ level, data }))
+          }
+        },
+        rootDir,
+        mountDir,
+      )
+      await Promise.all(logPromises)
+      return {
+        content: [{ type: 'text', text: asXml(result) }],
+      }
+    },
+  )
 }

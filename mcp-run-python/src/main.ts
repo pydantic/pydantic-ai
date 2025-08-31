@@ -8,12 +8,10 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
-import { type LoggingLevel, SetLevelRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { z } from 'zod'
-import { asXml, getRootDir, runCode } from './runCode.ts'
+import { asXml, registerCodeFunctions, runCode } from './runCode.ts'
 import { Buffer } from 'node:buffer'
-import * as path from 'node:path'
+import { createRootDir, registerFileFunctions } from './files.ts'
 
 const VERSION = '0.0.13'
 
@@ -51,44 +49,9 @@ options:
 }
 
 /*
- * Resolve a mountDir cli option to a specific directory
- */
-export function resolveMountDir(mountDir: string): string {
-  // Base dir created by emscriptem
-  // See https://emscripten.org/docs/api_reference/Filesystem-API.html#file-system-api
-  const baseDir = '/home/web_user'
-
-  if (mountDir.trim() === '') {
-    return path.join(baseDir, 'persistent')
-  }
-
-  if (path.isAbsolute(mountDir)) {
-    return mountDir
-  }
-
-  // relative path
-  return path.join(baseDir, mountDir)
-}
-
-/*
- * Ensure and cleanup the root directory used by the MCP server
- */
-function ensureRootDir() {
-  Deno.mkdirSync(getRootDir(), { recursive: true })
-}
-
-function cleanupRootDir() {
-  try {
-    Deno.removeSync(getRootDir(), { recursive: true })
-  } catch (err) {
-    if (!(err instanceof Deno.errors.NotFound)) throw err
-  }
-}
-
-/*
  * Create an MCP server with the `run_python_code` tool registered.
  */
-function createServer(mount: string | boolean): McpServer {
+function createServer(rootDir: string | null, mount: string | boolean): McpServer {
   const server = new McpServer(
     {
       name: 'MCP Run Python',
@@ -102,71 +65,11 @@ function createServer(mount: string | boolean): McpServer {
     },
   )
 
-  let mountDirDescription: string
-  let mountDir: string | null
-  if (mount !== false) {
-    // Create temporary directory
-    ensureRootDir()
-    // Resolve mounted directory
-    mountDir = resolveMountDir(typeof mount === 'string' ? mount : '')
-    mountDirDescription = `To store files permanently use the directory at: ${mountDir}\n`
-  } else {
-    mountDir = null
-    mountDirDescription = ''
+  registerCodeFunctions(server, rootDir, mount)
+  if (rootDir != null) {
+    registerFileFunctions(server, rootDir)
   }
 
-  const toolDescription = `Tool to execute Python code and return stdout, stderr, and return value.
-
-The code may be async, and the value on the last line will be returned as the return value.
-
-The code will be executed with Python 3.12.
-${mountDirDescription}
-Dependencies may be defined via PEP 723 script metadata, e.g. to install "pydantic", the script should start
-with a comment of the form:
-
-# /// script
-# dependencies = ['pydantic']
-# ///
-print('python code here')
-`
-
-  let setLogLevel: LoggingLevel = 'emergency'
-
-  server.server.setRequestHandler(SetLevelRequestSchema, (request) => {
-    setLogLevel = request.params.level
-    return {}
-  })
-
-  server.registerTool(
-    'run_python_code',
-    {
-      title: 'Run Python Code',
-      description: toolDescription,
-      inputSchema: { python_code: z.string().describe('Python code to run') },
-    },
-    async ({ python_code }: { python_code: string }) => {
-      const logPromises: Promise<void>[] = []
-      const result = await runCode(
-        [
-          {
-            name: 'main.py',
-            content: python_code,
-            active: true,
-          },
-        ],
-        (level, data) => {
-          if (LogLevels.indexOf(level) >= LogLevels.indexOf(setLogLevel)) {
-            logPromises.push(server.server.sendLoggingMessage({ level, data }))
-          }
-        },
-        mountDir,
-      )
-      await Promise.all(logPromises)
-      return {
-        content: [{ type: 'text', text: asXml(result) }],
-      }
-    },
-  )
   return server
 }
 
@@ -229,8 +132,10 @@ function httpSetJsonResponse(
  * Run the MCP server using the Streamable HTTP transport
  */
 function runStreamableHttp(port: number, mount: string | boolean) {
+  const rootDir = mount !== false ? createRootDir() : null
+
   // https://github.com/modelcontextprotocol/typescript-sdk?tab=readme-ov-file#with-session-management
-  const mcpServer = createServer(mount)
+  const mcpServer = createServer(rootDir, mount)
   const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {}
 
   const server = http.createServer(async (req, res) => {
@@ -311,9 +216,11 @@ function runStreamableHttp(port: number, mount: string | boolean) {
   })
 
   // Cleanup root dir on server close
-  server.on('close', () => {
-    cleanupRootDir()
-  })
+  if (rootDir != null) {
+    server.on('close', () => {
+      Deno.removeSync(rootDir, { recursive: true })
+    })
+  }
 
   server.listen(port, () => {
     console.log(
@@ -326,7 +233,9 @@ function runStreamableHttp(port: number, mount: string | boolean) {
  * Run the MCP server using the SSE transport, e.g. over HTTP.
  */
 function runSse(port: number, mount: string | boolean) {
-  const mcpServer = createServer(mount)
+  const rootDir = mount !== false ? createRootDir() : null
+
+  const mcpServer = createServer(rootDir, mount)
   const transports: { [sessionId: string]: SSEServerTransport } = {}
 
   const server = http.createServer(async (req, res) => {
@@ -367,9 +276,11 @@ function runSse(port: number, mount: string | boolean) {
   })
 
   // Cleanup root dir on server close
-  server.on('close', () => {
-    cleanupRootDir()
-  })
+  if (rootDir != null) {
+    server.on('close', () => {
+      Deno.removeSync(rootDir, { recursive: true })
+    })
+  }
 
   server.listen(port, () => {
     console.log(
@@ -382,12 +293,15 @@ function runSse(port: number, mount: string | boolean) {
  * Run the MCP server using the Stdio transport.
  */
 async function runStdio(mount: string | boolean) {
-  const mcpServer = createServer(mount)
+  const rootDir = mount !== false ? createRootDir() : null
+  const mcpServer = createServer(rootDir, mount)
   const transport = new StdioServerTransport()
 
-  // Cleanup root dir on transport close
-  transport.onclose = () => {
-    cleanupRootDir()
+  // Cleanup root dir on server close
+  if (rootDir != null) {
+    transport.onclose = () => {
+      Deno.removeSync(rootDir, { recursive: true })
+    }
   }
 
   await mcpServer.connect(transport)
@@ -419,22 +333,11 @@ a
       // use warn to avoid recursion since console.log is patched in runCode
       console.error(`${level}: ${data}`),
     null,
+    null,
   )
   console.log('Tool return value:')
   console.log(asXml(result))
   console.log('\nwarmup successful 🎉')
 }
-
-// list of log levels to use for level comparison
-const LogLevels: LoggingLevel[] = [
-  'debug',
-  'info',
-  'notice',
-  'warning',
-  'error',
-  'critical',
-  'alert',
-  'emergency',
-]
 
 await main()
