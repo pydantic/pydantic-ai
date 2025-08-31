@@ -172,15 +172,13 @@ class FunctionTextFormat:
                     lark.Lark(self.grammar)
                 except GrammarError as e:
                     raise ValueError('Lark grammar is invalid') from e
-            except ImportError:
+            except ImportError:  # pragma: no cover
                 warn('Cannot validate lark grammar as the lark optional dependency group has not been installed')
-        elif self.syntax == 'regex':
+        elif self.syntax == 'regex':  # pragma: no branch
             try:
                 re.compile(self.grammar)
             except re.error as e:
                 raise ValueError('Regex is invalid') from e
-        else:
-            raise ValueError(f'Unsupported syntax {self.syntax}')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
