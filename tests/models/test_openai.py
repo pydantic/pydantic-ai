@@ -1,10 +1,11 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Any, Callable, Literal, Union, cast
+from typing import Annotated, Any, Literal, cast
 
 import httpx
 import pytest
@@ -78,9 +79,8 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+    MockChatCompletion = chat.ChatCompletion | Exception
+    MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),

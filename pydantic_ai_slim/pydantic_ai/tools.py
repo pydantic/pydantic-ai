@@ -1,17 +1,20 @@
 from __future__ import annotations as _annotations
 
 import re
-from collections.abc import Awaitable, Sequence
-from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Literal, Union
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import KW_ONLY, dataclass, field, replace
+from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, cast
 from warnings import warn
 
+from pydantic import Discriminator, Tag
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, Self, TypeAlias, TypeVar
+from typing_extensions import ParamSpec, Self, TypeVar
 
 from . import _function_schema, _utils
 from ._run_context import AgentDepsT, RunContext
+from .exceptions import ModelRetry
+from .messages import RetryPromptPart, ToolCallPart, ToolReturn
 
 __all__ = (
     'AgentDepsT',
@@ -27,18 +30,22 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
+    'DeferredToolRequests',
+    'DeferredToolResults',
+    'ToolApproved',
+    'ToolDenied',
 )
 
 
 ToolParams = ParamSpec('ToolParams', default=...)
 """Retrieval function param spec."""
 
-SystemPromptFunc: TypeAlias = Union[
-    Callable[[RunContext[AgentDepsT]], str],
-    Callable[[RunContext[AgentDepsT]], Awaitable[str]],
-    Callable[[], str],
-    Callable[[], Awaitable[str]],
-]
+SystemPromptFunc: TypeAlias = (
+    Callable[[RunContext[AgentDepsT]], str]
+    | Callable[[RunContext[AgentDepsT]], Awaitable[str]]
+    | Callable[[], str]
+    | Callable[[], Awaitable[str]]
+)
 """A function that may or maybe not take `RunContext` as an argument, and may or may not be async.
 
 Usage `SystemPromptFunc[AgentDepsT]`.
@@ -54,7 +61,7 @@ ToolFuncPlain: TypeAlias = Callable[ToolParams, Any]
 
 Usage `ToolPlainFunc[ToolParams]`.
 """
-ToolFuncEither: TypeAlias = Union[ToolFuncContext[AgentDepsT, ToolParams], ToolFuncPlain[ToolParams]]
+ToolFuncEither: TypeAlias = ToolFuncContext[AgentDepsT, ToolParams] | ToolFuncPlain[ToolParams]
 """Either kind of tool function.
 
 This is just a union of [`ToolFuncContext`][pydantic_ai.tools.ToolFuncContext] and
@@ -70,14 +77,12 @@ See [tool docs](../tools.md#tool-prepare) for more information.
 Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 
 ```python {noqa="I001"}
-from typing import Union
-
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.tools import ToolDefinition
 
 async def only_if_42(
     ctx: RunContext[int], tool_def: ToolDefinition
-) -> Union[ToolDefinition, None]:
+) -> ToolDefinition | None:
     if ctx.deps == 42:
         return tool_def
 
@@ -101,7 +106,6 @@ Example — here `turn_on_strict_if_openai` is valid as a `ToolsPrepareFunc`:
 
 ```python {noqa="I001"}
 from dataclasses import replace
-from typing import Union
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.tools import ToolDefinition
@@ -109,7 +113,7 @@ from pydantic_ai.tools import ToolDefinition
 
 async def turn_on_strict_if_openai(
     ctx: RunContext[None], tool_defs: list[ToolDefinition]
-) -> Union[list[ToolDefinition], None]:
+) -> list[ToolDefinition] | None:
     if ctx.model.system == 'openai':
         return [replace(tool_def, strict=True) for tool_def in tool_defs]
     return tool_defs
@@ -128,6 +132,88 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 * `'sphinx'` — [Sphinx-style](https://sphinx-rtd-tutorial.readthedocs.io/en/latest/docstrings.html#the-sphinx-docstring-format) docstrings.
 * `'auto'` — Automatically infer the format based on the structure of the docstring.
 """
+
+
+@dataclass(kw_only=True)
+class DeferredToolRequests:
+    """Tool calls that require approval or external execution.
+
+    This can be used as an agent's `output_type` and will be used as the output of the agent run if the model called any deferred tools.
+
+    Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
+
+    See [deferred tools docs](../tools.md#deferred-tools) for more information.
+    """
+
+    calls: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require external execution."""
+    approvals: list[ToolCallPart] = field(default_factory=list)
+    """Tool calls that require human-in-the-loop approval."""
+
+
+@dataclass(kw_only=True)
+class ToolApproved:
+    """Indicates that a tool call has been approved and that the tool function should be executed."""
+
+    override_args: dict[str, Any] | None = None
+    """Optional tool call arguments to use instead of the original arguments."""
+
+    kind: Literal['tool-approved'] = 'tool-approved'
+
+
+@dataclass
+class ToolDenied:
+    """Indicates that a tool call has been denied and that a denial message should be returned to the model."""
+
+    message: str = 'The tool call was denied.'
+    """The message to return to the model."""
+
+    _: KW_ONLY
+
+    kind: Literal['tool-denied'] = 'tool-denied'
+
+
+def _deferred_tool_call_result_discriminator(x: Any) -> str | None:
+    if isinstance(x, dict):
+        if 'kind' in x:
+            return cast(str, x['kind'])
+        elif 'part_kind' in x:
+            return cast(str, x['part_kind'])
+    else:
+        if hasattr(x, 'kind'):
+            return cast(str, x.kind)
+        elif hasattr(x, 'part_kind'):
+            return cast(str, x.part_kind)
+    return None
+
+
+DeferredToolApprovalResult: TypeAlias = Annotated[ToolApproved | ToolDenied, Discriminator('kind')]
+"""Result for a tool call that required human-in-the-loop approval."""
+DeferredToolCallResult: TypeAlias = Annotated[
+    Annotated[ToolReturn, Tag('tool-return')]
+    | Annotated[ModelRetry, Tag('model-retry')]
+    | Annotated[RetryPromptPart, Tag('retry-prompt')],
+    Discriminator(_deferred_tool_call_result_discriminator),
+]
+"""Result for a tool call that required external execution."""
+DeferredToolResult = DeferredToolApprovalResult | DeferredToolCallResult
+"""Result for a tool call that required approval or external execution."""
+
+
+@dataclass(kw_only=True)
+class DeferredToolResults:
+    """Results for deferred tool calls from a previous run that required approval or external execution.
+
+    The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
+
+    See [deferred tools docs](../tools.md#deferred-tools) for more information.
+    """
+
+    calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict)
+    """Map of tool call IDs to results for tool calls that required external execution."""
+    approvals: dict[str, bool | DeferredToolApprovalResult] = field(default_factory=dict)
+    """Map of tool call IDs to results for tool calls that required human-in-the-loop approval."""
+
 
 A = TypeVar('A')
 
@@ -219,6 +305,7 @@ class Tool(Generic[AgentDepsT]):
     require_parameter_descriptions: bool
     strict: bool | None
     text_format: Literal['text'] | FunctionTextFormat | None
+    requires_approval: bool
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -240,6 +327,7 @@ class Tool(Generic[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        requires_approval: bool = False,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -258,7 +346,6 @@ class Tool(Generic[AgentDepsT]):
         or with a custom prepare method:
 
         ```python {noqa="I001"}
-        from typing import Union
 
         from pydantic_ai import Agent, RunContext, Tool
         from pydantic_ai.tools import ToolDefinition
@@ -268,7 +355,7 @@ class Tool(Generic[AgentDepsT]):
 
         async def prep_my_tool(
             ctx: RunContext[int], tool_def: ToolDefinition
-        ) -> Union[ToolDefinition, None]:
+        ) -> ToolDefinition | None:
             # only register the tool if `deps == 42`
             if ctx.deps == 42:
                 return tool_def
@@ -295,6 +382,8 @@ class Tool(Generic[AgentDepsT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -314,6 +403,7 @@ class Tool(Generic[AgentDepsT]):
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
         self.text_format = text_format
+        self.requires_approval = requires_approval
 
     @classmethod
     def from_schema(
@@ -377,6 +467,10 @@ class Tool(Generic[AgentDepsT]):
             return a `ToolDefinition` or `None` if the tools should not be registered for this run.
         """
         base_tool_def = self.tool_def
+
+        if self.requires_approval and not ctx.tool_call_approved:
+            base_tool_def = replace(base_tool_def, kind='unapproved')
+
         if self.prepare is not None:
             return await self.prepare(ctx, base_tool_def)
         else:
@@ -391,11 +485,11 @@ This type is used to define tools parameters (aka arguments) in [ToolDefinition]
 With PEP-728 this should be a TypedDict with `type: Literal['object']`, and `extra_parts=Any`
 """
 
-ToolKind: TypeAlias = Literal['function', 'output', 'deferred']
+ToolKind: TypeAlias = Literal['function', 'output', 'external', 'unapproved']
 """Kind of tool."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ToolDefinition:
     """Definition of a tool passed to a model.
 
@@ -446,8 +540,10 @@ class ToolDefinition:
 
     - `'function'`: a tool that will be executed by Pydantic AI during an agent run and has its result returned to the model
     - `'output'`: a tool that passes through an output value that ends the run
-    - `'deferred'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
-        When the model calls a deferred tool, the agent run ends with a `DeferredToolCalls` object and a new run is expected to be started at a later point with the message history and new `ToolReturnPart`s corresponding to each deferred call.
+    - `'external'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
+        See the [tools documentation](../tools.md#deferred-tools) for more info.
+    - `'unapproved'`: a tool that requires human-in-the-loop approval.
+        See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
     """
 
     @property
@@ -471,5 +567,12 @@ class ToolDefinition:
         if not schema['properties'][property_name].get('type', None) == 'string':
             return None
         return property_name
+
+    def defer(self) -> bool:
+        """Whether calls to this tool will be deferred.
+
+        See the [tools documentation](../tools.md#deferred-tools) for more info.
+        """
+        return self.kind in ('external', 'unapproved')
 
     __repr__ = _utils.dataclasses_no_defaults_repr

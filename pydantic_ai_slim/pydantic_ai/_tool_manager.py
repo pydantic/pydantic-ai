@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic
 
@@ -13,7 +12,6 @@ from . import messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
-from .output import DeferredToolCalls
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -105,6 +103,9 @@ class ToolManager(Generic[AgentDepsT]):
                 else:
                     msg = 'No tools available.'
                 raise ModelRetry(f'Unknown tool name: {name!r}. {msg}')
+
+            if tool.tool_def.defer:
+                raise RuntimeError('Deferred tools cannot be called')
 
             ctx = replace(
                 self.ctx,
@@ -204,23 +205,3 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
         return tool_result
-
-    def get_deferred_tool_calls(self, parts: Iterable[_messages.ModelResponsePart]) -> DeferredToolCalls | None:
-        """Get the deferred tool calls from the model response parts."""
-        deferred_calls_and_defs = [
-            (part, tool_def)
-            for part in parts
-            if isinstance(part, _messages.ToolCallPart)
-            and (tool_def := self.get_tool_def(part.tool_name))
-            and tool_def.kind == 'deferred'
-        ]
-        if not deferred_calls_and_defs:
-            return None
-
-        deferred_calls: list[_messages.ToolCallPart] = []
-        deferred_tool_defs: dict[str, ToolDefinition] = {}
-        for part, tool_def in deferred_calls_and_defs:
-            deferred_calls.append(part)
-            deferred_tool_defs[part.tool_name] = tool_def
-
-        return DeferredToolCalls(deferred_calls, deferred_tool_defs)

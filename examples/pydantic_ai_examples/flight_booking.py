@@ -11,9 +11,8 @@ import logfire
 from pydantic import BaseModel, Field
 from rich.prompt import Prompt
 
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, RunUsage, UsageLimits
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.usage import RunUsage, UsageLimits
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')

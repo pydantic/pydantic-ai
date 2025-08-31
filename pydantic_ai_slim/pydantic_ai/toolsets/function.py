@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Literal, overload
+from typing import Any, Literal, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
@@ -20,7 +20,7 @@ from ..tools import (
 from .abstract import AbstractToolset, ToolsetTool
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a function toolset tool that keeps track of the function to call."""
 
@@ -41,8 +41,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
     def __init__(
         self,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
-        max_retries: int = 1,
         *,
+        max_retries: int = 1,
         id: str | None = None,
     ):
         """Build a new function toolset.
@@ -82,6 +82,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        requires_approval: bool = False,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -97,6 +98,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        requires_approval: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -145,6 +147,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(
@@ -162,6 +166,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 schema_generator,
                 strict,
                 text_format,
+                requires_approval,
             )
             return func_
 
@@ -179,6 +184,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        requires_approval: bool = False,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -204,6 +210,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
         """
         tool = Tool[AgentDepsT](
             func,
@@ -216,6 +224,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             schema_generator=schema_generator,
             strict=strict,
             text_format=text_format,
+            requires_approval=requires_approval,
         )
         self.add_tool(tool)
 

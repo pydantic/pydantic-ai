@@ -10,14 +10,14 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import sqlite3
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Callable, Literal, TypeVar
+from typing import Annotated, Any, Literal, TypeVar
 
 import fastapi
 import logfire
@@ -25,8 +25,7 @@ from fastapi import Depends, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from typing_extensions import LiteralString, ParamSpec, TypedDict
 
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
