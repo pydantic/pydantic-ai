@@ -179,6 +179,8 @@ class FunctionTextFormat:
                 re.compile(self.grammar)
             except re.error as e:
                 raise ValueError('Regex is invalid') from e
+        else:
+            raise ValueError(f'Unsupported syntax {self.syntax}')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):

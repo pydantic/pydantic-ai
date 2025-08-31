@@ -1496,6 +1496,11 @@ def test_function_text_format_lark_invalid():
         FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
 
 
+def test_function_text_format_syntax_invalid():
+    with pytest.raises(ValueError, match='Unsupported syntax antlr'):
+        FunctionTextFormat(syntax='antlr', grammar="grammar T; a: 'a';")
+
+
 def test_tool_definition_single_string_argument():
     schema = {
         'type': 'object',
