@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import re
 from dataclasses import dataclass, replace
@@ -34,13 +35,6 @@ from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
-
-try:
-    import lark
-except ImportError:
-    lark_installed = False
-else:
-    lark_installed = True
 
 
 def test_tool_no_ctx():
@@ -1489,14 +1483,14 @@ def test_function_text_format_regex_invalid():
         FunctionTextFormat(syntax='regex', grammar='[')
 
 
-@pytest.mark.skipif(not lark_installed, reason='lark not installed')
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
 def test_function_text_format_lark_valid():
     format = FunctionTextFormat(syntax='lark', grammar='start: "hello"')
     assert format.syntax == 'lark'
     assert format.grammar == 'start: "hello"'
 
 
-@pytest.mark.skipif(not lark_installed, reason='lark not installed')
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
 def test_function_text_format_lark_invalid():
     with pytest.raises(ValueError, match='Lark grammar is invalid'):
         FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
