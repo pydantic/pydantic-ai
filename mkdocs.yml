@@ -35,9 +35,13 @@ nav:
           - models/mistral.md
           - models/huggingface.md
       - Tools & Toolsets:
+          - tools.md
+          - tools-advanced.md
           - toolsets.md
           - builtin-tools.md
           - common-tools.md
+          - third-party-tools.md
+          - deferred-tools.md
       - Advanced Features:
           - input.md
           - thinking.md
