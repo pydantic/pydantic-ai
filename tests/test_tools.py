@@ -27,7 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import DeferredToolCalls, ToolOutput
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import FunctionTextFormat, ToolDefinition
 from pydantic_ai.toolsets.deferred import DeferredToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -1479,24 +1479,18 @@ def test_parallel_tool_return():
 
 
 def test_function_text_format_regex_valid():
-    from pydantic_ai.tools import FunctionTextFormat
-
     format = FunctionTextFormat(syntax='regex', grammar=r'\d+')
     assert format.syntax == 'regex'
     assert format.grammar == r'\d+'
 
 
 def test_function_text_format_regex_invalid():
-    from pydantic_ai.tools import FunctionTextFormat
-
     with pytest.raises(ValueError, match='Regex is invalid'):
         FunctionTextFormat(syntax='regex', grammar='[')
 
 
 @pytest.mark.skipif(not lark_installed, reason='lark not installed')
 def test_function_text_format_lark_valid():
-    from pydantic_ai.tools import FunctionTextFormat
-
     format = FunctionTextFormat(syntax='lark', grammar='start: "hello"')
     assert format.syntax == 'lark'
     assert format.grammar == 'start: "hello"'
@@ -1504,8 +1498,6 @@ def test_function_text_format_lark_valid():
 
 @pytest.mark.skipif(not lark_installed, reason='lark not installed')
 def test_function_text_format_lark_invalid():
-    from pydantic_ai.tools import FunctionTextFormat
-
     with pytest.raises(ValueError, match='Lark grammar is invalid'):
         FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
 
@@ -1519,7 +1511,7 @@ def test_tool_definition_single_string_argument():
     }
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
     assert tool_def.single_string_argument_name == 'text'
-    assert tool_def.only_takes_string_argument is True
+    assert tool_def.only_takes_string_argument
 
 
 def test_tool_definition_multiple_arguments():
@@ -1531,7 +1523,7 @@ def test_tool_definition_multiple_arguments():
     }
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
     assert tool_def.single_string_argument_name is None
-    assert tool_def.only_takes_string_argument is False
+    assert not tool_def.only_takes_string_argument
 
 
 def test_tool_definition_non_string_argument():
@@ -1543,7 +1535,7 @@ def test_tool_definition_non_string_argument():
     }
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
     assert tool_def.single_string_argument_name is None
-    assert tool_def.only_takes_string_argument is False
+    assert not tool_def.only_takes_string_argument
 
 
 def test_tool_definition_no_required_fields():
@@ -1556,7 +1548,7 @@ def test_tool_definition_no_required_fields():
     }
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
     assert tool_def.single_string_argument_name is None
-    assert tool_def.only_takes_string_argument is False
+    assert not tool_def.only_takes_string_argument
 
 
 def test_tool_definition_no_properties():
@@ -1565,7 +1557,7 @@ def test_tool_definition_no_properties():
     schema = {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
     assert tool_def.single_string_argument_name is None
-    assert tool_def.only_takes_string_argument is False
+    assert not tool_def.only_takes_string_argument
 
 
 def test_tool_definition_mismatched_properties_required():
@@ -1577,37 +1569,10 @@ def test_tool_definition_mismatched_properties_required():
     }
     tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
     assert tool_def.single_string_argument_name is None
-    assert tool_def.only_takes_string_argument is False
+    assert not tool_def.only_takes_string_argument
 
 
 def test_agent_tool_with_text_format():
-    agent = Agent(TestModel())
-
-    @agent.tool(text_format='text')
-    def analyze_text(ctx: RunContext[None], text: str) -> str:
-        return f'Analyzed: {text}'
-
-    tool_def = agent._function_toolset.tools['analyze_text'].tool_def
-    assert tool_def.text_format == 'text'
-    assert tool_def.only_takes_string_argument is True
-
-
-def test_agent_tool_with_cfg_format():
-    from pydantic_ai.tools import FunctionTextFormat
-
-    agent = Agent(TestModel())
-
-    cfg = FunctionTextFormat(syntax='regex', grammar=r'\d+')
-
-    @agent.tool(text_format=cfg)
-    def parse_numbers(ctx: RunContext[None], numbers: str) -> str:
-        return f'Parsed: {numbers}'
-
-    tool_def = agent._function_toolset.tools['parse_numbers'].tool_def
-    assert tool_def.text_format == cfg
-
-
-def test_agent_tool_plain_with_text_format():
     agent = Agent(TestModel())
 
     @agent.tool_plain(text_format='text')
@@ -1616,4 +1581,17 @@ def test_agent_tool_plain_with_text_format():
 
     tool_def = agent._function_toolset.tools['analyze_text'].tool_def
     assert tool_def.text_format == 'text'
-    assert tool_def.only_takes_string_argument is True
+    assert tool_def.only_takes_string_argument
+
+
+def test_agent_tool_with_cfg_format():
+    agent = Agent(TestModel())
+
+    cfg = FunctionTextFormat(syntax='regex', grammar=r'\d+')
+
+    @agent.tool_plain(text_format=cfg)
+    def parse_numbers(numbers: str) -> str:
+        return f'Parsed: {numbers}'
+
+    tool_def = agent._function_toolset.tools['parse_numbers'].tool_def
+    assert tool_def.text_format == cfg
