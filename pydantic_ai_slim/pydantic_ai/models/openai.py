@@ -226,7 +226,8 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """The identifier of the most recent response to include in the API request.
 
     This enables the model to reference previous reasoning traces.
-    See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/responses) for more information.
+    See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
+    for more information.
     """
 
 
