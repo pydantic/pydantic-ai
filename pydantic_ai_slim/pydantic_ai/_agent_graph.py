@@ -693,7 +693,7 @@ async def process_function_tools(  # noqa: C901
             output_parts.append(part)
         else:
             try:
-                result_data = await tool_manager.handle_call(call, usage_limits=ctx.deps.usage_limits)
+                result_data = await tool_manager.handle_call(call)
             except exceptions.UnexpectedModelBehavior as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 raise e  # pragma: lax no cover
@@ -756,9 +756,9 @@ async def process_function_tools(  # noqa: C901
             calls_to_run,
             deferred_tool_results,
             ctx.deps.tracer,
+            ctx.deps.usage_limits,
             output_parts,
             deferred_calls,
-            ctx.deps.usage_limits,
         ):
             yield event
 
@@ -803,9 +803,9 @@ async def _call_tools(
     tool_calls: list[_messages.ToolCallPart],
     deferred_tool_results: dict[str, DeferredToolResult],
     tracer: Tracer,
+    usage_limits: _usage.UsageLimits | None,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
-    usage_limits: _usage.UsageLimits | None,
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}

@@ -86,7 +86,7 @@ class ToolManager(Generic[AgentDepsT]):
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
             # Output tool calls are not traced
-            return await self._call_tool(call, allow_partial, wrap_validation_errors, usage_limits, is_output_tool=True)
+            return await self._call_tool(call, allow_partial, wrap_validation_errors)
         else:
             return await self._call_tool_traced(
                 call,
@@ -102,8 +102,7 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         allow_partial: bool,
         wrap_validation_errors: bool,
-        usage_limits: UsageLimits | None,
-        is_output_tool: bool = False,
+        usage_limits: UsageLimits | None = None,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -135,12 +134,12 @@ class ToolManager(Generic[AgentDepsT]):
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
 
-            if not is_output_tool and usage_limits is not None:
+            if usage_limits is not None:
                 usage_limits.check_before_tool_call(self.ctx.usage)
 
             result = await self.toolset.call_tool(name, args_dict, ctx, tool)
 
-            if not is_output_tool:
+            if usage_limits is not None:
                 self.ctx.usage.tool_calls += 1
 
             return result
