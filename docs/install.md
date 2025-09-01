@@ -27,7 +27,7 @@ To install examples, use the `examples` optional group:
 pip/uv-add "pydantic-ai[examples]"
 ```
 
-To run the examples, follow instructions in the [examples docs](examples/index.md).
+To run the examples, follow instructions in the [examples docs](examples/setup.md).
 
 ## Slim Install
 
@@ -58,7 +58,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `a2a` - installs `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}
 * `ag-ui` - installs `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 
-See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
+See the [models](models/overview.md) documentation for information on which optional dependencies are required for each model.
 
 You can also install dependencies for multiple models and use cases, for example:
 

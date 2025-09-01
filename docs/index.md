@@ -24,7 +24,7 @@ We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI
   Built by the team behind [Pydantic Validation](https://docs.pydantic.dev/latest/) (the validation layer of the OpenAI SDK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more).
 
 - **Model-agnostic**:
-  Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](models/index.md).
+  Supports OpenAI, Anthropic, Gemini, Deepseek, Ollama, Groq, Cohere, and Mistral, and there is a simple interface to implement support for [other models](models/overview.md).
 
 - **Pydantic Logfire Integration**:
   Seamlessly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire) for real-time debugging, performance monitoring, and behavior tracking of your LLM-powered applications.
@@ -244,7 +244,7 @@ file.
 
 ## Next Steps
 
-To try Pydantic AI yourself, follow the instructions [in the examples](examples/index.md).
+To try Pydantic AI yourself, follow the instructions [in the examples](examples/setup.md).
 
 Read the [docs](agents.md) to learn more about building applications with Pydantic AI.
 

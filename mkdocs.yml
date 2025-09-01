@@ -11,12 +11,12 @@ copyright: © Pydantic Services Inc. 2024 to present
 
 nav:
   - Introduction: index.md
-  - Getting Started:
-      - install.md
-      - help.md
-      - troubleshooting.md
+  - install.md
+  - help.md
+  - troubleshooting.md
+  - changelog.md
 
-  - Pydantic AI:
+  - Documentation:
       - Core Concepts:
           - agents.md
           - dependencies.md
@@ -25,7 +25,7 @@ nav:
           - message-history.md
           - direct.md
       - Models & Providers:
-          - models/index.md
+          - Overview: models/overview.md
           - models/openai.md
           - models/anthropic.md
           - models/google.md
@@ -42,41 +42,31 @@ nav:
           - input.md
           - thinking.md
           - retries.md
-          - temporal.md
       - MCP:
-          - mcp/index.md
+          - Overview: mcp/overview.md
           - mcp/client.md
           - mcp/server.md
       - Multi-Agent Patterns: multi-agent-applications.md
       - Testing: testing.md
-      - Debugging & Monitoring with Pydantic Logfire: logfire.md
-
-  - Pydantic Graph:
-      - Overview: graph.md
-      - API Reference:
-          - api/pydantic_graph/graph.md
-          - api/pydantic_graph/nodes.md
-          - api/pydantic_graph/persistence.md
-          - api/pydantic_graph/mermaid.md
-          - api/pydantic_graph/exceptions.md
 
   - Pydantic Evals:
       - Overview: evals.md
-      - API Reference:
-          - api/pydantic_evals/dataset.md
-          - api/pydantic_evals/evaluators.md
-          - api/pydantic_evals/reporting.md
-          - api/pydantic_evals/otel.md
-          - api/pydantic_evals/generation.md
+
+  - Pydantic Graph:
+      - Overview: graph.md
 
   - Integrations:
-      - AG-UI: ag-ui.md
-      - A2A: a2a.md
-      - clai (CLI): cli.md
+    - Debugging & Monitoring with Pydantic Logfire: logfire.md
+    - temporal.md
+    - AG-UI: ag-ui.md
+    - A2A: a2a.md
+
+  - Related Packages:
+      - Clai: cli.md
       - MCP Run Python: mcp/run-python.md
 
   - Examples:
-      - Overview: examples/index.md
+      - Setup: examples/setup.md
       - Getting Started:
           - examples/pydantic-model.md
           - examples/weather-agent.md
@@ -99,56 +89,59 @@ nav:
           - examples/ag-ui.md
 
   - API Reference:
-      - api/ag_ui.md
-      - api/agent.md
-      - api/tools.md
-      - api/toolsets.md
-      - api/builtin_tools.md
-      - api/common_tools.md
-      - api/durable_exec.md
-      - api/output.md
-      - api/result.md
-      - api/messages.md
-      - api/exceptions.md
-      - api/settings.md
-      - api/usage.md
-      - api/mcp.md
-      - api/format_prompt.md
-      - api/direct.md
-      - api/ext.md
-      - api/models/base.md
-      - api/models/openai.md
-      - api/models/anthropic.md
-      - api/models/bedrock.md
-      - api/models/cohere.md
-      - api/models/google.md
-      - api/models/groq.md
-      - api/models/huggingface.md
-      - api/models/instrumented.md
-      - api/models/mistral.md
-      - api/models/test.md
-      - api/models/function.md
-      - api/models/fallback.md
-      - api/models/wrapper.md
-      - api/models/mcp-sampling.md
-      - api/profiles.md
-      - api/providers.md
-      - api/retries.md
-      - api/pydantic_graph/graph.md
-      - api/pydantic_graph/nodes.md
-      - api/pydantic_graph/persistence.md
-      - api/pydantic_graph/mermaid.md
-      - api/pydantic_graph/exceptions.md
-      - api/pydantic_evals/dataset.md
-      - api/pydantic_evals/evaluators.md
-      - api/pydantic_evals/reporting.md
-      - api/pydantic_evals/otel.md
-      - api/pydantic_evals/generation.md
-      - api/fasta2a.md
+      - pydantic_ai:
+          - api/ag_ui.md
+          - api/agent.md
+          - api/tools.md
+          - api/toolsets.md
+          - api/builtin_tools.md
+          - api/common_tools.md
+          - api/durable_exec.md
+          - api/output.md
+          - api/result.md
+          - api/messages.md
+          - api/exceptions.md
+          - api/settings.md
+          - api/usage.md
+          - api/mcp.md
+          - api/format_prompt.md
+          - api/direct.md
+          - api/ext.md
+          - api/models/base.md
+          - api/models/openai.md
+          - api/models/anthropic.md
+          - api/models/bedrock.md
+          - api/models/cohere.md
+          - api/models/google.md
+          - api/models/groq.md
+          - api/models/huggingface.md
+          - api/models/instrumented.md
+          - api/models/mistral.md
+          - api/models/test.md
+          - api/models/function.md
+          - api/models/fallback.md
+          - api/models/wrapper.md
+          - api/models/mcp-sampling.md
+          - api/profiles.md
+          - api/providers.md
+          - api/retries.md
+      - pydantic_evals:
+          - api/pydantic_evals/dataset.md
+          - api/pydantic_evals/evaluators.md
+          - api/pydantic_evals/reporting.md
+          - api/pydantic_evals/otel.md
+          - api/pydantic_evals/generation.md
+      - pydantic_graph:
+          - api/pydantic_graph/graph.md
+          - api/pydantic_graph/nodes.md
+          - api/pydantic_graph/persistence.md
+          - api/pydantic_graph/mermaid.md
+          - api/pydantic_graph/exceptions.md
+      - fasta2a:
+          - api/fasta2a.md
 
   - Project:
       - contributing.md
-      - changelog.md
 
 extra:
   # hide the "Made with Material for MkDocs" message
@@ -244,6 +237,7 @@ markdown_extensions:
 
 watch:
   - pydantic_ai_slim
+  - pydantic_evals
   - pydantic_graph
   - examples
 
@@ -308,6 +302,11 @@ plugins:
           - cli.md
           - logfire.md
           - examples/*.md
+  - redirects:
+      redirect_maps:
+        'examples/index.md': 'examples/setup.md'
+        'mcp/index.md': 'mcp/overview.md'
+        'models/index.md': 'models/overview.md'
 
 hooks:
   - "docs/.hooks/main.py"
