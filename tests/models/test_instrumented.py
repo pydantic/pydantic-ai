@@ -123,7 +123,7 @@ class MyResponseStream(StreamedResponse):
 
 @requires_logfire_events
 async def test_instrumented_model(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
     assert model.system == 'my_system'
     assert model.model_name == 'my_model'
 
@@ -152,7 +152,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
         ),
     )
 
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat my_model',
@@ -166,8 +166,18 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
-                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'allow_text_output': True,
+                    },
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'model_request_parameters': {'type': 'object'}},
+                    },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -182,7 +192,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
     assert capfire.log_exporter.exported_logs_as_dicts() == snapshot(
         [
             {
-                'body': {'content': 'system_prompt', 'role': 'system'},
+                'body': {'role': 'system', 'content': 'system_prompt'},
                 'severity_number': 9,
                 'severity_text': None,
                 'attributes': {
@@ -343,7 +353,7 @@ async def test_instrumented_model_not_recording():
 
 @requires_logfire_events
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -371,7 +381,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
             ]
         )
 
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat my_model',
@@ -385,8 +395,18 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
-                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'allow_text_output': True,
+                    },
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'model_request_parameters': {'type': 'object'}},
+                    },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -432,7 +452,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
 
 @requires_logfire_events
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
-    model = InstrumentedModel(MyModel(), InstrumentationSettings(event_mode='logs'))
+    model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
     messages: list[ModelMessage] = [
         ModelRequest(
@@ -458,7 +478,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                 assert event == PartStartEvent(index=0, part=TextPart(content='text1'))
                 raise RuntimeError
 
-    assert capfire.exporter.exported_spans_as_dict() == snapshot(
+    assert capfire.exporter.exported_spans_as_dict(parse_json_attributes=True) == snapshot(
         [
             {
                 'name': 'chat my_model',
@@ -472,8 +492,18 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.model': 'my_model',
                     'server.address': 'example.com',
                     'server.port': 8000,
-                    'model_request_parameters': '{"function_tools": [], "builtin_tools": [], "output_mode": "text", "output_object": null, "output_tools": [], "allow_text_output": true}',
-                    'logfire.json_schema': '{"type": "object", "properties": {"model_request_parameters": {"type": "object"}}}',
+                    'model_request_parameters': {
+                        'function_tools': [],
+                        'builtin_tools': [],
+                        'output_mode': 'text',
+                        'output_object': None,
+                        'output_tools': [],
+                        'allow_text_output': True,
+                    },
+                    'logfire.json_schema': {
+                        'type': 'object',
+                        'properties': {'model_request_parameters': {'type': 'object'}},
+                    },
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat my_model',
                     'logfire.span_type': 'span',
@@ -1227,3 +1257,14 @@ def test_message_with_thinking_parts():
             },
         ]
     )
+
+
+def test_deprecated_event_mode_warning():
+    with pytest.warns(
+        UserWarning,
+        match='event_mode is only relevant for version=1 which is deprecated and will be removed in a future release',
+    ):
+        settings = InstrumentationSettings(event_mode='logs')
+    assert settings.event_mode == 'logs'
+    assert settings.version == 1
+    assert InstrumentationSettings().version == 2

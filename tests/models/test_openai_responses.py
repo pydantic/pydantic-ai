@@ -206,7 +206,7 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
+                provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
             ),
             ModelRequest(
                 parts=[
@@ -238,7 +238,7 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
+                provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
             ),
         ]
     )
@@ -272,7 +272,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
+                provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
             ),
             ModelRequest(
                 parts=[
@@ -297,7 +297,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
+                provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
             ),
         ]
     )
@@ -429,7 +429,7 @@ OpenAI's recent launch of GPT-5 has faced mixed reactions. Despite strong benchm
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_689b7c90010c8196ac0efd68b021490f07450cfc2d48b975',
+                provider_response_id='resp_689b7c90010c8196ac0efd68b021490f07450cfc2d48b975',
             ),
         ]
     )
@@ -453,7 +453,7 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
+                provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
             ),
         ]
     )
@@ -697,7 +697,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+                provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
             ),
             ModelRequest(
                 parts=[
@@ -721,7 +721,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
+                provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
             ),
             ModelRequest(
                 parts=[
@@ -771,7 +771,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
+                provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
             ),
             ModelRequest(
                 parts=[
@@ -789,7 +789,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
+                provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
             ),
         ]
     )
@@ -830,7 +830,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
+                provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
             ),
             ModelRequest(
                 parts=[
@@ -848,7 +848,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
+                provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
             ),
         ]
     )
@@ -891,7 +891,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
+                provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
             ),
             ModelRequest(
                 parts=[
@@ -913,7 +913,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
+                provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
             ),
         ]
     )
@@ -959,7 +959,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
+                provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
             ),
             ModelRequest(
                 parts=[
@@ -984,7 +984,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
+                provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
             ),
         ]
     )
@@ -1034,7 +1034,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
+                provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
             ),
             ModelRequest(
                 parts=[
@@ -1063,7 +1063,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
+                provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
             ),
         ]
     )
@@ -1118,7 +1118,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )

@@ -1,11 +1,12 @@
 from __future__ import annotations as _annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Any, Callable, Literal, Union, cast
+from typing import Annotated, Any, Literal, cast
 
 import httpx
 import pytest
@@ -79,9 +80,8 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+    MockChatCompletion = chat.ChatCompletion | Exception
+    MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -129,7 +129,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='openai',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -137,7 +137,7 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='openai',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -219,7 +219,7 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -314,7 +314,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -342,7 +342,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -359,7 +359,7 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='gpt-4o',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='openai',
-                provider_request_id='123',
+                provider_response_id='123',
             ),
         ]
     )
@@ -818,7 +818,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
+                provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
             ),
             ModelRequest(
                 parts=[
@@ -854,7 +854,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
+                provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
             ),
         ]
     )
@@ -896,7 +896,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
+                provider_response_id='chatcmpl-BRlkLhPc87BdohVobEJJCGq3rUAG2',
             ),
             ModelRequest(
                 parts=[
@@ -930,7 +930,7 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
+                provider_response_id='chatcmpl-BRlkORPA5rXMV3uzcOcgK4eQFKCVW',
             ),
         ]
     )
@@ -1850,7 +1850,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
+                provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
             ),
         ]
     )
@@ -1895,7 +1895,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
+                provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
             ),
             ModelRequest(
                 parts=[
@@ -1920,7 +1920,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 model_name='gpt-4.1-mini-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
+                provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
             ),
         ]
     )
@@ -1947,7 +1947,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
         ]
     )
@@ -1971,7 +1971,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
             ),
             ModelRequest(
                 parts=[
@@ -1992,7 +1992,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
+                provider_response_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
             ),
         ]
     )
@@ -2020,7 +2020,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
+                provider_response_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
         ]
     )
@@ -2045,7 +2045,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
+                provider_response_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
             ),
             ModelRequest(
                 parts=[
@@ -2070,7 +2070,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
+                provider_response_id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
             ),
         ]
     )
@@ -2372,7 +2372,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
+                provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
             ),
             ModelRequest(
                 parts=[
@@ -2405,7 +2405,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
+                provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
             ),
             ModelRequest(
                 parts=[
@@ -2463,7 +2463,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
+                provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
             ),
             ModelRequest(
                 parts=[
@@ -2490,7 +2490,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
+                provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
             ),
         ]
     )
@@ -2541,7 +2541,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
+                provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
             ),
             ModelRequest(
                 parts=[
@@ -2568,7 +2568,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
+                provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
             ),
         ]
     )
@@ -2621,7 +2621,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
+                provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
             ),
             ModelRequest(
                 parts=[
@@ -2652,7 +2652,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
+                provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
             ),
         ]
     )
@@ -2708,7 +2708,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
+                provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
             ),
             ModelRequest(
                 parts=[
@@ -2742,7 +2742,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
+                provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
             ),
         ]
     )
@@ -2802,7 +2802,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
+                provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
             ),
             ModelRequest(
                 parts=[
@@ -2840,7 +2840,7 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
+                provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
             ),
         ]
     )

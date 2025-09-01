@@ -5,7 +5,8 @@
         members:
         - AbstractToolset
         - CombinedToolset
-        - DeferredToolset
+        - ExternalToolset
+        - ApprovalRequiredToolset
         - FilteredToolset
         - FunctionToolset
         - PrefixedToolset

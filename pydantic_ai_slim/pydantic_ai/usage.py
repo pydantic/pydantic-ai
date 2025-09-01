@@ -13,7 +13,7 @@ from .exceptions import UsageLimitExceeded
 __all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class UsageBase:
     input_tokens: int = 0
     """Number of input/prompt tokens."""
@@ -79,7 +79,7 @@ class UsageBase:
         return any(dataclasses.asdict(self).values())
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class RequestUsage(UsageBase):
     """LLM usage associated with a single request.
 
@@ -111,7 +111,7 @@ class RequestUsage(UsageBase):
         return new_usage
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class RunUsage(UsageBase):
     """LLM usage associated with an agent run.
 
@@ -186,13 +186,13 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf.details[key] = slf.details.get(key, 0) + value
 
 
-@dataclass
+@dataclass(repr=False, kw_only=True)
 @deprecated('`Usage` is deprecated, use `RunUsage` instead')
 class Usage(RunUsage):
     """Deprecated alias for `RunUsage`."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class UsageLimits:
     """Limits on model usage.
 

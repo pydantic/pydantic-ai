@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from .. import _mcp, exceptions
@@ -35,6 +35,8 @@ class MCPSamplingModel(Model):
 
     session: ServerSession
     """The MCP server session to use for sampling."""
+
+    _: KW_ONLY
 
     default_max_tokens: int = 16_384
     """Default max tokens to use if not set in [`ModelSettings`][pydantic_ai.settings.ModelSettings.max_tokens].

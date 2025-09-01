@@ -2,8 +2,9 @@ from __future__ import annotations as _annotations
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal, overload
+from typing import Literal, overload
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import ModelProfile
@@ -27,7 +28,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 
-@dataclass
+@dataclass(kw_only=True)
 class BedrockModelProfile(ModelProfile):
     """Profile for models used with BedrockModel.
 
