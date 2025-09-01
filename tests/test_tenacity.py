@@ -32,6 +32,8 @@ class TestTenacityTransport:
     def test_successful_request(self):
         """Test that successful requests pass through without retry."""
         mock_transport = Mock(spec=httpx.BaseTransport)
+        mock_transport.__enter__ = Mock(return_value=mock_transport)
+        mock_transport.__exit__ = Mock(return_value=None)
         mock_response = Mock(spec=httpx.Response)
         mock_transport.handle_request.return_value = mock_response
 
