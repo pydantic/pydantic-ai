@@ -68,6 +68,9 @@ try:
         TextMessageContentEvent,
         TextMessageEndEvent,
         TextMessageStartEvent,
+        # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+        # ThinkingEndEvent,
+        # ThinkingStartEvent,
         ThinkingTextMessageContentEvent,
         ThinkingTextMessageEndEvent,
         ThinkingTextMessageStartEvent,
@@ -392,6 +395,12 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEve
                 if stream_ctx.part_end:  # pragma: no branch
                     yield stream_ctx.part_end
                     stream_ctx.part_end = None
+                if stream_ctx.thinking:
+                    # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+                    # yield ThinkingEndEvent(
+                    #     type=EventType.THINKING_END,
+                    # )
+                    stream_ctx.thinking = False
         elif isinstance(node, CallToolsNode):
             async with node.stream(run.ctx) as handle_stream:
                 async for event in handle_stream:
@@ -400,7 +409,7 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEve
                             yield msg
 
 
-async def _handle_model_request_event(
+async def _handle_model_request_event(  # noqa: C901
     stream_ctx: _RequestStreamContext,
     agent_event: ModelResponseStreamEvent,
 ) -> AsyncIterator[BaseEvent]:
@@ -420,48 +429,61 @@ async def _handle_model_request_event(
             stream_ctx.part_end = None
 
         part = agent_event.part
-        if isinstance(part, TextPart):
-            message_id = stream_ctx.new_message_id()
-            yield TextMessageStartEvent(
-                message_id=message_id,
-            )
-            if part.content:  # pragma: no branch
-                yield TextMessageContentEvent(
-                    message_id=message_id,
+        if isinstance(part, ThinkingPart):  # pragma: no branch
+            if not stream_ctx.thinking:
+                # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+                # yield ThinkingStartEvent(
+                #     type=EventType.THINKING_START,
+                # )
+                stream_ctx.thinking = True
+
+            if part.content:
+                yield ThinkingTextMessageStartEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_START,
+                )
+                yield ThinkingTextMessageContentEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
                     delta=part.content,
                 )
-            stream_ctx.part_end = TextMessageEndEvent(
-                message_id=message_id,
-            )
-        elif isinstance(part, ToolCallPart):  # pragma: no branch
-            message_id = stream_ctx.message_id or stream_ctx.new_message_id()
-            yield ToolCallStartEvent(
-                tool_call_id=part.tool_call_id,
-                tool_call_name=part.tool_name,
-                parent_message_id=message_id,
-            )
-            if part.args:
-                yield ToolCallArgsEvent(
-                    tool_call_id=part.tool_call_id,
-                    delta=part.args if isinstance(part.args, str) else json.dumps(part.args),
+                stream_ctx.part_end = ThinkingTextMessageEndEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_END,
                 )
-            stream_ctx.part_end = ToolCallEndEvent(
-                tool_call_id=part.tool_call_id,
-            )
+        else:
+            if stream_ctx.thinking:
+                # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+                # yield ThinkingEndEvent(
+                #     type=EventType.THINKING_END,
+                # )
+                stream_ctx.thinking = False
 
-        elif isinstance(part, ThinkingPart):  # pragma: no branch
-            yield ThinkingTextMessageStartEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_START,
-            )
-            # Always send the content even if it's empty, as it may be
-            # used to indicate the start of thinking.
-            yield ThinkingTextMessageContentEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                delta=part.content,
-            )
-            stream_ctx.part_end = ThinkingTextMessageEndEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_END,
-            )
+            if isinstance(part, TextPart):
+                message_id = stream_ctx.new_message_id()
+                yield TextMessageStartEvent(
+                    message_id=message_id,
+                )
+                if part.content:  # pragma: no branch
+                    yield TextMessageContentEvent(
+                        message_id=message_id,
+                        delta=part.content,
+                    )
+                stream_ctx.part_end = TextMessageEndEvent(
+                    message_id=message_id,
+                )
+            elif isinstance(part, ToolCallPart):  # pragma: no branch
+                message_id = stream_ctx.message_id or stream_ctx.new_message_id()
+                yield ToolCallStartEvent(
+                    tool_call_id=part.tool_call_id,
+                    tool_call_name=part.tool_name,
+                    parent_message_id=message_id,
+                )
+                if part.args:
+                    yield ToolCallArgsEvent(
+                        tool_call_id=part.tool_call_id,
+                        delta=part.args if isinstance(part.args, str) else json.dumps(part.args),
+                    )
+                stream_ctx.part_end = ToolCallEndEvent(
+                    tool_call_id=part.tool_call_id,
+                )
 
     elif isinstance(agent_event, PartDeltaEvent):
         delta = agent_event.delta
@@ -478,6 +500,14 @@ async def _handle_model_request_event(
             )
         elif isinstance(delta, ThinkingPartDelta):  # pragma: no branch
             if delta.content_delta:  # pragma: no branch
+                if not isinstance(stream_ctx.part_end, ThinkingTextMessageEndEvent):
+                    yield ThinkingTextMessageStartEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_START,
+                    )
+                    stream_ctx.part_end = ThinkingTextMessageEndEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_END,
+                    )
+
                 yield ThinkingTextMessageContentEvent(
                     type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
                     delta=delta.content_delta,
@@ -629,6 +659,7 @@ class _RequestStreamContext:
 
     message_id: str = ''
     part_end: BaseEvent | None = None
+    thinking: bool = False
 
     def new_message_id(self) -> str:
         """Generate a new message ID for the request stream.
