@@ -306,7 +306,7 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         await self.wrapped.__aexit__(exc_type, exc_value, traceback)
 
     async def aclose(self) -> None:
-        await self.wrapped.aclose()  # pragma: no cover
+        await self.wrapped.aclose()
 
 
 def wait_retry_after(
