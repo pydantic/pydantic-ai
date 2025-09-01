@@ -646,7 +646,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
         tool_call_approved=ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None,
-        usage_limits=ctx.deps.usage_limits,
     )
 
 
@@ -694,7 +693,7 @@ async def process_function_tools(  # noqa: C901
             output_parts.append(part)
         else:
             try:
-                result_data = await tool_manager.handle_call(call)
+                result_data = await tool_manager.handle_call(call, usage_limits=ctx.deps.usage_limits)
             except exceptions.UnexpectedModelBehavior as e:
                 ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                 raise e  # pragma: lax no cover
@@ -759,6 +758,7 @@ async def process_function_tools(  # noqa: C901
             ctx.deps.tracer,
             output_parts,
             deferred_calls,
+            ctx.deps.usage_limits,
         ):
             yield event
 
@@ -805,6 +805,7 @@ async def _call_tools(
     tracer: Tracer,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
+    usage_limits: _usage.UsageLimits | None,
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
     tool_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
     user_parts_by_index: dict[int, _messages.UserPromptPart] = {}
@@ -823,7 +824,7 @@ async def _call_tools(
     ):
         tasks = [
             asyncio.create_task(
-                _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id)),
+                _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
                 name=call.tool_name,
             )
             for call in tool_calls
@@ -863,14 +864,15 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
+    usage_limits: _usage.UsageLimits | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]:
     try:
         if tool_call_result is None:
-            tool_result = await tool_manager.handle_call(tool_call)
+            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call)
+            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
