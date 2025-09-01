@@ -3,62 +3,13 @@ import { exists } from '@std/fs/exists'
 import { contentType } from '@std/media-types'
 import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import z from 'zod'
+import { encodeBase64 } from '@std/encoding/base64'
 
 /**
  * Returns the temporary directory in the local filesystem for file persistence.
  */
 export function createRootDir(): string {
   return Deno.makeTempDirSync({ prefix: 'mcp_run_python' })
-}
-
-/**
- * Streams a file from an http(s) or file:// URI into targetPath.
- * Returns when bytes are fully written.
- */
-async function uploadFromUri(
-  uri: string,
-  absPath: string,
-): Promise<void> {
-  await Deno.mkdir(
-    path.dirname(absPath),
-    { recursive: true },
-  )
-
-  if (uri.startsWith('http://') || uri.startsWith('https://')) {
-    const res = await fetch(uri)
-    if (!res.ok || !res.body) {
-      throw new Error(`Fetch failed: ${res.status} ${res.statusText}`)
-    }
-    const file = await Deno.open(absPath, {
-      write: true,
-      create: true,
-      truncate: true,
-    })
-    try {
-      await res.body.pipeTo(file.writable)
-    } finally {
-      file.close()
-    }
-    return
-  }
-
-  if (uri.startsWith('file://')) {
-    const src = await Deno.open(path.fromFileUrl(uri), { read: true })
-    const dest = await Deno.open(absPath, {
-      write: true,
-      create: true,
-      truncate: true,
-    })
-    try {
-      await src.readable.pipeTo(dest.writable)
-    } finally {
-      src.close()
-      dest.close()
-    }
-    return
-  }
-
-  throw new Error(`Unsupported URI scheme: ${uri}`)
 }
 
 /**
@@ -82,9 +33,18 @@ export function registerFileFunctions(server: McpServer, rootDir: string) {
     },
     async ({ uri, filename }: { uri: string; filename: string }) => {
       const absPath = path.join(rootDir, filename)
-      await uploadFromUri(uri, absPath)
+      const fileResponse = await fetch(uri)
+      if (fileResponse.body) {
+        const file = await Deno.open(absPath, { write: true, create: true })
+        await fileResponse.body.pipeTo(file.writable)
+      }
       return {
-        content: [{ type: 'text', text: 'Upload successful.' }],
+        content: [{
+          type: 'resource_link',
+          uri: `file:///${filename}`,
+          name: filename,
+          mimeType: contentType(path.extname(absPath)),
+        }],
       }
     },
   )
@@ -112,15 +72,15 @@ export function registerFileFunctions(server: McpServer, rootDir: string) {
     },
     async (uri, { filename }) => {
       const absPath = path.join(rootDir, ...(Array.isArray(filename) ? filename : [filename]))
-      const mime = contentType(absPath)
+      const mime = contentType(path.extname(absPath))
       const fileBytes = await Deno.readFile(absPath)
 
       // Check if it's text-based
-      if (mime && /^text\/|\/json$|\/csv$|\/javascript$|\/xml$/.test(mime)) {
+      if (mime && /^(text\/|.*\/json$|.*\/csv$|.*\/javascript$|.*\/xml$)/.test(mime.split(';')[0])) {
         const text = new TextDecoder().decode(fileBytes)
         return { contents: [{ uri: uri.href, name: filename, mimeType: mime, text: text }] }
       } else {
-        const base64 = btoa(String.fromCharCode(...fileBytes))
+        const base64 = encodeBase64(String.fromCharCode(...fileBytes))
         return { contents: [{ uri: uri.href, name: filename, mimeType: mime, blob: base64 }] }
       }
     },

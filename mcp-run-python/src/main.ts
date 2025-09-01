@@ -18,12 +18,13 @@ const VERSION = '0.0.13'
 export async function main() {
   // Parse global flags once, then branch on subcommand
   const flags = parseArgs(Deno.args, {
-    string: ['port'],
-    default: { port: '3001', mount: false },
+    string: ['port', 'mount'],
+    default: { port: '3001' },
   })
   const mode = (flags._[0] as string | undefined) ?? ''
   const port = parseInt(flags.port as string)
-  const mount = flags.mount as string | boolean
+  const rawMount = flags.mount as string | undefined
+  const mount: string | boolean = rawMount === undefined ? false : rawMount === '' ? true : rawMount
 
   if (mode === 'stdio') {
     await runStdio(mount)
@@ -32,7 +33,7 @@ export async function main() {
   } else if (mode === 'sse') {
     runSse(port, mount)
   } else if (mode === 'warmup') {
-    await warmup(mount)
+    await warmup()
   } else {
     console.error(
       `\
@@ -58,8 +59,11 @@ function createServer(rootDir: string | null, mount: string | boolean): McpServe
       version: VERSION,
     },
     {
-      instructions: 'Call the "run_python_code" tool with the Python code to run.',
+      instructions: 'Call the "run_python_code" tool with the Python code to run.' +
+        (rootDir != null ? ` Persistent storage is mounted at: "${rootDir}".` : ''),
       capabilities: {
+        resources: {},
+        tools: {},
         logging: {},
       },
     },
@@ -126,6 +130,36 @@ function httpSetJsonResponse(
     }),
   )
   res.end()
+}
+
+function addDirCleanupCallback(server: http.Server | StdioServerTransport, dir: string) {
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    try {
+      Deno.removeSync(dir, { recursive: true })
+    } catch {
+      // ignore
+    }
+  }
+  if (server instanceof http.Server) {
+    server.on('close', cleanup)
+  } else {
+    server.onclose = cleanup
+  }
+  const handleSig = () => {
+    try {
+      server.close(() => {})
+    } catch {
+      // ignore
+    }
+    cleanup()
+    Deno.exit()
+  }
+  Deno.addSignalListener('SIGINT', handleSig)
+  Deno.addSignalListener('SIGTERM', handleSig)
+  addEventListener('unload', cleanup)
 }
 
 /*
@@ -215,16 +249,14 @@ function runStreamableHttp(port: number, mount: string | boolean) {
     }
   })
 
-  // Cleanup root dir on server close
+  // Cleanup root dir on server close and on process signals
   if (rootDir != null) {
-    server.on('close', () => {
-      Deno.removeSync(rootDir, { recursive: true })
-    })
+    addDirCleanupCallback(server, rootDir)
   }
 
   server.listen(port, () => {
     console.log(
-      `Running MCP Run Python version ${VERSION} with Streamable HTTP transport on port ${port}`,
+      `Running MCP Run Python version ${VERSION} with SSE transport on port ${port}.`,
     )
   })
 }
@@ -275,16 +307,14 @@ function runSse(port: number, mount: string | boolean) {
     }
   })
 
-  // Cleanup root dir on server close
+  // Cleanup root dir on server close and on process signals
   if (rootDir != null) {
-    server.on('close', () => {
-      Deno.removeSync(rootDir, { recursive: true })
-    })
+    addDirCleanupCallback(server, rootDir)
   }
 
   server.listen(port, () => {
     console.log(
-      `Running MCP Run Python version ${VERSION} with SSE transport on port ${port}`,
+      `Running MCP Run Python version ${VERSION} with SSE transport on port ${port}.`,
     )
   })
 }
@@ -297,11 +327,9 @@ async function runStdio(mount: string | boolean) {
   const mcpServer = createServer(rootDir, mount)
   const transport = new StdioServerTransport()
 
-  // Cleanup root dir on server close
+  // Cleanup root dir on server close and on process signals
   if (rootDir != null) {
-    transport.onclose = () => {
-      Deno.removeSync(rootDir, { recursive: true })
-    }
+    addDirCleanupCallback(transport, rootDir)
   }
 
   await mcpServer.connect(transport)
@@ -310,10 +338,9 @@ async function runStdio(mount: string | boolean) {
 /*
  * Run pyodide to download packages which can otherwise interrupt the server
  */
-async function warmup(mount?: string | boolean) {
+async function warmup() {
   console.error(
-    `Running warmup script for MCP Run Python version ${VERSION}...` +
-      (mount ? ` (mount: ${typeof mount === 'string' ? mount : 'enabled'})` : ''),
+    `Running warmup script for MCP Run Python version ${VERSION}...`,
   )
   const code = `
 import numpy

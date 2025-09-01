@@ -3,6 +3,7 @@
   "specifiers": {
     "jsr:@std/cli@*": "1.0.15",
     "jsr:@std/cli@^1.0.15": "1.0.15",
+    "jsr:@std/encoding@^1.0.10": "1.0.10",
     "jsr:@std/fs@*": "1.0.19",
     "jsr:@std/fs@^1.0.19": "1.0.19",
     "jsr:@std/internal@^1.0.10": "1.0.10",
@@ -21,6 +22,9 @@
   "jsr": {
     "@std/cli@1.0.15": {
       "integrity": "e79ba3272ec710ca44d8342a7688e6288b0b88802703f3264184b52893d5e93f"
+    },
+    "@std/encoding@1.0.10": {
+      "integrity": "8783c6384a2d13abd5e9e87a7ae0520a30e9f56aeeaa3bdf910a3eaaf5c811a1"
     },
     "@std/fs@1.0.19": {
       "integrity": "051968c2b1eae4d2ea9f79a08a3845740ef6af10356aff43d3e2ef11ed09fb06",
@@ -641,6 +645,7 @@
   "workspace": {
     "dependencies": [
       "jsr:@std/cli@^1.0.15",
+      "jsr:@std/encoding@^1.0.10",
       "jsr:@std/fs@^1.0.19",
       "jsr:@std/media-types@^1.1.0",
       "jsr:@std/path@^1.0.8",
