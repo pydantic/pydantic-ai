@@ -4,9 +4,8 @@ WARNING: running these tests will make use of the relevant API tokens (and cost 
 """
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Callable
 
 import httpx
 import pytest

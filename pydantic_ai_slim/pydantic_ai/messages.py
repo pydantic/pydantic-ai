@@ -4,22 +4,19 @@ import base64
 import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
 
 import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import TypeAlias, deprecated
+from typing_extensions import deprecated
 
 from . import _otel_messages, _utils
-from ._utils import (
-    generate_tool_call_id as _generate_tool_call_id,
-    now_utc as _now_utc,
-)
+from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from .exceptions import UnexpectedModelBehavior
 from .usage import RequestUsage
 
@@ -65,6 +62,8 @@ class SystemPromptPart:
 
     content: str
     """The content of the prompt."""
+
+    _: KW_ONLY
 
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
@@ -114,6 +113,8 @@ class FileUrl(ABC):
     If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
     e.g. "This is file <identifier>:" preceding the `FileUrl`.
     """
+    
+    _: KW_ONLY
 
     force_download: bool = False
     """If the model supports it:
@@ -173,6 +174,8 @@ class VideoUrl(FileUrl):
 
     url: str
     """The URL of the video."""
+
+    _: KW_ONLY
 
     kind: Literal['video-url'] = 'video-url'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -247,6 +250,8 @@ class AudioUrl(FileUrl):
     url: str
     """The URL of the audio file."""
 
+    _: KW_ONLY
+
     kind: Literal['audio-url'] = 'audio-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
@@ -307,6 +312,8 @@ class ImageUrl(FileUrl):
     url: str
     """The URL of the image."""
 
+    _: KW_ONLY
+
     kind: Literal['image-url'] = 'image-url'
     """Type identifier, this is available on all parts as a discriminator."""
 
@@ -361,6 +368,8 @@ class DocumentUrl(FileUrl):
 
     url: str
     """The URL of the document."""
+
+    _: KW_ONLY
 
     kind: Literal['document-url'] = 'document-url'
     """Type identifier, this is available on all parts as a discriminator."""
@@ -437,7 +446,6 @@ class BinaryContent:
 
     identifier: str
     """Identifier for the binary content, such as a unique ID. generating one from the data if not explicitly set
-
     This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
     and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
 
@@ -445,6 +453,8 @@ class BinaryContent:
     If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
     e.g. "This is file <identifier>:" preceding the `BinaryContent`.
     """
+
+    _: KW_ONLY
 
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
@@ -508,7 +518,8 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-UserContent: TypeAlias = 'str | ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent'
+MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+UserContent: TypeAlias = str | MultiModalContent
 
 
 @dataclass(repr=False)
@@ -524,17 +535,19 @@ class ToolReturn:
     return_value: Any
     """The return value to be used in the tool response."""
 
+    _: KW_ONLY
+
     content: str | Sequence[UserContent] | None = None
     """The content to be sent to the model as a UserPromptPart."""
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
 
+    kind: Literal['tool-return'] = 'tool-return'
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-# Ideally this would be a Union of types, but Python 3.9 requires it to be a string, and strings don't work with `isinstance``.
-MultiModalContentTypes = (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent)
 _document_format_lookup: dict[str, DocumentFormat] = {
     'application/pdf': 'pdf',
     'text/plain': 'txt',
@@ -582,6 +595,8 @@ class UserPromptPart:
     content: str | Sequence[UserContent]
     """The content of the prompt."""
 
+    _: KW_ONLY
+
     timestamp: datetime = field(default_factory=_now_utc)
     """The timestamp of the prompt."""
 
@@ -608,7 +623,7 @@ class UserPromptPart:
                 parts.append(
                     _otel_messages.TextPart(type='text', **({'content': part} if settings.include_content else {}))
                 )
-            elif isinstance(part, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl)):
+            elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
                 parts.append(
                     _otel_messages.MediaUrlPart(
                         type=part.kind,
@@ -644,6 +659,8 @@ class BaseToolReturnPart:
 
     tool_call_id: str
     """The tool call identifier, this is used by some models including OpenAI."""
+
+    _: KW_ONLY
 
     metadata: Any = None
     """Additional data that can be accessed programmatically by the application but is not sent to the LLM."""
@@ -700,6 +717,8 @@ class BaseToolReturnPart:
 class ToolReturnPart(BaseToolReturnPart):
     """A tool return message, this encodes the result of running a tool."""
 
+    _: KW_ONLY
+
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -707,6 +726,8 @@ class ToolReturnPart(BaseToolReturnPart):
 @dataclass(repr=False)
 class BuiltinToolReturnPart(BaseToolReturnPart):
     """A tool return message from a built-in tool."""
+
+    _: KW_ONLY
 
     provider_name: str | None = None
     """The name of the provider that generated the response."""
@@ -740,6 +761,8 @@ class RetryPromptPart:
     If the retry was triggered by a [`ValidationError`][pydantic_core.ValidationError], this will be a list of
     error details.
     """
+
+    _: KW_ONLY
 
     tool_name: str | None = None
     """The name of the tool that was called, if any."""
@@ -799,7 +822,7 @@ class RetryPromptPart:
 
 
 ModelRequestPart = Annotated[
-    Union[SystemPromptPart, UserPromptPart, ToolReturnPart, RetryPromptPart], pydantic.Discriminator('part_kind')
+    SystemPromptPart | UserPromptPart | ToolReturnPart | RetryPromptPart, pydantic.Discriminator('part_kind')
 ]
 """A message part sent by Pydantic AI to a model."""
 
@@ -810,6 +833,8 @@ class ModelRequest:
 
     parts: list[ModelRequestPart]
     """The parts of the user message."""
+
+    _: KW_ONLY
 
     instructions: str | None = None
     """The instructions for the model."""
@@ -832,6 +857,8 @@ class TextPart:
     content: str
     """The text content of the response."""
 
+    _: KW_ONLY
+
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -848,6 +875,8 @@ class ThinkingPart:
 
     content: str
     """The thinking content of the response."""
+
+    _: KW_ONLY
 
     id: str | None = None
     """The identifier of the thinking part."""
@@ -927,6 +956,8 @@ class BaseToolCallPart:
 class ToolCallPart(BaseToolCallPart):
     """A tool call from a model."""
 
+    _: KW_ONLY
+
     part_kind: Literal['tool-call'] = 'tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -934,6 +965,8 @@ class ToolCallPart(BaseToolCallPart):
 @dataclass(repr=False)
 class BuiltinToolCallPart(BaseToolCallPart):
     """A tool call to a built-in tool."""
+
+    _: KW_ONLY
 
     provider_name: str | None = None
     """The name of the provider that generated the response."""
@@ -943,7 +976,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    Union[TextPart, ToolCallPart, BuiltinToolCallPart, BuiltinToolReturnPart, ThinkingPart],
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""
@@ -955,6 +988,8 @@ class ModelResponse:
 
     parts: list[ModelResponsePart]
     """The parts of the model message."""
+
+    _: KW_ONLY
 
     usage: RequestUsage = field(default_factory=RequestUsage)
     """Usage information for the request.
@@ -984,7 +1019,7 @@ class ModelResponse:
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    provider_request_id: str | None = None
+    provider_response_id: str | None = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def price(self) -> genai_types.PriceCalculation:
@@ -1016,14 +1051,14 @@ class ModelResponse:
                 body.setdefault('tool_calls', []).append(
                     {
                         'id': part.tool_call_id,
-                        'type': 'function',  # TODO https://github.com/pydantic/pydantic-ai/issues/888
+                        'type': 'function',
                         'function': {
                             'name': part.tool_name,
                             **({'arguments': part.args} if settings.include_content else {}),
                         },
                     }
                 )
-            elif isinstance(part, (TextPart, ThinkingPart)):
+            elif isinstance(part, TextPart | ThinkingPart):
                 kind = part.part_kind
                 body.setdefault('content', []).append(
                     {'kind': kind, **({'text': part.content} if settings.include_content else {})}
@@ -1072,14 +1107,19 @@ class ModelResponse:
         return self.provider_details
 
     @property
-    @deprecated('`vendor_id` is deprecated, use `provider_request_id` instead')
+    @deprecated('`vendor_id` is deprecated, use `provider_response_id` instead')
     def vendor_id(self) -> str | None:
-        return self.provider_request_id
+        return self.provider_response_id
+
+    @property
+    @deprecated('`provider_request_id` is deprecated, use `provider_response_id` instead')
+    def provider_request_id(self) -> str | None:
+        return self.provider_response_id
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-ModelMessage = Annotated[Union[ModelRequest, ModelResponse], pydantic.Discriminator('kind')]
+ModelMessage = Annotated[ModelRequest | ModelResponse, pydantic.Discriminator('kind')]
 """Any message sent to or returned by a model."""
 
 ModelMessagesTypeAdapter = pydantic.TypeAdapter(
@@ -1094,6 +1134,8 @@ class TextPartDelta:
 
     content_delta: str
     """The incremental text content to add to the existing `TextPart` content."""
+
+    _: KW_ONLY
 
     part_delta_kind: Literal['text'] = 'text'
     """Part delta type identifier, used as a discriminator."""
@@ -1117,7 +1159,7 @@ class TextPartDelta:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ThinkingPartDelta:
     """A partial update (delta) for a `ThinkingPart` to append new thinking content."""
 
@@ -1169,7 +1211,7 @@ class ThinkingPartDelta:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ToolCallPartDelta:
     """A partial update (delta) for a `ToolCallPart` to modify tool name, arguments, or tool call ID."""
 
@@ -1289,12 +1331,12 @@ class ToolCallPartDelta:
 
 
 ModelResponsePartDelta = Annotated[
-    Union[TextPartDelta, ThinkingPartDelta, ToolCallPartDelta], pydantic.Discriminator('part_delta_kind')
+    TextPartDelta | ThinkingPartDelta | ToolCallPartDelta, pydantic.Discriminator('part_delta_kind')
 ]
 """A partial update (delta) for any model response part."""
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class PartStartEvent:
     """An event indicating that a new part has started.
 
@@ -1314,7 +1356,7 @@ class PartStartEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class PartDeltaEvent:
     """An event indicating a delta update for an existing part."""
 
@@ -1330,7 +1372,7 @@ class PartDeltaEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class FinalResultEvent:
     """An event indicating the response to the current model request matches the output schema and will produce a result."""
 
@@ -1345,7 +1387,7 @@ class FinalResultEvent:
 
 
 ModelResponseStreamEvent = Annotated[
-    Union[PartStartEvent, PartDeltaEvent, FinalResultEvent], pydantic.Discriminator('event_kind')
+    PartStartEvent | PartDeltaEvent | FinalResultEvent, pydantic.Discriminator('event_kind')
 ]
 """An event in the model response stream, starting a new part, applying a delta to an existing one, or indicating the final result."""
 
@@ -1356,6 +1398,9 @@ class FunctionToolCallEvent:
 
     part: ToolCallPart
     """The (function) tool call to make."""
+
+    _: KW_ONLY
+
     event_kind: Literal['function_tool_call'] = 'function_tool_call'
     """Event type identifier, used as a discriminator."""
 
@@ -1379,6 +1424,9 @@ class FunctionToolResultEvent:
 
     result: ToolReturnPart | RetryPromptPart
     """The result of the call to the function tool."""
+
+    _: KW_ONLY
+
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""
 
@@ -1397,6 +1445,8 @@ class BuiltinToolCallEvent:
     part: BuiltinToolCallPart
     """The built-in tool call to make."""
 
+    _: KW_ONLY
+
     event_kind: Literal['builtin_tool_call'] = 'builtin_tool_call'
     """Event type identifier, used as a discriminator."""
 
@@ -1408,15 +1458,17 @@ class BuiltinToolResultEvent:
     result: BuiltinToolReturnPart
     """The result of the call to the built-in tool."""
 
+    _: KW_ONLY
+
     event_kind: Literal['builtin_tool_result'] = 'builtin_tool_result'
     """Event type identifier, used as a discriminator."""
 
 
 HandleResponseEvent = Annotated[
-    Union[FunctionToolCallEvent, FunctionToolResultEvent, BuiltinToolCallEvent, BuiltinToolResultEvent],
+    FunctionToolCallEvent | FunctionToolResultEvent | BuiltinToolCallEvent | BuiltinToolResultEvent,
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
 
-AgentStreamEvent = Annotated[Union[ModelResponseStreamEvent, HandleResponseEvent], pydantic.Discriminator('event_kind')]
+AgentStreamEvent = Annotated[ModelResponseStreamEvent | HandleResponseEvent, pydantic.Discriminator('event_kind')]
 """An event in the agent stream: model response stream events and response-handling events."""

@@ -27,7 +27,7 @@ MetadataT = TypeVar('MetadataT', default=Any, covariant=True)
 """Type variable for the metadata associated with the task being evaluated."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EvaluatorContext(Generic[InputsT, OutputT, MetadataT]):
     """Context for evaluating a task execution.
 
