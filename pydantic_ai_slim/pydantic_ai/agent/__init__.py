@@ -1080,16 +1080,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # noinspection PyTypeChecker
             self._function_toolset.add_function(
                 func_,
-                True,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
-                text_format,
-                requires_approval,
+                takes_ctx=True,
+                name=name,
+                retries=retries,
+                prepare=prepare,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                text_format=text_format,
+                requires_approval=requires_approval,
             )
             return func_
 
@@ -1182,16 +1182,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # noinspection PyTypeChecker
             self._function_toolset.add_function(
                 func_,
-                False,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
-                text_format,
-                requires_approval,
+                takes_ctx=False,
+                name=name,
+                retries=retries,
+                prepare=prepare,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                text_format=text_format,
+                requires_approval=requires_approval,
             )
             return func_
 

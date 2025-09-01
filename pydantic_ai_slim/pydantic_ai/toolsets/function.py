@@ -157,16 +157,16 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             # noinspection PyTypeChecker
             self.add_function(
                 func_,
-                None,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
-                text_format,
-                requires_approval,
+                takes_ctx=None,
+                name=name,
+                retries=retries,
+                prepare=prepare,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                text_format=text_format,
+                requires_approval=requires_approval,
             )
             return func_
 
