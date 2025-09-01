@@ -793,7 +793,7 @@ for call in requests.approvals:
 result = agent.run_sync(message_history=messages, deferred_tool_results=results)
 print(result.output)
 """
-I successfully deleted `__init__.py` and updated `README.md`, but was not able to delete `.env`.
+I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.
 """
 print(result.all_messages())
 """
@@ -853,7 +853,7 @@ print(result.all_messages())
     ModelResponse(
         parts=[
             TextPart(
-                content='I successfully deleted `__init__.py` and updated `README.md`, but was not able to delete `.env`.'
+                content='I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.'
             )
         ],
         usage=RequestUsage(input_tokens=79, output_tokens=39),
