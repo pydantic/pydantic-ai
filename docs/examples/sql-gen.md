@@ -19,7 +19,7 @@ docker run --rm -e POSTGRES_PASSWORD=postgres -p 54320:5432 postgres
 
 _(we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running)_
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.sql_gen
