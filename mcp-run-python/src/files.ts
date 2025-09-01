@@ -78,10 +78,10 @@ export function registerFileFunctions(server: McpServer, rootDir: string) {
       // Check if it's text-based
       if (mime && /^(text\/|.*\/json$|.*\/csv$|.*\/javascript$|.*\/xml$)/.test(mime.split(';')[0])) {
         const text = new TextDecoder().decode(fileBytes)
-        return { contents: [{ uri: uri.href, name: filename, mimeType: mime, text: text }] }
+        return { contents: [{ uri: uri.href, mimeType: mime, text: text }] }
       } else {
-        const base64 = encodeBase64(String.fromCharCode(...fileBytes))
-        return { contents: [{ uri: uri.href, name: filename, mimeType: mime, blob: base64 }] }
+        const base64 = encodeBase64(fileBytes)
+        return { contents: [{ uri: uri.href, mimeType: mime, blob: base64 }] }
       }
     },
   )

@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import base64
 import re
 import secrets
 import subprocess
@@ -20,6 +21,7 @@ from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
+from pydantic import FileUrl
 
 if TYPE_CHECKING:
     from mcp import ClientSession
@@ -45,6 +47,8 @@ LOREM_IPSUM = """But I must explain to you how all this mistaken idea of denounc
 
 On the other hand, we denounce with righteous indignation and dislike men who are so beguiled and demoralized by the charms of pleasure of the moment, so blinded by desire, that they cannot foresee the pain and trouble that are bound to ensue; and equal blame belongs to those who fail in their duty through weakness of will, which is the same as saying through shrinking from toil and pain. These cases are perfectly simple and easy to distinguish. In a free hour, when our power of choice is untrammelled and when nothing prevents our being able to do what we like best, every pleasure is to be welcomed and every pain avoided. But in certain circumstances and owing to the claims of duty or the obligations of business it will frequently occur that pleasures have to be repudiated and annoyances accepted. The wise man therefore always holds in these matters to this principle of selection: he rejects pleasures to secure other greater pleasures, or else he endures pains to avoid worse pains.
 """
+
+BASE_64_IMAGE = 'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAEX0lEQVR4nOzdO8vX9R/HcS/56f8PWotGQkPBBUWESCQYNJR0GjIn6UBTgUMZTiGE4ZgRVKNkuDSEFtgBQqIiKunkEFdkWLmEBQUWiNUQYd2KNwTPx+MGvD7Tk/f2/S7O7tmyatKnJx8b3f/p6EOj+5euu2Z0/+Sxt0f3N++9fHR/+57/j+7vuPuT0f3Vo+vwHycA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQtDr561+gDpzf9PLp/4eNzo/uXzv41uv/BM0+O7h9/bsPo/vqPdo3u7965GN13AUgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSlh5ce+XoA9+eODK6v3r7naP7b31zaHT/4p+3jO4f2/Tb6P7K41tH9zff+8LovgtAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkLb09ZmLow8sb1ke3d92YXR+1dO7PhzdX7f2xtH9Q5fN/t/g2j9eHt3/cc350X0XgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBtcf3eW0cfePTE7Pf1D9yxMrq/4YrR+VWvnN84uv/lvs2j+2v3nx3dv3rT/0b3XQDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmAtKWrzq0ffeD312f339h5ZnT/npsPj+7//cPDo/un739idP/Xg5+P7j/y/G2j+y4AaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQNpi/5FfRh94753XRvcP7F0zuv/V7e+O7t906v3R/WdP/zO6f9/ixdH9G3Z/NrrvApAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkLb25vDL6wLoHjo7ur7z03ej++u+fGt0/vm/2+/dfHF4e3d9xauPo/taN20b3XQDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmAtH8DAAD//9drYGg9ROu9AAAAAElFTkSuQmCC'
 
 
 @pytest.fixture
@@ -371,6 +375,61 @@ NameError: name 'unknown' is not defined
         assert createdFile.exists()
         assert createdFile.is_file()
         assert createdFile.read_text() == LOREM_IPSUM
+
+    @pytest.mark.parametrize('content_type', ['bytes', 'text'])
+    async def test_download_files(
+        self,
+        mcp_session: ClientSession,
+        server_type: Literal['stdio', 'sse', 'streamable_http'],
+        mount: bool | str,
+        content_type: Literal['bytes', 'text'],
+    ):
+        if mount is False:
+            pytest.skip('No directory mounted.')
+        result = await mcp_session.initialize()
+
+        # Extract directory from response
+        storageDir = self.get_dir_from_instructions(result.instructions)
+        assert storageDir.is_dir()
+
+        match content_type:
+            case 'bytes':
+                filename = 'image.png'
+                ctype = 'image/png'
+                file_path = storageDir / filename
+                file_path.write_bytes(base64.b64decode(BASE_64_IMAGE))
+
+            case 'text':
+                filename = 'lorem.txt'
+                ctype = 'text/plain'
+                file_path = storageDir / filename
+                file_path.write_text(LOREM_IPSUM)
+
+        result = await mcp_session.list_resources()
+
+        assert len(result.resources) == 1
+        resource = result.resources[0]
+        assert resource.name == filename
+        assert resource.mimeType is not None
+        assert resource.mimeType.startswith(ctype)
+        assert str(resource.uri) == f'file:///{filename}'
+
+        result = await mcp_session.read_resource(FileUrl(f'file:///{filename}'))
+
+        assert len(result.contents) == 1
+        resource = result.contents[0]
+        assert str(resource.uri) == f'file:///{filename}'
+        assert resource.mimeType is not None
+        assert resource.mimeType.startswith(ctype)
+
+        match content_type:
+            case 'bytes':
+                assert isinstance(resource, types.BlobResourceContents)
+                assert resource.blob == BASE_64_IMAGE
+
+            case 'text':
+                assert isinstance(resource, types.TextResourceContents)
+                assert resource.text == LOREM_IPSUM
 
 
 async def test_install_run_python_code() -> None:
