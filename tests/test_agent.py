@@ -3372,25 +3372,10 @@ def test_tool_returning_file_url_with_identifier():
                     content=[
                         'This is file img_001:',
                         ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
-                    ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
                         'This is file vid_002:',
                         VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),
-                    ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
                         'This is file aud_003:',
                         AudioUrl(url='https://example.com/audio.mp3', identifier='aud_003'),
-                    ],
-                    timestamp=IsNow(tz=timezone.utc),
-                ),
-                UserPromptPart(
-                    content=[
                         'This is file doc_004:',
                         DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
                     ],
