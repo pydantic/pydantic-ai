@@ -1321,6 +1321,7 @@ def test_tool_raises_approval_required():
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1337,6 +1338,7 @@ def test_tool_raises_approval_required():
                 usage=RequestUsage(input_tokens=52, output_tokens=5),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1479,6 +1481,7 @@ def test_parallel_tool_return_with_deferred():
                 usage=RequestUsage(input_tokens=68, output_tokens=30),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1564,6 +1567,7 @@ def test_parallel_tool_return_with_deferred():
                 usage=RequestUsage(input_tokens=68, output_tokens=30),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1624,6 +1628,7 @@ def test_parallel_tool_return_with_deferred():
                 usage=RequestUsage(input_tokens=124, output_tokens=31),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1715,6 +1720,7 @@ async def test_approval_required_toolset():
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1765,6 +1771,7 @@ async def test_approval_required_toolset():
                 usage=RequestUsage(input_tokens=51, output_tokens=12),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1793,6 +1800,7 @@ async def test_approval_required_toolset():
                 usage=RequestUsage(input_tokens=59, output_tokens=13),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )

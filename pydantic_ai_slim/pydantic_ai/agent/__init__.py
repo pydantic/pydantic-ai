@@ -245,7 +245,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
-        ignore_warning_cost: bool = False,
+        ignore_warning_cost: bool = True,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.

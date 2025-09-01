@@ -66,6 +66,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -104,6 +105,7 @@ async def test_history_processor_run_replaces_message_history(function_model: Fu
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -138,6 +140,7 @@ async def test_history_processor_streaming_replaces_message_history(function_mod
                 usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -169,6 +172,7 @@ async def test_history_processor_messages_sent_to_provider(
                 usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
