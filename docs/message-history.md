@@ -61,6 +61,7 @@ print(result.all_messages())
         usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
 ]
 """
@@ -129,6 +130,7 @@ async def main():
                 usage=RequestUsage(input_tokens=50, output_tokens=12),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
+                provider_name='function',
             ),
         ]
         """
@@ -183,6 +185,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
     ModelRequest(
         parts=[
@@ -201,6 +204,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
 ]
 """
@@ -302,6 +306,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
     ModelRequest(
         parts=[
@@ -320,6 +325,7 @@ print(result2.all_messages())
         usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
 ]
 """

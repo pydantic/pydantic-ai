@@ -98,6 +98,7 @@ print(dice_result.all_messages())
         usage=RequestUsage(input_tokens=90, output_tokens=2),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
     ModelRequest(
         parts=[
@@ -118,6 +119,7 @@ print(dice_result.all_messages())
         usage=RequestUsage(input_tokens=91, output_tokens=4),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
     ModelRequest(
         parts=[
@@ -138,6 +140,7 @@ print(dice_result.all_messages())
         usage=RequestUsage(input_tokens=92, output_tokens=12),
         model_name='gemini-1.5-flash',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
 ]
 """
@@ -827,6 +830,7 @@ print(result.all_messages())
         usage=RequestUsage(input_tokens=63, output_tokens=21),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
     ModelRequest(
         parts=[
@@ -859,6 +863,7 @@ print(result.all_messages())
         usage=RequestUsage(input_tokens=79, output_tokens=39),
         model_name='gpt-5',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     ),
 ]
 """
@@ -984,6 +989,7 @@ async def main():
             usage=RequestUsage(input_tokens=63, output_tokens=13),
             model_name='gpt-5',
             timestamp=datetime.datetime(...),
+            provider_name='function',
         ),
         ModelRequest(
             parts=[
@@ -1004,6 +1010,7 @@ async def main():
             usage=RequestUsage(input_tokens=64, output_tokens=28),
             model_name='gpt-5',
             timestamp=datetime.datetime(...),
+            provider_name='function',
         ),
     ]
     """
