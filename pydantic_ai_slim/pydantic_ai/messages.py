@@ -113,7 +113,7 @@ class FileUrl(ABC):
     If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
     e.g. "This is file <identifier>:" preceding the `FileUrl`.
     """
-    
+
     _: KW_ONLY
 
     force_download: bool = False
