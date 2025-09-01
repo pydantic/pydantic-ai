@@ -773,7 +773,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[
                 TextPart(
-                    'I successfully deleted `__init__.py` and updated `README.md`, but was not able to delete `.env`.'
+                    'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.'
                 )
             ]
         )
