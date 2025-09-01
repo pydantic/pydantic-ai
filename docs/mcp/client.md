@@ -54,7 +54,7 @@ Then we can create the client:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStreamableHTTP
 
-server = MCPServerStreamableHTTP('http://localhost:8000/mcp')  # (1)!
+server = MCPServerStreamableHTTP(url='http://localhost:8000/mcp')  # (1)!
 agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
