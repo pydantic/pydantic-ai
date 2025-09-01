@@ -568,6 +568,7 @@ class ToolDefinition:
             return None
         return property_name
 
+    @property
     def defer(self) -> bool:
         """Whether calls to this tool will be deferred.
 
