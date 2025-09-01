@@ -1180,6 +1180,44 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     assert result.output == snapshot('4')
 
 
+@pytest.mark.vcr()
+async def test_openai_previous_response_id(allow_model_requests: None, openai_api_key: str):
+    """Test if previous responses are detected via previous_response_id in settings"""
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+    result = await agent.run('The secret key is sesame')
+    settings = OpenAIResponsesModelSettings(openai_previous_response_id=result.all_messages()[-1].provider_response_id)  # type: ignore
+    result = await agent.run('What is the secret code?', model_settings=settings)
+    assert result.output == snapshot('sesame')
+
+
+@pytest.mark.vcr()
+async def test_openai_invalid_previous_response_id(allow_model_requests: None, openai_api_key: str):
+    """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
+    history = [
+        ModelRequest(
+            parts=[
+                UserPromptPart(
+                    content='The secret key is sesame',
+                ),
+            ],
+        ),
+        ModelResponse(
+            parts=[
+                TextPart(content='Open sesame! What would you like to unlock?'),
+            ],
+            model_name='claude-3-5-sonnet-latest',
+            provider_name='anthropic',
+            provider_response_id='msg_1234',
+        ),
+    ]
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model=model)
+    result = await agent.run('What is the secret code?', message_history=history)
+    assert result.output == snapshot('sesame')
+
+
 async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
     c = response_message(
         [

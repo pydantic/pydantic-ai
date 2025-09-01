@@ -222,6 +222,13 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `medium`, and `high`.
     """
 
+    openai_previous_response_id: str
+    """The identifier of the most recent response to include in the API request.
+
+    This enables the model to reference previous reasoning traces.
+    See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/responses) for more information.
+    """
+
 
 @dataclass(init=False)
 class OpenAIChatModel(Model):
@@ -977,6 +984,18 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
+        previous_response_id: str | None = None
+        for message in reversed(messages):
+            # Instead of sending the full message history, get provider_response_id
+            # (openai-compatible) from the latest matching ModelResponse and
+            # pass it to the next ModelRequest as previous_response_id to preserve context.
+            # Since the full history isn't needed, only the latest message is kept.
+            if isinstance(message, ModelResponse) and message.model_name:
+                if self._model_name in message.model_name:
+                    previous_response_id = message.provider_response_id
+                    messages = [messages[-1]]
+                    break
+
         instructions, openai_messages = await self._map_messages(messages, model_settings)
         reasoning = self._get_reasoning(model_settings)
 
@@ -1027,6 +1046,8 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                previous_response_id=previous_response_id
+                or model_settings.get('openai_previous_response_id', NOT_GIVEN),
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,

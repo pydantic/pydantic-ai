@@ -143,6 +143,26 @@ As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloud
 
 You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
 
+The Responses API also supports referencing earlier model responses in a new request. This is available through the `openai_previous_response_id` field in
+[`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings].
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-4o')
+agent = Agent(model=model)
+
+result = agent.run_sync('The secret is 1234')
+model_settings = OpenAIResponsesModelSettings(
+    openai_previous_response_id=result.all_messages()[-1].provider_response_id
+)
+result = agent.run_sync('What is the secret code?', model_settings=model_settings)
+print(result.output)
+#> 1234
+```
+By passing the `provider_response_id` from an earlier run, you can allow the model to build on its own prior reasoning without needing to resend the full message history.
+
 ## OpenAI-compatible Models
 
 Many providers and models are compatible with the OpenAI API, and can be used with `OpenAIChatModel` in Pydantic AI.
