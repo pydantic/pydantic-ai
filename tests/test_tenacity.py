@@ -39,7 +39,8 @@ class TestTenacityTransport:
         transport = TenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
-        result = transport.handle_request(request)
+        with transport:
+            result = transport.handle_request(request)
 
         assert result is mock_response
         mock_transport.handle_request.assert_called_once_with(request)
@@ -196,7 +197,8 @@ class TestAsyncTenacityTransport:
         transport = AsyncTenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
-        result = await transport.handle_async_request(request)
+        async with transport:
+            result = await transport.handle_async_request(request)
 
         assert result is mock_response
         mock_transport.handle_async_request.assert_called_once_with(request)
