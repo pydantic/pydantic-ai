@@ -38,10 +38,10 @@ nav:
           - tools.md
           - tools-advanced.md
           - toolsets.md
+          - deferred-tools.md
           - builtin-tools.md
           - common-tools.md
           - third-party-tools.md
-          - deferred-tools.md
       - Advanced Features:
           - input.md
           - thinking.md
