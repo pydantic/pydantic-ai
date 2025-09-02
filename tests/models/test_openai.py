@@ -2242,9 +2242,9 @@ def test_model_profile_strict_not_supported():
     )
 
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_definition = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
-    assert tool_param == snapshot(
+    assert tool_definition == snapshot(
         {
             'type': 'function',
             'function': {
@@ -2262,9 +2262,9 @@ def test_model_profile_strict_not_supported():
         provider=OpenAIProvider(api_key='foobar'),
         profile=OpenAIModelProfile(openai_supports_strict_tool_definition=False).update(openai_model_profile('gpt-4o')),
     )
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    tool_definition = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
-    assert tool_param == snapshot(
+    assert tool_definition == snapshot(
         {
             'type': 'function',
             'function': {
@@ -2947,25 +2947,19 @@ def test_deprecated_openai_model(openai_api_key: str):
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
 
 
-def test_model_profile_freeform_function_calling_support():
-    """Test that model profiles correctly indicate freeform function calling support."""
-    # GPT-5 models should support freeform function calling
-    gpt5_profile = openai_model_profile('gpt-5')
-    assert gpt5_profile.openai_supports_freeform_function_calling is True
-
-    gpt5_turbo_profile = openai_model_profile('gpt-5-turbo')
-    assert gpt5_turbo_profile.openai_supports_freeform_function_calling is True
-
-    # Other models should not support freeform function calling
-    gpt4_profile = openai_model_profile('gpt-4o')
-    assert gpt4_profile.openai_supports_freeform_function_calling is False
-
-    gpt35_profile = openai_model_profile('gpt-3.5-turbo')
-    assert gpt35_profile.openai_supports_freeform_function_calling is False
+@pytest.mark.parametrize('model_name', ['gpt-5', 'gpt-5-mini', 'gpt-5-nano'])
+def test_model_profile_gpt5_freeform_function_calling_support(model_name: str):
+    profile: OpenAIModelProfile = openai_model_profile(model_name)
+    assert profile.openai_supports_freeform_function_calling
 
 
-def test_tool_mapping_with_freeform_text_mode():
-    """Test that OpenAI Chat model ignores text_format and maps as regular function."""
+@pytest.mark.parametrize('model_name', ['gpt-4.1', 'gpt-4o', 'gpt-o4-mini'])
+def test_model_profile_gpt4_freeform_function_calling_support(model_name: str):
+    gpt4_profile = openai_model_profile(model_name)
+    assert not gpt4_profile.openai_supports_freeform_function_calling
+
+
+def test_chat_model_ignores_text_mode_text_when_tool_mapping():
     my_tool = ToolDefinition(
         name='analyze_text',
         description='Analyze the provided text',
@@ -2978,11 +2972,10 @@ def test_tool_mapping_with_freeform_text_mode():
         text_format='text',
     )
 
-    # OpenAI Chat model ignores text_format and maps as regular function tool
-    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
-    assert tool_param == snapshot(
+    assert tool_definition == snapshot(
         {
             'type': 'function',
             'function': {
@@ -2999,8 +2992,7 @@ def test_tool_mapping_with_freeform_text_mode():
     )
 
 
-def test_tool_mapping_with_freeform_lark_grammar():
-    """Test that OpenAI Chat model ignores lark CFG and maps as regular function."""
+def test_chat_model_ignores_text_mode_lark_when_tool_mapping():
     my_tool = ToolDefinition(
         name='parse_data',
         description='Parse structured data',
@@ -3013,11 +3005,10 @@ def test_tool_mapping_with_freeform_lark_grammar():
         text_format=FunctionTextFormat(syntax='lark', grammar='start: "hello" " " "world"'),
     )
 
-    # OpenAI Chat model ignores text_format and maps as regular function tool
-    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
-    assert tool_param == snapshot(
+    assert tool_definition == snapshot(
         {
             'type': 'function',
             'function': {
@@ -3034,8 +3025,7 @@ def test_tool_mapping_with_freeform_lark_grammar():
     )
 
 
-def test_tool_mapping_with_freeform_regex():
-    """Test that OpenAI Chat model ignores regex CFG and maps as regular function."""
+def test_chat_model_ignores_text_mode_regex_when_tool_mapping():
     my_tool = ToolDefinition(
         name='extract_pattern',
         description='Extract data matching pattern',
@@ -3048,11 +3038,10 @@ def test_tool_mapping_with_freeform_regex():
         text_format=FunctionTextFormat(syntax='regex', grammar=r'\d{4}-\d{2}-\d{2}'),
     )
 
-    # OpenAI Chat model ignores text_format and maps as regular function tool
-    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
-    assert tool_param == snapshot(
+    assert tool_definition == snapshot(
         {
             'type': 'function',
             'function': {
@@ -3069,8 +3058,85 @@ def test_tool_mapping_with_freeform_regex():
     )
 
 
-def test_tool_mapping_regular_function_unchanged():
-    """Test that regular tools without text_format are still mapped to function params."""
+def test_responses_model_uses_text_mode_text_when_tool_mapping():
+    my_tool = ToolDefinition(
+        name='analyze_text',
+        description='Analyze the provided text',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+            'additionalProperties': False,
+        },
+        text_format='text',
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_definition == snapshot(
+        {
+            'name': 'analyze_text',
+            'type': 'custom',
+            'description': 'Analyze the provided text',
+            'format': {'type': 'text'},
+        }
+    )
+
+
+def test_responses_model_uses_text_mode_lark_when_tool_mapping():
+    my_tool = ToolDefinition(
+        name='parse_data',
+        description='Parse structured data',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'data': {'type': 'string'}},
+            'required': ['data'],
+            'additionalProperties': False,
+        },
+        text_format=FunctionTextFormat(syntax='lark', grammar='start: "hello" " " "world"'),
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_definition == snapshot(
+        {
+            'name': 'parse_data',
+            'type': 'custom',
+            'description': 'Parse structured data',
+            'format': {'type': 'grammar', 'syntax': 'lark', 'definition': 'start: "hello" " " "world"'},
+        }
+    )
+
+
+def test_responses_model_uses_text_mode_regex_when_tool_mapping():
+    my_tool = ToolDefinition(
+        name='extract_pattern',
+        description='Extract data matching pattern',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'text': {'type': 'string'}},
+            'required': ['text'],
+            'additionalProperties': False,
+        },
+        text_format=FunctionTextFormat(syntax='regex', grammar=r'\d{4}-\d{2}-\d{2}'),
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+
+    assert tool_definition == snapshot(
+        {
+            'name': 'extract_pattern',
+            'type': 'custom',
+            'description': 'Extract data matching pattern',
+            'format': {'type': 'grammar', 'syntax': 'regex', 'definition': '\\d{4}-\\d{2}-\\d{2}'},
+        }
+    )
+
+
+def test_chat_model_tool_mapping_regular_function_unchanged():
     my_tool = ToolDefinition(
         name='regular_tool',
         description='A regular tool',
@@ -3081,10 +3147,10 @@ def test_tool_mapping_regular_function_unchanged():
         },
     )
 
-    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
-    tool_param = m._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
+    model = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
-    assert tool_param == snapshot(
+    assert tool_definition == snapshot(
         {
             'type': 'function',
             'function': {
@@ -3096,12 +3162,8 @@ def test_tool_mapping_regular_function_unchanged():
     )
 
 
-def test_parallel_tool_calling_with_regular_tools():
-    """Test that OpenAI Chat model handles parallel tool calling normally with regular tools."""
-    from pydantic_ai.models import ModelRequestParameters
-
-    # Regular tool
-    regular_tool = ToolDefinition(
+def test_responses_model_tool_mapping_regular_function_unchanged():
+    my_tool = ToolDefinition(
         name='regular_tool',
         description='A regular tool',
         parameters_json_schema={
@@ -3111,21 +3173,21 @@ def test_parallel_tool_calling_with_regular_tools():
         },
     )
 
-    m = OpenAIChatModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+    tool_definition = model._map_tool_definition(my_tool)  # type: ignore[reportPrivateUsage]
 
-    # With only regular tools - should use model settings default
-    params_regular_only = ModelRequestParameters(function_tools=[regular_tool])
-    # OpenAI Chat model doesn't have _get_parallel_tool_calling method like Responses model
-    # This test verifies the model can handle regular tools without issues
+    assert tool_definition == snapshot(
+        {
+            'name': 'regular_tool',
+            'parameters': {'type': 'object', 'properties': {'param': {'type': 'string'}}, 'required': ['param']},
+            'type': 'function',
+            'description': 'A regular tool',
+            'strict': False,
+        }
+    )
 
 
-# OpenAI Chat model doesn't validate text_format, so no error tests needed
-# Error validation tests are in the OpenAI Responses model section
-
-
-def test_tool_definition_single_string_argument_detection():
-    """Test ToolDefinition correctly detects single string argument tools."""
-    # Valid single string argument
+def test_tool_definition_single_string_argument():
     valid_tool = ToolDefinition(
         name='valid_tool',
         description='Valid single string tool',
@@ -3136,26 +3198,28 @@ def test_tool_definition_single_string_argument_detection():
             'additionalProperties': False,
         },
     )
-    assert valid_tool.only_takes_string_argument is True
+    assert valid_tool.only_takes_string_argument
     assert valid_tool.single_string_argument_name == 'content'
 
-    # Multiple parameters - invalid
+
+def test_tool_definition_multiple_argument_single_string_argument():
     multi_param_tool = ToolDefinition(
         name='multi_tool',
         description='Multi param tool',
         parameters_json_schema={
             'type': 'object',
+            'param1': {'type': 'string'},
             'properties': {
-                'param1': {'type': 'string'},
                 'param2': {'type': 'string'},
             },
             'required': ['param1', 'param2'],
         },
     )
-    assert multi_param_tool.only_takes_string_argument is False
+    assert not multi_param_tool.only_takes_string_argument
     assert multi_param_tool.single_string_argument_name is None
 
-    # Non-string parameter - invalid
+
+def test_tool_definition_single_non_string_argument_single_string_argument():
     non_string_tool = ToolDefinition(
         name='non_string_tool',
         description='Non-string param tool',
@@ -3165,9 +3229,5 @@ def test_tool_definition_single_string_argument_detection():
             'required': ['count'],
         },
     )
-    assert non_string_tool.only_takes_string_argument is False
+    assert not non_string_tool.only_takes_string_argument
     assert non_string_tool.single_string_argument_name is None
-
-
-# OpenAI Chat model doesn't support custom tool calls, so no custom tool call tests needed here
-# Those tests are in the OpenAI Responses model section
