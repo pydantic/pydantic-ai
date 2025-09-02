@@ -84,7 +84,7 @@ class MyModel(Model):
                 {},  # test unexpected parts  # type: ignore
             ],
             usage=RequestUsage(input_tokens=100, output_tokens=200),
-            model_name='gpt-4o',
+            model_name='gpt-4o-2024-11-20',
             provider_details=dict(finish_reason='stop', foo='bar'),
         )
 
@@ -111,7 +111,7 @@ class MyResponseStream(StreamedResponse):
 
     @property
     def model_name(self) -> str:
-        return 'gpt-4o'
+        return 'gpt-4o-2024-11-20'
 
     @property
     def provider_name(self) -> str:
@@ -182,7 +182,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
                     'logfire.span_type': 'span',
-                    'gen_ai.response.model': 'gpt-4o',
+                    'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
                     'operation.cost': 0.00225,
@@ -412,7 +412,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
                     'logfire.span_type': 'span',
-                    'gen_ai.response.model': 'gpt-4o',
+                    'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
@@ -510,7 +510,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                     'gen_ai.request.temperature': 1,
                     'logfire.msg': 'chat gpt-4o',
                     'logfire.span_type': 'span',
-                    'gen_ai.response.model': 'gpt-4o',
+                    'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.usage.input_tokens': 300,
                     'gen_ai.usage.output_tokens': 400,
                     'operation.cost': 0.00475,
@@ -624,7 +624,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                         'gen_ai.request.temperature': 1,
                         'logfire.msg': 'chat gpt-4o',
                         'logfire.span_type': 'span',
-                        'gen_ai.response.model': 'gpt-4o',
+                        'gen_ai.response.model': 'gpt-4o-2024-11-20',
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
                         'events': [
@@ -806,7 +806,7 @@ Fix the errors and try again.\
                                 'finish_reason': 'stop',
                             }
                         ],
-                        'gen_ai.response.model': 'gpt-4o',
+                        'gen_ai.response.model': 'gpt-4o-2024-11-20',
                         'gen_ai.system_instructions': [{'type': 'text', 'content': 'instructions'}],
                         'gen_ai.usage.input_tokens': 100,
                         'gen_ai.usage.output_tokens': 200,
