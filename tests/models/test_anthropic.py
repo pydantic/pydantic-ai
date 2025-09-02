@@ -608,7 +608,7 @@ async def test_stream_structured(allow_model_requests: None):
         BetaRawMessageDeltaEvent(
             type='message_delta',
             delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(output_tokens=5),
+            usage=BetaMessageDeltaUsage(input_tokens=20, output_tokens=5),
         ),
         # Mark message as complete
         BetaRawMessageStopEvent(type='message_stop'),
@@ -1291,12 +1291,11 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             snapshot(RequestUsage(output_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
-        pytest.param(
-            lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(RequestUsage()), id='RawMessageStopEvent'
-        ),
     ],
 )
-def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: RunUsage):
+def test_usage(
+    message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
+):
     assert _map_usage(message_callback()) == usage
 
 
