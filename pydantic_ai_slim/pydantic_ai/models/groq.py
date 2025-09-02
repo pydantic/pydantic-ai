@@ -409,7 +409,7 @@ class GroqModel(Model):
                 'strict': o.strict,
             },
         }
-        if o.description:
+        if o.description:  # pragma: no branch
             response_format_param['json_schema']['description'] = o.description
         return response_format_param
 
