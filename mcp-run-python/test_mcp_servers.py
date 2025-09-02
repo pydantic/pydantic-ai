@@ -41,6 +41,7 @@ class McpTools(StrEnum):
     RUN_PYTHON_CODE = 'run_python_code'
     UPLOAD_FILE_FROM_URI = 'upload_file_from_uri'
     RETRIEVE_FILE = 'retrieve_file'
+    DELETE_FILE = 'delete_file'
 
 
 CSV_DATA = """Name,Age,Department,Salary
@@ -168,10 +169,15 @@ class TestMcp:
             )
         else:
             # Check tools
-            assert len(tools.tools) == 3
+            assert len(tools.tools) == 4
             # sort tools by their name
             sorted_tools = sorted(tools.tools, key=lambda t: t.name)
-            tool = sorted_tools[1]
+
+            # Check tool names
+            assert set(tool.name for tool in tools.tools) == set(McpTools)
+
+            # Check run python tool
+            tool = sorted_tools[2]
             assert tool.name == McpTools.RUN_PYTHON_CODE
             assert tool.description
             assert tool.description.startswith(
@@ -180,6 +186,7 @@ class TestMcp:
             assert tool.inputSchema['properties'] == snapshot(
                 {'python_code': {'type': 'string', 'description': 'Python code to run'}}
             )
+
             # Check resources (no file uploaded)
             resources = await mcp_session.list_resources()
             assert len(resources.resources) == 0
@@ -450,6 +457,32 @@ NameError: name 'unknown' is not defined
             case 'text':
                 assert isinstance(resource, types.TextResourceContents)
                 assert resource.text == CSV_DATA
+
+    async def test_delete_file(
+        self,
+        mcp_session: ClientSession,
+        server_type: Literal['stdio', 'sse', 'streamable_http'],
+        mount: bool | str,
+    ):
+        if mount is False:
+            pytest.skip('No directory mounted.')
+        result = await mcp_session.initialize()
+
+        # Extract directory from response
+        storageDir = self.get_dir_from_instructions(result.instructions)
+        assert storageDir.is_dir()
+
+        filename = 'data.csv'
+        file_path = storageDir / filename
+        file_path.write_text(CSV_DATA)
+
+        result = await mcp_session.call_tool(McpTools.DELETE_FILE, {'filename': filename})
+        assert result.isError is False
+        assert len(result.content) == 1
+        content = result.content[0]
+        assert isinstance(content, types.TextContent)
+        assert content.text.endswith('deleted successfully')
+        assert not file_path.exists()
 
     # Code pieces use hardcoded values of mount
     @pytest.mark.parametrize(

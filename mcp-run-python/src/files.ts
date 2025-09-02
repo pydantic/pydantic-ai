@@ -110,4 +110,27 @@ export function registerFileFunctions(server: McpServer, rootDir: string) {
       }
     }
   })
+
+  // File deletion
+  server.registerTool('delete_file', {
+    title: 'Delete a file',
+    description: 'Delete a file from the persistent file store.',
+    inputSchema: { filename: z.string().describe('The name of the file to delete.') },
+  }, async ({ filename }) => {
+    const absPath = path.join(rootDir, filename)
+    if (await exists(absPath, { isFile: true })) {
+      await Deno.remove(absPath)
+      return {
+        content: [{
+          type: 'text',
+          text: `${filename} deleted successfully`,
+        }],
+      }
+    } else {
+      return {
+        content: [{ 'type': 'text', 'text': `Failed to delete file ${filename}. File not found.` }],
+        isError: true,
+      }
+    }
+  })
 }
