@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import time
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -14,7 +16,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -22,14 +24,19 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    TextPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.run import AgentRunResult
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr
 
@@ -60,7 +67,7 @@ except ImportError:  # pragma: lax no cover
 
 from inline_snapshot import snapshot
 
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 
 pytestmark = [
@@ -1137,3 +1144,277 @@ def test_dynamic_toolset(dbos: DBOS):
 
     result = dynamic_dbos_agent.run_sync('Toggle the toolset', deps=weather_deps)
     assert result.output == snapshot(IsStr(regex=r'{"toggle":null,"now":".+?"}'))
+
+
+# Test human-in-the-loop with DBOS agent
+hitl_agent = Agent(
+    model,
+    name='hitl_agent',
+    output_type=[str, DeferredToolRequests],
+    instructions='Just call tools without asking for confirmation.',
+)
+
+
+@hitl_agent.tool
+@DBOS.step()
+def create_file(ctx: RunContext[None], path: str) -> None:
+    raise CallDeferred
+
+
+@hitl_agent.tool
+@DBOS.step()
+def delete_file(ctx: RunContext[None], path: str) -> bool:
+    if not ctx.tool_call_approved:
+        raise ApprovalRequired
+    return True
+
+
+hitl_dbos_agent = DBOSAgent(hitl_agent)
+
+
+async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS):
+    # Main loop for the agent, keep running until we get a final string output.
+    @DBOS.workflow()
+    async def hitl_main_loop(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        deferred_tool_results: DeferredToolResults | None = None
+        while True:
+            result = await hitl_dbos_agent.run(message_history=messages, deferred_tool_results=deferred_tool_results)
+            messages = result.all_messages()
+
+            if isinstance(result.output, DeferredToolRequests):
+                deferred_tool_requests = result.output
+                # Set deferred_tool_requests as a DBOS workflow event, so the external functions can see it.
+                await DBOS.set_event_async('deferred_tool_requests', deferred_tool_requests)
+
+                # Wait for the deferred tool requests to be handled externally.
+                deferred_tool_results = await DBOS.recv_async('deferred_tool_results', timeout_seconds=30)
+            else:
+                return result
+
+    wf_handle = await DBOS.start_workflow_async(hitl_main_loop, 'Delete the file `.env` and create `test.txt`')
+
+    while True:
+        await asyncio.sleep(1)
+        status = await wf_handle.get_status()
+        if status.status == 'SUCCESS':
+            break
+
+        # Wait and check if the workflow has set a deferred tool request event.
+        deferred_tool_requests = await DBOS.get_event_async(
+            wf_handle.workflow_id, 'deferred_tool_requests', timeout_seconds=1
+        )
+        if deferred_tool_requests is not None:
+            results = DeferredToolResults()
+            # Approve all calls
+            for tool_call in deferred_tool_requests.approvals:
+                results.approvals[tool_call.tool_call_id] = True
+
+            for tool_call in deferred_tool_requests.calls:
+                results.calls[tool_call.tool_call_id] = 'Success'
+
+            # Signal the workflow with the results.
+            await DBOS.send_async(wf_handle.workflow_id, results, topic='deferred_tool_results')
+
+    result = await wf_handle.get_result()
+    assert result.output == snapshot('The file `.env` has been deleted and `test.txt` has been created successfully.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete the file `.env` and create `test.txt`',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Just call tools without asking for confirmation.',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file',
+                        args='{"path": ".env"}',
+                        tool_call_id='call_jYdIdRZHxZTn5bWCq5jlMrJi',
+                    ),
+                    ToolCallPart(
+                        tool_name='create_file',
+                        args='{"path": "test.txt"}',
+                        tool_call_id='call_TmlTVWQbzrXCZ4jNsCVNbNqu',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=71,
+                    output_tokens=46,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content=True,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='create_file',
+                        content='Success',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                instructions='Just call tools without asking for confirmation.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='The file `.env` has been deleted and `test.txt` has been created successfully.')
+                ],
+                usage=RequestUsage(
+                    input_tokens=133,
+                    output_tokens=19,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
+    # Main loop for the agent, keep running until we get a final string output.
+    @DBOS.workflow()
+    def hitl_main_loop_sync(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        deferred_tool_results: DeferredToolResults | None = None
+        while True:
+            result = hitl_dbos_agent.run_sync(message_history=messages, deferred_tool_results=deferred_tool_results)
+            messages = result.all_messages()
+
+            if isinstance(result.output, DeferredToolRequests):
+                deferred_tool_requests = result.output
+                # Set deferred_tool_requests as a DBOS workflow event, so the external functions can see it.
+                DBOS.set_event('deferred_tool_requests', deferred_tool_requests)
+
+                # Wait for the deferred tool requests to be handled externally.
+                deferred_tool_results = DBOS.recv('deferred_tool_results', timeout_seconds=30)
+            else:
+                return result
+
+    wf_handle = DBOS.start_workflow(hitl_main_loop_sync, 'Delete the file `.env` and create `test.txt`')
+
+    while True:
+        time.sleep(1)
+        status = wf_handle.get_status()
+        if status.status == 'SUCCESS':
+            break
+
+        # Wait and check if the workflow has set a deferred tool request event.
+        deferred_tool_requests = DBOS.get_event(wf_handle.workflow_id, 'deferred_tool_requests', timeout_seconds=1)
+        if deferred_tool_requests is not None:
+            results = DeferredToolResults()
+            # Approve all calls
+            for tool_call in deferred_tool_requests.approvals:
+                results.approvals[tool_call.tool_call_id] = True
+
+            for tool_call in deferred_tool_requests.calls:
+                results.calls[tool_call.tool_call_id] = 'Success'
+
+            # Signal the workflow with the results.
+            DBOS.send(wf_handle.workflow_id, results, topic='deferred_tool_results')
+
+    result = wf_handle.get_result()
+    assert result.output == snapshot('The file `.env` has been deleted and `test.txt` has been created successfully.')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Delete the file `.env` and create `test.txt`',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Just call tools without asking for confirmation.',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='delete_file',
+                        args='{"path": ".env"}',
+                        tool_call_id='call_jYdIdRZHxZTn5bWCq5jlMrJi',
+                    ),
+                    ToolCallPart(
+                        tool_name='create_file',
+                        args='{"path": "test.txt"}',
+                        tool_call_id='call_TmlTVWQbzrXCZ4jNsCVNbNqu',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=71,
+                    output_tokens=46,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name=IsStr(),
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content=True,
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='create_file',
+                        content='Success',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    ),
+                ],
+                instructions='Just call tools without asking for confirmation.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='The file `.env` has been deleted and `test.txt` has been created successfully.')
+                ],
+                usage=RequestUsage(
+                    input_tokens=133,
+                    output_tokens=19,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
