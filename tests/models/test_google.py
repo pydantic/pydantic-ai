@@ -230,6 +230,25 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     assert data == snapshot('The capital of France is Paris.\n')
 
 
+async def test_google_model_builtin_code_execution_stream(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+):
+    """Test Gemini streaming only code execution result or executable_code."""
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(
+        model=model,
+        system_prompt='Be concise and always use Python to do calculations no matter how small.',
+        builtin_tools=[CodeExecutionTool()],
+    )
+    event_parts: list[str] = []
+    async with agent.run_stream(user_prompt='what is 65465-6544 * 65464-6+1.02255') as result:
+        async for chunk in result.stream_text():
+            event_parts.append(chunk)
+
+    assert event_parts == snapshot(['The answer is -428330955.97745.\n'])
+
+
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
     agent = Agent(
