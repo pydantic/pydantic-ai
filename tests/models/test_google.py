@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
+import re
 from typing import Any
 
 import pytest
@@ -1418,7 +1419,12 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Gemini does not support structured output and tools at the same time.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+        ),
+    ):
         await agent.run('What is the largest city in the user country?')
 
 
@@ -1787,3 +1793,37 @@ def test_map_usage():
             },
         )
     )
+
+
+async def test_google_builtin_tools_with_other_tools(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    agent = Agent(m, builtin_tools=[UrlContextTool()])
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+    ):
+        await agent.run('What is the largest city in the user country?')
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in Mexico?')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
