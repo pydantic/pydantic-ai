@@ -965,7 +965,6 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                     'factuality': 0.1,
                     'foo': 'bar',
                     'logfire.feedback.comment': 'the agent lied',
-                    'logfire.disable_console_log': True,
                     'logfire.json_schema': {
                         'type': 'object',
                         'properties': {
