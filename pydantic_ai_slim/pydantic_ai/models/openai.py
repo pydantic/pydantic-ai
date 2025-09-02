@@ -1270,12 +1270,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         tool_call_id=chunk.item.call_id,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
-                    content = chunk.item.summary[0].text if chunk.item.summary else ''
-                    yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=chunk.item.id,
-                        content=content,
-                        signature=chunk.item.id,
-                    )
+                    pass
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
@@ -1291,7 +1286,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                pass  # there's nothing we need to do here
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
+                    content=chunk.part.text,
+                    id=chunk.item_id,
+                )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
                 pass  # there's nothing we need to do here
@@ -1301,9 +1300,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=chunk.item_id,
+                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.delta,
-                    signature=chunk.item_id,
+                    id=chunk.item_id,
                 )
 
             # TODO(Marcelo): We should support annotations in the future.
@@ -1311,9 +1310,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.content_index, content=chunk.delta
-                )
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
