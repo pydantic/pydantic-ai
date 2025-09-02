@@ -59,7 +59,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
     async with agent:  # (3)!
-        result = await agent.run('What is 7 plus 5')
+        result = await agent.run('What is 7 plus 5?')
     print(result.output)
     #> The answer is 12.
 ```
@@ -127,7 +127,7 @@ agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
     async with agent:  # (3)!
-        result = await agent.run('What is 7 plus 5')
+        result = await agent.run('What is 7 plus 5?')
     print(result.output)
     #> The answer is 12.
 ```
@@ -149,7 +149,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(  # (1)!
-    'uvx', args=['mcp-run-python', 'stdio'],
+    'uv', args=['run', 'mcp-run-python', 'stdio'],
 )
 agent = Agent('openai:gpt-4o', toolsets=[server])
 
