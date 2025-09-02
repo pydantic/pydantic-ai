@@ -415,6 +415,16 @@ NameError: name 'unknown' is not defined
                 file_path = storageDir / filename
                 file_path.write_text(CSV_DATA)
 
+        result = await mcp_session.call_tool(McpTools.RETRIEVE_FILE, {'filename': filename})
+        assert result.isError is False
+        assert len(result.content) == 1
+        content = result.content[0]
+        assert isinstance(content, types.ResourceLink)
+        assert str(content.uri) == f'file:///{filename}'
+        assert content.name == filename
+        assert content.mimeType is not None
+        assert content.mimeType.startswith(ctype)
+
         result = await mcp_session.list_resources()
 
         assert len(result.resources) == 1
