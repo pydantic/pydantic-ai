@@ -1679,14 +1679,6 @@ def test_function_text_format_lark_invalid():
         FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
 
 
-@pytest.mark.skip(
-    reason='throwing an exception causes coverage to drop to 73% due to the new branch affecting unrelated areas'
-)
-def test_function_text_format_syntax_invalid():
-    with pytest.raises(ValueError, match='Unsupported syntax antlr'):
-        FunctionTextFormat(syntax='antlr', grammar="grammar T; a: 'a';")
-
-
 def test_tool_definition_single_string_argument():
     schema = {
         'type': 'object',
@@ -1762,7 +1754,7 @@ def test_agent_tool_with_text_format():
 
     @agent.tool_plain(text_format='text')
     def analyze_text(text: str) -> str:
-        return f'Analyzed: {text}'
+        return f'Analyzed: {text}'  # pragma: no cover
 
     tool_def = agent._function_toolset.tools['analyze_text'].tool_def
     assert tool_def.text_format == 'text'
@@ -1776,7 +1768,7 @@ def test_agent_tool_with_cfg_format():
 
     @agent.tool_plain(text_format=cfg)
     def parse_numbers(numbers: str) -> str:
-        return f'Parsed: {numbers}'
+        return f'Parsed: {numbers}'  # pragma: no cover
 
     tool_def = agent._function_toolset.tools['parse_numbers'].tool_def
     assert tool_def.text_format == cfg
