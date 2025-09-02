@@ -81,7 +81,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
-        openai_supports_sampling_settings=not is_reasoning_model,
         openai_supports_freeform_function_calling=is_freeform_function_calling_model,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
