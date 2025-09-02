@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '465'
+      - '517'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: Be concise
+      - content: Be concise. Never use pretty double quotes, just regular ones.
         role: system
       - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
         role: user
@@ -74,17 +74,17 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1109'
+      - '1161'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=VnbK91DA8XsNAF.PWZrhTJ1XuNqtzxkBVUCJqhjqeiY-1756846668-1.0.1.1-1329p2VvySNodcO.aAyEUnGUCvUw9VYH1UcAHmjjAyBpDcm8Fbwkjj4Eyi7Re9i6UQ1d3WuISJmuWTYwWCGeCaFj8nKLaxxlVc1Ou7r9TIU
+      - __cf_bm=kvyx00m1ZCoUxtReHO5R3CLjlagpfc3zaE3NHcOBcEg-1756847032-1.0.1.1-mhlTYHoy8EzRcE6WRp3Kbr0WLwPgSt6yJkEa03NW.uHOVGIamR_B1D9CQC02AE7f_MsgQZdLmSTH30Pj90A_rOvXgvtbCZ2zMTLVux2diGE
       host:
       - api.groq.com
     method: POST
     parsed_body:
       messages:
-      - content: Be concise
+      - content: Be concise. Never use pretty double quotes, just regular ones.
         role: system
       - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
         role: user
@@ -93,7 +93,7 @@ interactions:
         - function:
             arguments: '{"foo":"bar"}'
             name: get_something_by_name
-          id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+          id: pyd_ai_634b53be19c74d98a52ac8667fb097f9
           type: function
       - content: |-
           2 validation errors: [
@@ -119,7 +119,7 @@ interactions:
 
           Fix the errors and try again.
         role: tool
-        tool_call_id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+        tool_call_id: pyd_ai_634b53be19c74d98a52ac8667fb097f9
       model: openai/gpt-oss-120b
       n: 1
       stream: false
@@ -147,7 +147,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1251'
+      - '1025'
       content-type:
       - application/json
       transfer-encoding:
@@ -160,35 +160,33 @@ interactions:
         index: 0
         logprobs: null
         message:
-          reasoning: The user wants to test error handling by calling the tool with non-existent parameters. However the tool
-            requires a "name" parameter. The instruction says "call the tool with non-existent parameters to test error handling".
-            The tool requires a name; we can provide a name that likely doesn't exist, e.g., "nonexistent_item". That's a
-            valid parameter but refers to a non-existent entity. That should test error handling at the tool's internal logic.
-            So call get_something_by_name with name "nonexistent_item".
+          reasoning: 'The user wants to test error handling by calling tool with non-existent parameters. We need to call
+            with correct parameters? The instruction from system: be concise. We should call get_something_by_name with a
+            name that likely does not exist, like "nonexistent". That will be a valid call.'
           role: assistant
           tool_calls:
           - function:
               arguments: '{"name":"nonexistent_item"}'
               name: get_something_by_name
-            id: fc_33728875-1a48-4eb5-a3ba-df16b256b003
+            id: fc_03620243-e944-4d56-ba2a-56668e07a615
             type: function
-      created: 1756846669
-      id: chatcmpl-698ea20d-1a19-421a-87f5-d862f2170b9f
+      created: 1756847032
+      id: chatcmpl-83caeaeb-fb2f-4943-a955-722ec33c7a71
       model: openai/gpt-oss-120b
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_ed9190d8b7
+      system_fingerprint: fp_213abb2467
       usage:
-        completion_time: 0.272149635
-        completion_tokens: 137
-        prompt_time: 0.012977756
-        prompt_tokens: 270
-        queue_time: 0.236896431
-        total_time: 0.285127391
-        total_tokens: 407
+        completion_time: 0.176651145
+        completion_tokens: 89
+        prompt_time: 0.015464239
+        prompt_tokens: 280
+        queue_time: 0.252471564
+        total_time: 0.192115384
+        total_tokens: 369
       usage_breakdown: null
       x_groq:
-        id: req_01k463hewke8g9ecctt31nn5d7
+        id: req_01k463wj2sesabnwy9jx2hhmr9
     status:
       code: 200
       message: OK
@@ -201,17 +199,17 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1425'
+      - '1477'
       content-type:
       - application/json
       cookie:
-      - __cf_bm=VnbK91DA8XsNAF.PWZrhTJ1XuNqtzxkBVUCJqhjqeiY-1756846668-1.0.1.1-1329p2VvySNodcO.aAyEUnGUCvUw9VYH1UcAHmjjAyBpDcm8Fbwkjj4Eyi7Re9i6UQ1d3WuISJmuWTYwWCGeCaFj8nKLaxxlVc1Ou7r9TIU
+      - __cf_bm=kvyx00m1ZCoUxtReHO5R3CLjlagpfc3zaE3NHcOBcEg-1756847032-1.0.1.1-mhlTYHoy8EzRcE6WRp3Kbr0WLwPgSt6yJkEa03NW.uHOVGIamR_B1D9CQC02AE7f_MsgQZdLmSTH30Pj90A_rOvXgvtbCZ2zMTLVux2diGE
       host:
       - api.groq.com
     method: POST
     parsed_body:
       messages:
-      - content: Be concise
+      - content: Be concise. Never use pretty double quotes, just regular ones.
         role: system
       - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
         role: user
@@ -220,7 +218,7 @@ interactions:
         - function:
             arguments: '{"foo":"bar"}'
             name: get_something_by_name
-          id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+          id: pyd_ai_634b53be19c74d98a52ac8667fb097f9
           type: function
       - content: |-
           2 validation errors: [
@@ -246,17 +244,17 @@ interactions:
 
           Fix the errors and try again.
         role: tool
-        tool_call_id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+        tool_call_id: pyd_ai_634b53be19c74d98a52ac8667fb097f9
       - role: assistant
         tool_calls:
         - function:
             arguments: '{"name":"nonexistent_item"}'
             name: get_something_by_name
-          id: fc_33728875-1a48-4eb5-a3ba-df16b256b003
+          id: fc_03620243-e944-4d56-ba2a-56668e07a615
           type: function
       - content: 'Something with name: nonexistent_item'
         role: tool
-        tool_call_id: fc_33728875-1a48-4eb5-a3ba-df16b256b003
+        tool_call_id: fc_03620243-e944-4d56-ba2a-56668e07a615
       model: openai/gpt-oss-120b
       n: 1
       stream: false
@@ -284,7 +282,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '641'
+      - '834'
       content-type:
       - application/json
       transfer-encoding:
@@ -300,25 +298,29 @@ interactions:
           content: |-
             The tool call succeeded, returning:
 
-            **“Something with name: nonexistent_item.”**
+            ```
+            Something with name: nonexistent_item
+            ```
+          reasoning: 'The user wants to test error handling. We called with non-existent name. The tool returned "Something
+            with name: nonexistent_item". That seems fine. We should respond accordingly.'
           role: assistant
-      created: 1756846669
-      id: chatcmpl-ac81964b-5c63-4986-bf19-efe3b2474dce
+      created: 1756847033
+      id: chatcmpl-524b1ea5-e9d4-412f-8e4a-990fe0f8d211
       model: openai/gpt-oss-120b
       object: chat.completion
       service_tier: on_demand
-      system_fingerprint: fp_ed9190d8b7
+      system_fingerprint: fp_213abb2467
       usage:
-        completion_time: 0.041797142
-        completion_tokens: 21
-        prompt_time: 0.015478895
-        prompt_tokens: 308
-        queue_time: 0.235336298
-        total_time: 0.057276037
-        total_tokens: 329
+        completion_time: 0.123881517
+        completion_tokens: 62
+        prompt_time: 0.0153609
+        prompt_tokens: 318
+        queue_time: 0.247418451
+        total_time: 0.139242417
+        total_tokens: 380
       usage_breakdown: null
       x_groq:
-        id: req_01k463hfg6e0ksk4b6vw4ws4p5
+        id: req_01k463wjm2fwprzdr9q09cxwyc
     status:
       code: 200
       message: OK

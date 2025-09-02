@@ -505,7 +505,7 @@ class GroqStreamedResponse(StreamedResponse):
                     )
                     return
                 except ValidationError as e:
-                    pass
+                    pass  # pragma: no cover
             raise
 
     @property
