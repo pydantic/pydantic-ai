@@ -1171,6 +1171,9 @@ class OpenAIStreamedResponse(StreamedResponse):
             except IndexError:
                 continue
 
+            if choice.delta is None:
+                continue
+
             # Handle the text part of the response
             content = choice.delta.content
             if content is not None:
