@@ -15,7 +15,7 @@ Demonstrates:
 
 ## Running the Example
 
-With [dependencies installed and environment variables set](./index.md#usage)
+With [dependencies installed and environment variables set](./setup.md#usage)
 you will need two command line windows.
 
 ### Pydantic AI AG-UI backend

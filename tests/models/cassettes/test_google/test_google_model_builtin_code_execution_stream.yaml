@@ -1,0 +1,67 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '287'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: what is 65465-6544 * 65464-6+1.02255
+        role: user
+      generationConfig: {}
+      systemInstruction:
+        parts:
+        - text: Be concise and always use Python to do calculations no matter how small.
+        role: user
+      tools:
+      - codeExecution: {}
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse
+  response:
+    body:
+      string: "data: {\"candidates\": [{\"content\": {\"parts\": [{\"executableCode\": {\"language\": \"PYTHON\",\"code\":
+        \"result = 65465 - 6544 * 65464 - 6 + 1.02255\\nprint(result)\\n\"}}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\":
+        46,\"totalTokenCount\": 46,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\":
+        \"gemini-2.0-flash\",\"responseId\": \"_oizaOUTzpCEwg_H-YnYAg\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
+        [{\"codeExecutionResult\": {\"outcome\": \"OUTCOME_OK\",\"output\": \"-428330955.97745\\n\"}}],\"role\": \"model\"}}],\"usageMetadata\":
+        {\"promptTokenCount\": 46,\"totalTokenCount\": 46,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        46}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"_oizaOUTzpCEwg_H-YnYAg\"}\r\n\r\ndata: {\"candidates\":
+        [{\"content\": {\"parts\": [{\"text\": \"The\"}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\":
+        46,\"totalTokenCount\": 46,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\":
+        \"gemini-2.0-flash\",\"responseId\": \"_oizaOUTzpCEwg_H-YnYAg\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\":
+        [{\"text\": \" answer is -428330955.9774\"}],\"role\": \"model\"}}],\"usageMetadata\": {\"promptTokenCount\": 46,\"totalTokenCount\":
+        46,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 46}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\":
+        \"_oizaOUTzpCEwg_H-YnYAg\"}\r\n\r\ndata: {\"candidates\": [{\"content\": {\"parts\": [{\"text\": \"5.\\n\"}],\"role\":
+        \"model\"},\"finishReason\": \"STOP\"}],\"usageMetadata\": {\"promptTokenCount\": 44,\"candidatesTokenCount\": 77,\"totalTokenCount\":
+        221,\"promptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\": 44}],\"candidatesTokensDetails\": [{\"modality\":
+        \"TEXT\",\"tokenCount\": 77}],\"toolUsePromptTokenCount\": 100,\"toolUsePromptTokensDetails\": [{\"modality\": \"TEXT\",\"tokenCount\":
+        100}]},\"modelVersion\": \"gemini-2.0-flash\",\"responseId\": \"_oizaOUTzpCEwg_H-YnYAg\"}\r\n\r\n"
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-disposition:
+      - attachment
+      content-type:
+      - text/event-stream
+      server-timing:
+      - gfet4t7; dur=5315
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    status:
+      code: 200
+      message: OK
+version: 1

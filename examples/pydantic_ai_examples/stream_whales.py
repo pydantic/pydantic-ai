@@ -51,7 +51,7 @@ async def main():
         ) as result:
             console.print('Response:', style='green')
 
-            async for whales in result.stream(debounce_by=0.01):
+            async for whales in result.stream_output(debounce_by=0.01):
                 table = Table(
                     title='Species of Whale',
                     caption='Streaming Structured responses from GPT-4',

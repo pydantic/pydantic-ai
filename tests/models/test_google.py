@@ -113,7 +113,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -180,7 +180,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -206,7 +206,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -228,6 +228,25 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot('The capital of France is Paris.\n')
+
+
+async def test_google_model_builtin_code_execution_stream(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+):
+    """Test Gemini streaming only code execution result or executable_code."""
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(
+        model=model,
+        system_prompt='Be concise and always use Python to do calculations no matter how small.',
+        builtin_tools=[CodeExecutionTool()],
+    )
+    event_parts: list[str] = []
+    async with agent.run_stream(user_prompt='what is 65465-6544 * 65464-6+1.02255') as result:
+        async for chunk in result.stream_text():
+            event_parts.append(chunk)
+
+    assert event_parts == snapshot(['The answer is -428330955.97745.\n'])
 
 
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
@@ -263,7 +282,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -288,7 +307,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -563,7 +582,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -684,7 +703,7 @@ print(f'{day_of_week=}')
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -744,7 +763,7 @@ print(f'{day_of_week=}')
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
@@ -794,7 +813,7 @@ print(f'{day_of_week=}')
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -949,7 +968,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1103,7 +1122,7 @@ async def test_google_url_input(
                 timestamp=IsDatetime(),
                 provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1113,9 +1132,10 @@ async def test_google_url_input(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_google_url_input_force_download(allow_model_requests: None) -> None:  # pragma: lax no cover
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
-    m = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_url_input_force_download(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+) -> None:  # pragma: lax no cover
+    m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
 
     video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4', force_download=True)
@@ -1140,7 +1160,7 @@ async def test_google_url_input_force_download(allow_model_requests: None) -> No
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
                 provider_name='google-vertex',
             ),
         ]
@@ -1190,7 +1210,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1217,7 +1237,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1279,7 +1299,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1306,7 +1326,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1358,7 +1378,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1379,7 +1399,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1444,7 +1464,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1499,7 +1519,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1543,7 +1563,7 @@ Don't include any text or Markdown fencing before or after.\
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1593,7 +1613,7 @@ Don't include any text or Markdown fencing before or after.\
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -1621,7 +1641,7 @@ Don't include any text or Markdown fencing before or after.\
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -1675,7 +1695,7 @@ Don't include any text or Markdown fencing before or after.\
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_request_id=IsStr(),
+                provider_response_id=IsStr(),
             ),
         ]
     )

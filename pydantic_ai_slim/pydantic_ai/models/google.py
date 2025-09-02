@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
@@ -91,7 +91,7 @@ LatestGoogleModelNames = Literal[
 ]
 """Latest Gemini models."""
 
-GoogleModelName = Union[str, LatestGoogleModelNames]
+GoogleModelName = str | LatestGoogleModelNames
 """Possible Gemini model names.
 
 Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
@@ -349,7 +349,7 @@ class GoogleModel(Model):
             'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         }
         if timeout := model_settings.get('timeout'):
-            if isinstance(timeout, (int, float)):
+            if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
@@ -559,6 +559,10 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif part.executable_code is not None:
+                    pass
+                elif part.code_execution_result is not None:
+                    pass
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
@@ -648,7 +652,7 @@ def _process_response_from_parts(
         parts=items,
         model_name=model_name,
         usage=usage,
-        provider_request_id=vendor_id,
+        provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
     )
