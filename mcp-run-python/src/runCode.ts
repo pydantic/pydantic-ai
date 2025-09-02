@@ -206,7 +206,7 @@ const LogLevels: LoggingLevel[] = [
 export function resolveMountDir(mountDir: string): string {
   // Base dir created by emscriptem
   // See https://emscripten.org/docs/api_reference/Filesystem-API.html#file-system-api
-  const baseDir = '/home/web_user'
+  const baseDir = '/home/pyodide'
 
   if (mountDir.trim() === '') {
     return path.join(baseDir, 'persistent')

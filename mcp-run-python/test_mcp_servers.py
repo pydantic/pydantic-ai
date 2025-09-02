@@ -43,9 +43,17 @@ class McpTools(StrEnum):
     RETRIEVE_FILE = 'retrieve_file'
 
 
-LOREM_IPSUM = """But I must explain to you how all this mistaken idea of denouncing pleasure and praising pain was born and I will give you a complete account of the system, and expound the actual teachings of the great explorer of the truth, the master-builder of human happiness. No one rejects, dislikes, or avoids pleasure itself, because it is pleasure, but because those who do not know how to pursue pleasure rationally encounter consequences that are extremely painful. Nor again is there anyone who loves or pursues or desires to obtain pain of itself, because it is pain, but because occasionally circumstances occur in which toil and pain can procure him some great pleasure. To take a trivial example, which of us ever undertakes laborious physical exercise, except to obtain some advantage from it? But who has any right to find fault with a man who chooses to enjoy a pleasure that has no annoying consequences, or one who avoids a pain that produces no resultant pleasure?
-
-On the other hand, we denounce with righteous indignation and dislike men who are so beguiled and demoralized by the charms of pleasure of the moment, so blinded by desire, that they cannot foresee the pain and trouble that are bound to ensue; and equal blame belongs to those who fail in their duty through weakness of will, which is the same as saying through shrinking from toil and pain. These cases are perfectly simple and easy to distinguish. In a free hour, when our power of choice is untrammelled and when nothing prevents our being able to do what we like best, every pleasure is to be welcomed and every pain avoided. But in certain circumstances and owing to the claims of duty or the obligations of business it will frequently occur that pleasures have to be repudiated and annoyances accepted. The wise man therefore always holds in these matters to this principle of selection: he rejects pleasures to secure other greater pleasures, or else he endures pains to avoid worse pains.
+CSV_DATA = """Name,Age,Department,Salary
+Alice,25,Engineering,60000
+Bob,32,Marketing,52000
+Charlie,29,Engineering,70000
+Diana,45,HR,65000
+Ethan,35,Marketing,58000
+Fiona,28,Engineering,72000
+George,40,HR,64000
+Hannah,31,Engineering,68000
+Ian,38,Marketing,61000
+Julia,27,HR,59000
 """
 
 BASE_64_IMAGE = 'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAEX0lEQVR4nOzdO8vX9R/HcS/56f8PWotGQkPBBUWESCQYNJR0GjIn6UBTgUMZTiGE4ZgRVKNkuDSEFtgBQqIiKunkEFdkWLmEBQUWiNUQYd2KNwTPx+MGvD7Tk/f2/S7O7tmyatKnJx8b3f/p6EOj+5euu2Z0/+Sxt0f3N++9fHR/+57/j+7vuPuT0f3Vo+vwHycA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQtDr561+gDpzf9PLp/4eNzo/uXzv41uv/BM0+O7h9/bsPo/vqPdo3u7965GN13AUgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSlh5ce+XoA9+eODK6v3r7naP7b31zaHT/4p+3jO4f2/Tb6P7K41tH9zff+8LovgtAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkLb09ZmLow8sb1ke3d92YXR+1dO7PhzdX7f2xtH9Q5fN/t/g2j9eHt3/cc350X0XgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBNAKQJgDQBkCYA0gRAmgBIEwBpAiBtcf3eW0cfePTE7Pf1D9yxMrq/4YrR+VWvnN84uv/lvs2j+2v3nx3dv3rT/0b3XQDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmAtKWrzq0ffeD312f339h5ZnT/npsPj+7//cPDo/un739idP/Xg5+P7j/y/G2j+y4AaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQNpi/5FfRh94753XRvcP7F0zuv/V7e+O7t906v3R/WdP/zO6f9/ixdH9G3Z/NrrvApAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkCYA0AZAmANIEQJoASBMAaQIgTQCkLb25vDL6wLoHjo7ur7z03ej++u+fGt0/vm/2+/dfHF4e3d9xauPo/taN20b3XQDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmANAGQJgDSBECaAEgTAGkCIE0ApAmAtH8DAAD//9drYGg9ROu9AAAAAElFTkSuQmCC'
@@ -347,17 +355,17 @@ NameError: name 'unknown' is not defined
 
         match uri_type:
             case 'file':
-                filename = 'lorem.txt'
-                lorem_file = tmp_path / filename
-                lorem_file.write_text(LOREM_IPSUM)
+                filename = 'data.csv'
+                data_file = tmp_path / filename
+                data_file.write_text(CSV_DATA)
 
                 result = await mcp_session.call_tool(
-                    McpTools.UPLOAD_FILE_FROM_URI, {'uri': f'file://{str(lorem_file)}', 'filename': filename}
+                    McpTools.UPLOAD_FILE_FROM_URI, {'uri': f'file://{str(data_file)}', 'filename': filename}
                 )
 
             case 'http':
-                filename = 'lorem.txt'
-                with self.serve_file_once(LOREM_IPSUM.encode()) as url:
+                filename = 'data.csv'
+                with self.serve_file_once(CSV_DATA.encode()) as url:
                     result = await mcp_session.call_tool(
                         McpTools.UPLOAD_FILE_FROM_URI, {'uri': url, 'filename': filename}
                     )
@@ -369,12 +377,12 @@ NameError: name 'unknown' is not defined
         assert str(content.uri) == f'file:///{filename}'
         assert content.name == filename
         assert content.mimeType is not None
-        assert content.mimeType.startswith('text/plain')
+        assert content.mimeType.startswith('text/csv')
 
         createdFile = storageDir / filename
         assert createdFile.exists()
         assert createdFile.is_file()
-        assert createdFile.read_text() == LOREM_IPSUM
+        assert createdFile.read_text() == CSV_DATA
 
     @pytest.mark.parametrize('content_type', ['bytes', 'text'])
     async def test_download_files(
@@ -400,10 +408,10 @@ NameError: name 'unknown' is not defined
                 file_path.write_bytes(base64.b64decode(BASE_64_IMAGE))
 
             case 'text':
-                filename = 'lorem.txt'
-                ctype = 'text/plain'
+                filename = 'data.csv'
+                ctype = 'text/csv'
                 file_path = storageDir / filename
-                file_path.write_text(LOREM_IPSUM)
+                file_path.write_text(CSV_DATA)
 
         result = await mcp_session.list_resources()
 
@@ -429,7 +437,99 @@ NameError: name 'unknown' is not defined
 
             case 'text':
                 assert isinstance(resource, types.TextResourceContents)
-                assert resource.text == LOREM_IPSUM
+                assert resource.text == CSV_DATA
+
+    # Code pieces use hardcoded values of mount
+    @pytest.mark.parametrize(
+        'code,expected_output,content_type',
+        [
+            pytest.param(
+                [
+                    '# /// script',
+                    '# dependencies = ["pillow"]',
+                    '# ///',
+                    'from pathlib import Path',
+                    'perm_storage = Path.cwd() / "storage"',
+                    'print(str(perm_storage))',
+                    'assert perm_storage.is_dir()',
+                    'from PIL import Image, ImageFilter',
+                    'img = Image.open("storage/image.png")',
+                    'print(f"Image size: {img.size}")',
+                    'gray_img = img.convert("L")',
+                    'gray_img.save("storage/image-gray.png")',
+                ],
+                snapshot(""""""),
+                'bytes',
+                id='image-transform',
+            ),
+            pytest.param(
+                [
+                    '# /// script',
+                    '# dependencies = ["pandas"]',
+                    '# ///',
+                    'import pandas as pd',
+                    'df = pd.read_csv("storage/data.csv")',
+                    'print(df.describe())',
+                    'df["Age_in_10_years"] = df["Age"] + 10',
+                    'df.to_csv("storage/data-processed.csv", index=False)',
+                ],
+                snapshot(""""""),
+                'text',
+                id='dataframe-manipulation',
+            ),
+        ],
+    )
+    async def test_run_python_code_with_file(
+        self,
+        mcp_session: ClientSession,
+        server_type: Literal['stdio', 'sse', 'streamable_http'],
+        mount: bool | str,
+        code: list[str],
+        expected_output: str,
+        content_type: Literal['bytes', 'text'],
+        tmp_path: Path,
+    ):
+        if mount is False:
+            pytest.skip('No directory mounted.')
+        await mcp_session.initialize()
+
+        match content_type:
+            case 'bytes':
+                filename = 'image.png'
+                output_file = 'image-gray.png'
+                ctype = 'image/png'
+                data_file = tmp_path / filename
+                data_file.write_bytes(base64.b64decode(BASE_64_IMAGE))
+
+            case 'text':
+                filename = 'data.csv'
+                output_file = 'data-processed.csv'
+                ctype = 'text/csv'
+                data_file = tmp_path / filename
+                data_file.write_text(CSV_DATA)
+
+        result = await mcp_session.call_tool(
+            McpTools.UPLOAD_FILE_FROM_URI, {'uri': f'file://{str(data_file)}', 'filename': filename}
+        )
+        assert result.isError is False
+
+        result = await mcp_session.call_tool(McpTools.RUN_PYTHON_CODE, {'python_code': '\n'.join(code)})
+        assert result.isError is False
+        assert len(result.content) == 1
+        content = result.content[0]
+        assert isinstance(content, types.TextContent)
+        assert content.text == expected_output
+
+        result = await mcp_session.read_resource(FileUrl(f'file:///{output_file}'))
+        assert len(result.contents) == 1
+        resource = result.contents[0]
+        assert resource.mimeType is not None
+        assert resource.mimeType.startswith(ctype)
+        assert (
+            isinstance(resource, types.BlobResourceContents)
+            if content_type == 'bytes'
+            else isinstance(resource, types.TextResourceContents)
+        )
 
 
 async def test_install_run_python_code() -> None:
