@@ -18,11 +18,6 @@ export async function runCode(
   rootDir: string | null,
   mountDir: string | null,
 ): Promise<RunSuccess | RunError> {
-  // remove once we can upgrade to pyodide 0.27.7 and console.log is no longer used.
-  const realConsoleLog = console.log
-  // deno-lint-ignore no-explicit-any
-  console.log = (...args: any[]) => log('debug', args.join(' '))
-
   const output: string[] = []
   const pyodide = await loadPyodide({
     stdout: (msg) => {
@@ -108,7 +103,6 @@ export async function runCode(
   }
   sys.stdout.flush()
   sys.stderr.flush()
-  console.log = realConsoleLog
   return runResult
 }
 

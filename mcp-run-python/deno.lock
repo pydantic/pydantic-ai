@@ -12,7 +12,7 @@
     "npm:@modelcontextprotocol/sdk@^1.17.4": "1.17.4_express@5.1.0_zod@3.25.76",
     "npm:@types/node@*": "24.2.0",
     "npm:@types/node@22.12.0": "22.12.0",
-    "npm:pyodide@0.27.6": "0.27.6",
+    "npm:pyodide@0.28.2": "0.28.2",
     "npm:zod@^3.24.2": "3.25.76"
   },
   "jsr": {
@@ -392,8 +392,8 @@
     "punycode@2.3.1": {
       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg=="
     },
-    "pyodide@0.27.6": {
-      "integrity": "sha512-ahiSHHs6iFKl2f8aO1wALINAlMNDLAtb44xCI87GQyH2tLDk8F8VWip3u1ZNIyglGSCYAOSFzWKwS1f9gBFVdg==",
+    "pyodide@0.28.2": {
+      "integrity": "sha512-2BrZHrALvhYZfIuTGDHOvyiirHNLziHfBiBb1tpBFzLgAvDBb2ACxNPFFROCOzLnqapORmgArDYY8mJmMWH1Eg==",
       "dependencies": [
         "ws"
       ]
@@ -571,7 +571,7 @@
       "jsr:@std/media-types@^1.1.0",
       "jsr:@std/path@^1.0.8",
       "npm:@modelcontextprotocol/sdk@^1.17.4",
-      "npm:pyodide@0.27.6",
+      "npm:pyodide@0.28.2",
       "npm:zod@^3.24.2"
     ]
   }

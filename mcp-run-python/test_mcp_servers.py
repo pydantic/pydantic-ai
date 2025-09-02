@@ -251,6 +251,8 @@ x=4
 <status>run-error</status>
 <error>
 Traceback (most recent call last):
+    ...<9 lines>...
+    .run_async(globals, locals)
   File "main.py", line 1, in <module>
     print(unknown)
           ^^^^^^^
@@ -566,7 +568,8 @@ async def test_install_run_python_code() -> None:
 </return_value>\
 """
             assert content.text == expected_output
-            assert len(logs) >= 18
+            assert len(logs) >= 16
             assert re.search(
-                r"debug: Didn't find package numpy\S+?\.whl locally, attempting to load from", '\n'.join(logs)
+                r"debug: loadPackage: Didn't find package numpy\S*\.whl locally, attempting to load from",
+                '\n'.join(logs),
             )
