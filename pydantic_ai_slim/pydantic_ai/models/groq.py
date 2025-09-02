@@ -9,6 +9,8 @@ from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
+from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
+
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
@@ -228,6 +230,18 @@ class GroqModel(Model):
 
         groq_messages = self._map_messages(messages)
 
+        response_format: chat.completion_create_params.ResponseFormat | None = None
+        if model_request_parameters.output_mode == 'native':
+            output_object = model_request_parameters.output_object
+            assert output_object is not None
+            response_format = self._map_json_schema(output_object)
+        elif (
+            model_request_parameters.output_mode == 'prompted'
+            and not tools
+            and self.profile.supports_json_object_output
+        ):  # pragma: no branch
+            response_format = {'type': 'json_object'}
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -240,6 +254,7 @@ class GroqModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 stop=model_settings.get('stop_sequences', NOT_GIVEN),
                 stream=stream,
+                response_format=response_format or NOT_GIVEN,
                 max_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 temperature=model_settings.get('temperature', NOT_GIVEN),
                 top_p=model_settings.get('top_p', NOT_GIVEN),
@@ -384,6 +399,19 @@ class GroqModel(Model):
                 'parameters': f.parameters_json_schema,
             },
         }
+
+    def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
+        response_format_param: chat.completion_create_params.ResponseFormatResponseFormatJsonSchema = {
+            'type': 'json_schema',
+            'json_schema': {
+                'name': o.name or DEFAULT_OUTPUT_TOOL_NAME,
+                'schema': o.json_schema,
+                'strict': o.strict,
+            },
+        }
+        if o.description:  # pragma: no branch
+            response_format_param['json_schema']['description'] = o.description
+        return response_format_param
 
     @classmethod
     def _map_user_message(cls, message: ModelRequest) -> Iterable[chat.ChatCompletionMessageParam]:
