@@ -3,6 +3,7 @@
 WARNING: running these tests will make use of the relevant API tokens (and cost money).
 """
 
+import json
 import os
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -40,6 +41,7 @@ def vertexai(_: httpx.AsyncClient, tmp_path: Path) -> Model:
     from pydantic_ai.providers.google import GoogleProvider
 
     service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
+    project_id = json.loads(service_account_content)['project_id']
     service_account_path = tmp_path / 'service_account.json'
     service_account_path.write_text(service_account_content)
 
@@ -47,7 +49,7 @@ def vertexai(_: httpx.AsyncClient, tmp_path: Path) -> Model:
         service_account_path,
         scopes=['https://www.googleapis.com/auth/cloud-platform'],
     )
-    provider = GoogleProvider(credentials=credentials)
+    provider = GoogleProvider(credentials=credentials, project=project_id)
     return GoogleModel('gemini-1.5-flash', provider=provider)
 
 
@@ -91,9 +93,7 @@ def cohere(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:
 params = [
     pytest.param(openai, id='openai'),
     pytest.param(gemini, marks=pytest.mark.skip(reason='API seems very flaky'), id='gemini'),
-    pytest.param(
-        vertexai, marks=pytest.mark.skip(reason='This needs to be fixed. It raises RuntimeError.'), id='vertexai'
-    ),
+    pytest.param(vertexai, id='vertexai'),
     pytest.param(groq, id='groq'),
     pytest.param(anthropic, id='anthropic'),
     pytest.param(ollama, id='ollama'),

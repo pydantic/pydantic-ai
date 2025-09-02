@@ -130,6 +130,29 @@ async def test_function_toolset():
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
 
 
+async def test_function_toolset_with_defaults():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Missing parameter descriptions for'),
+    ):
+
+        @defaults_toolset.tool
+        def add(a: int, b: int) -> int:
+            """Add two numbers"""
+            return a + b  # pragma: no cover
+
+
+async def test_function_toolset_with_defaults_overridden():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    @defaults_toolset.tool(require_parameter_descriptions=False)
+    def subtract(a: int, b: int) -> int:
+        """Subtract two numbers"""
+        return a - b  # pragma: no cover
+
+
 async def test_prepared_toolset_user_error_add_new_tools():
     """Test that PreparedToolset raises UserError when prepare function tries to add new tools."""
     context = build_run_context(None)

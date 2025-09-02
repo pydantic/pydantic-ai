@@ -9,7 +9,7 @@ and displays it as a dynamic table using [`rich`](https://github.com/Textualize/
 
 ## Running the Example
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.stream_whales
