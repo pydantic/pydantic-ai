@@ -103,17 +103,6 @@ class FileUrl(ABC):
     url: str
     """The URL of the file."""
 
-    identifier: str
-    """The identifier of the file, such as a unique ID. generating one from the url if not explicitly set
-
-    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
-    and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
-
-    This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
-    If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
-    e.g. "This is file <identifier>:" preceding the `FileUrl`.
-    """
-
     _: KW_ONLY
 
     force_download: bool = False
@@ -134,9 +123,21 @@ class FileUrl(ABC):
         compare=False, default=None
     )
 
+    identifier: str | None = None
+    """The identifier of the file, such as a unique ID. generating one from the url if not explicitly set
+
+    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+    and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+    This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+    If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+    e.g. "This is file <identifier>:" preceding the `FileUrl`.
+    """
+
     def __init__(
         self,
         url: str,
+        *,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
@@ -183,12 +184,12 @@ class VideoUrl(FileUrl):
     def __init__(
         self,
         url: str,
+        *,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['video-url'] = 'video-url',
         identifier: str | None = None,
-        *,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
     ) -> None:
@@ -258,12 +259,12 @@ class AudioUrl(FileUrl):
     def __init__(
         self,
         url: str,
+        *,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['audio-url'] = 'audio-url',
         identifier: str | None = None,
-        *,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
     ) -> None:
@@ -320,12 +321,12 @@ class ImageUrl(FileUrl):
     def __init__(
         self,
         url: str,
+        *,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['image-url'] = 'image-url',
         identifier: str | None = None,
-        *,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
     ) -> None:
@@ -377,12 +378,12 @@ class DocumentUrl(FileUrl):
     def __init__(
         self,
         url: str,
+        *,
         force_download: bool = False,
         vendor_metadata: dict[str, Any] | None = None,
         media_type: str | None = None,
         kind: Literal['document-url'] = 'document-url',
         identifier: str | None = None,
-        *,
         # Required for inline-snapshot which expects all dataclass `__init__` methods to take all field names as kwargs.
         _media_type: str | None = None,
     ) -> None:
@@ -441,6 +442,8 @@ class BinaryContent:
     data: bytes
     """The binary data."""
 
+    _: KW_ONLY
+
     media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str
     """The media type of the binary data."""
 
@@ -453,8 +456,6 @@ class BinaryContent:
     If you're passing the `BinaryContent` as a user message, it's up to you to include a separate text part with the identifier,
     e.g. "This is file <identifier>:" preceding the `BinaryContent`.
     """
-
-    _: KW_ONLY
 
     vendor_metadata: dict[str, Any] | None = None
     """Vendor-specific metadata for the file.
@@ -469,6 +470,7 @@ class BinaryContent:
     def __init__(
         self,
         data: bytes,
+        *,
         media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
         identifier: str | None = None,
         vendor_metadata: dict[str, Any] | None = None,
