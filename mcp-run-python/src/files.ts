@@ -3,7 +3,7 @@ import { exists } from '@std/fs/exists'
 import { contentType } from '@std/media-types'
 import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js'
 import z from 'zod'
-import { encodeBase64 } from '@std/encoding/base64'
+import { decodeBase64, encodeBase64 } from '@std/encoding/base64'
 
 /**
  * Returns the temporary directory in the local filesystem for file persistence.
@@ -18,6 +18,37 @@ export function createRootDir(): string {
  * @param rootDir Directory in the local file system to read/write to.
  */
 export function registerFileFunctions(server: McpServer, rootDir: string) {
+  server.registerTool('upload_file', {
+    title: 'Upload file.',
+    description: 'Ingest a file from the given object. Returns a link to the resource that was created.',
+    inputSchema: {
+      type: z.union([z.literal('text'), z.literal('bytes')]),
+      filename: z.string().describe('Name of the file to write.'),
+      text: z.nullable(z.string().describe('Text content of the file, if the type is "text".')),
+      blob: z.nullable(z.string().describe('Base 64 encoded content of the file, if the type is "bytes".')),
+    },
+  }, async ({ type, filename, text, blob }) => {
+    const absPath = path.join(rootDir, filename)
+    if (type === 'text') {
+      if (text == null) {
+        return { content: [{ type: 'text', text: "Type is 'text', but no text provided." }], isError: true }
+      }
+      await Deno.writeTextFile(absPath, text)
+    } else {
+      if (blob == null) {
+        return { content: [{ type: 'text', text: "Type is 'bytes', but no blob provided." }], isError: true }
+      }
+      await Deno.writeFile(absPath, decodeBase64(blob))
+    }
+    return {
+      content: [{
+        type: 'resource_link',
+        uri: `file:///${filename}`,
+        name: filename,
+        mimeType: contentType(path.extname(absPath)),
+      }],
+    }
+  })
   // File Upload
   server.registerTool(
     'upload_file_from_uri',

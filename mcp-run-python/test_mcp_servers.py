@@ -39,6 +39,7 @@ DENO_ARGS = [
 
 class McpTools(StrEnum):
     RUN_PYTHON_CODE = 'run_python_code'
+    UPLOAD_FILE = 'upload_file'
     UPLOAD_FILE_FROM_URI = 'upload_file_from_uri'
     RETRIEVE_FILE = 'retrieve_file'
     DELETE_FILE = 'delete_file'
@@ -169,7 +170,7 @@ class TestMcp:
             )
         else:
             # Check tools
-            assert len(tools.tools) == 4
+            assert len(tools.tools) == 5
             # sort tools by their name
             sorted_tools = sorted(tools.tools, key=lambda t: t.name)
 
@@ -345,8 +346,59 @@ NameError: name 'unknown' is not defined
             httpd.server_close()
             t.join(timeout=2)
 
-    @pytest.mark.parametrize('uri_type', ['http', 'file'])
+    @pytest.mark.parametrize('file_type', ['text', 'bytes'])
     async def test_upload_files(
+        self,
+        mcp_session: ClientSession,
+        server_type: Literal['stdio', 'sse', 'streamable_http'],
+        mount: bool | str,
+        file_type: Literal['text', 'bytes'],
+        tmp_path: Path,
+    ) -> None:
+        if mount is False:
+            pytest.skip('No directory mounted.')
+        result = await mcp_session.initialize()
+
+        # Extract directory from response
+        storageDir = self.get_dir_from_instructions(result.instructions)
+        assert storageDir.is_dir()
+
+        match file_type:
+            case 'text':
+                filename = 'data.csv'
+                ctype = 'text/csv'
+                result = await mcp_session.call_tool(
+                    McpTools.UPLOAD_FILE, {'type': 'text', 'filename': filename, 'text': CSV_DATA, 'blob': None}
+                )
+
+            case 'bytes':
+                filename = 'image.png'
+                ctype = 'image/png'
+                result = await mcp_session.call_tool(
+                    McpTools.UPLOAD_FILE, {'type': 'bytes', 'filename': filename, 'blob': BASE_64_IMAGE, 'text': None}
+                )
+
+        assert result.isError is False
+        assert len(result.content) == 1
+        content = result.content[0]
+        assert isinstance(content, types.ResourceLink)
+        assert str(content.uri) == f'file:///{filename}'
+        assert content.name == filename
+        assert content.mimeType is not None
+        assert content.mimeType.startswith(ctype)
+
+        createdFile = storageDir / filename
+        assert createdFile.exists()
+        assert createdFile.is_file()
+
+        match file_type:
+            case 'text':
+                assert createdFile.read_text() == CSV_DATA
+            case 'bytes':
+                assert base64.b64encode(createdFile.read_bytes()).decode() == BASE_64_IMAGE
+
+    @pytest.mark.parametrize('uri_type', ['http', 'file'])
+    async def test_upload_files_with_uri(
         self,
         mcp_session: ClientSession,
         server_type: Literal['stdio', 'sse', 'streamable_http'],
@@ -400,7 +452,7 @@ NameError: name 'unknown' is not defined
         server_type: Literal['stdio', 'sse', 'streamable_http'],
         mount: bool | str,
         content_type: Literal['bytes', 'text'],
-    ):
+    ) -> None:
         if mount is False:
             pytest.skip('No directory mounted.')
         result = await mcp_session.initialize()
