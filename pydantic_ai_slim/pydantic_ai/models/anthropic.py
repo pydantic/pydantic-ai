@@ -543,6 +543,8 @@ def _map_usage(message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageD
         response_usage = message.message.usage
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
+    else:
+        assert_never(message)
 
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
