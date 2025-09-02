@@ -11,16 +11,19 @@ The server can be run with `deno` installed using:
 
 ```bash
 deno run \
-  -N -R=node_modules -W=node_modules --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python [stdio|streamable_http|sse|warmup]
+  -N -R=node_modules,/tmp -W=node_modules,/tmp --node-modules-dir=auto \
+  jsr:@pydantic/mcp-run-python [stdio|streamable_http|sse|warmup] [--mount ./storage/]
 ```
 
 where:
 
-- `-N -R=node_modules -W=node_modules` (alias of `--allow-net --allow-read=node_modules --allow-write=node_modules`)
-  allows network access and read+write access to `./node_modules`. These are required so pyodide can download and cache
-  the Python standard library and packages
+- `-N -R=node_modules,/tmp -W=node_modules,/tmp` (alias of
+  `--allow-net --allow-read=node_modules,/tmp --allow-write=node_modules,/tmp`) allows network access and read+write
+  access to `./node_modules` and `/tmp`. These are required so pyodide can download and cache the Python standard
+  library and packages
 - `--node-modules-dir=auto` tells deno to use a local `node_modules` directory
+- `--mount ./storage`: Optionally, mount a directory to `/home/pyodide/storage` for persist file between pyodide runs.
+  File can be uploaded and retrieve using the `upload_file_from_uri`and `retrieve_file` tools respectively.
 - `stdio` runs the server with the
   [Stdio MCP transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#stdio) — suitable for
   running the process as a subprocess locally
@@ -52,8 +55,8 @@ server = MCPServerStdio('deno',
     args=[
         'run',
         '-N',
-        '-R=node_modules',
-        '-W=node_modules',
+        '-R=node_modules,/tmp',
+        '-W=node_modules,/tmp',
         '--node-modules-dir=auto',
         'jsr:@pydantic/mcp-run-python',
         'stdio',
