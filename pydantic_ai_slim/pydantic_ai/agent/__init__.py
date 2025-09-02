@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 import anyio
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_graph import Graph
 
@@ -1355,7 +1355,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return schema  # pyright: ignore[reportReturnType]
 
-    async def __aenter__(self) -> AbstractAgent[AgentDepsT, OutputDataT]:
+    async def __aenter__(self) -> Self:
         """Enter the agent context.
 
         This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
