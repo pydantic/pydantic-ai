@@ -826,9 +826,9 @@ async def test_dbos_agent():
     assert toolsets[3].id == 'mcp'
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
-    # Unwrapped 'deferred' toolset
+    # Unwrapped 'external' toolset
     assert isinstance(toolsets[4], ExternalToolset)
-    assert toolsets[4].id == 'deferred'
+    assert toolsets[4].id == 'external'
     assert toolsets[4] == complex_agent.toolsets[3]
 
 
