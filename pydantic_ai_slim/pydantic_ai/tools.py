@@ -70,7 +70,7 @@ Usage `ToolFuncEither[AgentDepsT, ToolParams]`.
 ToolPrepareFunc: TypeAlias = Callable[[RunContext[AgentDepsT], 'ToolDefinition'], Awaitable['ToolDefinition | None']]
 """Definition of a function that can prepare a tool definition at call time.
 
-See [tool docs](../tools.md#tool-prepare) for more information.
+See [tool docs](../tools-advanced.md#tool-prepare) for more information.
 
 Example — here `only_if_42` is valid as a `ToolPrepareFunc`:
 
@@ -140,7 +140,7 @@ class DeferredToolRequests:
 
     Results can be passed to the next agent run using a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with the same tool call IDs.
 
-    See [deferred tools docs](../tools.md#deferred-tools) for more information.
+    See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
     calls: list[ToolCallPart] = field(default_factory=list)
@@ -204,7 +204,7 @@ class DeferredToolResults:
 
     The tool call IDs need to match those from the [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object from the previous run.
 
-    See [deferred tools docs](../tools.md#deferred-tools) for more information.
+    See [deferred tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
     calls: dict[str, DeferredToolCallResult | Any] = field(default_factory=dict)
@@ -328,7 +328,7 @@ class Tool(Generic[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
-                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -472,16 +472,16 @@ class ToolDefinition:
     - `'function'`: a tool that will be executed by Pydantic AI during an agent run and has its result returned to the model
     - `'output'`: a tool that passes through an output value that ends the run
     - `'external'`: a tool whose result will be produced outside of the Pydantic AI agent run in which it was called, because it depends on an upstream service (or user) or could take longer to generate than it's reasonable to keep the agent process running.
-        See the [tools documentation](../tools.md#deferred-tools) for more info.
+        See the [tools documentation](../deferred-tools.md#deferred-tools) for more info.
     - `'unapproved'`: a tool that requires human-in-the-loop approval.
-        See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+        See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
     """
 
     @property
     def defer(self) -> bool:
         """Whether calls to this tool will be deferred.
 
-        See the [tools documentation](../tools.md#deferred-tools) for more info.
+        See the [tools documentation](../deferred-tools.md#deferred-tools) for more info.
         """
         return self.kind in ('external', 'unapproved')
 
