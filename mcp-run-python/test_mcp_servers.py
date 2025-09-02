@@ -514,15 +514,15 @@ max    45.000000  72000.000000        55.000000
         match content_type:
             case 'bytes':
                 filename = 'image.png'
-                # output_file = 'image-gray.png'
-                # ctype = 'image/png'
+                output_file = 'image-gray.png'
+                ctype = 'image/png'
                 data_file = tmp_path / filename
                 data_file.write_bytes(base64.b64decode(BASE_64_IMAGE))
 
             case 'text':
                 filename = 'data.csv'
-                # output_file = 'data-processed.csv'
-                # ctype = 'text/csv'
+                output_file = 'data-processed.csv'
+                ctype = 'text/csv'
                 data_file = tmp_path / filename
                 data_file.write_text(CSV_DATA)
 
@@ -538,16 +538,16 @@ max    45.000000  72000.000000        55.000000
         assert isinstance(content, types.TextContent)
         assert content.text == expected_output
 
-        # result = await mcp_session.read_resource(FileUrl(f'file:///{output_file}'))
-        # assert len(result.contents) == 1
-        # resource = result.contents[0]
-        # assert resource.mimeType is not None
-        # assert resource.mimeType.startswith(ctype)
-        # assert (
-        #     isinstance(resource, types.BlobResourceContents)
-        #     if content_type == 'bytes'
-        #     else isinstance(resource, types.TextResourceContents)
-        # )
+        result = await mcp_session.read_resource(FileUrl(f'file:///{output_file}'))
+        assert len(result.contents) == 1
+        resource = result.contents[0]
+        assert resource.mimeType is not None
+        assert resource.mimeType.startswith(ctype)
+        assert (
+            isinstance(resource, types.BlobResourceContents)
+            if content_type == 'bytes'
+            else isinstance(resource, types.TextResourceContents)
+        )
 
 
 async def test_install_run_python_code() -> None:
