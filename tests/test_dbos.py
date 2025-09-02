@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UserError
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FinalResultEvent,
@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolCallPartDelta,
@@ -1404,6 +1405,123 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 usage=RequestUsage(
                     input_tokens=133,
                     output_tokens=19,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+# Test model retry
+
+model_retry_agent = Agent(model, name='model_retry_agent')
+
+
+@model_retry_agent.tool_plain
+@DBOS.step()
+def get_weather_in_city(city: str) -> str:
+    if city != 'Mexico City':
+        raise ModelRetry('Did you mean Mexico City?')
+    return 'sunny'
+
+
+model_retry_dbos_agent = DBOSAgent(model_retry_agent)
+
+
+async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBOS):
+    result = await model_retry_dbos_agent.run('What is the weather in CDMX?')
+    assert result.output == snapshot('The weather in Mexico City is currently sunny.')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the weather in CDMX?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather_in_city',
+                        args='{"city":"CDMX"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=47,
+                    output_tokens=17,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Did you mean Mexico City?',
+                        tool_name='get_weather_in_city',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_weather_in_city',
+                        args='{"city":"Mexico City"}',
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=87,
+                    output_tokens=17,
+                    details={
+                        'accepted_prediction_tokens': 0,
+                        'audio_tokens': 0,
+                        'reasoning_tokens': 0,
+                        'rejected_prediction_tokens': 0,
+                    },
+                ),
+                model_name='gpt-4o-2024-08-06',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_weather_in_city',
+                        content='sunny',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The weather in Mexico City is currently sunny.')],
+                usage=RequestUsage(
+                    input_tokens=116,
+                    output_tokens=10,
                     details={
                         'accepted_prediction_tokens': 0,
                         'audio_tokens': 0,
