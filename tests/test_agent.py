@@ -115,6 +115,7 @@ def test_result_pydantic_model_retry():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -138,6 +139,7 @@ def test_result_pydantic_model_retry():
                 usage=RequestUsage(input_tokens=87, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -238,6 +240,7 @@ def test_output_validator():
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -254,6 +257,7 @@ def test_output_validator():
                 usage=RequestUsage(input_tokens=63, output_tokens=14),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -296,6 +300,7 @@ def test_plain_response_then_tuple():
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -313,6 +318,7 @@ def test_plain_response_then_tuple():
                 usage=RequestUsage(input_tokens=74, output_tokens=8),
                 model_name='function:return_tuple:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -856,6 +862,7 @@ def test_output_type_function_with_retry():
                 usage=RequestUsage(input_tokens=53, output_tokens=7),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -878,6 +885,7 @@ def test_output_type_function_with_retry():
                 usage=RequestUsage(input_tokens=68, output_tokens=13),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -932,6 +940,7 @@ def test_output_type_text_output_function_with_retry():
                 usage=RequestUsage(input_tokens=53, output_tokens=3),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -947,6 +956,7 @@ def test_output_type_text_output_function_with_retry():
                 usage=RequestUsage(input_tokens=70, output_tokens=5),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1120,6 +1130,7 @@ def test_output_type_text_output_function():
                 usage=RequestUsage(input_tokens=51, output_tokens=1),
                 model_name='function:say_world:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1180,6 +1191,7 @@ def test_output_type_handoff_to_agent():
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='function:call_handoff_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1215,6 +1227,7 @@ def test_output_type_handoff_to_agent():
                 usage=RequestUsage(input_tokens=57, output_tokens=6),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1428,6 +1441,7 @@ Don't include any text or Markdown fencing before or after.\
                 usage=RequestUsage(input_tokens=56, output_tokens=7),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1467,6 +1481,7 @@ Gimme some JSON:
                 usage=RequestUsage(input_tokens=56, output_tokens=4),
                 model_name='function:return_foo:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1541,6 +1556,7 @@ Don't include any text or Markdown fencing before or after.\
                 usage=RequestUsage(input_tokens=53, output_tokens=17),
                 model_name='function:return_foo_bar:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1582,6 +1598,7 @@ def test_native_output():
                 usage=RequestUsage(input_tokens=56, output_tokens=5),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1604,6 +1621,7 @@ def test_native_output():
                 usage=RequestUsage(input_tokens=85, output_tokens=12),
                 model_name='function:return_city_location:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -1665,6 +1683,7 @@ Don't include any text or Markdown fencing before or after.\
                 usage=RequestUsage(input_tokens=53, output_tokens=6),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -1680,6 +1699,7 @@ Don't include any text or Markdown fencing before or after.\
                 usage=RequestUsage(input_tokens=70, output_tokens=11),
                 model_name='function:call_tool:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -2046,6 +2066,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
                 usage=RequestUsage(input_tokens=53, output_tokens=4),
                 model_name='function:simple_response:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -2130,6 +2151,7 @@ def test_unknown_tool():
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -2146,6 +2168,7 @@ def test_unknown_tool():
                 usage=RequestUsage(input_tokens=65, output_tokens=4),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -2170,6 +2193,7 @@ def test_unknown_tool_fix():
                 usage=RequestUsage(input_tokens=51, output_tokens=2),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -2186,6 +2210,7 @@ def test_unknown_tool_fix():
                 usage=RequestUsage(input_tokens=65, output_tokens=3),
                 model_name='function:empty:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -2484,6 +2509,7 @@ class TestMultipleToolCalls:
                     usage=RequestUsage(input_tokens=53, output_tokens=27),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='function',
                 ),
                 ModelRequest(
                     parts=[
@@ -2592,6 +2618,7 @@ class TestMultipleToolCalls:
                     usage=RequestUsage(input_tokens=58, output_tokens=22),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='function',
                 ),
                 ModelRequest(
                     parts=[
@@ -2750,6 +2777,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -2766,6 +2794,7 @@ def test_heterogeneous_responses_non_streaming() -> None:
                 usage=RequestUsage(input_tokens=56, output_tokens=8),
                 model_name='function:return_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -3495,6 +3524,7 @@ def test_empty_final_response():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -3511,6 +3541,7 @@ def test_empty_final_response():
                 usage=RequestUsage(input_tokens=52, output_tokens=10),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -3524,6 +3555,7 @@ def test_empty_final_response():
                 usage=RequestUsage(input_tokens=53, output_tokens=10),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -3663,6 +3695,7 @@ def test_multimodal_tool_response():
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -3688,6 +3721,7 @@ def test_multimodal_tool_response():
                 usage=RequestUsage(input_tokens=70, output_tokens=6),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -3738,6 +3772,7 @@ def test_plain_tool_response():
                 usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -3755,6 +3790,7 @@ def test_plain_tool_response():
                 usage=RequestUsage(input_tokens=58, output_tokens=6),
                 model_name='function:llm:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -4031,6 +4067,7 @@ def test_adding_tools_during_run():
                 usage=RequestUsage(input_tokens=57, output_tokens=2),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -4047,6 +4084,7 @@ def test_adding_tools_during_run():
                 usage=RequestUsage(input_tokens=60, output_tokens=4),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -4063,6 +4101,7 @@ def test_adding_tools_during_run():
                 usage=RequestUsage(input_tokens=63, output_tokens=5),
                 model_name='function:respond:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -4355,6 +4394,7 @@ async def test_thinking_only_response_retry():
                 usage=RequestUsage(input_tokens=57, output_tokens=6),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -4370,6 +4410,7 @@ async def test_thinking_only_response_retry():
                 usage=RequestUsage(input_tokens=75, output_tokens=8),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )
@@ -4437,6 +4478,7 @@ async def test_hitl_tool_approval():
                 usage=RequestUsage(input_tokens=60, output_tokens=23),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -4492,6 +4534,7 @@ async def test_hitl_tool_approval():
                 usage=RequestUsage(input_tokens=60, output_tokens=23),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -4520,6 +4563,7 @@ async def test_hitl_tool_approval():
                 usage=RequestUsage(input_tokens=78, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
+                provider_name='function',
             ),
         ]
     )

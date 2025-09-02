@@ -166,6 +166,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
+                        provider_name='function',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),

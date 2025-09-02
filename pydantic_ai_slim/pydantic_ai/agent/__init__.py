@@ -187,6 +187,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        ignore_warning_cost: bool = False,
     ) -> None: ...
 
     @overload
@@ -216,6 +217,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        ignore_warning_cost: bool = False,
     ) -> None: ...
 
     def __init__(
@@ -243,6 +245,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         instrument: InstrumentationSettings | bool | None = None,
         history_processors: Sequence[HistoryProcessor[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        ignore_warning_cost: bool = True,
         **_deprecated_kwargs: Any,
     ):
         """Create an agent.
@@ -295,6 +298,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 Each processor takes a list of messages and returns a modified list of messages.
                 Processors can be sync or async and are applied in sequence.
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools.
+            ignore_warning_cost: If `True`, the agent will ignore warnings about token cost.
         """
         if model is None or defer_model_check:
             self._model = model
@@ -364,6 +368,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self.history_processors = history_processors or []
 
         self._event_stream_handler = event_stream_handler
+
+        self._ignore_warning_cost = ignore_warning_cost
 
         self._override_deps: ContextVar[_utils.Option[AgentDepsT]] = ContextVar('_override_deps', default=None)
         self._override_model: ContextVar[_utils.Option[models.Model]] = ContextVar('_override_model', default=None)
@@ -527,6 +533,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                         usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
+                        provider_name='function',
                     )
                 ),
                 End(data=FinalResult(output='The capital of France is Paris.')),
@@ -590,6 +597,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             retries=0,
             run_step=0,
+            ignore_warning_cost=self._ignore_warning_cost,
         )
 
         # Merge model settings in order of precedence: run > agent > model

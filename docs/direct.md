@@ -87,6 +87,7 @@ async def main():
         usage=RequestUsage(input_tokens=55, output_tokens=7),
         model_name='gpt-4.1-nano',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     )
     """
 ```

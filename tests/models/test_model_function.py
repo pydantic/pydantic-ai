@@ -70,6 +70,7 @@ def test_simple():
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -84,6 +85,7 @@ def test_simple():
                 usage=RequestUsage(input_tokens=51, output_tokens=3),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(parts=[UserPromptPart(content='World', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -91,6 +93,7 @@ def test_simple():
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='function:return_last:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -161,6 +164,7 @@ def test_weather():
                 usage=RequestUsage(input_tokens=51, output_tokens=5),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -177,6 +181,7 @@ def test_weather():
                 usage=RequestUsage(input_tokens=56, output_tokens=11),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
             ModelRequest(
                 parts=[
@@ -193,6 +198,7 @@ def test_weather():
                 usage=RequestUsage(input_tokens=57, output_tokens=14),
                 model_name='function:weather_model:',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='function',
             ),
         ]
     )
@@ -455,6 +461,7 @@ async def test_stream_text():
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::stream_text_function',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='function',
                 ),
             ]
         )

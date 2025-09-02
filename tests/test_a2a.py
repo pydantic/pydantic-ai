@@ -615,6 +615,7 @@ async def test_a2a_multiple_tasks_same_context():
                         usage=RequestUsage(input_tokens=52, output_tokens=7),
                         model_name='function:track_messages:',
                         timestamp=IsDatetime(),
+                        provider_name='function',
                     ),
                     ModelRequest(
                         parts=[

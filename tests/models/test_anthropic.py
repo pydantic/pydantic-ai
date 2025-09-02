@@ -180,6 +180,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     # reset the index so we get the same response again
@@ -193,6 +194,7 @@ async def test_sync_request_text_response(allow_model_requests: None):
             input_tokens=5,
             output_tokens=10,
             details={'input_tokens': 5, 'output_tokens': 10},
+            cost=Decimal('0.000044'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -248,11 +250,12 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
                 'cache_creation_input_tokens': 4,
                 'cache_read_input_tokens': 6,
             },
+            cost=Decimal('0.00003488'),
         )
     )
     last_message = result.all_messages()[-1]
     assert isinstance(last_message, ModelResponse)
-    assert last_message.price().total_price == snapshot(Decimal('0.00003488'))
+    assert last_message.cost().total_price == snapshot(Decimal('0.00003488'))
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -272,6 +275,7 @@ async def test_async_request_text_response(allow_model_requests: None):
             input_tokens=3,
             output_tokens=5,
             details={'input_tokens': 3, 'output_tokens': 5},
+            cost=Decimal('0.0000224'),
         )
     )
 

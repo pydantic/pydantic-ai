@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from decimal import Decimal
 from typing import Any, cast
 
 import pytest
@@ -1114,7 +1115,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
             ModelResponse(
                 parts=[TextPart(content='4')],
                 usage=RequestUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}),
-                model_name='gpt-4o-123',
+                model_name='gpt-4o',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_response_id='123',
@@ -1123,5 +1124,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
     )
 
     assert result.usage() == snapshot(
-        RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
+        RunUsage(
+            input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1, cost=Decimal('0.000045')
+        )
     )

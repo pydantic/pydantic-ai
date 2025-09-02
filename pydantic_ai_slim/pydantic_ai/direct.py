@@ -60,6 +60,7 @@ async def model_request(
             usage=RequestUsage(input_tokens=56, output_tokens=7),
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
+            provider_name='function',
         )
         '''
     ```
@@ -113,6 +114,7 @@ def model_request_sync(
         usage=RequestUsage(input_tokens=56, output_tokens=7),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
+        provider_name='function',
     )
     '''
     ```
