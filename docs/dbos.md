@@ -59,9 +59,7 @@ The original agent, model, and MCP server can still be used as normal outside th
 Here is a simple but complete example of wrapping an agent for durable execution. All it requires is to install Pydantic AI with the DBOS [open-source library](https://github.com/dbos-inc/dbos-transact-py):
 
 ```sh
-uv add pydantic-ai[dbos]
-# or
-pip install pydantic-ai[dbos]
+pip/uv-add pydantic-ai[dbos]
 ```
 
 ```python {title="dbos_agent.py" test="skip"}
