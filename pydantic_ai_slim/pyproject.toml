@@ -95,7 +95,7 @@ retries = ["tenacity>=8.2.3"]
 # Temporal
 temporal = ["temporalio==1.16.0"]
 # DBOS (Update version before merge)
-dbos = ["dbos>=1.13.0a5"]
+dbos = ["dbos>=1.13.0"]
 
 
 [tool.hatch.metadata]

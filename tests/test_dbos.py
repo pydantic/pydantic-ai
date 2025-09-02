@@ -82,16 +82,11 @@ async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
         await http_client.aclose()
 
 
-# Our setup calls `logfire.instrument_pydantic_ai()`, so we need to make sure this doesn't bleed into other tests.
 @pytest.fixture(autouse=True, scope='module')
-def uninstrument_pydantic_ai() -> Iterator[None]:
-    try:
-        # Set up logfire for the tests.
-        logfire.configure(metrics=False)
-        logfire.instrument_pydantic_ai()
-        yield
-    finally:
-        Agent.instrument_all(False)
+def setup_logfire_instrumentation() -> Iterator[None]:
+    # Set up logfire for the tests.
+    logfire.configure(metrics=False)
+    yield
 
 
 @contextmanager
@@ -109,6 +104,7 @@ DBOS_CONFIG: DBOSConfig = {
     'database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'run_admin_server': False,
+    'disable_otlp': True,  # Disable DBOS OTLP to avoid conflicts with logfire
 }
 
 
@@ -217,6 +213,7 @@ complex_agent = Agent(
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
+    instrument=True,  # Enable instrumentation for testing
     name='complex_agent',
 )
 complex_dbos_agent = DBOSAgent(complex_agent)
@@ -262,11 +259,10 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
     # Assert the root span and its structure matches expected hierarchy
     assert root_span == snapshot(
         BasicSpan(
-            content='complex_agent.run',
+            content='complex_agent run',
             children=[
-                BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                 BasicSpan(
-                    content='complex_agent__model.request_stream',
+                    content='chat gpt-4o',
                     children=[
                         BasicSpan(content='ctx.run_step=1'),
                         BasicSpan(
@@ -281,9 +277,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                         BasicSpan(
                             content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                         ),
+                        BasicSpan(content='ctx.run_step=1'),
                     ],
                 ),
-                BasicSpan(content='ctx.run_step=1'),
                 BasicSpan(content='ctx.run_step=1'),
                 BasicSpan(
                     content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
@@ -292,19 +288,24 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                     content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                 ),
                 BasicSpan(
-                    content=IsStr(
-                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                    )
+                    content='running 2 tools',
+                    children=[
+                        BasicSpan(content='running tool: get_country'),
+                        BasicSpan(
+                            content=IsStr(
+                                regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                            )
+                        ),
+                        BasicSpan(content='running tool: get_product_name'),
+                        BasicSpan(
+                            content=IsStr(
+                                regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                            )
+                        ),
+                    ],
                 ),
-                BasicSpan(content='complex_agent__mcp_server__mcp.call_tool'),
                 BasicSpan(
-                    content=IsStr(
-                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                    )
-                ),
-                BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
-                BasicSpan(
-                    content='complex_agent__model.request_stream',
+                    content='chat gpt-4o',
                     children=[
                         BasicSpan(content='ctx.run_step=2'),
                         BasicSpan(
@@ -328,22 +329,26 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                         BasicSpan(
                             content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                         ),
+                        BasicSpan(content='ctx.run_step=2'),
                     ],
                 ),
-                BasicSpan(content='ctx.run_step=2'),
                 BasicSpan(content='ctx.run_step=2'),
                 BasicSpan(
                     content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                 ),
-                BasicSpan(content='get_weather'),
                 BasicSpan(
-                    content=IsStr(
-                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                    )
+                    content='running 1 tool',
+                    children=[
+                        BasicSpan(content='running tool: get_weather'),
+                        BasicSpan(
+                            content=IsStr(
+                                regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                            )
+                        ),
+                    ],
                 ),
-                BasicSpan(content='complex_agent__mcp_server__mcp.get_tools'),
                 BasicSpan(
-                    content='complex_agent__model.request_stream',
+                    content='chat gpt-4o',
                     children=[
                         BasicSpan(content='ctx.run_step=3'),
                         BasicSpan(
@@ -472,9 +477,9 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                         BasicSpan(
                             content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                         ),
+                        BasicSpan(content='ctx.run_step=3'),
                     ],
                 ),
-                BasicSpan(content='ctx.run_step=3'),
                 BasicSpan(content='ctx.run_step=3'),
             ],
         )

@@ -882,7 +882,7 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "1.13.0a8"
+version = "1.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
@@ -903,9 +903,9 @@ dependencies = [
     { name = "typer" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/30/03/9455e8a9ea0ac24146bab1d4efd15f42a7a0331b9ce2e878af72ce05ae34/dbos-1.13.0a8.tar.gz", hash = "sha256:0f0b8a615520f85bcbf85155ce727c008b304cb5f7c4f550336a99d5349953a9", size = 209658, upload-time = "2025-08-28T16:27:41.61Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/d2/fa283887930293f079400b5525ceab7f0b0301910cf0070c1aebe621d85f/dbos-1.13.0.tar.gz", hash = "sha256:40fd2419bd4e72821fe1726e12ff7fae7b6e4b482971cc43cef08693468bac4c", size = 209587, upload-time = "2025-09-02T18:56:50.996Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7b/f3/93a33c07fe525e4fb3ad6e486ffa608a778671e805d042e2e8405382edb3/dbos-1.13.0a8-py3-none-any.whl", hash = "sha256:06e75e7b51ff0e2d0b2b902fb5af177502722e5a5e2ac349d573e264b59a163e", size = 147318, upload-time = "2025-08-28T16:27:39.645Z" },
+    { url = "https://files.pythonhosted.org/packages/1a/a0/5cd6f990c5835067fdb71a29e507ed13cbbd92fbf0c857450dfa134099c0/dbos-1.13.0-py3-none-any.whl", hash = "sha256:fec850e95a92997c7c0dc05ebd702dde941221465006957a314207bad7caf45f", size = 147294, upload-time = "2025-09-02T18:56:48.772Z" },
 ]
 
 [[package]]
@@ -3578,7 +3578,7 @@ requires-dist = [
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.16.0" },
-    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.13.0a5" },
+    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.13.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
