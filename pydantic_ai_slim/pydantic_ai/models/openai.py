@@ -1171,12 +1171,8 @@ class OpenAIStreamedResponse(StreamedResponse):
             except IndexError:
                 continue
 
-            if choice.delta is None:
-                continue
-
             # Handle the text part of the response
-            content = choice.delta.content
-            if content is not None:
+            if (delta := choice.delta) is not None and (content := delta.content) is not None:
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
