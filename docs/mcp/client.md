@@ -149,7 +149,7 @@ from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(  # (1)!
-    'uv', args=['run', 'mcp-run-python', 'stdio'],
+    'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
 )
 agent = Agent('openai:gpt-4o', toolsets=[server])
 

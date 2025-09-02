@@ -400,7 +400,7 @@ class MCPServerStdio(MCPServer):
     from pydantic_ai.mcp import MCPServerStdio
 
     server = MCPServerStdio(  # (1)!
-        'uv', args=['run', 'mcp-run-python', 'stdio'],
+        'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
@@ -722,16 +722,15 @@ class MCPServerSSE(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerSSE
 
-    server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
+    server = MCPServerSSE('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent:  # (2)!
+        async with agent:  # (1)!
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with [`mcp-run-python`](https://github.com/pydantic/mcp-run-python).
-    2. This will connect to a server running on `localhost:3001`.
+    1. This will connect to a server running on `localhost:3001`.
     """
 
     @property

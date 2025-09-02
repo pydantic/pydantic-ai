@@ -159,6 +159,7 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
+      - run: uv run mcp-run-python example
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
           COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -196,6 +197,7 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --group dev
+      - run: uv run mcp-run-python example
 
       - run: unset UV_FROZEN
 
@@ -227,10 +229,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
 
       - run: uv run --all-extras python tests/import_examples.py
 
