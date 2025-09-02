@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
+from pydantic import BaseModel, Json, ValidationError
 from typing_extensions import assert_never
 
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -50,7 +51,7 @@ from . import (
 )
 
 try:
-    from groq import NOT_GIVEN, APIStatusError, AsyncGroq, AsyncStream
+    from groq import NOT_GIVEN, APIError, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
 except ImportError as _import_error:
@@ -171,9 +172,24 @@ class GroqModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
-        response = await self._completions_create(
-            messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
-        )
+        try:
+            response = await self._completions_create(
+                messages, False, cast(GroqModelSettings, model_settings or {}), model_request_parameters
+            )
+        except ModelHTTPError as e:
+            if isinstance(e.body, dict):  # pragma: no branch
+                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+                # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
+                try:
+                    error = _GroqToolUseFailedError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
+                    tool_call_part = ToolCallPart(
+                        tool_name=error.error.failed_generation.name,
+                        args=error.error.failed_generation.arguments,
+                    )
+                    return ModelResponse(parts=[tool_call_part])
+                except ValidationError:
+                    pass
+            raise
         model_response = self._process_response(response)
         return model_response
 
@@ -477,36 +493,52 @@ class GroqStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        async for chunk in self._response:
-            self._usage += _map_usage(chunk)
+        try:
+            async for chunk in self._response:
+                self._usage += _map_usage(chunk)
 
-            try:
-                choice = chunk.choices[0]
-            except IndexError:
-                continue
+                try:
+                    choice = chunk.choices[0]
+                except IndexError:
+                    continue
 
-            # Handle the text part of the response
-            content = choice.delta.content
-            if content is not None:
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id='content',
-                    content=content,
-                    thinking_tags=self._model_profile.thinking_tags,
-                    ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
-                )
-                if maybe_event is not None:  # pragma: no branch
-                    yield maybe_event
+                # Handle the text part of the response
+                content = choice.delta.content
+                if content is not None:
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id='content',
+                        content=content,
+                        thinking_tags=self._model_profile.thinking_tags,
+                        ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
+                    )
+                    if maybe_event is not None:  # pragma: no branch
+                        yield maybe_event
 
-            # Handle the tool calls
-            for dtc in choice.delta.tool_calls or []:
-                maybe_event = self._parts_manager.handle_tool_call_delta(
-                    vendor_part_id=dtc.index,
-                    tool_name=dtc.function and dtc.function.name,
-                    args=dtc.function and dtc.function.arguments,
-                    tool_call_id=dtc.id,
-                )
-                if maybe_event is not None:
-                    yield maybe_event
+                # Handle the tool calls
+                for dtc in choice.delta.tool_calls or []:
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=dtc.index,
+                        tool_name=dtc.function and dtc.function.name,
+                        args=dtc.function and dtc.function.arguments,
+                        tool_call_id=dtc.id,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
+        except APIError as e:
+            if isinstance(e.body, dict):  # pragma: no branch
+                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+                # but we'd rather handle it ourselves so we can tell the model to retry the tool call
+                try:
+                    error = _GroqToolUseFailedInnerError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
+                    yield self._parts_manager.handle_tool_call_part(
+                        vendor_part_id='tool_use_failed',
+                        tool_name=error.failed_generation.name,
+                        args=error.failed_generation.arguments,
+                    )
+                    return
+                except ValidationError as e:  # pragma: no cover
+                    pass
+            raise  # pragma: no cover
 
     @property
     def model_name(self) -> GroqModelName:
@@ -538,3 +570,31 @@ def _map_usage(completion: chat.ChatCompletionChunk | chat.ChatCompletion) -> us
         input_tokens=response_usage.prompt_tokens,
         output_tokens=response_usage.completion_tokens,
     )
+
+
+class _GroqToolUseFailedGeneration(BaseModel):
+    name: str
+    arguments: dict[str, Any]
+
+
+class _GroqToolUseFailedInnerError(BaseModel):
+    message: str
+    type: Literal['invalid_request_error']
+    code: Literal['tool_use_failed']
+    failed_generation: Json[_GroqToolUseFailedGeneration]
+
+
+class _GroqToolUseFailedError(BaseModel):
+    # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+    # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
+    # Example payload from `exception.body`:
+    # {
+    #     'error': {
+    #         'message': "Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did not match schema: errors: [missing properties: 'name', additionalProperties 'foo' not allowed]",
+    #         'type': 'invalid_request_error',
+    #         'code': 'tool_use_failed',
+    #         'failed_generation': '{"name": "get_something_by_name", "arguments": {\n  "foo": "bar"\n}}',
+    #     }
+    # }
+
+    error: _GroqToolUseFailedInnerError
