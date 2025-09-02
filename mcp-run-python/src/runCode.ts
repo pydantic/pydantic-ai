@@ -85,7 +85,6 @@ export async function runCode(
   }
   sys.stdout.flush()
   sys.stderr.flush()
-  // console.log = realConsoleLog;
   return runResult
 }
 
