@@ -1118,8 +1118,11 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
     async with agent.iter(
         'Please call the "get_something_by_name" tool with non-existent parameters to test error handling'
     ) as agent_run:
-        async for _ in agent_run:
-            pass
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
 
     assert agent_run.result is not None
     assert agent_run.result.all_messages() == snapshot(
@@ -1135,24 +1138,32 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ),
             ModelResponse(
                 parts=[
+                    TextPart(content=''),
                     ToolCallPart(
                         tool_name='get_something_by_name',
-                        args={'foo': 'bar'},
+                        args={'nonexistent': 'test'},
                         tool_call_id=IsStr(),
-                    )
+                    ),
                 ],
+                model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
+                provider_name='groq',
             ),
             ModelRequest(
                 parts=[
                     RetryPromptPart(
                         content=[
-                            {'type': 'missing', 'loc': ('name',), 'msg': 'Field required', 'input': {'foo': 'bar'}},
+                            {
+                                'type': 'missing',
+                                'loc': ('name',),
+                                'msg': 'Field required',
+                                'input': {'nonexistent': 'test'},
+                            },
                             {
                                 'type': 'extra_forbidden',
-                                'loc': ('foo',),
+                                'loc': ('nonexistent',),
                                 'msg': 'Extra inputs are not permitted',
-                                'input': 'bar',
+                                'input': 'test',
                             },
                         ],
                         tool_name='get_something_by_name',
@@ -1164,26 +1175,23 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(
-                        content='The user wants to test error handling by calling tool with non-existent parameters. We need to call with correct parameters? The instruction from system: be concise. We should call get_something_by_name with a name that likely does not exist, like "nonexistent". That will be a valid call.'
-                    ),
+                    TextPart(content=''),
                     ToolCallPart(
                         tool_name='get_something_by_name',
-                        args='{"name":"nonexistent_item"}',
+                        args='{"name":"test_name"}',
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=RequestUsage(input_tokens=280, output_tokens=89),
+                usage=RequestUsage(input_tokens=283, output_tokens=43),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
                         tool_name='get_something_by_name',
-                        content='Something with name: nonexistent_item',
+                        content='Something with name: test_name',
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
@@ -1191,25 +1199,11 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 instructions='Be concise. Never use pretty double quotes, just regular ones.',
             ),
             ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content='The user wants to test error handling. We called with non-existent name. The tool returned "Something with name: nonexistent_item". That seems fine. We should respond accordingly.'
-                    ),
-                    TextPart(
-                        content="""\
-The tool call succeeded, returning:
-
-```
-Something with name: nonexistent_item
-```\
-"""
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=318, output_tokens=62),
+                parts=[TextPart(content='The tool call succeeded with the name "test_name".')],
+                usage=RequestUsage(input_tokens=320, output_tokens=15),
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
-                provider_response_id=IsStr(),
             ),
         ]
     )
