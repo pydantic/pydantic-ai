@@ -532,9 +532,9 @@ class GroqStreamedResponse(StreamedResponse):
                         args=error.failed_generation.arguments,
                     )
                     return
-                except ValidationError as e:
-                    pass  # pragma: no cover
-            raise
+                except ValidationError as e:  # pragma: no cover
+                    pass
+            raise  # pragma: no cover
 
     @property
     def model_name(self) -> GroqModelName:
