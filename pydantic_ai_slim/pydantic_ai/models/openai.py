@@ -1289,7 +1289,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_thinking_delta(
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.part.text,
-                    signature=chunk.item_id,
+                    id=chunk.item_id,
                 )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
@@ -1302,7 +1302,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_thinking_delta(
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.delta,
-                    signature=chunk.item_id,
+                    id=chunk.item_id,
                 )
 
             # TODO(Marcelo): We should support annotations in the future.
