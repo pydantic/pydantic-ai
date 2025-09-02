@@ -1012,16 +1012,6 @@ async def test_dbos_agent_override_deps_in_workflow(allow_model_requests: None, 
     assert output == snapshot('The capital of Mexico is Mexico City.')
 
 
-async def test_dbos_agent_sync_tool_activity_disabled():
-    # Not a valid test for DBOS
-    pass
-
-
-async def test_dbos_agent_mcp_server_activity_disabled():
-    # Not a valid test for DBOS
-    pass
-
-
 async def test_dbos_model_stream_direct(allow_model_requests: None, dbos: DBOS):
     @DBOS.workflow()
     async def run_model_stream():
@@ -1063,11 +1053,6 @@ async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: No
             # This will trigger the client to be unserializable
             logfire.instrument_httpx(client, capture_all=True)
             await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
-
-
-async def test_logfire_plugin():
-    # Not a valid test for DBOS, as we don't need the LogfirePlugin.
-    pass
 
 
 # Test dynamic toolsets in an agent with DBOS
