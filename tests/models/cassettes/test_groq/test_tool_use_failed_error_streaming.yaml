@@ -1,0 +1,325 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '465'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '380'
+      content-type:
+      - application/json
+      vary:
+      - Origin
+    parsed_body:
+      error:
+        code: tool_use_failed
+        failed_generation: |-
+          {"name": "get_something_by_name", "arguments": {
+            "foo": "bar"
+          }}
+        message: 'Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did
+          not match schema: errors: [missing properties: ''name'', additionalProperties ''foo'' not allowed]'
+        type: invalid_request_error
+    status:
+      code: 400
+      message: Bad Request
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1109'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=VnbK91DA8XsNAF.PWZrhTJ1XuNqtzxkBVUCJqhjqeiY-1756846668-1.0.1.1-1329p2VvySNodcO.aAyEUnGUCvUw9VYH1UcAHmjjAyBpDcm8Fbwkjj4Eyi7Re9i6UQ1d3WuISJmuWTYwWCGeCaFj8nKLaxxlVc1Ou7r9TIU
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"foo":"bar"}'
+            name: get_something_by_name
+          id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+          type: function
+      - content: |-
+          2 validation errors: [
+            {
+              "type": "missing",
+              "loc": [
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "foo": "bar"
+              }
+            },
+            {
+              "type": "extra_forbidden",
+              "loc": [
+                "foo"
+              ],
+              "msg": "Extra inputs are not permitted",
+              "input": "bar"
+            }
+          ]
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '1251'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          reasoning: The user wants to test error handling by calling the tool with non-existent parameters. However the tool
+            requires a "name" parameter. The instruction says "call the tool with non-existent parameters to test error handling".
+            The tool requires a name; we can provide a name that likely doesn't exist, e.g., "nonexistent_item". That's a
+            valid parameter but refers to a non-existent entity. That should test error handling at the tool's internal logic.
+            So call get_something_by_name with name "nonexistent_item".
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"name":"nonexistent_item"}'
+              name: get_something_by_name
+            id: fc_33728875-1a48-4eb5-a3ba-df16b256b003
+            type: function
+      created: 1756846669
+      id: chatcmpl-698ea20d-1a19-421a-87f5-d862f2170b9f
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_ed9190d8b7
+      usage:
+        completion_time: 0.272149635
+        completion_tokens: 137
+        prompt_time: 0.012977756
+        prompt_tokens: 270
+        queue_time: 0.236896431
+        total_time: 0.285127391
+        total_tokens: 407
+      usage_breakdown: null
+      x_groq:
+        id: req_01k463hewke8g9ecctt31nn5d7
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '1425'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=VnbK91DA8XsNAF.PWZrhTJ1XuNqtzxkBVUCJqhjqeiY-1756846668-1.0.1.1-1329p2VvySNodcO.aAyEUnGUCvUw9VYH1UcAHmjjAyBpDcm8Fbwkjj4Eyi7Re9i6UQ1d3WuISJmuWTYwWCGeCaFj8nKLaxxlVc1Ou7r9TIU
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: Be concise
+        role: system
+      - content: Please call the "get_something_by_name" tool with non-existent parameters to test error handling
+        role: user
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"foo":"bar"}'
+            name: get_something_by_name
+          id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+          type: function
+      - content: |-
+          2 validation errors: [
+            {
+              "type": "missing",
+              "loc": [
+                "name"
+              ],
+              "msg": "Field required",
+              "input": {
+                "foo": "bar"
+              }
+            },
+            {
+              "type": "extra_forbidden",
+              "loc": [
+                "foo"
+              ],
+              "msg": "Extra inputs are not permitted",
+              "input": "bar"
+            }
+          ]
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: pyd_ai_d3b503c9cc7f499493c9c9ebfc17768d
+      - role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"name":"nonexistent_item"}'
+            name: get_something_by_name
+          id: fc_33728875-1a48-4eb5-a3ba-df16b256b003
+          type: function
+      - content: 'Something with name: nonexistent_item'
+        role: tool
+        tool_call_id: fc_33728875-1a48-4eb5-a3ba-df16b256b003
+      model: openai/gpt-oss-120b
+      n: 1
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_something_by_name
+          parameters:
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+            required:
+            - name
+            type: object
+        type: function
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '641'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: |-
+            The tool call succeeded, returning:
+
+            **“Something with name: nonexistent_item.”**
+          role: assistant
+      created: 1756846669
+      id: chatcmpl-ac81964b-5c63-4986-bf19-efe3b2474dce
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_ed9190d8b7
+      usage:
+        completion_time: 0.041797142
+        completion_tokens: 21
+        prompt_time: 0.015478895
+        prompt_tokens: 308
+        queue_time: 0.235336298
+        total_time: 0.057276037
+        total_tokens: 329
+      usage_breakdown: null
+      x_groq:
+        id: req_01k463hfg6e0ksk4b6vw4ws4p5
+    status:
+      code: 200
+      message: OK
+version: 1
