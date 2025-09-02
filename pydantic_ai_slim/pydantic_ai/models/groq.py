@@ -178,6 +178,8 @@ class GroqModel(Model):
             )
         except ModelHTTPError as e:
             if isinstance(e.body, dict):  # pragma: no branch
+                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+                # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
                 try:
                     error = _GroqToolUseFailedError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
                     tool_call_part = ToolCallPart(
@@ -524,6 +526,8 @@ class GroqStreamedResponse(StreamedResponse):
                         yield maybe_event
         except APIError as e:
             if isinstance(e.body, dict):  # pragma: no branch
+                # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+                # but we'd rather handle it ourselves so we can tell the model to retry the tool call
                 try:
                     error = _GroqToolUseFailedInnerError.model_validate(e.body)  # pyright: ignore[reportUnknownMemberType]
                     yield self._parts_manager.handle_tool_call_part(
@@ -581,6 +585,9 @@ class _GroqToolUseFailedInnerError(BaseModel):
 
 
 class _GroqToolUseFailedError(BaseModel):
+    # The Groq SDK tries to be helpful by raising an exception when generated tool arguments don't match the schema,
+    # but we'd rather handle it ourselves so we can tell the model to retry the tool call.
+    # Example payload from `exception.body`:
     # {
     #     'error': {
     #         'message': "Tool call validation failed: tool call validation failed: parameters for tool get_something_by_name did not match schema: errors: [missing properties: 'name', additionalProperties 'foo' not allowed]",
