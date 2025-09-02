@@ -29,10 +29,6 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
       - uses: pre-commit/action@v3.0.0
         with:
           extra_args: --all-files --verbose
@@ -272,29 +268,6 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
-  test-mcp-run-python:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      UV_PYTHON: "3.12"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - run: make lint-js
-
-      - run: uv run --package mcp-run-python pytest mcp-run-python -v --durations=100
-
-      - run: deno task dev warmup
-        working-directory: mcp-run-python
-
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
@@ -307,7 +280,6 @@ jobs:
       - test-lowest-versions
       - test-examples
       - coverage
-      - test-mcp-run-python
     runs-on: ubuntu-latest
 
     steps:
