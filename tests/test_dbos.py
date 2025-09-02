@@ -5,12 +5,11 @@ from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from httpx import AsyncClient
 from pydantic import BaseModel
-from typing_extensions import Literal
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
@@ -21,7 +20,6 @@ from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
-    HandleResponseEvent,
     ModelMessage,
     ModelRequest,
     PartDeltaEvent,
@@ -63,7 +61,7 @@ except ImportError:  # pragma: lax no cover
 from inline_snapshot import snapshot
 
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets import DeferredToolset, FunctionToolset
+from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 
 pytestmark = [
     pytest.mark.anyio,
@@ -166,7 +164,7 @@ class Deps(BaseModel):
 
 async def event_stream_handler(
     ctx: RunContext[Deps],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     logfire.info(f'{ctx.run_step=}')
     async for event in stream:
@@ -215,7 +213,7 @@ complex_agent = Agent(
     toolsets=[
         FunctionToolset[Deps](tools=[get_country], id='country'),
         MCPServerStdio('python', ['-m', 'tests.mcp_server'], timeout=20, id='mcp'),
-        DeferredToolset(tool_defs=[ToolDefinition(name='deferred')], id='deferred'),
+        ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='external'),
     ],
     tools=[get_weather],
     event_stream_handler=event_stream_handler,
@@ -485,11 +483,11 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
 
 # Note: since we wrap the agent run in a DBOS workflow, we cannot just use a DBOS agent without DBOS. This test shows we can use a complex agent with DBOS decorated tools. Without DBOS workflows, those steps are just normal functions.
 async def test_complex_agent_run(allow_model_requests: None) -> None:
-    events: list[AgentStreamEvent | HandleResponseEvent] = []
+    events: list[AgentStreamEvent] = []
 
     async def event_stream_handler(
         ctx: RunContext[Deps],
-        stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+        stream: AsyncIterable[AgentStreamEvent],
     ):
         async for event in stream:
             events.append(event)
@@ -829,7 +827,7 @@ async def test_dbos_agent():
     assert toolsets[3].wrapped == complex_agent.toolsets[2]
 
     # Unwrapped 'deferred' toolset
-    assert isinstance(toolsets[4], DeferredToolset)
+    assert isinstance(toolsets[4], ExternalToolset)
     assert toolsets[4].id == 'deferred'
     assert toolsets[4] == complex_agent.toolsets[3]
 
@@ -939,7 +937,7 @@ async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBO
 
 async def simple_event_stream_handler(
     ctx: RunContext[None],
-    stream: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+    stream: AsyncIterable[AgentStreamEvent],
 ):
     pass
 

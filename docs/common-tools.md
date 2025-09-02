@@ -106,7 +106,7 @@ Here's an example of how you can use the Tavily search tool with an agent:
 ```py {title="tavily_search.py" test="skip"}
 import os
 
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent
 from pydantic_ai.common_tools.tavily import tavily_search_tool
 
 api_key = os.getenv('TAVILY_API_KEY')

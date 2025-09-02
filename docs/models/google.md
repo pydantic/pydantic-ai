@@ -87,7 +87,7 @@ credentials = service_account.Credentials.from_service_account_file(
     'path/to/service-account.json',
     scopes=['https://www.googleapis.com/auth/cloud-platform'],
 )
-provider = GoogleProvider(credentials=credentials)
+provider = GoogleProvider(credentials=credentials, project='your-project-id')
 model = GoogleModel('gemini-1.5-flash', provider=provider)
 agent = Agent(model)
 ...

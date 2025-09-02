@@ -1,7 +1,8 @@
 import sys
 import types
+from collections.abc import Callable
 from io import StringIO
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from dirty_equals import IsInstance, IsStr

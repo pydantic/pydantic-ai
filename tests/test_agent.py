@@ -2,10 +2,10 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable
-from dataclasses import dataclass, field, replace
+from collections.abc import AsyncIterable, Callable
+from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Callable, Union
+from typing import Any, Union
 
 import httpx
 import pytest
@@ -28,7 +28,9 @@ from pydantic_ai._output import (
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    AudioUrl,
     BinaryContent,
+    DocumentUrl,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -42,13 +44,14 @@ from pydantic_ai.messages import (
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, StructuredDict, ToolOutput
+from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -417,8 +420,8 @@ def upcase(text: str) -> str:
 @pytest.mark.parametrize(
     'input_union_callable',
     [
-        lambda: Union[str, Foo],
-        lambda: Union[Foo, str],
+        lambda: Union[str, Foo],  # noqa: UP007
+        lambda: Union[Foo, str],  # noqa: UP007
         lambda: str | Foo,
         lambda: Foo | str,
         lambda: [Foo, str],
@@ -440,7 +443,7 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.skip('Python version does not support `|` syntax for unions')
 
     m = TestModel()
-    agent: Agent[None, Union[str, Foo]] = Agent(m, output_type=union)
+    agent: Agent[None, str | Foo] = Agent(m, output_type=union)
 
     got_tool_call_name = 'unset'
 
@@ -491,11 +494,8 @@ def test_response_union_allow_str(input_union_callable: Callable[[], Any]):
         pytest.param('OutputType = Union[Foo, Bar]'),
         pytest.param('OutputType = [Foo, Bar]'),
         pytest.param('OutputType = [ToolOutput(Foo), ToolOutput(Bar)]'),
-        pytest.param('OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='3.10+')),
-        pytest.param(
-            'OutputType: TypeAlias = Foo | Bar',
-            marks=pytest.mark.skipif(sys.version_info < (3, 10), reason='Python 3.10+'),
-        ),
+        pytest.param('OutputType = Foo | Bar'),
+        pytest.param('OutputType: TypeAlias = Foo | Bar'),
         pytest.param(
             'type OutputType = Foo | Bar', marks=pytest.mark.skipif(sys.version_info < (3, 12), reason='3.12+')
         ),
@@ -616,7 +616,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Union[Foo, Bar]] = ToolOutput(Union[Foo, Bar], strict=False)  # type: ignore
+    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # type: ignore
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -1827,6 +1827,7 @@ def test_run_with_history_new():
     assert result3.output == snapshot('{"ret_a":"a-apple"}')
     assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result3.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
+    assert result3.timestamp() == IsNow(tz=timezone.utc)
 
 
 def test_run_with_history_new_structured():
@@ -2068,7 +2069,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 
     with pytest.raises(
         UserError,
-        match='Cannot provide a new user prompt when the message history ends with a model response containing unprocessed tool calls',
+        match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.',
     ):
         agent.run_sync(user_prompt='New question', message_history=message_history)
 
@@ -2321,6 +2322,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('regular_tool', {'x': 1}),
                     ToolCallPart('another_tool', {'y': 2}),
+                    ToolCallPart('deferred_tool', {'x': 3}),
                 ],
             )
 
@@ -2337,6 +2339,13 @@ class TestMultipleToolCalls:
             """Another tool that should not be called."""
             tool_called.append('another_tool')
             return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
 
         result = agent.run_sync('test early strategy')
         messages = result.all_messages()
@@ -2361,6 +2370,12 @@ class TestMultipleToolCalls:
                 ),
                 ToolReturnPart(
                     tool_name='another_tool',
+                    content='Tool not executed - a final result was already processed.',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                ToolReturnPart(
+                    tool_name='deferred_tool',
                     content='Tool not executed - a final result was already processed.',
                     tool_call_id=IsStr(),
                     timestamp=IsNow(tz=timezone.utc),
@@ -2417,6 +2432,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('final_result', {'value': 'second'}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
+                    ToolCallPart('deferred_tool', {'x': 4}),
                 ],
             )
 
@@ -2433,6 +2449,13 @@ class TestMultipleToolCalls:
             """Another tool that should be called."""
             tool_called.append('another_tool')
             return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
 
         result = agent.run_sync('test exhaustive strategy')
 
@@ -2455,8 +2478,13 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='final_result', args={'value': 'second'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args={'x': 4},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
-                    usage=RequestUsage(input_tokens=53, output_tokens=23),
+                    usage=RequestUsage(input_tokens=53, output_tokens=27),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -2484,10 +2512,16 @@ class TestMultipleToolCalls:
                             tool_name='another_tool', content=2, tool_call_id=IsStr(), timestamp=IsNow(tz=timezone.utc)
                         ),
                         RetryPromptPart(
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
                             tool_name='unknown_tool',
                             tool_call_id=IsStr(),
-                            timestamp=IsDatetime(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                     ]
                 ),
@@ -2506,6 +2540,7 @@ class TestMultipleToolCalls:
                     ToolCallPart('final_result', {'value': 'final'}),
                     ToolCallPart('another_tool', {'y': 2}),
                     ToolCallPart('unknown_tool', {'value': '???'}),
+                    ToolCallPart('deferred_tool', {'x': 5}),
                 ],
             )
 
@@ -2522,6 +2557,13 @@ class TestMultipleToolCalls:
             """A tool that should not be called."""
             tool_called.append('another_tool')
             return y
+
+        async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+            return replace(tool_def, kind='external')
+
+        @agent.tool_plain(prepare=defer)
+        def deferred_tool(x: int) -> int:  # pragma: no cover
+            return x + 1
 
         result = agent.run_sync('test early strategy with final result in middle')
 
@@ -2544,8 +2586,13 @@ class TestMultipleToolCalls:
                         ToolCallPart(tool_name='final_result', args={'value': 'final'}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args={'y': 2}, tool_call_id=IsStr()),
                         ToolCallPart(tool_name='unknown_tool', args={'value': '???'}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='deferred_tool',
+                            args={'x': 5},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
-                    usage=RequestUsage(input_tokens=58, output_tokens=18),
+                    usage=RequestUsage(input_tokens=58, output_tokens=22),
                     model_name='function:return_model:',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -2570,10 +2617,16 @@ class TestMultipleToolCalls:
                             timestamp=IsNow(tz=timezone.utc),
                         ),
                         RetryPromptPart(
+                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool', 'deferred_tool'",
                             tool_name='unknown_tool',
-                            content="Unknown tool name: 'unknown_tool'. Available tools: 'final_result', 'regular_tool', 'another_tool'",
-                            timestamp=IsNow(tz=timezone.utc),
                             tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
+                        ),
+                        ToolReturnPart(
+                            tool_name='deferred_tool',
+                            content='Tool not executed - a final result was already processed.',
+                            tool_call_id=IsStr(),
+                            timestamp=IsNow(tz=timezone.utc),
                         ),
                     ]
                 ),
@@ -3038,7 +3091,7 @@ def test_binary_content_serializable():
                                 'media_type': 'text/plain',
                                 'vendor_metadata': None,
                                 'kind': 'binary',
-                                'identifier': None,
+                                'identifier': 'f7ff9e',
                             },
                         ],
                         'timestamp': IsStr(),
@@ -3093,6 +3146,7 @@ def test_image_url_serializable_missing_media_type():
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
                                 'media_type': 'image/jpeg',
+                                'identifier': 'a72e39',
                             },
                         ],
                         'timestamp': IsStr(),
@@ -3154,6 +3208,7 @@ def test_image_url_serializable():
                                 'vendor_metadata': None,
                                 'kind': 'image-url',
                                 'media_type': 'image/jpeg',
+                                'identifier': 'bdd86d',
                             },
                         ],
                         'timestamp': IsStr(),
@@ -3198,7 +3253,7 @@ def test_image_url_serializable():
 def test_tool_return_part_binary_content_serialization():
     """Test that ToolReturnPart can properly serialize BinaryContent."""
     png_data = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc```\x00\x00\x00\x04\x00\x01\xf6\x178\x00\x00\x00\x00IEND\xaeB`\x82'
-    binary_content = BinaryContent(png_data, media_type='image/png', identifier='image_id_1')
+    binary_content = BinaryContent(png_data, media_type='image/png')
 
     tool_return = ToolReturnPart(tool_name='test_tool', content=binary_content, tool_call_id='test_call_123')
 
@@ -3207,12 +3262,12 @@ def test_tool_return_part_binary_content_serialization():
     assert '"kind":"binary"' in response_str
     assert '"media_type":"image/png"' in response_str
     assert '"data":"' in response_str
-    assert '"identifier":"image_id_1"' in response_str
+    assert '"identifier":"14a01a"' in response_str
 
     response_obj = tool_return.model_response_object()
     assert response_obj['return_value']['kind'] == 'binary'
     assert response_obj['return_value']['media_type'] == 'image/png'
-    assert response_obj['return_value']['identifier'] == 'image_id_1'
+    assert response_obj['return_value']['identifier'] == '14a01a'
     assert 'data' in response_obj['return_value']
 
 
@@ -3274,6 +3329,55 @@ def test_tool_returning_binary_content_with_identifier():
                             media_type='image/png',
                             identifier='image_id_1',
                         ),
+                    ],
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+            ]
+        )
+    )
+
+
+def test_tool_returning_file_url_with_identifier():
+    """Test that a tool returning FileUrl subclasses with identifiers works correctly."""
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_files', {})])
+        else:
+            return ModelResponse(parts=[TextPart('Files received')])
+
+    agent = Agent(FunctionModel(llm))
+
+    @agent.tool_plain
+    def get_files():
+        """Return various file URLs with custom identifiers."""
+        return [
+            ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
+            VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),
+            AudioUrl(url='https://example.com/audio.mp3', identifier='aud_003'),
+            DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
+        ]
+
+    result = agent.run_sync('Get some files')
+    assert result.all_messages()[2] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='get_files',
+                    content=['See file img_001', 'See file vid_002', 'See file aud_003', 'See file doc_004'],
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                ),
+                UserPromptPart(
+                    content=[
+                        'This is file img_001:',
+                        ImageUrl(url='https://example.com/image.jpg', identifier='img_001'),
+                        'This is file vid_002:',
+                        VideoUrl(url='https://example.com/video.mp4', identifier='vid_002'),
+                        'This is file aud_003:',
+                        AudioUrl(url='https://example.com/audio.mp3', identifier='aud_003'),
+                        'This is file doc_004:',
+                        DocumentUrl(url='https://example.com/document.pdf', identifier='doc_004'),
                     ],
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -3776,7 +3880,7 @@ def test_multimodal_tool_response_nested():
 
     with pytest.raises(
         UserError,
-        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContentTypes` objects. Please use `content` instead.",
+        match="The `return_value` of tool 'analyze_data' contains invalid nested `MultiModalContent` objects. Please use `content` instead.",
     ):
         agent.run_sync('Please analyze the data')
 
@@ -4331,6 +4435,11 @@ async def test_hitl_tool_approval():
             return ModelResponse(
                 parts=[
                     ToolCallPart(
+                        tool_name='create_file',
+                        args={'path': 'new_file.py', 'content': 'print("Hello, world!")'},
+                        tool_call_id='create_file',
+                    ),
+                    ToolCallPart(
                         tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
                     ),
                     ToolCallPart(
@@ -4339,40 +4448,28 @@ async def test_hitl_tool_approval():
                 ]
             )
         else:
-            return ModelResponse(parts=[TextPart('OK')])
+            return ModelResponse(parts=[TextPart('Done!')])
 
     model = FunctionModel(model_function)
 
-    @dataclass
-    class ApprovableToolsDeps:
-        tool_call_results: dict[str, Union[bool, str]] = field(default_factory=dict)
+    agent = Agent(model, output_type=[str, DeferredToolRequests])
 
-    agent = Agent(model, output_type=[str, DeferredToolCalls], deps_type=ApprovableToolsDeps)
-
-    async def defer_unless_approved(
-        ctx: RunContext[ApprovableToolsDeps], tool_def: ToolDefinition
-    ) -> Union[ToolDefinition, None]:
-        # When restarting a run with message history ending on `ModelResponse`, run_step will be 0
-        return tool_def if ctx.run_step == 0 else replace(tool_def, kind='deferred')
-
-    @agent.tool(prepare=defer_unless_approved)
-    def delete_file(ctx: RunContext[ApprovableToolsDeps], path: str) -> str:
-        assert ctx.tool_call_id is not None
-        assert ctx.tool_call_id in ctx.deps.tool_call_results
-        response = ctx.deps.tool_call_results[ctx.tool_call_id]
-        if response is not True:
-            raise ModelRetry(f'File {path!r} was not deleted: {response}')
-
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
         return f'File {path!r} deleted'
 
-    result = await agent.run('Delete files ok_to_delete.py and never_delete.py', deps=ApprovableToolsDeps())
+    @agent.tool_plain
+    def create_file(path: str, content: str) -> str:
+        return f'File {path!r} created with content: {content}'
+
+    result = await agent.run('Create new_file.py and delete ok_to_delete.py and never_delete.py')
     messages = result.all_messages()
     assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Delete files ok_to_delete.py and never_delete.py',
+                        content='Create new_file.py and delete ok_to_delete.py and never_delete.py',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -4380,54 +4477,10 @@ async def test_hitl_tool_approval():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                        tool_name='create_file',
+                        args={'path': 'new_file.py', 'content': 'print("Hello, world!")'},
+                        tool_call_id='create_file',
                     ),
-                    ToolCallPart(
-                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=57, output_tokens=12),
-                model_name='function:model_function:',
-                timestamp=IsDatetime(),
-            ),
-        ]
-    )
-    assert result.output == snapshot(
-        DeferredToolCalls(
-            tool_calls=[
-                ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
-                ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
-            ],
-            tool_defs={
-                'delete_file': ToolDefinition(
-                    name='delete_file',
-                    parameters_json_schema={
-                        'additionalProperties': False,
-                        'properties': {'path': {'type': 'string'}},
-                        'required': ['path'],
-                        'type': 'object',
-                    },
-                    kind='deferred',
-                )
-            },
-        )
-    )
-
-    results = {'ok_to_delete': True, 'never_delete': 'Please stop!'}
-
-    result = await agent.run(message_history=messages, deps=ApprovableToolsDeps(tool_call_results=results))
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Delete files ok_to_delete.py and never_delete.py',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
                     ToolCallPart(
                         tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
                     ),
@@ -4435,32 +4488,196 @@ async def test_hitl_tool_approval():
                         tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=57, output_tokens=12),
+                usage=RequestUsage(input_tokens=60, output_tokens=23),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
             ModelRequest(
                 parts=[
                     ToolReturnPart(
+                        tool_name='create_file',
+                        content='File \'new_file.py\' created with content: print("Hello, world!")',
+                        tool_call_id='create_file',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'),
+                ToolCallPart(tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'),
+            ]
+        )
+    )
+
+    result = await agent.run(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={'ok_to_delete': True, 'never_delete': ToolDenied('File cannot be deleted')},
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create new_file.py and delete ok_to_delete.py and never_delete.py',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='create_file',
+                        args={'path': 'new_file.py', 'content': 'print("Hello, world!")'},
+                        tool_call_id='create_file',
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'ok_to_delete.py'}, tool_call_id='ok_to_delete'
+                    ),
+                    ToolCallPart(
+                        tool_name='delete_file', args={'path': 'never_delete.py'}, tool_call_id='never_delete'
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=60, output_tokens=23),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='create_file',
+                        content='File \'new_file.py\' created with content: print("Hello, world!")',
+                        tool_call_id='create_file',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
                         tool_name='delete_file',
                         content="File 'ok_to_delete.py' deleted",
                         tool_call_id='ok_to_delete',
                         timestamp=IsDatetime(),
                     ),
-                    RetryPromptPart(
-                        content="File 'never_delete.py' was not deleted: Please stop!",
+                    ToolReturnPart(
                         tool_name='delete_file',
+                        content='File cannot be deleted',
                         tool_call_id='never_delete',
                         timestamp=IsDatetime(),
                     ),
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='OK')],
-                usage=RequestUsage(input_tokens=76, output_tokens=13),
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
                 model_name='function:model_function:',
                 timestamp=IsDatetime(),
             ),
         ]
     )
-    assert result.output == snapshot('OK')
+    assert result.output == snapshot('Done!')
+
+
+async def test_run_with_deferred_tool_results_errors():
+    agent = Agent('test')
+
+    message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])])]
+
+    with pytest.raises(
+        UserError,
+        match='Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.',
+    ):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[TextPart(content='Hello to you too!')]),
+    ]
+
+    with pytest.raises(
+        UserError,
+        match='Tool call results were provided, but the message history does not contain any unprocessed tool calls.',
+    ):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='say_hello')]),
+    ]
+
+    with pytest.raises(
+        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+    ):
+        await agent.run('Hello', message_history=message_history)
+
+    with pytest.raises(UserError, match='Tool call results need to be provided for all deferred tool calls.'):
+        await agent.run(
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(),
+        )
+
+    with pytest.raises(UserError, match='Tool call results were provided, but the message history is empty.'):
+        await agent.run(
+            'Hello again',
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
+
+    message_history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello')]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='run_me', tool_call_id='run_me'),
+                ToolCallPart(tool_name='run_me_too', tool_call_id='run_me_too'),
+                ToolCallPart(tool_name='defer_me', tool_call_id='defer_me'),
+            ]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='run_me', tool_call_id='run_me', content='Success'),
+                RetryPromptPart(tool_name='run_me_too', tool_call_id='run_me_too', content='Failure'),
+            ]
+        ),
+    ]
+
+    with pytest.raises(UserError, match="Tool call 'run_me' was already executed and its result cannot be overridden."):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(
+                calls={'run_me': 'Failure', 'defer_me': 'Failure'},
+            ),
+        )
+
+    with pytest.raises(
+        UserError, match="Tool call 'run_me_too' was already executed and its result cannot be overridden."
+    ):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(
+                calls={'run_me_too': 'Success', 'defer_me': 'Failure'},
+            ),
+        )
+
+
+def test_tool_requires_approval_error():
+    agent = Agent('test')
+
+    with pytest.raises(
+        UserError,
+        match='To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.',
+    ):
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file(path: str) -> None:
+            pass

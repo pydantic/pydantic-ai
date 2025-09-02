@@ -6,22 +6,16 @@ Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pyd
 pip/uv-add pydantic-ai
 ```
 
-(Requires Python 3.9+)
+(Requires Python 3.10+)
 
-This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models
-included in Pydantic AI. If you want to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
+This installs the `pydantic_ai` package, core dependencies, and libraries required to use all the models included in Pydantic AI.
+If you want to install only those dependencies required to use a specific model, you can install the ["slim"](#slim-install) version of Pydantic AI.
 
 ## Use with Pydantic Logfire
 
 Pydantic AI has an excellent (but completely optional) integration with [Pydantic Logfire](https://pydantic.dev/logfire) to help you view and understand agent runs.
 
-To use Logfire with Pydantic AI, install `pydantic-ai` or `pydantic-ai-slim` with the `logfire` optional group:
-
-```bash
-pip/uv-add "pydantic-ai[logfire]"
-```
-
-From there, follow the [Logfire setup docs](logfire.md#using-logfire) to configure Logfire.
+Logfire comes included with `pydantic-ai` (but not the ["slim" version](#slim-install)), so you can typically start using it immediately by following the [Logfire setup docs](logfire.md#using-logfire).
 
 ## Running Examples
 
@@ -33,7 +27,7 @@ To install examples, use the `examples` optional group:
 pip/uv-add "pydantic-ai[examples]"
 ```
 
-To run the examples, follow instructions in the [examples docs](examples/index.md).
+To run the examples, follow instructions in the [examples docs](examples/setup.md).
 
 ## Slim Install
 
@@ -64,7 +58,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `a2a` - installs `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}
 * `ag-ui` - installs `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
 
-See the [models](models/index.md) documentation for information on which optional dependencies are required for each model.
+See the [models](models/overview.md) documentation for information on which optional dependencies are required for each model.
 
 You can also install dependencies for multiple models and use cases, for example:
 

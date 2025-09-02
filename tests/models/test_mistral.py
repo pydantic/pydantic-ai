@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Union, cast
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -60,9 +60,8 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.mistral import MistralProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[MistralChatCompletionResponse, Exception]
-    MockCompletionEvent = Union[MistralCompletionEvent, Exception]
+    MockChatCompletion = MistralChatCompletionResponse | Exception
+    MockCompletionEvent = MistralCompletionEvent | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral or openai not installed'),

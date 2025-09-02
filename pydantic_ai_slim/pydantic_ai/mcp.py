@@ -5,12 +5,12 @@ import functools
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import anyio
 import httpx
@@ -20,6 +20,7 @@ from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
 
+from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
@@ -300,6 +301,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
+        if self._running_count == 0:
+            raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
         async with self._enter_lock:
             self._running_count -= 1
             if self._running_count == 0 and self._exit_stack is not None:
@@ -327,11 +330,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         if stop_sequences := params.stopSequences:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
-        model_response = await self.sampling_model.request(
-            pai_messages,
-            model_settings,
-            models.ModelRequestParameters(),
-        )
+        model_response = await model_request(self.sampling_model, pai_messages, model_settings=model_settings)
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),

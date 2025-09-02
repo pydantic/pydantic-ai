@@ -1,8 +1,5 @@
 # Durable Execution with Temporal
 
-!!! note
-    Durable execution support is in beta and the public interface is subject to change based on user feedback. We expect it to be stable by the release of Pydantic AI v1 at the end of August. Questions and feedback are welcome in [GitHub issues](https://github.com/pydantic/pydantic-ai/issues) and the [`#pydantic-ai` Slack channel](https://logfire.pydantic.dev/docs/join-slack/).
-
 Pydantic AI allows you to build durable agents that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability. Durable agents have full support for [streaming](agents.md#streaming-all-events) and [MCP](mcp/client.md), with the added benefit of fault tolerance.
 
 [Temporal](https://temporal.io) is a popular [durable execution](https://docs.temporal.io/evaluate/understanding-temporal#durable-execution) platform that's natively supported by Pydantic AI.
@@ -32,7 +29,7 @@ Activity code faces no restrictions on I/O or external interactions, but if an a
 
     See the [Temporal documentation](https://docs.temporal.io/evaluate/understanding-temporal#temporal-application-the-building-blocks) for more information
 
-In the case of Pydantic AI agents, integration with Temporal means that [model requests](models/index.md), [tool calls](tools.md) that may require I/O, and [MCP server communication](mcp/client.md) all need to be offloaded to Temporal activities due to their I/O requirements, while the logic that coordinates them (i.e. the agent run) lives in the workflow. Code that handles a scheduled job or web request can then execute the workflow, which will in turn execute the activities as needed.
+In the case of Pydantic AI agents, integration with Temporal means that [model requests](models/overview.md), [tool calls](tools.md) that may require I/O, and [MCP server communication](mcp/client.md) all need to be offloaded to Temporal activities due to their I/O requirements, while the logic that coordinates them (i.e. the agent run) lives in the workflow. Code that handles a scheduled job or web request can then execute the workflow, which will in turn execute the activities as needed.
 
 The diagram below shows the overall architecture of an agentic application in Temporal.
 The Temporal Server is responsible for tracking program execution and making sure the associated state is preserved reliably (i.e., stored to an internal database, and possibly replicated across cloud regions).
@@ -74,7 +71,7 @@ See the [Temporal documentation](https://docs.temporal.io/evaluate/understanding
 
 Any agent can be wrapped in a [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] to get a durable agent that can be used inside a deterministic Temporal workflow, by automatically offloading all work that requires I/O (namely model requests, tool calls, and MCP server communication) to non-deterministic activities.
 
-At the time of wrapping, the agent's [model](models/index.md) and [toolsets](toolsets.md) (including function tools registered on the agent and MCP servers) are frozen, activities are dynamically created for each, and the original model and toolsets are wrapped to call on the worker to execute the corresponding activities instead of directly performing the actions inside the workflow. The original agent can still be used as normal outside the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
+At the time of wrapping, the agent's [model](models/overview.md) and [toolsets](toolsets.md) (including function tools registered on the agent and MCP servers) are frozen, activities are dynamically created for each, and the original model and toolsets are wrapped to call on the worker to execute the corresponding activities instead of directly performing the actions inside the workflow. The original agent can still be used as normal outside the Temporal workflow, but any changes to its model or toolsets after wrapping will not be reflected in the durable agent.
 
 Here is a simple but complete example of wrapping an agent for durable execution, creating a Temporal workflow with durable execution logic, connecting to a Temporal server, and running the workflow from non-durable code. All it requires is a Temporal server to be [running locally](https://github.com/temporalio/temporal#download-and-start-temporal-server-locally):
 
@@ -91,7 +88,11 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 
 from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, TemporalAgent
+from pydantic_ai.durable_exec.temporal import (
+    AgentPlugin,
+    PydanticAIPlugin,
+    TemporalAgent,
+)
 
 agent = Agent(
     'gpt-5',
@@ -168,7 +169,7 @@ As workflows and activities run in separate processes, any values passed between
 
 To account for these limitations, tool functions and the [event stream handler](#streaming) running inside activities receive a limited version of the agent's [`RunContext`][pydantic_ai.tools.RunContext], and it's your responsibility to make sure that the [dependencies](dependencies.md) object provided to [`TemporalAgent.run()`][pydantic_ai.durable_exec.temporal.TemporalAgent.run] can be serialized using Pydantic.
 
-Specifically, only the `deps`, `retries`, `tool_call_id`, `tool_name`, `retry`, and `run_step` fields are available by default, and trying to access `model`, `usage`, `prompt`, `messages`, or `tracer` will raise an error.
+Specifically, only the `deps`, `retries`, `tool_call_id`, `tool_name`, `tool_call_approved`, `retry`, and `run_step` fields are available by default, and trying to access `model`, `usage`, `prompt`, `messages`, or `tracer` will raise an error.
 If you need one or more of these attributes to be available inside activities, you can create a [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext] subclass with custom `serialize_run_context` and `deserialize_run_context` class methods and pass it to [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] as `run_context_type`.
 
 ### Streaming
@@ -210,9 +211,10 @@ Temporal generates telemetry events and metrics for each workflow and activity e
 To use Logfire with Temporal, you need to pass a [`LogfirePlugin`][pydantic_ai.durable_exec.temporal.LogfirePlugin] object to Temporal's `Client.connect()`:
 
 ```py {title="logfire_plugin.py" test="skip" noqa="F841"}
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, LogfirePlugin
-
 from temporalio.client import Client
+
+from pydantic_ai.durable_exec.temporal import LogfirePlugin, PydanticAIPlugin
+
 
 async def main():
     client = await Client.connect(

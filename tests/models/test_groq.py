@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import httpx
@@ -59,9 +59,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+    MockChatCompletion = chat.ChatCompletion | Exception
+    MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
