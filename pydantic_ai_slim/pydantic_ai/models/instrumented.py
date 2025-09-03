@@ -421,7 +421,7 @@ class InstrumentedModel(WrapperModel):
 
                     self.instrumentation_settings.handle_messages(messages, response, system, span)
                     try:
-                        cost_attributes = {'operation.cost': float(response.price().total_price)}
+                        cost_attributes = {'operation.cost': float(response.cost().total_price)}
                     except LookupError:
                         cost_attributes = {}
                     span.set_attributes(
