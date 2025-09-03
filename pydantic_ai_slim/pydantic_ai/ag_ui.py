@@ -488,10 +488,11 @@ async def _handle_model_request_event(  # noqa: C901
     elif isinstance(agent_event, PartDeltaEvent):
         delta = agent_event.delta
         if isinstance(delta, TextPartDelta):
-            yield TextMessageContentEvent(
-                message_id=stream_ctx.message_id,
-                delta=delta.content_delta,
-            )
+            if delta.content_delta:  # pragma: no branch
+                yield TextMessageContentEvent(
+                    message_id=stream_ctx.message_id,
+                    delta=delta.content_delta,
+                )
         elif isinstance(delta, ToolCallPartDelta):  # pragma: no branch
             assert delta.tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
             yield ToolCallArgsEvent(
