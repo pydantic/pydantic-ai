@@ -1014,14 +1014,19 @@ class ModelResponse:
     provider_name: str | None = None
     """The name of the LLM provider that generated the response."""
 
-    provider_details: dict[str, Any] | None = field(default=None)
+    provider_details: Annotated[
+        dict[str, Any] | None,
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
+    ] = None
     """Additional provider-specific details in a serializable format.
 
     This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    provider_response_id: str | None = None
+    provider_response_id: Annotated[
+        str | None, pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id'))
+    ] = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     def price(self) -> genai_types.PriceCalculation:
