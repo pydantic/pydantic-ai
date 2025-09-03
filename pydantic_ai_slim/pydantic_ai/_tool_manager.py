@@ -80,13 +80,16 @@ class ToolManager(Generic[AgentDepsT]):
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
             usage_limits: Optional usage limits to check before executing tools.
+            count_tool_usage: Whether to count this tool call in usage metrics.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
-            # Output tool calls are not traced
-            return await self._call_tool(call, allow_partial, wrap_validation_errors)
+            # Output tool calls are not traced and not counted
+            return await self._call_tool(
+                call, allow_partial, wrap_validation_errors, usage_limits, count_tool_usage=False
+            )
         else:
             return await self._call_tool_traced(
                 call,
@@ -102,7 +105,8 @@ class ToolManager(Generic[AgentDepsT]):
         call: ToolCallPart,
         allow_partial: bool,
         wrap_validation_errors: bool,
-        usage_limits: UsageLimits | None = None,
+        usage_limits: UsageLimits | None,
+        count_tool_usage: bool = True,
     ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
@@ -139,7 +143,7 @@ class ToolManager(Generic[AgentDepsT]):
 
             result = await self.toolset.call_tool(name, args_dict, ctx, tool)
 
-            if usage_limits is not None:
+            if count_tool_usage:
                 self.ctx.usage.tool_calls += 1
 
             return result
