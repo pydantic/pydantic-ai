@@ -116,7 +116,7 @@ DBOS_CONFIG: DBOSConfig = {
 }
 
 
-@pytest.fixture()
+@pytest.fixture(scope='module')
 def dbos() -> Generator[DBOS, Any, None]:
     dbos = DBOS(config=DBOS_CONFIG)
     DBOS.launch()
