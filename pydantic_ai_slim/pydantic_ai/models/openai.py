@@ -532,6 +532,7 @@ class OpenAIChatModel(Model):
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
+            _provider_response_id=first_chunk.id,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -847,6 +848,7 @@ class OpenAIResponsesModel(Model):
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.response.created_at),
             _provider_name=self._provider.name,
+            _provider_response_id=first_chunk.response.id,
         )
 
     @overload
@@ -1161,6 +1163,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
+    _provider_response_id: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -1210,6 +1213,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         return self._provider_name
 
     @property
+    def provider_response_id(self) -> str:
+        """Get the provider response id."""
+        return self._provider_response_id
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -1223,6 +1231,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
     _provider_name: str
+    _provider_response_id: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
@@ -1344,6 +1353,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def provider_name(self) -> str:
         """Get the provider name."""
         return self._provider_name
+
+    @property
+    def provider_response_id(self) -> str:
+        """Get the provider response id."""
+        return self._provider_response_id
 
     @property
     def timestamp(self) -> datetime:

@@ -609,6 +609,7 @@ class StreamedResponse(ABC):
             timestamp=self.timestamp,
             usage=self.usage(),
             provider_name=self.provider_name,
+            provider_response_id=self.provider_response_id,
         )
 
     def usage(self) -> RequestUsage:
@@ -626,6 +627,11 @@ class StreamedResponse(ABC):
     def provider_name(self) -> str | None:
         """Get the provider name."""
         raise NotImplementedError()
+
+    @property
+    def provider_response_id(self) -> str | None:
+        """Get the provider response id."""
+        return None
 
     @property
     @abstractmethod
