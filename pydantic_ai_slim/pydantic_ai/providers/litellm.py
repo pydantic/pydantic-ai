@@ -87,7 +87,6 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         api_base: str | None = None,
-        custom_llm_provider: str | None = None,
     ) -> None: ...
 
     @overload
@@ -96,7 +95,6 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         api_base: str | None = None,
-        custom_llm_provider: str | None = None,
         http_client: AsyncHTTPClient,
     ) -> None: ...
 
@@ -108,7 +106,6 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         api_base: str | None = None,
-        custom_llm_provider: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: AsyncHTTPClient | None = None,
     ) -> None:
@@ -117,7 +114,6 @@ class LiteLLMProvider(Provider[AsyncOpenAI]):
         Args:
             api_key: API key for the model provider. If None, LiteLLM will try to get it from environment variables.
             api_base: Base URL for the model provider. Use this for custom endpoints or self-hosted models.
-            custom_llm_provider: Custom LLM provider name for LiteLLM. Use this if LiteLLM can't auto-detect the provider.
             openai_client: Pre-configured OpenAI client. If provided, other parameters are ignored.
             http_client: Custom HTTP client to use.
         """

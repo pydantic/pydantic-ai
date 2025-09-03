@@ -22,11 +22,6 @@ def test_init_with_api_config():
     assert provider.client.api_key == 'test-key'
 
 
-def test_init_with_custom_llm_provider():
-    provider = LiteLLMProvider(api_key='test-key', custom_llm_provider='anthropic')
-    assert provider.name == 'litellm'
-
-
 def test_init_without_api_key():
     provider = LiteLLMProvider()
     assert provider.name == 'litellm'
