@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
@@ -15,7 +15,6 @@ resolution-markers = [
 [manifest]
 members = [
     "clai",
-    "mcp-run-python",
     "pydantic-ai",
     "pydantic-ai-examples",
     "pydantic-ai-slim",
@@ -1800,7 +1799,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.12.3"
+version = "1.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1815,9 +1814,9 @@ dependencies = [
     { name = "starlette" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4d/19/9955e2df5384ff5dd25d38f8e88aaf89d2d3d9d39f27e7383eaf0b293836/mcp-1.12.3.tar.gz", hash = "sha256:ab2e05f5e5c13e1dc90a4a9ef23ac500a6121362a564447855ef0ab643a99fed", size = 427203, upload-time = "2025-07-31T18:36:36.795Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/66/3c/82c400c2d50afdac4fbefb5b4031fd327e2ad1f23ccef8eee13c5909aa48/mcp-1.13.1.tar.gz", hash = "sha256:165306a8fd7991dc80334edd2de07798175a56461043b7ae907b279794a834c5", size = 438198, upload-time = "2025-08-22T09:22:16.061Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8f/8b/0be74e3308a486f1d127f3f6767de5f9f76454c9b4183210c61cc50999b6/mcp-1.12.3-py3-none-any.whl", hash = "sha256:5483345bf39033b858920a5b6348a303acacf45b23936972160ff152107b850e", size = 158810, upload-time = "2025-07-31T18:36:34.915Z" },
+    { url = "https://files.pythonhosted.org/packages/19/3f/d085c7f49ade6d273b185d61ec9405e672b6433f710ea64a90135a8dd445/mcp-1.13.1-py3-none-any.whl", hash = "sha256:c314e7c8bd477a23ba3ef472ee5a32880316c42d03e06dcfa31a1cc7a73b65df", size = 161494, upload-time = "2025-08-22T09:22:14.705Z" },
 ]
 
 [package.optional-dependencies]
@@ -1828,33 +1827,14 @@ cli = [
 
 [[package]]
 name = "mcp-run-python"
-version = "0.0.1"
-source = { virtual = "mcp-run-python" }
-
-[package.dev-dependencies]
-dev = [
-    { name = "anyio" },
-    { name = "dirty-equals" },
-    { name = "httpx" },
-    { name = "inline-snapshot" },
+version = "0.0.20"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
     { name = "mcp" },
-    { name = "micropip", marker = "python_full_version >= '3.12'" },
-    { name = "pytest" },
-    { name = "pytest-pretty" },
 ]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "anyio", specifier = ">=4.5.0" },
-    { name = "dirty-equals", specifier = ">=0.9.0" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "inline-snapshot", specifier = ">=0.19.3" },
-    { name = "mcp", marker = "python_full_version >= '3.10'", specifier = ">=1.4.1" },
-    { name = "micropip", marker = "python_full_version >= '3.12'", specifier = ">=0.9.0" },
-    { name = "pytest", specifier = ">=8.3.3" },
-    { name = "pytest-pretty", specifier = ">=1.2.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/85/47/1b279d51a71aa475215376024d14c7b3c0deb64e604b6178913cdcfe77f4/mcp_run_python-0.0.20.tar.gz", hash = "sha256:5988d293b1130d56624c35b927b95596e92b23b77e14ca0f1fd320f33fef10de", size = 23232, upload-time = "2025-09-02T21:19:39.148Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/09/3d834a7df11f70481f99f871a077d129ac309939eb2982c1912b17645986/mcp_run_python-0.0.20-py3-none-any.whl", hash = "sha256:2c62759add24626d9e25abd953342ffe39ff9a684803ca9de03c8c025aae5e83", size = 26042, upload-time = "2025-09-02T21:19:38.197Z" },
 ]
 
 [[package]]
@@ -1886,15 +1866,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/3a/41/580bb4006e3ed0361b8151a01d324fb03f420815446c7def45d02f74c270/mergedeep-1.3.4.tar.gz", hash = "sha256:0096d52e9dad9939c3d975a774666af186eda617e6ca84df4c94dec30004f2a8", size = 4661, upload-time = "2021-02-05T18:55:30.623Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/19/04f9b178c2d8a15b076c8b5140708fa6ffc5601fb6f1e975537072df5b2a/mergedeep-1.3.4-py3-none-any.whl", hash = "sha256:70775750742b25c0d8f36c55aed03d24c3384d17c951b3175d898bd778ef0307", size = 6354, upload-time = "2021-02-05T18:55:29.583Z" },
-]
-
-[[package]]
-name = "micropip"
-version = "0.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3d/6f/aeef5f7696480704c133206511ff785dd86b76b6eba77391d14de162c1ab/micropip-0.9.0.tar.gz", hash = "sha256:d72c3224537a14e5d9d02f29e945bf7cde02404ec744291e8f6a310cedf60b66", size = 1783814, upload-time = "2025-02-01T15:55:25.23Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/6d/195810e3e73e5f351dc6082cada41bb4d5b0746a6804155ba6bae4304612/micropip-0.9.0-py3-none-any.whl", hash = "sha256:babcf68c1849e229aa887564bc5f2de50273c3212e73c9aff8e3e6e80f2b6a23", size = 114896, upload-time = "2025-02-01T15:55:23.436Z" },
 ]
 
 [[package]]
@@ -3009,6 +2980,7 @@ dev = [
     { name = "duckduckgo-search" },
     { name = "genai-prices" },
     { name = "inline-snapshot" },
+    { name = "mcp-run-python" },
     { name = "pip" },
     { name = "pytest" },
     { name = "pytest-examples" },
@@ -3059,6 +3031,7 @@ dev = [
     { name = "duckduckgo-search", specifier = ">=7.0.0" },
     { name = "genai-prices", specifier = ">=0.0.22" },
     { name = "inline-snapshot", specifier = ">=0.19.3" },
+    { name = "mcp-run-python", specifier = ">=0.0.20" },
     { name = "pip", specifier = ">=25.2" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "pytest-examples", specifier = ">=0.0.18" },
@@ -3227,7 +3200,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=3.14.1" },
-    { name = "mcp", marker = "python_full_version >= '3.10' and extra == 'mcp'", specifier = ">=1.12.3" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.12.3" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.9.2" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.99.9" },
     { name = "opentelemetry-api", specifier = ">=1.28.0" },

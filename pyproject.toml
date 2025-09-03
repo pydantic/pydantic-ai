@@ -74,7 +74,6 @@ members = [
     "pydantic_ai_slim",
     "pydantic_evals",
     "pydantic_graph",
-    "mcp-run-python",
     "clai",
     "examples",
 ]
@@ -103,6 +102,7 @@ dev = [
     # Needed for PyCharm users
     "pip>=25.2",
     "genai-prices>=0.0.22",
+    "mcp-run-python>=0.0.20",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
@@ -131,7 +131,6 @@ include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
-    "mcp-run-python/**/*.py",
     "examples/**/*.py",
     "clai/**/*.py",
     "tests/**/*.py",
@@ -177,7 +176,6 @@ docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
-"mcp-run-python/**/*.py" = ["D", "TID251"]
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
@@ -193,7 +191,6 @@ include = [
     "pydantic_ai_slim",
     "pydantic_evals",
     "pydantic_graph",
-    "mcp-run-python",
     "tests",
     "examples",
     "clai",
@@ -207,10 +204,8 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "mcp-run-python/node_modules",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
 ]
-extraPaths = ["mcp-run-python/stubs"]
 
 [tool.mypy]
 files = "tests/typed_agent.py,tests/typed_graph.py"
@@ -267,7 +262,7 @@ disable_warnings = ["include-ignored"]
 source = [
     ".",
     "/home/runner/work/pydantic-ai/pydantic-ai",
-    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai"
+    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report

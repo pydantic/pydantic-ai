@@ -34,23 +34,30 @@ def gemini(_: httpx.AsyncClient, _tmp_path: Path) -> Model:
     return GoogleModel('gemini-1.5-pro')
 
 
-def vertexai(_: httpx.AsyncClient, tmp_path: Path) -> Model:
+def vertexai(http_client: httpx.AsyncClient, tmp_path: Path) -> Model:
     from google.oauth2 import service_account
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
-    service_account_content = os.environ['GOOGLE_SERVICE_ACCOUNT_CONTENT']
-    project_id = json.loads(service_account_content)['project_id']
-    service_account_path = tmp_path / 'service_account.json'
-    service_account_path.write_text(service_account_content)
+    if service_account_path := os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
+        project_id = json.loads(Path(service_account_path).read_text())['project_id']
+    elif service_account_content := os.environ.get('GOOGLE_SERVICE_ACCOUNT_CONTENT'):
+        project_id = json.loads(service_account_content)['project_id']
+        service_account_path = tmp_path / 'service_account.json'
+        service_account_path.write_text(service_account_content)
+    else:
+        pytest.skip(
+            'VertexAI live test requires GOOGLE_APPLICATION_CREDENTIALS or GOOGLE_SERVICE_ACCOUNT_CONTENT to be set'
+        )
 
     credentials = service_account.Credentials.from_service_account_file(  # type: ignore[reportUnknownReturnType]
         service_account_path,
         scopes=['https://www.googleapis.com/auth/cloud-platform'],
     )
     provider = GoogleProvider(credentials=credentials, project=project_id)
-    return GoogleModel('gemini-1.5-flash', provider=provider)
+    provider.client.aio._api_client._async_httpx_client = http_client  # type: ignore
+    return GoogleModel('gemini-2.0-flash', provider=provider)
 
 
 def groq(http_client: httpx.AsyncClient, _tmp_path: Path) -> Model:

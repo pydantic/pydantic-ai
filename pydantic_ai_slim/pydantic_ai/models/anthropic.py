@@ -536,7 +536,7 @@ class AnthropicModel(Model):
         }
 
 
-def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.RequestUsage:
+def _map_usage(message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
@@ -544,12 +544,7 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Reques
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
     else:
-        # No usage information provided in:
-        # - RawMessageStopEvent
-        # - RawContentBlockStartEvent
-        # - RawContentBlockDeltaEvent
-        # - RawContentBlockStopEvent
-        return usage.RequestUsage()
+        assert_never(message)
 
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
@@ -586,10 +581,8 @@ class AnthropicStreamedResponse(StreamedResponse):
         current_block: BetaContentBlock | None = None
 
         async for event in self._response:
-            self._usage += _map_usage(event)
-
             if isinstance(event, BetaRawMessageStartEvent):
-                pass
+                self._usage = _map_usage(event)
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
@@ -652,7 +645,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
-                pass
+                self._usage = _map_usage(event)
 
             elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
                 current_block = None
