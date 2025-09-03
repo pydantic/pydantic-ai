@@ -117,6 +117,9 @@ class RunUsage(UsageBase):
     requests: int = 0
     """Number of requests made to the LLM API."""
 
+    tool_calls: int = 0
+    """Number of successful tool calls executed during the run."""
+
     input_tokens: int = 0
     """Total number of text input/prompt tokens."""
 
@@ -146,6 +149,7 @@ class RunUsage(UsageBase):
         """
         if isinstance(incr_usage, RunUsage):
             self.requests += incr_usage.requests
+            self.tool_calls += incr_usage.tool_calls
         return _incr_usage_tokens(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:
@@ -194,6 +198,8 @@ class UsageLimits:
 
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
+    tool_calls_limit: int | None = None
+    """The maximum number of successful tool calls allowed to be executed."""
     input_tokens_limit: int | None = None
     """The maximum number of input/prompt tokens allowed."""
     output_tokens_limit: int | None = None
@@ -220,12 +226,14 @@ class UsageLimits:
         self,
         *,
         request_limit: int | None = 50,
+        tool_calls_limit: int | None = None,
         input_tokens_limit: int | None = None,
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
     ) -> None:
         self.request_limit = request_limit
+        self.tool_calls_limit = tool_calls_limit
         self.input_tokens_limit = input_tokens_limit
         self.output_tokens_limit = output_tokens_limit
         self.total_tokens_limit = total_tokens_limit
@@ -239,12 +247,14 @@ class UsageLimits:
         self,
         *,
         request_limit: int | None = 50,
+        tool_calls_limit: int | None = None,
         request_tokens_limit: int | None = None,
         response_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
         count_tokens_before_request: bool = False,
     ) -> None:
         self.request_limit = request_limit
+        self.tool_calls_limit = tool_calls_limit
         self.input_tokens_limit = request_tokens_limit
         self.output_tokens_limit = response_tokens_limit
         self.total_tokens_limit = total_tokens_limit
@@ -254,6 +264,7 @@ class UsageLimits:
         self,
         *,
         request_limit: int | None = 50,
+        tool_calls_limit: int | None = None,
         input_tokens_limit: int | None = None,
         output_tokens_limit: int | None = None,
         total_tokens_limit: int | None = None,
@@ -263,6 +274,7 @@ class UsageLimits:
         response_tokens_limit: int | None = None,
     ):
         self.request_limit = request_limit
+        self.tool_calls_limit = tool_calls_limit
         self.input_tokens_limit = input_tokens_limit or request_tokens_limit
         self.output_tokens_limit = output_tokens_limit or response_tokens_limit
         self.total_tokens_limit = total_tokens_limit
@@ -313,5 +325,13 @@ class UsageLimits:
         total_tokens = usage.total_tokens
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(f'Exceeded the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})')
+
+    def check_before_tool_call(self, usage: RunUsage) -> None:
+        """Raises a `UsageLimitExceeded` exception if the next tool call would exceed the tool call limit."""
+        tool_calls_limit = self.tool_calls_limit
+        if tool_calls_limit is not None and usage.tool_calls >= tool_calls_limit:
+            raise UsageLimitExceeded(
+                f'The next tool call would exceed the tool_calls_limit of {tool_calls_limit} (tool_calls={usage.tool_calls})'
+            )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
