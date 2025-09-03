@@ -1171,8 +1171,12 @@ class OpenAIStreamedResponse(StreamedResponse):
             except IndexError:
                 continue
 
+            if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
+                continue
+
             # Handle the text part of the response
-            if (delta := choice.delta) is not None and (content := delta.content) is not None:  # pyright: ignore[reportUnnecessaryComparison]
+            content = choice.delta.content
+            if content is not None:
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,
