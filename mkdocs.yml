@@ -60,17 +60,16 @@ nav:
       - Overview: graph.md
 
   - Integrations:
-    - Debugging & Monitoring with Pydantic Logfire: logfire.md
-    - Durable Execution:
+      - Debugging & Monitoring with Pydantic Logfire: logfire.md
+      - Durable Execution:
         - Overview: durable_execution/index.md
         - Temporal: durable_execution/temporal.md
         - DBOS: durable_execution/dbos.md
-    - Agent-User Interaction (AG-UI): ag-ui.md
-    - Agent2Agent (A2A): a2a.md
+      - Agent-User Interaction (AG-UI): ag-ui.md
+      - Agent2Agent (A2A): a2a.md
 
   - Related Packages:
       - Clai: cli.md
-      - MCP Run Python: mcp/run-python.md
 
   - Examples:
       - Setup: examples/setup.md
@@ -311,9 +310,9 @@ plugins:
           - examples/*.md
   - redirects:
       redirect_maps:
-        'examples/index.md': 'examples/setup.md'
-        'mcp/index.md': 'mcp/overview.md'
-        'models/index.md': 'models/overview.md'
+        "examples/index.md": "examples/setup.md"
+        "mcp/index.md": "mcp/overview.md"
+        "models/index.md": "models/overview.md"
 
 hooks:
   - "docs/.hooks/main.py"
