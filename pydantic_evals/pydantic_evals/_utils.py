@@ -2,12 +2,19 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+import warnings
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from typing import Any, TypeVar
 
 import anyio
+import logfire_api
 from typing_extensions import ParamSpec, TypeIs
+
+_logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
+logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
 
 
 class Unset:
@@ -101,3 +108,20 @@ async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list
             tg.start_soon(_run_task, task, i)
 
     return results
+
+
+try:
+    from logfire._internal.config import LogfireNotConfiguredWarning  # pyright: ignore[reportAssignmentType]
+except ImportError:
+
+    class LogfireNotConfiguredWarning(UserWarning):
+        pass
+
+
+@contextmanager
+def logfire_span(*args: Any, **kwargs: Any) -> Generator[logfire_api.LogfireSpan, None, None]:
+    """Create a Logfire span without warning if logfire is not configured."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
+        with _logfire.span(*args, **kwargs) as span:
+            yield span
