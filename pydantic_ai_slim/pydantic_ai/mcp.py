@@ -400,16 +400,7 @@ class MCPServerStdio(MCPServer):
     from pydantic_ai.mcp import MCPServerStdio
 
     server = MCPServerStdio(  # (1)!
-        'deno',
-        args=[
-            'run',
-            '-N',
-            '-R=node_modules',
-            '-W=node_modules',
-            '--node-modules-dir=auto',
-            'jsr:@pydantic/mcp-run-python',
-            'stdio',
-        ]
+        'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
@@ -418,7 +409,7 @@ class MCPServerStdio(MCPServer):
             ...
     ```
 
-    1. See [MCP Run Python](../mcp/run-python.md) for more information.
+    1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
     2. This will start the server as a subprocess and connect to it.
     """
 
@@ -731,16 +722,15 @@ class MCPServerSSE(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerSSE
 
-    server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
+    server = MCPServerSSE('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent:  # (2)!
+        async with agent:  # (1)!
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
-    2. This will connect to a server running on `localhost:3001`.
+    1. This will connect to a server running on `localhost:3001`.
     """
 
     @property
@@ -764,7 +754,7 @@ class MCPServerHTTP(MCPServerSSE):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerHTTP
 
-    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
+    server = MCPServerHTTP('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
@@ -772,8 +762,7 @@ class MCPServerHTTP(MCPServerSSE):
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
-    2. This will connect to a server running on `localhost:3001`.
+    1. This will connect to a server running on `localhost:3001`.
     """
 
 
