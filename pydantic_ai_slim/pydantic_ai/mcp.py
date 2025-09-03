@@ -457,6 +457,7 @@ class MCPServerStdio(MCPServer):
         self,
         command: str,
         args: Sequence[str],
+        *,
         env: dict[str, str] | None = None,
         cwd: str | Path | None = None,
         tool_prefix: str | None = None,
@@ -469,7 +470,6 @@ class MCPServerStdio(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
-        *,
         id: str | None = None,
     ):
         """Build a new MCP server.
@@ -583,8 +583,8 @@ class _MCPServerHTTP(MCPServer):
 
     def __init__(
         self,
-        *,
         url: str,
+        *,
         headers: dict[str, str] | None = None,
         http_client: httpx.AsyncClient | None = None,
         id: str | None = None,
