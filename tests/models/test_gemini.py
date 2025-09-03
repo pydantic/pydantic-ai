@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import datetime
 import json
+import re
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import dataclass
 from datetime import timezone
@@ -1868,7 +1869,12 @@ async def test_gemini_native_output_with_tools(allow_model_requests: None, gemin
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Gemini does not support structured output and tools at the same time.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+        ),
+    ):
         await agent.run('What is the largest city in the user country?')
 
 

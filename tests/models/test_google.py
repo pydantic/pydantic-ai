@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
+import re
 from typing import Any
 
 import pytest
@@ -228,6 +229,25 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot('The capital of France is Paris.\n')
+
+
+async def test_google_model_builtin_code_execution_stream(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+):
+    """Test Gemini streaming only code execution result or executable_code."""
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(
+        model=model,
+        system_prompt='Be concise and always use Python to do calculations no matter how small.',
+        builtin_tools=[CodeExecutionTool()],
+    )
+    event_parts: list[str] = []
+    async with agent.run_stream(user_prompt='what is 65465-6544 * 65464-6+1.02255') as result:
+        async for chunk in result.stream_text():
+            event_parts.append(chunk)
+
+    assert event_parts == snapshot(['The answer is -428330955.97745.\n'])
 
 
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
@@ -1399,7 +1419,12 @@ async def test_google_native_output_with_tools(allow_model_requests: None, googl
     async def get_user_country() -> str:
         return 'Mexico'  # pragma: no cover
 
-    with pytest.raises(UserError, match='Gemini does not support structured output and tools at the same time.'):
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+        ),
+    ):
         await agent.run('What is the largest city in the user country?')
 
 
@@ -1768,3 +1793,37 @@ def test_map_usage():
             },
         )
     )
+
+
+async def test_google_builtin_tools_with_other_tools(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    agent = Agent(m, builtin_tools=[UrlContextTool()])
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+    ):
+        await agent.run('What is the largest city in the user country?')
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in Mexico?')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))

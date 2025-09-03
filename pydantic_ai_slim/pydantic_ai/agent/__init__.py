@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 import anyio
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_graph import Graph
 
@@ -1071,7 +1071,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
-                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(
@@ -1175,7 +1175,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
-                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1366,7 +1366,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return schema  # pyright: ignore[reportReturnType]
 
-    async def __aenter__(self) -> AbstractAgent[AgentDepsT, OutputDataT]:
+    async def __aenter__(self) -> Self:
         """Enter the agent context.
 
         This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
