@@ -864,6 +864,7 @@ async def test_thinking() -> None:
     ) -> AsyncIterator[DeltaThinkingCalls | str]:
         yield {0: DeltaThinkingPart(content='')}
         yield "Let's do some thinking"
+        yield ''
         yield {1: DeltaThinkingPart(content='Thinking ')}
         yield {1: DeltaThinkingPart(content='about the weather')}
         yield {2: DeltaThinkingPart(content='')}
