@@ -1066,7 +1066,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
-                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(
@@ -1165,7 +1165,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
-                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:

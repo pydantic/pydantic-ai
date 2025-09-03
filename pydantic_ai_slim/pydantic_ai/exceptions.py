@@ -65,7 +65,7 @@ class ModelRetry(Exception):
 class CallDeferred(Exception):
     """Exception to raise when a tool call should be deferred.
 
-    See [tools docs](../tools.md#deferred-tools) for more information.
+    See [tools docs](../deferred-tools.md#deferred-tools) for more information.
     """
 
     pass
@@ -74,7 +74,7 @@ class CallDeferred(Exception):
 class ApprovalRequired(Exception):
     """Exception to raise when a tool call requires human-in-the-loop approval.
 
-    See [tools docs](../tools.md#human-in-the-loop-tool-approval) for more information.
+    See [tools docs](../deferred-tools.md#human-in-the-loop-tool-approval) for more information.
     """
 
     pass
