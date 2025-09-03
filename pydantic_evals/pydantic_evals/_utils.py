@@ -5,9 +5,9 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
-from functools import partial, wraps
+from functools import partial
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import anyio
 import logfire_api
@@ -114,18 +114,22 @@ try:
     from logfire._internal.config import (
         LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
     )
-except ImportError:
+# TODO: Remove this once we test evals without pydantic-ai (which includes logfire)
+except ImportError:  # pragma: no cover
 
     class LogfireNotConfiguredWarning(UserWarning):
         pass
 
 
-@wraps(_logfire.span)
-@contextmanager
-def logfire_span(*args: Any, **kwargs: Any) -> Generator[logfire_api.LogfireSpan, None, None]:
-    """Create a Logfire span without warning if logfire is not configured."""
-    # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
-        with _logfire.span(*args, **kwargs) as span:
-            yield span
+if TYPE_CHECKING:
+    logfire_span = _logfire.span
+else:
+
+    @contextmanager
+    def logfire_span(*args: Any, **kwargs: Any) -> Generator[logfire_api.LogfireSpan, None, None]:
+        """Create a Logfire span without warning if logfire is not configured."""
+        # TODO: Remove once Logfire has the ability to suppress this warning from non-user code
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=LogfireNotConfiguredWarning)
+            with _logfire.span(*args, **kwargs) as span:
+                yield span
