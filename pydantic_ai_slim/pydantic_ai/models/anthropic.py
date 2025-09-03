@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
@@ -37,12 +37,13 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
+from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncAnthropic, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -98,7 +99,7 @@ except ImportError as _import_error:
 LatestAnthropicModelNames = ModelParam
 """Latest Anthropic models."""
 
-AnthropicModelName = Union[str, LatestAnthropicModelNames]
+AnthropicModelName = str | LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
@@ -134,16 +135,16 @@ class AnthropicModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    client: AsyncAnthropic = field(repr=False)
+    client: AsyncAnthropicClient = field(repr=False)
 
     _model_name: AnthropicModelName = field(repr=False)
-    _system: str = field(default='anthropic', repr=False)
+    _provider: Provider[AsyncAnthropicClient] = field(repr=False)
 
     def __init__(
         self,
         model_name: AnthropicModelName,
         *,
-        provider: Literal['anthropic'] | Provider[AsyncAnthropic] = 'anthropic',
+        provider: Literal['anthropic'] | Provider[AsyncAnthropicClient] = 'anthropic',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
@@ -153,7 +154,7 @@ class AnthropicModel(Model):
             model_name: The name of the Anthropic model to use. List of model names available
                 [here](https://docs.anthropic.com/en/docs/about-claude/models).
             provider: The provider to use for the Anthropic API. Can be either the string 'anthropic' or an
-                instance of `Provider[AsyncAnthropic]`. If not provided, the other parameters will be used.
+                instance of `Provider[AsyncAnthropicClient]`. If not provided, the other parameters will be used.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
             settings: Default model settings for this model instance.
         """
@@ -161,6 +162,7 @@ class AnthropicModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -168,6 +170,16 @@ class AnthropicModel(Model):
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> AnthropicModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -180,7 +192,6 @@ class AnthropicModel(Model):
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -197,16 +208,6 @@ class AnthropicModel(Model):
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> AnthropicModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _messages_create(
@@ -289,7 +290,7 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
-            elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
+            elif isinstance(item, BetaWebSearchToolResultBlock | BetaCodeExecutionToolResultBlock):
                 items.append(
                     BuiltinToolReturnPart(
                         provider_name='anthropic',
@@ -325,7 +326,13 @@ class AnthropicModel(Model):
                     )
                 )
 
-        return ModelResponse(items, usage=_map_usage(response), model_name=response.model, vendor_id=response.id)
+        return ModelResponse(
+            parts=items,
+            usage=_map_usage(response),
+            model_name=response.model,
+            provider_response_id=response.id,
+            provider_name=self._provider.name,
+        )
 
     async def _process_streamed_response(
         self, response: AsyncStream[BetaRawMessageStreamEvent], model_request_parameters: ModelRequestParameters
@@ -342,6 +349,7 @@ class AnthropicModel(Model):
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=timestamp,
+            _provider_name=self._provider.name,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[BetaToolParam]:
@@ -467,9 +475,9 @@ class AnthropicModel(Model):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
-        system_prompt = '\n\n'.join(system_prompt_parts)
         if instructions := self._get_instructions(messages):
-            system_prompt = f'{instructions}\n\n{system_prompt}'
+            system_prompt_parts.insert(0, instructions)
+        system_prompt = '\n\n'.join(system_prompt_parts)
         return system_prompt, anthropic_messages
 
     @staticmethod
@@ -528,7 +536,7 @@ class AnthropicModel(Model):
         }
 
 
-def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
+def _map_usage(message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
@@ -536,12 +544,7 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
     else:
-        # No usage information provided in:
-        # - RawMessageStopEvent
-        # - RawContentBlockStartEvent
-        # - RawContentBlockDeltaEvent
-        # - RawContentBlockStopEvent
-        return usage.Usage()
+        assert_never(message)
 
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
@@ -552,17 +555,16 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Usage:
     # Usage coming from the RawMessageDeltaEvent doesn't have input token data, hence using `get`
     # Tokens are only counted once between input_tokens, cache_creation_input_tokens, and cache_read_input_tokens
     # This approach maintains request_tokens as the count of all input tokens, with cached counts as details
-    request_tokens = (
-        details.get('input_tokens', 0)
-        + details.get('cache_creation_input_tokens', 0)
-        + details.get('cache_read_input_tokens', 0)
-    )
+    cache_write_tokens = details.get('cache_creation_input_tokens', 0)
+    cache_read_tokens = details.get('cache_read_input_tokens', 0)
+    request_tokens = details.get('input_tokens', 0) + cache_write_tokens + cache_read_tokens
 
-    return usage.Usage(
-        request_tokens=request_tokens or None,
-        response_tokens=response_usage.output_tokens,
-        total_tokens=request_tokens + response_usage.output_tokens,
-        details=details or None,
+    return usage.RequestUsage(
+        input_tokens=request_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+        output_tokens=response_usage.output_tokens,
+        details=details,
     )
 
 
@@ -573,15 +575,14 @@ class AnthropicStreamedResponse(StreamedResponse):
     _model_name: AnthropicModelName
     _response: AsyncIterable[BetaRawMessageStreamEvent]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
 
         async for event in self._response:
-            self._usage += _map_usage(event)
-
             if isinstance(event, BetaRawMessageStartEvent):
-                pass
+                self._usage = _map_usage(event)
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
@@ -644,15 +645,20 @@ class AnthropicStreamedResponse(StreamedResponse):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
-                pass
+                self._usage = _map_usage(event)
 
-            elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):  # pragma: no branch
+            elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
                 current_block = None
 
     @property
     def model_name(self) -> AnthropicModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:

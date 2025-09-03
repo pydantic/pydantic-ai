@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import get_current_span
 
@@ -33,8 +33,8 @@ class FallbackModel(Model):
 
     def __init__(
         self,
-        default_model: Model | KnownModelName,
-        *fallback_models: Model | KnownModelName,
+        default_model: Model | KnownModelName | str,
+        *fallback_models: Model | KnownModelName | str,
         fallback_on: Callable[[Exception], bool] | tuple[type[Exception], ...] = (ModelHTTPError,),
     ):
         """Initialize a fallback model instance.
@@ -51,6 +51,19 @@ class FallbackModel(Model):
             self._fallback_on = _default_fallback_condition_factory(fallback_on)
         else:
             self._fallback_on = fallback_on
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return f'fallback:{",".join(model.model_name for model in self.models)}'
+
+    @property
+    def system(self) -> str:
+        return f'fallback:{",".join(model.system for model in self.models)}'
+
+    @property
+    def base_url(self) -> str | None:
+        return self.models[0].base_url
 
     async def request(
         self,
@@ -120,19 +133,6 @@ class FallbackModel(Model):
                 attributes = getattr(span, 'attributes', {})
                 if attributes.get('gen_ai.request.model') == self.model_name:  # pragma: no branch
                     span.set_attributes(InstrumentedModel.model_attributes(model))
-
-    @property
-    def model_name(self) -> str:
-        """The model name."""
-        return f'fallback:{",".join(model.model_name for model in self.models)}'
-
-    @property
-    def system(self) -> str:
-        return f'fallback:{",".join(model.system for model in self.models)}'
-
-    @property
-    def base_url(self) -> str | None:
-        return self.models[0].base_url
 
 
 def _default_fallback_condition_factory(exceptions: tuple[type[Exception], ...]) -> Callable[[Exception], bool]:

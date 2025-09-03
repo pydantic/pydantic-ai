@@ -83,7 +83,6 @@ This is a uv workspace with multiple packages:
 - **`pydantic_graph/`**: Graph execution engine
 - **`examples/`**: Example applications
 - **`clai/`**: CLI tool
-- **`mcp-run-python/`**: MCP server implementation (Deno/TypeScript)
 
 ## Testing Strategy
 
@@ -91,7 +90,7 @@ This is a uv workspace with multiple packages:
 - **VCR cassettes**: `tests/cassettes/` for recorded LLM API interactions
 - **Test models**: Use `TestModel` for deterministic testing
 - **Examples testing**: `tests/test_examples.py` validates all documentation examples
-- **Multi-version testing**: Python 3.9-3.13 support
+- **Multi-version testing**: Python 3.10-3.13 support
 
 ## Key Configuration Files
 
@@ -134,7 +133,7 @@ from typing_extensions import deprecated
 
 class NewClass: ...  # This class was renamed from OldClass.
 
-@deprecated("Use `NewClass` instead")
+@deprecated("Use `NewClass` instead.")
 class OldClass(NewClass): ...
 ```
 
@@ -143,7 +142,7 @@ deprecation warning:
 
 ```python
 def test_old_class_is_deprecated():
-    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead"):
+    with pytest.warns(DeprecationWarning, match="Use `NewClass` instead."):
         OldClass()
 ```
 

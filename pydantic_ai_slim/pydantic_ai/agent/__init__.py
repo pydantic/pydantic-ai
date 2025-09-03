@@ -4,15 +4,15 @@ import dataclasses
 import inspect
 import json
 import warnings
-from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
+import anyio
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_graph import Graph
 
@@ -26,7 +26,14 @@ from .. import (
     models,
     usage as _usage,
 )
-from .._agent_graph import HistoryProcessor
+from .._agent_graph import (
+    CallToolsNode,
+    EndStrategy,
+    HistoryProcessor,
+    ModelRequestNode,
+    UserPromptNode,
+    capture_run_messages,
+)
 from .._output import OutputToolset
 from .._tool_manager import ToolManager
 from ..builtin_tools import AbstractBuiltinTool
@@ -38,10 +45,15 @@ from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
+    DeferredToolCallResult,
+    DeferredToolResult,
+    DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
     RunContext,
     Tool,
+    ToolApproved,
+    ToolDenied,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -59,13 +71,6 @@ from ..toolsets.function import FunctionToolset
 from ..toolsets.prepared import PreparedToolset
 from .abstract import AbstractAgent, EventStreamHandler, RunOutputDataT
 from .wrapper import WrapperAgent
-
-# Re-exporting like this improves auto-import behavior in PyCharm
-capture_run_messages = _agent_graph.capture_run_messages
-EndStrategy = _agent_graph.EndStrategy
-CallToolsNode = _agent_graph.CallToolsNode
-ModelRequestNode = _agent_graph.ModelRequestNode
-UserPromptNode = _agent_graph.UserPromptNode
 
 if TYPE_CHECKING:
     from ..mcp import MCPServer
@@ -152,7 +157,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
-    _enter_lock: Lock = dataclasses.field(repr=False)
+    _enter_lock: anyio.Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
@@ -243,7 +248,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         """Create an agent.
 
         Args:
-            model: The default model to use for this agent, if not provide,
+            model: The default model to use for this agent, if not provided,
                 you must provide the model when calling it. We allow `str` here since the actual list of allowed models changes frequently.
             output_type: The type of the output data, used to validate the data returned by the model,
                 defaults to `str`.
@@ -321,7 +326,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._instructions = ''
         self._instructions_functions = []
-        if isinstance(instructions, (str, Callable)):
+        if isinstance(instructions, str | Callable):
             instructions = [instructions]
         for instruction in instructions or []:
             if isinstance(instruction, str):
@@ -346,7 +351,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if self._output_toolset:
             self._output_toolset.max_retries = self._max_result_retries
 
-        self._function_toolset = _AgentFunctionToolset(tools, max_retries=self._max_tool_retries)
+        self._function_toolset = _AgentFunctionToolset(
+            tools, max_retries=self._max_tool_retries, output_schema=self._output_schema
+        )
         self._dynamic_toolsets = [
             DynamicToolset[AgentDepsT](toolset_func=toolset)
             for toolset in toolsets or []
@@ -367,7 +374,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
 
-        self._enter_lock = _utils.get_async_lock()
+        self._enter_lock = anyio.Lock()
         self._entered_count = 0
         self._exit_stack = None
 
@@ -427,11 +434,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
@@ -443,27 +451,29 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         *,
         output_type: OutputSpec[RunOutputDataT],
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(
+    async def iter(  # noqa: C901
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
         output_type: OutputSpec[RunOutputDataT] | None = None,
         message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
         model: models.Model | models.KnownModelName | str | None = None,
         deps: AgentDepsT = None,
         model_settings: ModelSettings | None = None,
         usage_limits: _usage.UsageLimits | None = None,
-        usage: _usage.Usage | None = None,
+        usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
@@ -514,9 +524,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 CallToolsNode(
                     model_response=ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
-                        usage=Usage(
-                            requests=1, request_tokens=56, response_tokens=7, total_tokens=63
-                        ),
+                        usage=RequestUsage(input_tokens=56, output_tokens=7),
                         model_name='gpt-4o',
                         timestamp=datetime.datetime(...),
                     )
@@ -533,6 +541,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_type: Custom output type to use for this run, `output_type` may only be used if the agent has no
                 output validators since output validators would expect an argument that matches the agent's output type.
             message_history: History of the conversation so far.
+            deferred_tool_results: Optional results for deferred tool calls in the message history.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             deps: Optional dependencies to use for this run.
             model_settings: Optional settings to use for this model's request.
@@ -575,7 +584,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         # Build the initial state
-        usage = usage or _usage.Usage()
+        usage = usage or _usage.RunUsage()
         state = _agent_graph.GraphAgentState(
             message_history=message_history[:] if message_history else [],
             usage=usage,
@@ -611,6 +620,23 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
+        tool_call_results: dict[str, DeferredToolResult] | None = None
+        if deferred_tool_results is not None:
+            tool_call_results = {}
+            for tool_call_id, approval in deferred_tool_results.approvals.items():
+                if approval is True:
+                    approval = ToolApproved()
+                elif approval is False:
+                    approval = ToolDenied()
+                tool_call_results[tool_call_id] = approval
+
+            if calls := deferred_tool_results.calls:
+                call_result_types = _utils.get_union_args(DeferredToolCallResult)
+                for tool_call_id, result in calls.items():
+                    if not isinstance(result, call_result_types):
+                        result = _messages.ToolReturn(result)
+                    tool_call_results[tool_call_id] = result
+
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
@@ -625,6 +651,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors=self.history_processors,
             builtin_tools=list(self._builtin_tools),
             tool_manager=tool_manager,
+            tool_call_results=tool_call_results,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
@@ -677,18 +704,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 run_span.end()
 
     def _run_span_end_attributes(
-        self, state: _agent_graph.GraphAgentState, usage: _usage.Usage, settings: InstrumentationSettings
+        self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
     ):
+        if settings.version == 1:
+            attrs = {
+                'all_messages_events': json.dumps(
+                    [
+                        InstrumentedModel.event_to_dict(e)
+                        for e in settings.messages_to_otel_events(state.message_history)
+                    ]
+                )
+            }
+        else:
+            attrs = {
+                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(state.message_history)),
+                **settings.system_instructions_attributes(self._instructions),
+            }
+
         return {
             **usage.opentelemetry_attributes(),
-            'all_messages_events': json.dumps(
-                [InstrumentedModel.event_to_dict(e) for e in settings.messages_to_otel_events(state.message_history)]
-            ),
+            **attrs,
             'logfire.json_schema': json.dumps(
                 {
                     'type': 'object',
                     'properties': {
-                        'all_messages_events': {'type': 'array'},
+                        **{attr: {'type': 'array'} for attr in attrs.keys()},
                         'final_result': {'type': 'object'},
                     },
                 }
@@ -965,6 +1005,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -979,6 +1020,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1023,6 +1065,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(
@@ -1039,6 +1083,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                requires_approval,
             )
             return func_
 
@@ -1059,6 +1104,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1073,6 +1119,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        requires_approval: bool = False,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1117,6 +1164,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1131,6 +1180,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                requires_approval,
             )
             return func_
 
@@ -1274,7 +1324,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         toolsets: list[AbstractToolset[AgentDepsT]] = []
 
         if some_tools := self._override_tools.get():
-            function_toolset = _AgentFunctionToolset(some_tools.value, max_retries=self._max_tool_retries)
+            function_toolset = _AgentFunctionToolset(
+                some_tools.value, max_retries=self._max_tool_retries, output_schema=self._output_schema
+            )
         else:
             function_toolset = self._function_toolset
         toolsets.append(function_toolset)
@@ -1303,7 +1355,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return schema  # pyright: ignore[reportReturnType]
 
-    async def __aenter__(self) -> AbstractAgent[AgentDepsT, OutputDataT]:
+    async def __aenter__(self) -> Self:
         """Enter the agent context.
 
         This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.
@@ -1371,6 +1423,19 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
 @dataclasses.dataclass(init=False)
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
+    output_schema: _output.BaseOutputSchema[Any]
+
+    def __init__(
+        self,
+        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] = [],
+        *,
+        max_retries: int = 1,
+        id: str | None = None,
+        output_schema: _output.BaseOutputSchema[Any],
+    ):
+        self.output_schema = output_schema
+        super().__init__(tools, max_retries=max_retries, id=id)
+
     @property
     def id(self) -> str:
         return '<agent>'
@@ -1378,3 +1443,10 @@ class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
     @property
     def label(self) -> str:
         return 'the agent'
+
+    def add_tool(self, tool: Tool[AgentDepsT]) -> None:
+        if tool.requires_approval and not self.output_schema.allows_deferred_tools:
+            raise exceptions.UserError(
+                'To use tools that require approval, add `DeferredToolRequests` to the list of output types for this agent.'
+            )
+        super().add_tool(tool)

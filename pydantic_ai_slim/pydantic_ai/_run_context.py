@@ -12,13 +12,13 @@ from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .models import Model
-    from .result import Usage
+    from .result import RunUsage
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
 
-@dataclasses.dataclass(repr=False)
+@dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 
@@ -26,7 +26,7 @@ class RunContext(Generic[AgentDepsT]):
     """Dependencies for the agent."""
     model: Model
     """The model used in this run."""
-    usage: Usage
+    usage: RunUsage
     """LLM usage associated with the run."""
     prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
@@ -46,5 +46,7 @@ class RunContext(Generic[AgentDepsT]):
     """Number of retries so far."""
     run_step: int = 0
     """The current step in the run."""
+    tool_call_approved: bool = False
+    """Whether a tool call that required approval has now been approved."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr

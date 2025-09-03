@@ -16,7 +16,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime
 
@@ -63,7 +63,7 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
             ModelRequest(parts=[UserPromptPart(content='New question', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=4, total_tokens=58),
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),
@@ -101,7 +101,7 @@ async def test_history_processor_run_replaces_message_history(function_model: Fu
             ModelRequest(parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=2, total_tokens=56),
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),
@@ -135,7 +135,7 @@ async def test_history_processor_streaming_replaces_message_history(function_mod
             ModelRequest(parts=[SystemPromptPart(content='Processed answer', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='hello')],
-                usage=Usage(request_tokens=50, response_tokens=1, total_tokens=51),
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),
@@ -166,7 +166,7 @@ async def test_history_processor_messages_sent_to_provider(
             ModelRequest(parts=[UserPromptPart(content='New question', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content='Provider response')],
-                usage=Usage(requests=1, request_tokens=54, response_tokens=2, total_tokens=56),
+                usage=RequestUsage(input_tokens=54, output_tokens=2),
                 model_name='function:capture_model_function:capture_model_stream_function',
                 timestamp=IsDatetime(),
             ),

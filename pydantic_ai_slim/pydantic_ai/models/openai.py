@@ -6,10 +6,10 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
-from typing_extensions import assert_never
+from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
@@ -40,7 +40,7 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfile, ModelProfileSpec
-from ..profiles.openai import OpenAIModelProfile
+from ..profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -82,13 +82,15 @@ except ImportError as _import_error:
 
 __all__ = (
     'OpenAIModel',
+    'OpenAIChatModel',
     'OpenAIResponsesModel',
     'OpenAIModelSettings',
+    'OpenAIChatModelSettings',
     'OpenAIResponsesModelSettings',
     'OpenAIModelName',
 )
 
-OpenAIModelName = Union[str, AllModels]
+OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
 
@@ -100,10 +102,8 @@ Using this more broad type for the model name instead of the ChatModel definitio
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
 
-OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
-
-class OpenAIModelSettings(ModelSettings, total=False):
+class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
     # ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -141,7 +141,12 @@ class OpenAIModelSettings(ModelSettings, total=False):
     """
 
 
-class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
+@deprecated('Use `OpenAIChatModelSettings` instead.')
+class OpenAIModelSettings(OpenAIChatModelSettings, total=False):
+    """Deprecated alias for `OpenAIChatModelSettings`."""
+
+
+class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """Settings used for an OpenAI Responses model request.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
@@ -187,7 +192,7 @@ class OpenAIResponsesModelSettings(OpenAIModelSettings, total=False):
 
 
 @dataclass(init=False)
-class OpenAIModel(Model):
+class OpenAIChatModel(Model):
     """A model that uses the OpenAI API.
 
     Internally, this uses the [OpenAI Python client](https://github.com/openai/openai-python) to interact with the API.
@@ -196,28 +201,86 @@ class OpenAIModel(Model):
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None, repr=False)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str = field(default='openai', repr=False)
+    _provider: Provider[AsyncOpenAI] = field(repr=False)
+
+    @overload
+    def __init__(
+        self,
+        model_name: OpenAIModelName,
+        *,
+        provider: Literal[
+            'azure',
+            'deepseek',
+            'cerebras',
+            'fireworks',
+            'github',
+            'grok',
+            'heroku',
+            'moonshotai',
+            'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
+            'litellm',
+        ]
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
+    ) -> None: ...
+
+    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
+    @overload
+    def __init__(
+        self,
+        model_name: OpenAIModelName,
+        *,
+        provider: Literal[
+            'azure',
+            'deepseek',
+            'cerebras',
+            'fireworks',
+            'github',
+            'grok',
+            'heroku',
+            'moonshotai',
+            'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
+            'litellm',
+        ]
+        | Provider[AsyncOpenAI] = 'openai',
+        profile: ModelProfileSpec | None = None,
+        system_prompt_role: OpenAISystemPromptRole | None = None,
+        settings: ModelSettings | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
         model_name: OpenAIModelName,
         *,
         provider: Literal[
-            'openai',
-            'deepseek',
             'azure',
-            'openrouter',
-            'moonshotai',
-            'vercel',
-            'grok',
+            'deepseek',
+            'cerebras',
             'fireworks',
-            'together',
-            'heroku',
             'github',
+            'grok',
+            'heroku',
+            'moonshotai',
             'ollama',
+            'openai',
+            'openai-chat',
+            'openrouter',
+            'together',
+            'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -240,15 +303,32 @@ class OpenAIModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
-        self.system_prompt_role = system_prompt_role
-
         super().__init__(settings=settings, profile=profile or provider.model_profile)
+
+        if system_prompt_role is not None:
+            self.profile = OpenAIModelProfile(openai_system_prompt_role=system_prompt_role).update(self.profile)
 
     @property
     def base_url(self) -> str:
         return str(self.client.base_url)
+
+    @property
+    def model_name(self) -> OpenAIModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
+
+    @property
+    @deprecated('Set the `system_prompt_role` in the `OpenAIModelProfile` instead.')
+    def system_prompt_role(self) -> OpenAISystemPromptRole | None:
+        return OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
 
     async def request(
         self,
@@ -258,10 +338,9 @@ class OpenAIModel(Model):
     ) -> ModelResponse:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, False, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -274,27 +353,17 @@ class OpenAIModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         response = await self._completions_create(
-            messages, True, cast(OpenAIModelSettings, model_settings or {}), model_request_parameters
+            messages, True, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
-
-    @property
-    def model_name(self) -> OpenAIModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     @overload
     async def _completions_create(
         self,
         messages: list[ModelMessage],
         stream: Literal[True],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> AsyncStream[ChatCompletionChunk]: ...
 
@@ -303,7 +372,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: Literal[False],
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion: ...
 
@@ -311,7 +380,7 @@ class OpenAIModel(Model):
         self,
         messages: list[ModelMessage],
         stream: bool,
-        model_settings: OpenAIModelSettings,
+        model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> chat.ChatCompletion | AsyncStream[ChatCompletionChunk]:
         tools = self._get_tools(model_request_parameters)
@@ -339,11 +408,9 @@ class OpenAIModel(Model):
         ):  # pragma: no branch
             response_format = {'type': 'json_object'}
 
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIModelSettings()
-        )
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -366,13 +433,13 @@ class OpenAIModel(Model):
                 web_search_options=web_search_options or NOT_GIVEN,
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
                 prediction=model_settings.get('openai_prediction', NOT_GIVEN),
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
-                presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=sampling_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=sampling_settings.get('logit_bias', NOT_GIVEN),
-                logprobs=sampling_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=sampling_settings.get('openai_top_logprobs', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -441,12 +508,13 @@ class OpenAIModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            vendor_details=vendor_details,
-            vendor_id=response.id,
+            provider_details=vendor_details,
+            provider_response_id=response.id,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -466,6 +534,7 @@ class OpenAIModel(Model):
             _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
+            _provider_name=self._provider.name,
         )
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[chat.ChatCompletionToolParam]:
@@ -509,7 +578,7 @@ class OpenAIModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         pass
                     else:
                         assert_never(item)
@@ -518,6 +587,8 @@ class OpenAIModel(Model):
                     # Note: model responses from this model should only have one text item, so the following
                     # shouldn't merge multiple texts into one unless you switch models between runs:
                     message_param['content'] = '\n\n'.join(texts)
+                else:
+                    message_param['content'] = None
                 if tool_calls:
                     message_param['tool_calls'] = tool_calls
                 openai_messages.append(message_param)
@@ -538,7 +609,7 @@ class OpenAIModel(Model):
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
         response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
             'type': 'json_schema',
-            'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema, 'strict': True},
+            'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema},
         }
         if o.description:
             response_format_param['json_schema']['description'] = o.description
@@ -562,9 +633,10 @@ class OpenAIModel(Model):
     async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
-                if self.system_prompt_role == 'developer':
+                system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
+                if system_prompt_role == 'developer':
                     yield chat.ChatCompletionDeveloperMessageParam(role='developer', content=part.content)
-                elif self.system_prompt_role == 'user':
+                elif system_prompt_role == 'user':
                     yield chat.ChatCompletionUserMessageParam(role='user', content=part.content)
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
@@ -578,9 +650,7 @@ class OpenAIModel(Model):
                 )
             elif isinstance(part, RetryPromptPart):
                 if part.tool_name is None:
-                    yield chat.ChatCompletionUserMessageParam(  # pragma: no cover
-                        role='user', content=part.model_response()
-                    )
+                    yield chat.ChatCompletionUserMessageParam(role='user', content=part.model_response())
                 else:
                     yield chat.ChatCompletionToolMessageParam(
                         role='tool',
@@ -648,6 +718,16 @@ class OpenAIModel(Model):
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
 
+@deprecated(
+    '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
+    "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
+    "require a feature that the Responses API doesn't support yet like audio."
+)
+@dataclass(init=False)
+class OpenAIModel(OpenAIChatModel):
+    """Deprecated alias for `OpenAIChatModel`."""
+
+
 @dataclass(init=False)
 class OpenAIResponsesModel(Model):
     """A model that uses the OpenAI Responses API.
@@ -660,10 +740,9 @@ class OpenAIResponsesModel(Model):
     """
 
     client: AsyncOpenAI = field(repr=False)
-    system_prompt_role: OpenAISystemPromptRole | None = field(default=None)
 
     _model_name: OpenAIModelName = field(repr=False)
-    _system: str = field(default='openai', repr=False)
+    _provider: Provider[AsyncOpenAI] = field(repr=False)
 
     def __init__(
         self,
@@ -686,6 +765,7 @@ class OpenAIResponsesModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -697,8 +777,8 @@ class OpenAIResponsesModel(Model):
 
     @property
     def system(self) -> str:
-        """The system / model provider."""
-        return self._system
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -744,11 +824,12 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            vendor_id=response.id,
+            provider_response_id=response.id,
             timestamp=timestamp,
+            provider_name=self._provider.name,
         )
 
     async def _process_streamed_response(
@@ -768,6 +849,7 @@ class OpenAIResponsesModel(Model):
             _model_name=self._model_name,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.response.created_at),
+            _provider_name=self._provider.name,
         )
 
     @overload
@@ -832,11 +914,9 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIResponsesModelSettings()
-        )
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -850,8 +930,8 @@ class OpenAIResponsesModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 stream=stream,
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
@@ -963,7 +1043,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
@@ -1083,6 +1163,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _model_profile: ModelProfile
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
@@ -1091,6 +1172,10 @@ class OpenAIStreamedResponse(StreamedResponse):
             try:
                 choice = chunk.choices[0]
             except IndexError:
+                continue
+
+            # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
+            if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
 
             # Handle the text part of the response
@@ -1127,6 +1212,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
@@ -1139,6 +1229,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _model_name: OpenAIModelName
     _response: AsyncIterable[responses.ResponseStreamEvent]
     _timestamp: datetime
+    _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
@@ -1186,12 +1277,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         tool_call_id=chunk.item.call_id,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
-                    content = chunk.item.summary[0].text if chunk.item.summary else ''
-                    yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=chunk.item.id,
-                        content=content,
-                        signature=chunk.item.id,
-                    )
+                    pass
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
@@ -1207,7 +1293,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                pass  # there's nothing we need to do here
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
+                    content=chunk.part.text,
+                    id=chunk.item_id,
+                )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
                 pass  # there's nothing we need to do here
@@ -1217,9 +1307,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=chunk.item_id,
+                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.delta,
-                    signature=chunk.item_id,
+                    id=chunk.item_id,
                 )
 
             # TODO(Marcelo): We should support annotations in the future.
@@ -1227,9 +1317,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.content_index, content=chunk.delta
-                )
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
@@ -1260,15 +1348,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
 
 
-def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.Usage:
+def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.Response) -> usage.RequestUsage:
     response_usage = response.usage
     if response_usage is None:
-        return usage.Usage()
+        return usage.RequestUsage()
     elif isinstance(response_usage, responses.ResponseUsage):
         details: dict[str, int] = {
             key: value
@@ -1277,30 +1370,40 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             ).items()
             if isinstance(value, int)
         }
-        details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
-        details['cached_tokens'] = response_usage.input_tokens_details.cached_tokens
-        return usage.Usage(
-            request_tokens=response_usage.input_tokens,
-            response_tokens=response_usage.output_tokens,
-            total_tokens=response_usage.total_tokens,
+        # Handle vLLM compatibility - some providers don't include token details
+        if getattr(response_usage, 'input_tokens_details', None) is not None:
+            cache_read_tokens = response_usage.input_tokens_details.cached_tokens
+        else:
+            cache_read_tokens = 0
+
+        if getattr(response_usage, 'output_tokens_details', None) is not None:
+            details['reasoning_tokens'] = response_usage.output_tokens_details.reasoning_tokens
+        else:
+            details['reasoning_tokens'] = 0
+
+        return usage.RequestUsage(
+            input_tokens=response_usage.input_tokens,
+            output_tokens=response_usage.output_tokens,
+            cache_read_tokens=cache_read_tokens,
             details=details,
         )
     else:
         details = {
             key: value
             for key, value in response_usage.model_dump(
-                exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
+                exclude_none=True, exclude={'prompt_tokens', 'completion_tokens', 'total_tokens'}
             ).items()
             if isinstance(value, int)
         }
-        if response_usage.completion_tokens_details is not None:
-            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
-        if response_usage.prompt_tokens_details is not None:
-            details.update(response_usage.prompt_tokens_details.model_dump(exclude_none=True))
-        return usage.Usage(
-            requests=1,
-            request_tokens=response_usage.prompt_tokens,
-            response_tokens=response_usage.completion_tokens,
-            total_tokens=response_usage.total_tokens,
+        u = usage.RequestUsage(
+            input_tokens=response_usage.prompt_tokens,
+            output_tokens=response_usage.completion_tokens,
             details=details,
         )
+        if response_usage.completion_tokens_details is not None:
+            details.update(response_usage.completion_tokens_details.model_dump(exclude_none=True))
+            u.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens or 0
+        if response_usage.prompt_tokens_details is not None:
+            u.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens or 0
+            u.cache_read_tokens = response_usage.prompt_tokens_details.cached_tokens or 0
+        return u

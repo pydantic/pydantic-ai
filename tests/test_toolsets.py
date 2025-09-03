@@ -24,7 +24,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RunUsage
 
 pytestmark = pytest.mark.anyio
 
@@ -35,7 +35,7 @@ def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
     return RunContext(
         deps=deps,
         model=TestModel(),
-        usage=Usage(),
+        usage=RunUsage(),
         prompt=None,
         messages=[],
         run_step=run_step,
@@ -128,6 +128,29 @@ async def test_function_toolset():
         ]
     )
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
+
+
+async def test_function_toolset_with_defaults():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Missing parameter descriptions for'),
+    ):
+
+        @defaults_toolset.tool
+        def add(a: int, b: int) -> int:
+            """Add two numbers"""
+            return a + b  # pragma: no cover
+
+
+async def test_function_toolset_with_defaults_overridden():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    @defaults_toolset.tool(require_parameter_descriptions=False)
+    def subtract(a: int, b: int) -> int:
+        """Subtract two numbers"""
+        return a - b  # pragma: no cover
 
 
 async def test_prepared_toolset_user_error_add_new_tools():

@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import httpx
 import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
@@ -37,7 +38,8 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.usage import Usage
+from pydantic_ai.output import NativeOutput, PromptedOutput
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
@@ -59,9 +61,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+    MockChatCompletion = chat.ChatCompletion | Exception
+    MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
@@ -142,31 +143,31 @@ async def test_request_simple_success(allow_model_requests: None):
 
     result = await agent.run('hello')
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
 
     # reset the index so we get the same response again
     mock_client.index = 0  # type: ignore
 
     result = await agent.run('hello', message_history=result.new_messages())
     assert result.output == 'world'
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_name='groq',
+                provider_response_id='123',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[TextPart(content='world')],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_name='groq',
+                provider_response_id='123',
             ),
         ]
     )
@@ -216,10 +217,10 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_call_id='123',
                     )
                 ],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_name='groq',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -304,10 +305,11 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='1',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=2, response_tokens=1, total_tokens=3),
+                usage=RequestUsage(input_tokens=2, output_tokens=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_name='groq',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -327,10 +329,11 @@ async def test_request_tool_call(allow_model_requests: None):
                         tool_call_id='2',
                     )
                 ],
-                usage=Usage(requests=1, request_tokens=3, response_tokens=2, total_tokens=6),
+                usage=RequestUsage(input_tokens=3, output_tokens=2),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_name='groq',
+                provider_response_id='123',
             ),
             ModelRequest(
                 parts=[
@@ -344,10 +347,10 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
             ModelResponse(
                 parts=[TextPart(content='final response')],
-                usage=Usage(requests=1),
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
-                vendor_id='123',
+                provider_name='groq',
+                provider_response_id='123',
             ),
         ]
     )
@@ -382,7 +385,9 @@ async def test_stream_text(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world']
+        )
         assert result.is_complete
 
 
@@ -394,7 +399,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             ['hello ', 'hello world', 'hello world.', 'hello world.']
         )
         assert result.is_complete
@@ -441,7 +446,7 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {},
                 {'first': 'One'},
@@ -452,7 +457,7 @@ async def test_stream_structured(allow_model_requests: None):
         )
         assert result.is_complete
 
-    assert result.usage() == snapshot(Usage(requests=1))
+    assert result.usage() == snapshot(RunUsage(requests=1))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='', timestamp=IsNow(tz=timezone.utc))]),
@@ -466,6 +471,7 @@ async def test_stream_structured(allow_model_requests: None):
                 ],
                 model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                provider_name='groq',
             ),
             ModelRequest(
                 parts=[
@@ -495,7 +501,7 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [dict(c) async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [dict(c) async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 {'first': 'One'},
                 {'first': 'One', 'second': 'Two'},
@@ -526,7 +532,9 @@ async def test_no_delta(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(['hello ', 'hello world', 'hello world'])
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['hello ', 'hello world', 'hello world']
+        )
         assert result.is_complete
 
 
@@ -579,10 +587,11 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='call_wkpd')],
-                usage=Usage(requests=1, request_tokens=192, response_tokens=8, total_tokens=200),
+                usage=RequestUsage(input_tokens=192, output_tokens=8),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                provider_name='groq',
+                provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
             ),
             ModelRequest(
                 parts=[
@@ -603,10 +612,11 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=Usage(requests=1, request_tokens=2552, response_tokens=11, total_tokens=2563),
+                usage=RequestUsage(input_tokens=2552, output_tokens=11),
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                provider_name='groq',
+                provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
             ),
         ]
     )
@@ -681,10 +691,11 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(requests=1, request_tokens=48, response_tokens=8, total_tokens=56),
+                usage=RequestUsage(input_tokens=48, output_tokens=8),
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
+                provider_name='groq',
+                provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
             ),
         ]
     )
@@ -883,10 +894,11 @@ The current day is Tuesday.\
                     ),
                     TextPart(content='The current day is Tuesday.'),
                 ],
-                usage=Usage(requests=1, request_tokens=4287, response_tokens=117, total_tokens=4404),
+                usage=RequestUsage(input_tokens=4287, output_tokens=117),
                 model_name='compound-beta',
                 timestamp=IsDatetime(),
-                vendor_id='stub',
+                provider_name='groq',
+                provider_response_id='stub',
             ),
         ]
     )
@@ -906,10 +918,11 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(requests=1, request_tokens=21, response_tokens=1414, total_tokens=1435),
+                usage=RequestUsage(input_tokens=21, output_tokens=1414),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id=IsStr(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -927,10 +940,11 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(requests=1, request_tokens=21, response_tokens=1414, total_tokens=1435),
+                usage=RequestUsage(input_tokens=21, output_tokens=1414),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
+                provider_name='groq',
+                provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
             ),
             ModelRequest(
                 parts=[
@@ -943,10 +957,11 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
             ),
             ModelResponse(
                 parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=Usage(requests=1, request_tokens=524, response_tokens=1590, total_tokens=2114),
+                usage=RequestUsage(input_tokens=524, output_tokens=1590),
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
-                vendor_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
+                provider_name='groq',
+                provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
             ),
         ]
     )
@@ -990,4 +1005,304 @@ async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_ap
             },
             length=996,
         )
+    )
+
+
+async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, instructions='Be concise. Never use pretty double quotes, just regular ones.')
+
+    @agent.tool_plain
+    async def get_something_by_name(name: str) -> str:
+        return f'Something with name: {name}'
+
+    result = await agent.run(
+        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args={'invalid_param': 'test'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'missing',
+                                'loc': ('name',),
+                                'msg': 'Field required',
+                                'input': {'invalid_param': 'test'},
+                            },
+                            {
+                                'type': 'extra_forbidden',
+                                'loc': ('invalid_param',),
+                                'msg': 'Extra inputs are not permitted',
+                                'input': 'test',
+                            },
+                        ],
+                        tool_name='get_something_by_name',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='We need to call with correct param name: name. Provide a non-existent name perhaps "nonexistent".'
+                    ),
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args='{"name":"nonexistent"}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=283, output_tokens=49),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_something_by_name',
+                        content='Something with name: nonexistent',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user asked: "Please call the \'get_something_by_name\' tool with non-existent parameters to test error handling". They wanted to test error handling with non-existent parameters, but we corrected to proper parameters. The response from tool: "Something with name: nonexistent". Should we respond? Probably just output the result. Follow developer instruction: be concise, no fancy quotes. Use regular quotes only.'
+                    ),
+                    TextPart(content='Something with name: nonexistent'),
+                ],
+                usage=RequestUsage(input_tokens=319, output_tokens=96),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, instructions='Be concise. Never use pretty double quotes, just regular ones.')
+
+    @agent.tool_plain
+    async def get_something_by_name(name: str) -> str:
+        return f'Something with name: {name}'
+
+    async with agent.iter(
+        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=''),
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args={'nonexistent': 'test'},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'missing',
+                                'loc': ('name',),
+                                'msg': 'Field required',
+                                'input': {'nonexistent': 'test'},
+                            },
+                            {
+                                'type': 'extra_forbidden',
+                                'loc': ('nonexistent',),
+                                'msg': 'Extra inputs are not permitted',
+                                'input': 'test',
+                            },
+                        ],
+                        tool_name='get_something_by_name',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=''),
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args='{"name":"test_name"}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=283, output_tokens=43),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_something_by_name',
+                        content='Something with name: test_name',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The tool call succeeded with the name "test_name".')],
+                usage=RequestUsage(input_tokens=320, output_tokens=15),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+            ),
+        ]
+    )
+
+
+async def test_tool_regular_error(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('non-existent', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m)
+
+    with pytest.raises(
+        ModelHTTPError, match='The model `non-existent` does not exist or you do not have access to it.'
+    ):
+        await agent.run('hello')
+
+
+async def test_groq_native_output(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user asks: "What is the largest city in Mexico?" The system expects a JSON object conforming to CityLocation schema: properties city (string) and country (string), required both. Provide largest city in Mexico: Mexico City. So output JSON: {"city":"Mexico City","country":"Mexico"} in compact format, no extra text.'
+                    ),
+                    TextPart(content='{"city":"Mexico City","country":"Mexico"}'),
+                ],
+                usage=RequestUsage(input_tokens=178, output_tokens=94),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='We need to respond with JSON object with properties city and country. The question: "What is the largest city in Mexico?" The answer: City is Mexico City, country is Mexico. Must output compact JSON without any extra text or markdown. So {"city":"Mexico City","country":"Mexico"} Ensure valid JSON.'
+                    ),
+                    TextPart(content='{"city":"Mexico City","country":"Mexico"}'),
+                ],
+                usage=RequestUsage(input_tokens=177, output_tokens=87),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+        ]
     )

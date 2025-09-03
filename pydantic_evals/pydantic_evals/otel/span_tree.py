@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import cache
 from textwrap import indent
-from typing import TYPE_CHECKING, Any, Callable, Union
+from typing import TYPE_CHECKING, Any
 
 from pydantic import TypeAdapter
 from typing_extensions import TypedDict
@@ -16,16 +16,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from opentelemetry.sdk.trace import ReadableSpan
 
 # Should match opentelemetry.util.types.AttributeValue
-AttributeValue = Union[
-    str,
-    bool,
-    int,
-    float,
-    Sequence[str],
-    Sequence[bool],
-    Sequence[int],
-    Sequence[float],
-]
+AttributeValue = str | bool | int | float | Sequence[str] | Sequence[bool] | Sequence[int] | Sequence[float]
 
 
 __all__ = 'SpanNode', 'SpanTree', 'SpanQuery'
@@ -87,7 +78,7 @@ class SpanQuery(TypedDict, total=False):
     no_ancestor_has: SpanQuery
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class SpanNode:
     """A node in the span tree; provides references to parents/children for easy traversal and queries."""
 
@@ -435,7 +426,7 @@ class SpanNode:
 SpanPredicate = Callable[[SpanNode], bool]
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class SpanTree:
     """A container that builds a hierarchy of SpanNode objects from a list of finished spans.
 

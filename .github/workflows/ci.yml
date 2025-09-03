@@ -29,10 +29,6 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --all-packages --group lint
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
       - uses: pre-commit/action@v3.0.0
         with:
           extra_args: --all-files --verbose
@@ -137,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -162,6 +158,7 @@ jobs:
 
       - run: mkdir .coverage
 
+      - run: uv run mcp-run-python example --deps=numpy
       - run: uv sync --only-dev
       - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n auto --dist=loadgroup
         env:
@@ -169,7 +166,6 @@ jobs:
 
       - name: store coverage files
         uses: actions/upload-artifact@v4
-        if: matrix.python-version != '3.9'
         with:
           name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
           path: .coverage
@@ -201,6 +197,7 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --group dev
+      - run: uv run mcp-run-python example --deps=numpy
 
       - run: unset UV_FROZEN
 
@@ -233,10 +230,6 @@ jobs:
         with:
           enable-cache: true
 
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
       - run: uv run --all-extras python tests/import_examples.py
 
   coverage:
@@ -266,33 +259,25 @@ jobs:
         env:
           COVERAGE_FILE: .coverage/.coverage
 
-  test-mcp-run-python:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      UV_PYTHON: "3.12"
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
+      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
         with:
-          enable-cache: true
-
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
-      - run: make lint-js
-
-      - run: uv run --package mcp-run-python pytest mcp-run-python -v --durations=100
-
-      - run: deno task dev warmup
-        working-directory: mcp-run-python
+          name: coverage-html
+          path: htmlcov
+          include-hidden-files: true
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, mypy, docs, test-live, test, test-lowest-versions, test-examples, coverage, test-mcp-run-python]
+    needs:
+      - lint
+      - mypy
+      - docs
+      - test-live
+      - test
+      - test-lowest-versions
+      - test-examples
+      - coverage
     runs-on: ubuntu-latest
 
     steps:

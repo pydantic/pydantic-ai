@@ -1,8 +1,9 @@
 import json
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -22,6 +23,8 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
     TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -29,13 +32,17 @@ from pydantic_ai.messages import (
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, TestEnv, try_import
 from ..parts_from_messages import part_types_from_messages
+from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIModelSettings, OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_usage import ResponseUsage
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -86,7 +93,7 @@ async def test_openai_responses_output_type(allow_model_requests: None, openai_a
 
 async def test_openai_responses_reasoning_effort(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, model_settings=OpenAIModelSettings(openai_reasoning_effort='low'))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='low'))
     result = await agent.run(
         'Explain me how to cook uruguayan alfajor. Do not send whitespaces at the end of the lines.'
     )
@@ -197,15 +204,11 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                         tool_call_id=IsStr(),
                     ),
                 ],
-                usage=Usage(
-                    request_tokens=0,
-                    response_tokens=0,
-                    total_tokens=0,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
+                provider_name='openai',
+                provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
             ),
             ModelRequest(
                 parts=[
@@ -233,15 +236,11 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
 """
                     )
                 ],
-                usage=Usage(
-                    request_tokens=335,
-                    response_tokens=44,
-                    total_tokens=379,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=335, output_tokens=44, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
+                provider_name='openai',
+                provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
             ),
         ]
     )
@@ -271,15 +270,11 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id=IsStr())],
-                usage=Usage(
-                    request_tokens=40,
-                    response_tokens=11,
-                    total_tokens=51,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=40, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
+                provider_name='openai',
+                provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
             ),
             ModelRequest(
                 parts=[
@@ -300,15 +295,11 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[TextPart(content='The fruit in the image is a kiwi.')],
-                usage=Usage(
-                    request_tokens=1185,
-                    response_tokens=11,
-                    total_tokens=1196,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=1185, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
+                provider_name='openai',
+                provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
             ),
         ]
     )
@@ -400,7 +391,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
     """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(model=model, model_settings=OpenAIModelSettings(temperature=-1))
+    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(temperature=-1))
 
     with pytest.raises(ModelHTTPError):
         async with agent.run_stream('What is the capital of France?'):
@@ -436,15 +427,11 @@ OpenAI's recent launch of GPT-5 has faced mixed reactions. Despite strong benchm
 """
                     )
                 ],
-                usage=Usage(
-                    request_tokens=320,
-                    response_tokens=159,
-                    total_tokens=479,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=320, output_tokens=159, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_689b7c90010c8196ac0efd68b021490f07450cfc2d48b975',
+                provider_name='openai',
+                provider_response_id='resp_689b7c90010c8196ac0efd68b021490f07450cfc2d48b975',
             ),
         ]
     )
@@ -464,15 +451,11 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.')],
-                usage=Usage(
-                    request_tokens=24,
-                    response_tokens=8,
-                    total_tokens=32,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=24, output_tokens=8, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
+                provider_name='openai',
+                provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
             ),
         ]
     )
@@ -712,15 +695,11 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=Usage(
-                    request_tokens=62,
-                    response_tokens=12,
-                    total_tokens=74,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=62, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+                provider_name='openai',
+                provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
             ),
             ModelRequest(
                 parts=[
@@ -740,15 +719,11 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                         tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
                     )
                 ],
-                usage=Usage(
-                    request_tokens=85,
-                    response_tokens=20,
-                    total_tokens=105,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
+                provider_name='openai',
+                provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
             ),
             ModelRequest(
                 parts=[
@@ -794,15 +769,11 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 parts=[
                     ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr')
                 ],
-                usage=Usage(
-                    request_tokens=36,
-                    response_tokens=12,
-                    total_tokens=48,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=36, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
+                provider_name='openai',
+                provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
             ),
             ModelRequest(
                 parts=[
@@ -816,15 +787,11 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
             ),
             ModelResponse(
                 parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
-                usage=Usage(
-                    request_tokens=59,
-                    response_tokens=11,
-                    total_tokens=70,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=59, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
+                provider_name='openai',
+                provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
             ),
         ]
     )
@@ -861,15 +828,11 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=Usage(
-                    request_tokens=66,
-                    response_tokens=12,
-                    total_tokens=78,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=66, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
+                provider_name='openai',
+                provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
             ),
             ModelRequest(
                 parts=[
@@ -883,15 +846,11 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
-                usage=Usage(
-                    request_tokens=89,
-                    response_tokens=16,
-                    total_tokens=105,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=89, output_tokens=16, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
+                provider_name='openai',
+                provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
             ),
         ]
     )
@@ -930,15 +889,11 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=Usage(
-                    request_tokens=153,
-                    response_tokens=12,
-                    total_tokens=165,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=153, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
+                provider_name='openai',
+                provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
             ),
             ModelRequest(
                 parts=[
@@ -956,15 +911,11 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
                     )
                 ],
-                usage=Usage(
-                    request_tokens=176,
-                    response_tokens=26,
-                    total_tokens=202,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=176, output_tokens=26, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
+                provider_name='openai',
+                provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
             ),
         ]
     )
@@ -1006,15 +957,11 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=Usage(
-                    request_tokens=107,
-                    response_tokens=12,
-                    total_tokens=119,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=107, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
+                provider_name='openai',
+                provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
             ),
             ModelRequest(
                 parts=[
@@ -1035,15 +982,11 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
-                usage=Usage(
-                    request_tokens=130,
-                    response_tokens=12,
-                    total_tokens=142,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=130, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
+                provider_name='openai',
+                provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
             ),
         ]
     )
@@ -1089,15 +1032,11 @@ Don't include any text or Markdown fencing before or after.\
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id=IsStr())],
-                usage=Usage(
-                    request_tokens=283,
-                    response_tokens=12,
-                    total_tokens=295,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=283, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
+                provider_name='openai',
+                provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
             ),
             ModelRequest(
                 parts=[
@@ -1122,15 +1061,11 @@ Don't include any text or Markdown fencing before or after.\
                         content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
                     )
                 ],
-                usage=Usage(
-                    request_tokens=306,
-                    response_tokens=22,
-                    total_tokens=328,
-                    details={'reasoning_tokens': 0, 'cached_tokens': 0},
-                ),
+                usage=RequestUsage(input_tokens=306, output_tokens=22, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
-                vendor_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
+                provider_name='openai',
+                provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
             ),
         ]
     )
@@ -1148,3 +1083,150 @@ async def test_openai_responses_verbosity(allow_model_requests: None, openai_api
     agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_text_verbosity='low'))
     result = await agent.run('What is 2+2?')
     assert result.output == snapshot('4')
+
+
+async def test_openai_responses_usage_without_tokens_details(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseOutputMessage(
+                id='123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ],
+        # Intentionally use model_construct so that input_tokens_details and output_tokens_details will not be set.
+        usage=ResponseUsage.model_construct(input_tokens=14, output_tokens=1, total_tokens=15),
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='4')],
+                usage=RequestUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}),
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='123',
+            ),
+        ]
+    )
+
+    assert result.usage() == snapshot(
+        RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
+    )
+
+
+async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    IsInstance(TextPart),
+                ],
+                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    IsInstance(TextPart),
+                ],
+                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    IsInstance(TextPart),
+                ],
+                usage=RequestUsage(input_tokens=424, output_tokens=2033, details={'reasoning_tokens': 1408}),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_thinking_part_iter(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(responses_model, model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert event_parts == IsListOrTuple(
+        positions={
+            0: PartStartEvent(index=0, part=ThinkingPart(content='', id=IsStr())),
+            1: PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
+            84: PartStartEvent(index=1, part=ThinkingPart(content='', id=IsStr())),
+            85: PartDeltaEvent(index=1, delta=IsInstance(ThinkingPartDelta)),
+            186: PartStartEvent(index=2, part=ThinkingPart(content='', id=IsStr())),
+            187: PartDeltaEvent(index=2, delta=IsInstance(ThinkingPartDelta)),
+            280: PartStartEvent(index=3, part=TextPart(content='I')),
+            281: FinalResultEvent(tool_name=None, tool_call_id=None),
+            282: PartDeltaEvent(index=3, delta=IsInstance(TextPartDelta)),
+        },
+        length=631,
+    )

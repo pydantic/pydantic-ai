@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
@@ -21,7 +21,7 @@ from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from ._run_context import TemporalRunContext
 
@@ -48,12 +48,16 @@ class TemporalStreamedResponse(StreamedResponse):
     def get(self) -> ModelResponse:
         return self.response
 
-    def usage(self) -> Usage:
+    def usage(self) -> RequestUsage:
         return self.response.usage  # pragma: no cover
 
     @property
     def model_name(self) -> str:
         return self.response.model_name or ''  # pragma: no cover
+
+    @property
+    def provider_name(self) -> str:
+        return self.response.provider_name or ''  # pragma: no cover
 
     @property
     def timestamp(self) -> datetime:

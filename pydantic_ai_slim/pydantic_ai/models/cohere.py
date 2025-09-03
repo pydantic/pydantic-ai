@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Literal, Union, cast
+from typing import Literal, cast
 
 from typing_extensions import assert_never
 
@@ -30,11 +30,7 @@ from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    check_allow_model_requests,
-)
+from . import Model, ModelRequestParameters, check_allow_model_requests
 
 try:
     from cohere import (
@@ -76,7 +72,7 @@ LatestCohereModelNames = Literal[
 ]
 """Latest Cohere models."""
 
-CohereModelName = Union[str, LatestCohereModelNames]
+CohereModelName = str | LatestCohereModelNames
 """Possible Cohere model names.
 
 Since Cohere supports a variety of date-stamped models, we explicitly list the latest models but
@@ -106,7 +102,7 @@ class CohereModel(Model):
     client: AsyncClientV2 = field(repr=False)
 
     _model_name: CohereModelName = field(repr=False)
-    _system: str = field(default='cohere', repr=False)
+    _provider: Provider[AsyncClientV2] = field(repr=False)
 
     def __init__(
         self,
@@ -131,6 +127,7 @@ class CohereModel(Model):
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = provider.client
 
         super().__init__(settings=settings, profile=profile or provider.model_profile)
@@ -139,6 +136,16 @@ class CohereModel(Model):
     def base_url(self) -> str:
         client_wrapper = self.client._client_wrapper  # type: ignore
         return str(client_wrapper.get_base_url())
+
+    @property
+    def model_name(self) -> CohereModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -149,18 +156,7 @@ class CohereModel(Model):
         check_allow_model_requests()
         response = await self._chat(messages, cast(CohereModelSettings, model_settings or {}), model_request_parameters)
         model_response = self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
-
-    @property
-    def model_name(self) -> CohereModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
 
     async def _chat(
         self,
@@ -209,7 +205,9 @@ class CohereModel(Model):
                         tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
-        return ModelResponse(parts=parts, usage=_map_usage(response), model_name=self._model_name)
+        return ModelResponse(
+            parts=parts, usage=_map_usage(response), model_name=self._model_name, provider_name=self._provider.name
+        )
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
@@ -230,7 +228,7 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from cohere
                         pass
                     else:
@@ -301,10 +299,10 @@ class CohereModel(Model):
                 assert_never(part)
 
 
-def _map_usage(response: V2ChatResponse) -> usage.Usage:
+def _map_usage(response: V2ChatResponse) -> usage.RequestUsage:
     u = response.usage
     if u is None:
-        return usage.Usage()
+        return usage.RequestUsage()
     else:
         details: dict[str, int] = {}
         if u.billed_units is not None:
@@ -317,11 +315,10 @@ def _map_usage(response: V2ChatResponse) -> usage.Usage:
             if u.billed_units.classifications:  # pragma: no cover
                 details['classifications'] = int(u.billed_units.classifications)
 
-        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else None
-        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else None
-        return usage.Usage(
-            request_tokens=request_tokens,
-            response_tokens=response_tokens,
-            total_tokens=(request_tokens or 0) + (response_tokens or 0),
+        request_tokens = int(u.tokens.input_tokens) if u.tokens and u.tokens.input_tokens else 0
+        response_tokens = int(u.tokens.output_tokens) if u.tokens and u.tokens.output_tokens else 0
+        return usage.RequestUsage(
+            input_tokens=request_tokens,
+            output_tokens=response_tokens,
             details=details,
         )
