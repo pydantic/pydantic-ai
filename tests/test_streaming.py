@@ -68,6 +68,7 @@ async def test_streamed_text_response():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelRequest(
                     parts=[
@@ -98,6 +99,7 @@ async def test_streamed_text_response():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelRequest(
                     parts=[
@@ -112,6 +114,7 @@ async def test_streamed_text_response():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
             ]
         )
@@ -230,6 +233,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
@@ -237,6 +241,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
@@ -244,6 +249,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
@@ -251,6 +257,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
@@ -258,6 +265,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -265,6 +273,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
@@ -272,6 +281,7 @@ async def test_streamed_text_stream():
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 ),
             ]
         )
@@ -796,6 +806,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                provider_response_id='resp_test',
             ),
             ModelRequest(
                 parts=[
@@ -810,6 +821,7 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='test',
+                provider_response_id='resp_test',
             ),
             ModelRequest(
                 parts=[
@@ -914,6 +926,7 @@ async def test_iter_stream_responses():
             timestamp=IsNow(tz=timezone.utc),
             kind='response',
             provider_name='test',
+            provider_response_id='resp_test',
         )
         for text in [
             '',
@@ -1197,6 +1210,7 @@ async def test_tool_raises_call_deferred():
                     model_name='test',
                     timestamp=IsDatetime(),
                     provider_name='test',
+                    provider_response_id='resp_test',
                 )
             ]
         )

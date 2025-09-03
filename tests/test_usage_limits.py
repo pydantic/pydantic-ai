@@ -97,6 +97,7 @@ async def test_streamed_text_limits() -> None:
                         model_name='test',
                         timestamp=IsNow(tz=timezone.utc),
                         provider_name='test',
+                        provider_response_id='resp_test',
                     ),
                     ModelRequest(
                         parts=[
