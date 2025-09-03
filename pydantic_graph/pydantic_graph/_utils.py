@@ -5,7 +5,7 @@ import types
 import warnings
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from functools import partial
+from functools import partial, wraps
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
@@ -149,6 +149,7 @@ except ImportError:
         pass
 
 
+@wraps(_logfire.span)
 @contextmanager
 def logfire_span(*args: Any, **kwargs: Any) -> Generator[LogfireSpan, None, None]:
     """Create a Logfire span without warning if logfire is not configured."""

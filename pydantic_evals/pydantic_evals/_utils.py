@@ -5,7 +5,7 @@ import inspect
 import warnings
 from collections.abc import Awaitable, Callable, Generator, Sequence
 from contextlib import contextmanager
-from functools import partial
+from functools import partial, wraps
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -118,6 +118,7 @@ except ImportError:
         pass
 
 
+@wraps(_logfire.span)
 @contextmanager
 def logfire_span(*args: Any, **kwargs: Any) -> Generator[logfire_api.LogfireSpan, None, None]:
     """Create a Logfire span without warning if logfire is not configured."""
