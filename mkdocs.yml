@@ -62,7 +62,7 @@ nav:
   - Integrations:
       - Debugging & Monitoring with Pydantic Logfire: logfire.md
       - Durable Execution:
-        - Overview: durable_execution/index.md
+        - Overview: durable_execution/overview.md
         - Temporal: durable_execution/temporal.md
         - DBOS: durable_execution/dbos.md
       - Agent-User Interaction (AG-UI): ag-ui.md
