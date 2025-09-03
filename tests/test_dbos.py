@@ -1201,11 +1201,12 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
         if status.status == 'SUCCESS':
             break
 
+        assert status.status == 'PENDING'
         # Wait and check if the workflow has set a deferred tool request event.
         deferred_tool_requests = await DBOS.get_event_async(
             wf_handle.workflow_id, 'deferred_tool_requests', timeout_seconds=1
         )
-        if deferred_tool_requests is not None:
+        if deferred_tool_requests is not None:  # pragma: no branch
             results = DeferredToolResults()
             # Approve all calls
             for tool_call in deferred_tool_requests.approvals:
@@ -1328,7 +1329,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
 
         # Wait and check if the workflow has set a deferred tool request event.
         deferred_tool_requests = DBOS.get_event(wf_handle.workflow_id, 'deferred_tool_requests', timeout_seconds=1)
-        if deferred_tool_requests is not None:
+        if deferred_tool_requests is not None:  # pragma: no branch
             results = DeferredToolResults()
             # Approve all calls
             for tool_call in deferred_tool_requests.approvals:
