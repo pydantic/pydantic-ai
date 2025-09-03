@@ -142,7 +142,9 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
 
 
 try:
-    from logfire._internal.config import LogfireNotConfiguredWarning  # pyright: ignore[reportAssignmentType]
+    from logfire._internal.config import (
+        LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
+    )
 except ImportError:
 
     class LogfireNotConfiguredWarning(UserWarning):

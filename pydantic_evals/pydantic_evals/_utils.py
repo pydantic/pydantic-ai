@@ -111,7 +111,9 @@ async def task_group_gather(tasks: Sequence[Callable[[], Awaitable[T]]]) -> list
 
 
 try:
-    from logfire._internal.config import LogfireNotConfiguredWarning  # pyright: ignore[reportAssignmentType]
+    from logfire._internal.config import (
+        LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
+    )
 except ImportError:
 
     class LogfireNotConfiguredWarning(UserWarning):
