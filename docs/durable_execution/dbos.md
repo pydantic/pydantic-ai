@@ -140,10 +140,8 @@ You can customize DBOS's retry policy using [step configuration](#step-configura
 
 ## Observability with Logfire
 
-DBOS emits OpenTelemetry traces and events for every workflow and step, and Pydantic AI generates events for each agent run, model request and tool call. Both can be sent to [Pydantic Logfire](../logfire.md) for observability.
-
-⚠️ However, we **recommend disabling DBOS's built-in OpenTelemetry tracing** when using Logfire.
-Otherwise, you may see duplicate or conflicting traces, since both DBOS and Logfire emit overlapping information.
+When using [Pydantic Logfire](../logfire.md), we **recommend disabling DBOS's built-in OpenTelemetry tracing**.
+DBOS automatically wraps workflow and step execution in spans, while Pydantic AI and Logfire already emit spans for the same function calls, model requests, and tool invocations. Without disabling DBOS tracing, these operations may appear twice in your trace tree.
 
 To disable DBOS traces and logs, you can set `disable_otlp=True` in `DBOSConfig`. For example:
 
