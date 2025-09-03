@@ -99,7 +99,7 @@ def function_schema(  # noqa: C901
     errors: list[str] = []
 
     try:
-        sig = signature(function)
+        sig = signature(function, follow_wrapped=False)
     except ValueError as e:
         errors.append(str(e))
         sig = signature(lambda: None)
@@ -244,7 +244,7 @@ def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
         `True` if the function takes a `RunContext` as first argument, `False` otherwise.
     """
     try:
-        sig = signature(function)
+        sig = signature(function, follow_wrapped=False)
     except ValueError:  # pragma: no cover
         return False  # pragma: no cover
     try:
