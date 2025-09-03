@@ -36,7 +36,7 @@ from typing_extensions import NotRequired, Self, TypedDict, TypeVar
 
 from pydantic_evals._utils import get_event_loop
 
-from ._utils import get_unwrapped_function_name, task_group_gather
+from ._utils import get_unwrapped_function_name, logfire_span, task_group_gather
 from .evaluators import EvaluationResult, Evaluator
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.common import DEFAULT_EVALUATORS
@@ -283,7 +283,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
         limiter = anyio.Semaphore(max_concurrency) if max_concurrency is not None else AsyncExitStack()
 
         with (
-            _logfire.span('evaluate {name}', name=name, n_cases=len(self.cases)) as eval_span,
+            logfire_span('evaluate {name}', name=name, n_cases=len(self.cases)) as eval_span,
             progress_bar or nullcontext(),
         ):
             task_id = progress_bar.add_task(f'Evaluating {name}', total=total_cases) if progress_bar else None
@@ -858,7 +858,7 @@ async def _run_task(
         token = _CURRENT_TASK_RUN.set(task_run_)
         try:
             with (
-                _logfire.span('execute {task}', task=get_unwrapped_function_name(task)) as task_span,
+                logfire_span('execute {task}', task=get_unwrapped_function_name(task)) as task_span,
                 context_subtree() as span_tree_,
             ):
                 t0 = time.perf_counter()
@@ -933,7 +933,7 @@ async def _run_task_and_evaluators(
     trace_id: str | None = None
     span_id: str | None = None
     try:
-        with _logfire.span(
+        with logfire_span(
             'case: {case_name}',
             task_name=get_unwrapped_function_name(task),
             case_name=report_case_name,
