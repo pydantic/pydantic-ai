@@ -114,7 +114,7 @@ try:
     from logfire._internal.config import (
         LogfireNotConfiguredWarning,  # pyright: ignore[reportAssignmentType,reportPrivateImportUsage]
     )
-# TODO: Remove this once we test evals without pydantic-ai (which includes logfire)
+# TODO: Remove this `pragma: no cover` once we test evals without pydantic-ai (which includes logfire)
 except ImportError:  # pragma: no cover
 
     class LogfireNotConfiguredWarning(UserWarning):
