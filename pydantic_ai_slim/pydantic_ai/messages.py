@@ -1016,6 +1016,7 @@ class ModelResponse:
 
     provider_details: Annotated[
         dict[str, Any] | None,
+        # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
         pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
     ] = None
     """Additional provider-specific details in a serializable format.
@@ -1025,7 +1026,9 @@ class ModelResponse:
     """
 
     provider_response_id: Annotated[
-        str | None, pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id'))
+        str | None,
+        # `vendor_id` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id')),
     ] = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
