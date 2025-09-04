@@ -25,8 +25,8 @@ Designed to give your IDE or AI coding agent as much context as possible for aut
 5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. **MCP and A2A**:
-Integrates the [Model Context Protocol](mcp/index.md) and [Agent2Agent](a2a.md) standards to give your agent access to external tools and data and let it interoperate with other agents.
+6. **MCP, A2A, and AG-UI**:
+Integrates the [Model Context Protocol](mcp/index.md), [Agent2Agent](a2a.md), and [AG-UI](ag-ui.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
 7. **Multi-Modal Input**:
 Lets you easily share images, documents, videos and audio [input](input.md) with the LLM to go beyond the limitations of text.
