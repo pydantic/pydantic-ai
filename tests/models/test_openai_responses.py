@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
+from openai import NOT_GIVEN
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -34,7 +35,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from ..parts_from_messages import part_types_from_messages
-from .mock_openai import NOT_GIVEN, MockOpenAIResponses, response_message
+from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
