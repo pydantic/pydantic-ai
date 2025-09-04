@@ -130,6 +130,26 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'An agent needs to have a `model` in order to be used with Temporal, it cannot be set at agent run time.'
             )
 
+        async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
+            # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
+            # and that only ends up calling `event_stream_handler` if it is set.
+            assert self.event_stream_handler is not None
+
+            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
+
+            async def streamed_response():
+                yield params.event
+
+            await self.event_stream_handler(run_context, streamed_response())
+
+        # Set type hint explicitly so that Temporal can take care of serialization and deserialization
+        event_stream_handler_activity.__annotations__['deps'] = self.deps_type
+
+        self.event_stream_handler_activity = activity.defn(name=f'{activity_name_prefix}__event_stream_handler')(
+            event_stream_handler_activity
+        )
+        activities.append(self.event_stream_handler_activity)
+
         temporal_model = TemporalModel(
             wrapped.model,
             activity_name_prefix=activity_name_prefix,
@@ -162,26 +182,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
 
-        async def event_stream_handler_activity(params: _EventStreamHandlerParams, deps: AgentDepsT) -> None:
-            # We can never get here without an `event_stream_handler`, as `TemporalAgent.run_stream` and `TemporalAgent.iter` raise an error saying to use `TemporalAgent.run` instead,
-            # and that only calls `event_stream_handler` if it is set.
-            assert self.event_stream_handler is not None
-
-            run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
-
-            async def streamed_response():
-                yield params.event
-
-            await self.event_stream_handler(run_context, streamed_response())
-
-        # Set type hint explicitly so that Temporal can take care of serialization and deserialization
-        event_stream_handler_activity.__annotations__['deps'] = self.deps_type
-
-        self.event_stream_handler_activity = activity.defn(name=f'{activity_name_prefix}__event_stream_handler')(
-            event_stream_handler_activity
-        )
-        activities.append(self.event_stream_handler_activity)
-
         self._temporal_activities = activities
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
@@ -202,7 +202,30 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        return self._event_stream_handler or super().event_stream_handler
+        handler = self._event_stream_handler or super().event_stream_handler
+        if handler is None:
+            return None
+        elif workflow.in_workflow():
+            return self._call_event_stream_handler_activity
+        else:
+            return handler
+
+    async def _call_event_stream_handler_activity(
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
+    ) -> None:
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+        async for event in stream:
+            await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+                activity=self.event_stream_handler_activity,
+                args=[
+                    _EventStreamHandlerParams(
+                        event=event,
+                        serialized_run_context=serialized_run_context,
+                    ),
+                    ctx.deps,
+                ],
+                **self.activity_config,
+            )
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -321,25 +344,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
                 )
 
-            if self.event_stream_handler is not None:
-
-                async def event_stream_handler(
-                    ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
-                ):
-                    serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-                    async for event in stream:
-                        await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
-                            activity=self.event_stream_handler_activity,
-                            args=[
-                                _EventStreamHandlerParams(
-                                    event=event,
-                                    serialized_run_context=serialized_run_context,
-                                ),
-                                ctx.deps,
-                            ],
-                            **self.activity_config,
-                        )
-
         with self._temporal_overrides():
             return await super().run(
                 user_prompt,
@@ -353,7 +357,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
+                event_stream_handler=event_stream_handler or self.event_stream_handler,
                 **_deprecated_kwargs,
             )
 

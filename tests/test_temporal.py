@@ -1006,7 +1006,7 @@ async def test_multiple_agents(allow_model_requests: None, client: Client):
 
 
 async def test_agent_name_collision(allow_model_requests: None, client: Client):
-    with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__model_request'):
+    with pytest.raises(ValueError, match='More than one activity named agent__simple_agent__event_stream_handler'):
         async with Worker(
             client,
             task_queue=TASK_QUEUE,
@@ -1082,6 +1082,7 @@ async def test_temporal_agent():
         for activity in complex_temporal_agent.temporal_activities
     ] == snapshot(
         [
+            'agent__complex_agent__event_stream_handler',
             'agent__complex_agent__model_request',
             'agent__complex_agent__model_request_stream',
             'agent__complex_agent__toolset__<agent>__call_tool',
