@@ -783,7 +783,7 @@ async def test_request_tool_call(get_gemini_client: GetGeminiClient):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6))
+    assert result.usage() == snapshot(RunUsage(requests=3, input_tokens=3, output_tokens=6, tool_calls=2))
 
 
 async def test_unexpected_response(client_with_handler: ClientWithHandler, env: TestEnv, allow_model_requests: None):
@@ -932,7 +932,7 @@ async def test_stream_structured_tool_calls(get_gemini_client: GetGeminiClient):
     async with agent.run_stream('Hello') as result:
         response = await result.get_output()
         assert response == snapshot((1, 2))
-    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=2, output_tokens=4))
+    assert result.usage() == snapshot(RunUsage(requests=2, input_tokens=2, output_tokens=4, tool_calls=2))
     assert result.all_messages() == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),

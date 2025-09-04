@@ -149,6 +149,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             requests=2,
             input_tokens=224,
             output_tokens=35,
+            tool_calls=1,
             details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
         )
     )

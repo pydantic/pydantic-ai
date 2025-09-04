@@ -121,7 +121,7 @@ Then we can create the client:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
-server = MCPServerSSE(url='http://localhost:3001/sse')  # (1)!
+server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
 agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 
@@ -189,7 +189,7 @@ async def process_tool_call(
     return await call_tool(name, tool_args, {'deps': ctx.deps})
 
 
-server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)
+server = MCPServerStdio('python', args=['mcp_server.py'], process_tool_call=process_tool_call)
 agent = Agent(
     model=TestModel(call_tools=['echo_deps']),
     deps_type=int,
@@ -216,12 +216,12 @@ from pydantic_ai.mcp import MCPServerSSE
 
 # Create two servers with different prefixes
 weather_server = MCPServerSSE(
-    url='http://localhost:3001/sse',
+    'http://localhost:3001/sse',
     tool_prefix='weather'  # Tools will be prefixed with 'weather_'
 )
 
 calculator_server = MCPServerSSE(
-    url='http://localhost:3002/sse',
+    'http://localhost:3002/sse',
     tool_prefix='calc'  # Tools will be prefixed with 'calc_'
 )
 
@@ -263,7 +263,7 @@ http_client = httpx.AsyncClient(
 )
 
 server = MCPServerSSE(
-    url='http://localhost:3001/sse',
+    'http://localhost:3001/sse',
     http_client=http_client,  # (1)!
 )
 agent = Agent('openai:gpt-4o', toolsets=[server])
@@ -362,7 +362,7 @@ Using this server with an `Agent` will automatically allow sampling:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio(command='python', args=['generate_svg.py'])
+server = MCPServerStdio('python', args=['generate_svg.py'])
 agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
@@ -382,7 +382,7 @@ You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MC
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(
-    command='python',
+    'python',
     args=['generate_svg.py'],
     allow_sampling=False,
 )
@@ -502,7 +502,7 @@ async def handle_elicitation(
 
 # Set up MCP server connection
 restaurant_server = MCPServerStdio(
-    command='python', args=['restaurant_server.py'], elicitation_callback=handle_elicitation
+    'python', args=['restaurant_server.py'], elicitation_callback=handle_elicitation
 )
 
 # Create agent

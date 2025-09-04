@@ -346,7 +346,9 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3))
+    assert result.usage() == snapshot(
+        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, tool_calls=1)
+    )
 
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
