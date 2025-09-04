@@ -28,14 +28,14 @@ Enables you to systematically test and [evaluate](evals.md) the performance and 
 6. **MCP, A2A, and AG-UI**:
 Integrates the [Model Context Protocol](mcp/index.md), [Agent2Agent](a2a.md), and [AG-UI](ag-ui.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
-7. **Durable Execution**:
+7. **Human-in-the-Loop Tool Approval**:
+Easily lets you flag that certain tool calls [require approval](deferred-tools.md#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
+
+8. **Durable Execution**:
 Enables you to build [durable agents](temporal.md) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
-8. **Streamed Outputs**:
+9. **Streamed Outputs**:
 Provides the ability to [stream](output.md#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
-
-9. **Dependency Injection**:
-Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [instructions](agents.md#instructions), [tools](tools.md) and [output functions](output.md#output-functions).
 
 10. **Graph Support**:
 Provides a powerful way to define [graphs](graph.md) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.

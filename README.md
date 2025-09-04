@@ -53,14 +53,14 @@ Enables you to systematically test and [evaluate](https://ai.pydantic.dev/evals)
 6. **MCP, A2A, and AG-UI**:
 Integrates the [Model Context Protocol](https://ai.pydantic.dev/mcp), [Agent2Agent](https://ai.pydantic.dev/a2a), and [AG-UI](https://ai.pydantic.dev/ag-ui) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
-7. **Durable Execution**:
+7. **Human-in-the-Loop Tool Approval**:
+Easily lets you flag that certain tool calls [require approval](https://ai.pydantic.dev/deferred-tools#human-in-the-loop-tool-approval) before they can proceed, possibly depending on tool call arguments, conversation history, or user preferences.
+
+8. **Durable Execution**:
 Enables you to build [durable agents](https://ai.pydantic.dev/temporal) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
-8. **Streamed Outputs**:
+9. **Streamed Outputs**:
 Provides the ability to [stream](https://ai.pydantic.dev/output#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
-
-9. **Dependency Injection**:
-Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies) system to provide data and services to your agent's [instructions](https://ai.pydantic.dev/agents#instructions), [tools](https://ai.pydantic.dev/tools) and [output functions](https://ai.pydantic.dev/output#output-functions).
 
 10. **Graph Support**:
 Provides a powerful way to define [graphs](https://ai.pydantic.dev/graph) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
