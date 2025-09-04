@@ -314,7 +314,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         reevaluated_message_parts.append(part)
 
                     # Replace message parts with reevaluated ones to prevent mutating parts list
-                    msg.parts = reevaluated_message_parts
+                    if reevaluated_message_parts != msg.parts:
+                        msg.parts = reevaluated_message_parts
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
