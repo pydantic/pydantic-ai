@@ -94,7 +94,6 @@ Not very interesting yet, but we can easily add [tools](tools.md), [dynamic inst
 ## Tools & Dependency Injection Example
 
 Here is a concise example using Pydantic AI to build a support agent for a bank:
-Here is a concise example using Pydantic AI to build a support agent for a bank:
 
 ```python {title="bank_support.py"}
 from dataclasses import dataclass
@@ -112,12 +111,9 @@ class SupportDependencies:  # (3)!
 
 
 class SupportOutput(BaseModel):  # (13)!
-    support_advice: str
-    """Advice returned to the customer""" # (14)!
-    block_card: bool
-    """Whether to block the customer's card"""
-    risk: int = Field(ge=0, le=10)
-    """Risk level of query"""
+    support_advice: str = Field(description='Advice returned to the customer')
+    block_card: bool = Field(description="Whether to block the customer's card")
+    risk: int = Field(description='Risk level of query', ge=0, le=10)
 
 
 support_agent = Agent(  # (1)!
@@ -179,7 +175,6 @@ async def main():
 11. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
 12. This is a simple sketch of a database connection, used to keep the example short and readable. In reality, you'd be connecting to an external database (e.g. PostgreSQL) to get information about customers.
 13. This [Pydantic](https://docs.pydantic.dev) model is used to constrain the structured data returned by the agent. From this simple definition, Pydantic builds the JSON Schema that tells the LLM how to return the data, and performs validation to guarantee the data is correct at the end of the run.
-14. The docstrings of fields on a Pydantic model are passed to the LLM as part of the structured outputs definition, so that it has all the context needed to generate a value.
 
 !!! tip "Complete `bank_support.py` example"
     The code included here is incomplete for the sake of brevity (the definition of `DatabaseConn` is missing); you can find the complete `bank_support.py` example [here](examples/bank-support.md).

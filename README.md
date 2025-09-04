@@ -121,14 +121,9 @@ class SupportDependencies:
 
 # This Pydantic model defines the structure of the output returned by the agent.
 class SupportOutput(BaseModel):
-    support_advice: str
-    """Advice returned to the customer""" # (14)!
-    block_card: bool
-    """Whether to block the customer's card"""
-    risk: int = Field(ge=0, le=10)
-    """Risk level of query"""
-    # The docstrings of fields on a Pydantic model are passed to the LLM,
-    # so that it has all the context needed to generate a value.
+    support_advice: str = Field(description='Advice returned to the customer')
+    block_card: bool = Field(description="Whether to block the customer's card")
+    risk: int = Field(description='Risk level of query', ge=0, le=10)
 
 
 # This agent will act as first-tier support in a bank.
