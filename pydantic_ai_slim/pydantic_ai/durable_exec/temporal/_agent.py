@@ -159,7 +159,6 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             event_stream_handler=self.event_stream_handler,
         )
         activities.extend(temporal_model.temporal_activities)
-        self._model = temporal_model
 
         def temporalize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             id = toolset.id
@@ -180,8 +179,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 activities.extend(toolset.temporal_activities)
             return toolset
 
-        self._toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
+        temporal_toolsets = [toolset.visit_and_replace(temporalize_toolset) for toolset in wrapped.toolsets]
 
+        self._model = temporal_model
+        self._toolsets = temporal_toolsets
         self._temporal_activities = activities
 
         self._temporal_overrides_active: ContextVar[bool] = ContextVar('_temporal_overrides_active', default=False)
@@ -338,11 +339,10 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        if workflow.in_workflow():
-            if event_stream_handler is not None:
-                raise UserError(
-                    'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
-                )
+        if workflow.in_workflow() and event_stream_handler is not None:
+            raise UserError(
+                'Event stream handler cannot be set at agent run time inside a Temporal workflow, it must be set at agent creation time.'
+            )
 
         with self._temporal_overrides():
             return await super().run(
