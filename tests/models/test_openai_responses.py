@@ -4,7 +4,6 @@ from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
-from openai import NOT_GIVEN
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
@@ -1236,7 +1235,7 @@ async def test_previous_response_id_mixed_model_history(allow_model_requests: No
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     history, previous_response_id = model._get_response_id_and_trim(history)  # type: ignore
-    assert previous_response_id == NOT_GIVEN
+    assert not previous_response_id
     assert history == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='The first secret key is sesame', timestamp=IsDatetime())]),
