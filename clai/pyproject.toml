@@ -13,12 +13,13 @@ bump = true
 [project]
 name = "clai"
 dynamic = ["version", "dependencies"]
-description = "PydanticAI CLI: command line interface to chat to LLMs"
+description = "Pydantic AI CLI: command line interface to chat to LLMs"
 authors = [
-  { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
-  { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
-  { name = "David Montague", email = "david@pydantic.dev" },
-  { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
 ]
 license = "MIT"
 readme = "README.md"
@@ -27,7 +28,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -43,7 +43,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [

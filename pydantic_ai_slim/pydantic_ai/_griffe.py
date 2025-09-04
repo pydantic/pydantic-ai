@@ -2,9 +2,10 @@ from __future__ import annotations as _annotations
 
 import logging
 import re
+from collections.abc import Callable
 from contextlib import contextmanager
 from inspect import Signature
-from typing import TYPE_CHECKING, Any, Callable, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from griffe import Docstring, DocstringSectionKind, Object as GriffeObject
 
@@ -19,7 +20,7 @@ def doc_descriptions(
     sig: Signature,
     *,
     docstring_format: DocstringFormat,
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str | None, dict[str, str]]:
     """Extract the function description and parameter descriptions from a function's docstring.
 
     The function parses the docstring using the specified format (or infers it if 'auto')
@@ -35,7 +36,7 @@ def doc_descriptions(
     """
     doc = func.__doc__
     if doc is None:
-        return '', {}
+        return None, {}
 
     # see https://github.com/mkdocstrings/griffe/issues/293
     parent = cast(GriffeObject, sig)

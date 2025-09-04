@@ -4,7 +4,7 @@ import inspect
 from abc import ABCMeta, abstractmethod
 from collections.abc import Awaitable, Mapping
 from dataclasses import MISSING, dataclass, fields
-from typing import Any, Generic, Union, cast
+from typing import Any, Generic, cast
 
 from pydantic import (
     ConfigDict,
@@ -17,18 +17,20 @@ from typing_extensions import TypeVar, deprecated
 from pydantic_ai import _utils
 
 from .._utils import get_event_loop
-from ._spec import EvaluatorSpec
 from .context import EvaluatorContext
+from .spec import EvaluatorSpec
 
 __all__ = (
     'EvaluationReason',
     'EvaluationResult',
     'EvaluationScalar',
     'Evaluator',
+    'EvaluatorFailure',
     'EvaluatorOutput',
+    'EvaluatorSpec',
 )
 
-EvaluationScalar = Union[bool, int, float, str]
+EvaluationScalar = bool | int | float | str
 """The most primitive output allowed as an output from an Evaluator.
 
 `int` and `float` are treated as scores, `str` as labels, and `bool` as assertions.
@@ -50,11 +52,11 @@ class EvaluationReason:
     reason: str | None = None
 
 
-EvaluatorOutput = Union[EvaluationScalar, EvaluationReason, Mapping[str, Union[EvaluationScalar, EvaluationReason]]]
+EvaluatorOutput = EvaluationScalar | EvaluationReason | Mapping[str, EvaluationScalar | EvaluationReason]
 """Type for the output of an evaluator, which can be a scalar, an EvaluationReason, or a mapping of names to either."""
 
 
-# TODO(DavidM): Add bound=EvaluationScalar to the following typevar after we upgrade to pydantic 2.11
+# TODO(DavidM): Add bound=EvaluationScalar to the following typevar once pydantic 2.11 is the min supported version
 EvaluationScalarT = TypeVar('EvaluationScalarT', default=EvaluationScalar, covariant=True)
 """Type variable for the scalar result type of an evaluation."""
 
@@ -71,13 +73,13 @@ class EvaluationResult(Generic[EvaluationScalarT]):
         name: The name of the evaluation.
         value: The scalar result of the evaluation.
         reason: An optional explanation of the evaluation result.
-        source: The evaluator that produced this result.
+        source: The spec of the evaluator that produced this result.
     """
 
     name: str
     value: EvaluationScalarT
     reason: str | None
-    source: Evaluator
+    source: EvaluatorSpec
 
     def downcast(self, *value_types: type[T]) -> EvaluationResult[T] | None:
         """Attempt to downcast this result to a more specific type.
@@ -97,6 +99,16 @@ class EvaluationResult(Generic[EvaluationScalarT]):
                     continue
                 return cast(EvaluationResult[T], self)
         return None
+
+
+@dataclass
+class EvaluatorFailure:
+    """Represents a failure raised during the execution of an evaluator."""
+
+    name: str
+    error_message: str
+    error_stacktrace: str
+    source: EvaluatorSpec
 
 
 # Evaluators are contravariant in all of its parameters.
@@ -246,6 +258,13 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
         Returns:
             A JSON-serializable representation of this evaluator as an EvaluatorSpec.
         """
+        return to_jsonable_python(
+            self.as_spec(),
+            context=info.context,
+            serialize_unknown=True,
+        )
+
+    def as_spec(self) -> EvaluatorSpec:
         raw_arguments = self.build_serialization_arguments()
 
         arguments: None | tuple[Any,] | dict[str, Any]
@@ -255,11 +274,8 @@ class Evaluator(Generic[InputsT, OutputT, MetadataT], metaclass=_StrictABCMeta):
             arguments = (next(iter(raw_arguments.values())),)
         else:
             arguments = raw_arguments
-        return to_jsonable_python(
-            EvaluatorSpec(name=self.get_serialization_name(), arguments=arguments),
-            context=info.context,
-            serialize_unknown=True,
-        )
+
+        return EvaluatorSpec(name=self.get_serialization_name(), arguments=arguments)
 
     def build_serialization_arguments(self) -> dict[str, Any]:
         """Build the arguments for serialization.

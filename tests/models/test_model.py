@@ -1,3 +1,4 @@
+import warnings
 from importlib import import_module
 
 import pytest
@@ -10,10 +11,10 @@ from ..conftest import TestEnv
 # TODO(Marcelo): We need to add Vertex AI to the test cases.
 
 TEST_CASES = [
-    ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
-    ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIModel'),
-    ('OPENAI_API_KEY', 'o1', 'o1', 'openai', 'openai', 'OpenAIModel'),
-    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIModel'),
+    ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
+    ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
+    ('OPENAI_API_KEY', 'o1', 'o1', 'openai', 'openai', 'OpenAIChatModel'),
+    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIChatModel'),
     ('GEMINI_API_KEY', 'google-gla:gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
     ('GEMINI_API_KEY', 'gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
     (
@@ -44,7 +45,7 @@ TEST_CASES = [
         'MISTRAL_API_KEY',
         'mistral:mistral-small-latest',
         'mistral-small-latest',
-        'mistral_ai',
+        'mistral',
         'mistral',
         'MistralModel',
     ),
@@ -63,6 +64,46 @@ TEST_CASES = [
         'bedrock',
         'bedrock',
         'BedrockConverseModel',
+    ),
+    (
+        'GITHUB_API_KEY',
+        'github:xai/grok-3-mini',
+        'xai/grok-3-mini',
+        'github',
+        'github',
+        'OpenAIChatModel',
+    ),
+    (
+        'MOONSHOTAI_API_KEY',
+        'moonshotai:kimi-k2-0711-preview',
+        'kimi-k2-0711-preview',
+        'moonshotai',
+        'moonshotai',
+        'OpenAIChatModel',
+    ),
+    (
+        'GROK_API_KEY',
+        'grok:grok-3',
+        'grok-3',
+        'grok',
+        'grok',
+        'OpenAIChatModel',
+    ),
+    (
+        'GROK_API_KEY',
+        'grok-4',  # Note that the provider and model name are both "grok", so the plain string grok with no prefix works because its also the provider name
+        'grok-4',
+        'grok',
+        'grok',
+        'OpenAIChatModel',
+    ),
+    (
+        'OPENAI_API_KEY',
+        'openai-responses:gpt-4o',
+        'gpt-4o',
+        'openai',
+        'openai',
+        'OpenAIResponsesModel',
     ),
 ]
 
@@ -84,7 +125,9 @@ def test_infer_model(
     try:
         model_module = import_module(f'pydantic_ai.models.{module_name}')
         expected_model = getattr(model_module, model_class_name)
-        m = infer_model(model_name)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            m = infer_model(model_name)
     except ImportError:
         pytest.skip(f'{model_name} dependencies not installed')
 

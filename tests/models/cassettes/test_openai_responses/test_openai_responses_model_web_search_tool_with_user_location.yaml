@@ -1,0 +1,118 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '313'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the current temperature?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+        user_location:
+          city: Utrecht
+          country: NL
+          type: approximate
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2631'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '3405'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      created_at: 1747227481
+      error: null
+      id: resp_682493599ce08191a7d279acb969c28b05f032fc13ed3d8b
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      metadata: {}
+      model: gpt-4o-2024-08-06
+      object: response
+      output:
+      - id: ws_6824935a6ca481918cae37433d3e2f8005f032fc13ed3d8b
+        status: completed
+        type: web_search_call
+      - content:
+        - annotations: []
+          text: "As of 12:58 PM on Wednesday, May 14, 2025, in Utrecht, Netherlands, the weather is sunny with a temperature
+            of 22°C (71°F).\n\n## Weather for Utrecht, Netherlands:\nCurrent Conditions: Sunny, 71°F (22°C)\n\nDaily Forecast:\n*
+            Wednesday, May 14: Low: 48°F (9°C), High: 71°F (22°C), Description: Clouds yielding to sun\n* Thursday, May 15:
+            Low: 43°F (6°C), High: 67°F (20°C), Description: After a cloudy start, sun returns\n* Friday, May 16: Low: 45°F
+            (7°C), High: 64°F (18°C), Description: Mostly sunny\n* Saturday, May 17: Low: 47°F (9°C), High: 68°F (20°C), Description:
+            Mostly sunny\n* Sunday, May 18: Low: 47°F (8°C), High: 68°F (20°C), Description: Some sun\n* Monday, May 19: Low:
+            49°F (9°C), High: 70°F (21°C), Description: Delightful with partial sunshine\n* Tuesday, May 20: Low: 49°F (10°C),
+            High: 72°F (22°C), Description: Warm with sunshine and a few clouds\n "
+          type: output_text
+        id: msg_6824935c4dfc8191b0abacb1c0fd0a7805f032fc13ed3d8b
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      reasoning:
+        effort: null
+        summary: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search_preview
+        user_location:
+          city: Utrecht
+          country: NL
+          region: null
+          timezone: null
+          type: approximate
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 317
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 300
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 617
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

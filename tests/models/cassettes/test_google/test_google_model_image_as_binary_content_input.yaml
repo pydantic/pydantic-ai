@@ -33,11 +33,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '713'
+      - '756'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=4099
+      - gfet4t7; dur=2659
       transfer-encoding:
       - chunked
       vary:
@@ -53,6 +53,7 @@ interactions:
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: 2VpeaPm3DaHp1PIPwK-EmAM
       usageMetadata:
         candidatesTokenCount: 9
         candidatesTokensDetails:
@@ -60,10 +61,10 @@ interactions:
           tokenCount: 9
         promptTokenCount: 3367
         promptTokensDetails:
-        - modality: IMAGE
-          tokenCount: 3354
         - modality: TEXT
           tokenCount: 13
+        - modality: IMAGE
+          tokenCount: 3354
         totalTokenCount: 3376
     status:
       code: 200

@@ -1,11 +1,11 @@
 from __future__ import annotations as _annotations
 
 import base64
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import timezone
 from pathlib import Path
-from typing import Annotated, Callable
+from typing import Annotated, Union
 
 import httpx
 import pytest
@@ -426,3 +426,16 @@ def test_wrong_return_type():
 
     with pytest.raises(GraphSetupError, match="Invalid return type: <class 'int'>"):
         NoReturnType.get_node_def({})
+
+
+def test_edge_union():
+    """Test that a union of things annotated with an Edge doesn't raise a TypeError.
+
+    This is important because such unions may occur as a return type for a graph, and needs to be evaluated when
+    generating a mermaid diagram.
+    """
+    # This would raise an error on 3.10 if Edge was not hashable:
+    edges_union = Union[  # noqa: UP007
+        Annotated[End[None], Edge(label='first label')], Annotated[End[None], Edge(label='second label')]
+    ]
+    assert edges_union

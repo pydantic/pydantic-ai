@@ -2,45 +2,65 @@
 
 --8<-- "docs/.partials/index-header.html"
 
-FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev) and modern Python features like type hints.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
 
-Yet despite the fact that virtually every agent framework and LLM library in Python uses Pydantic, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
 
 We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
 
 ## Why use Pydantic AI
 
-1. __Built by the Pydantic Team__:
-[Pydantic](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
+1. **Built by the Pydantic Team**:
+[Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
-2. __Model-agnostic__:
-Supports virtually every [model](models/index.md) and provider under the sun: OpenAI, Anthropic, Gemini, DeepSeek, Ollama, Grok, Cohere, and Mistral; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Groq, Together AI, Fireworks AI, OpenRouter, and Heroku. If your favorite model or provider is not listed, you can easily implement a [custom model](models/index.md#custom-models).
+2. **Model-agnostic**:
+Supports virtually every [model](models/index.md) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel. If your favorite model or provider is not listed, you can easily implement a [custom model](models/index.md#custom-models).
 
-3. __Seamless Observability__:
+3. **Seamless Observability**:
 Tightly [integrates](logfire.md) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior and cost tracking. If you already have an observability platform that supports OTel, you can use that too.
 
-4. __Fully Type-safe__:
+4. **Fully Type-safe**:
 Designed to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](agents.md#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel.
 
-5. __Powerful Evals__:
+5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](evals.md) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. __MCP and A2A__:
+6. **MCP and A2A**:
 Integrates the [Model Context Protocol](mcp/index.md) and [Agent2Agent](a2a.md) standards to give your agent access to external tools and data and let it interoperate with other agents.
 
-7. __Multi-Modal Input__:
+7. **Multi-Modal Input**:
 Lets you easily share images, documents, videos and audio [input](input.md) with the LLM to go beyond the limitations of text.
 
-8. __Streamed Outputs__:
+8. **Streamed Outputs**:
 Provides the ability to [stream](output.md#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
 
-9. __Dependency Injection__:
+9. **Dependency Injection**:
 Offers an optional [dependency injection](dependencies.md) system to provide data and services to your agent's [instructions](agents.md#instructions), [tools](tools.md) and [output functions](output.md#output-functions).
 
-10. __Graph Support__:
+10. **Graph Support**:
 Provides a powerful way to define [graphs](graph.md) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
+
+**Sign up for our newsletter, *The Pydantic Stack*, with updates & tutorials on Pydantic AI, Logfire, and Pydantic:**
+
+  <form method="POST" action="https://eu.customerioforms.com/forms/submit_action?site_id=53d2086c3c4214eaecaa&form_id=14b22611745b458&success_url=https://ai.pydantic.dev/" class="md-typeset" style="display: flex; align-items: center; gap: 0.5rem; width: 100%;">
+      <input
+      type="email"
+      id="email_input"
+      name="email"
+      class="md-input md-input--stretch"
+      style="flex: 1; background: var(--md-default-bg-color); color: var(--md-default-fg-color);"
+      required
+      placeholder="Email"
+      data-1p-ignore
+      data-lpignore="true"
+      data-protonpass-ignore="true"
+      data-bwignore="true"
+      />
+      <input type="hidden" id="source_input" name="source" value="pydantic-ai" />
+      <button type="submit" class="md-button md-button--primary">Subscribe</button>
+  </form>
 
 ## Hello World Example
 
@@ -74,6 +94,7 @@ Not very interesting yet, but we can easily add [tools](tools.md), [dynamic inst
 ## Tools & Dependency Injection Example
 
 Here is a concise example using Pydantic AI to build a support agent for a bank:
+Here is a concise example using Pydantic AI to build a support agent for a bank:
 
 ```python {title="bank_support.py"}
 from dataclasses import dataclass
@@ -100,7 +121,7 @@ class SupportOutput(BaseModel):  # (13)!
 
 
 support_agent = Agent(  # (1)!
-    'openai:gpt-4o',  # (2)!
+    'openai:gpt-5',  # (2)!
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # (9)!
     instructions=(  # (4)!
@@ -146,7 +167,7 @@ async def main():
 ```
 
 1. This [agent](agents.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
-2. Here we configure the agent to use [OpenAI's GPT-4o model](api/models/openai.md), you can also set the model when running the agent.
+2. Here we configure the agent to use [OpenAI's GPT-5 model](api/models/openai.md), you can also set the model when running the agent.
 3. The `SupportDependencies` dataclass is used to pass data, connections, and logic into the model that will be needed when running [instructions](agents.md#instructions) and [tool](tools.md) functions. Pydantic AI's system of dependency injection provides a [type-safe](agents.md#static-type-checking) way to customise the behavior of your agents, and can be especially useful when running [unit tests](testing.md) and evals.
 4. Static [instructions](agents.md#instructions) can be registered with the [`instructions` keyword argument][pydantic_ai.Agent.__init__] to the agent.
 5. Dynamic [instructions](agents.md#instructions) can be registered with the [`@agent.instructions`][pydantic_ai.Agent.instructions] decorator, and can make use of dependency injection. Dependencies are carried via the [`RunContext`][pydantic_ai.tools.RunContext] argument, which is parameterized with the `deps_type` from above. If the type annotation here is wrong, static type checkers will catch it.
@@ -229,4 +250,4 @@ Read the [docs](agents.md) to learn more about building applications with Pydant
 
 Read the [API Reference](api/agent.md) to understand Pydantic AI's interface.
 
-Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.
+Join [:simple-slack: Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues) if you have any questions.

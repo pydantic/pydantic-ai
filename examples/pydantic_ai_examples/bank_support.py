@@ -1,4 +1,4 @@
-"""Small but complete example of using PydanticAI to build a support agent for a bank.
+"""Small but complete example of using Pydantic AI to build a support agent for a bank.
 
 Run with:
 

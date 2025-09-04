@@ -2,20 +2,24 @@ from __future__ import annotations as _annotations
 
 import datetime
 import os
-from dataclasses import dataclass
-from typing import Any, Union
+import re
+from typing import Any
 
 import pytest
-from httpx import Request, Timeout
+from httpx import Timeout
 from inline_snapshot import Is, snapshot
-from pytest_mock import MockerFixture
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from pydantic_ai import UsageLimitExceeded
 from pydantic_ai.agent import Agent
+from pydantic_ai.builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -36,15 +40,27 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.usage import Usage
+from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
-    from google.genai import _api_client
-    from google.genai.types import HarmBlockThreshold, HarmCategory
+    from google.genai.types import (
+        CodeExecutionResult,
+        GenerateContentResponse,
+        GenerateContentResponseUsageMetadata,
+        HarmBlockThreshold,
+        HarmCategory,
+        Language,
+        MediaModality,
+        ModalityTokenCount,
+        Outcome,
+    )
 
-    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+    from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, _metadata_as_usage  # type: ignore
     from pydantic_ai.providers.google import GoogleProvider
 
 pytestmark = [
@@ -54,7 +70,7 @@ pytestmark = [
 ]
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture()
 def google_provider(gemini_api_key: str) -> GoogleProvider:
     return GoogleProvider(api_key=gemini_api_key)
 
@@ -68,11 +84,10 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
     result = await agent.run('Hello!')
     assert result.output == snapshot('Hello there! How can I help you today?\n')
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=1,
-            request_tokens=7,
-            response_tokens=11,
-            total_tokens=18,
+            input_tokens=7,
+            output_tokens=11,
             details={'text_prompt_tokens': 7, 'text_candidates_tokens': 11},
         )
     )
@@ -92,22 +107,20 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
             ),
             ModelResponse(
                 parts=[TextPart(content='Hello there! How can I help you today?\n')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=7,
-                    response_tokens=11,
-                    total_tokens=18,
-                    details={'text_prompt_tokens': 7, 'text_candidates_tokens': 11},
+                usage=RequestUsage(
+                    input_tokens=7, output_tokens=11, details={'text_candidates_tokens': 11, 'text_prompt_tokens': 7}
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
 
 
-async def test_google_model_structured_response(allow_model_requests: None, google_provider: GoogleProvider):
+async def test_google_model_structured_output(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-1.5-flash', provider=google_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', retries=5)
 
@@ -132,11 +145,11 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
     result = await agent.run('What was the temperature in London 1st January 2022?', output_type=Response)
     assert result.output == snapshot({'temperature': '30°C', 'date': datetime.date(2022, 1, 1), 'city': 'London'})
     assert result.usage() == snapshot(
-        Usage(
+        RunUsage(
             requests=2,
-            request_tokens=224,
-            response_tokens=35,
-            total_tokens=259,
+            input_tokens=224,
+            output_tokens=35,
+            tool_calls=1,
             details={'text_prompt_tokens': 224, 'text_candidates_tokens': 35},
         )
     )
@@ -160,16 +173,16 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                         tool_name='temperature', args={'date': '2022-01-01', 'city': 'London'}, tool_call_id=IsStr()
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=101,
-                    response_tokens=14,
-                    total_tokens=115,
-                    details={'text_prompt_tokens': 101, 'text_candidates_tokens': 14},
+                usage=RequestUsage(
+                    input_tokens=101,
+                    output_tokens=14,
+                    details={'text_candidates_tokens': 14, 'text_prompt_tokens': 101},
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -186,16 +199,16 @@ async def test_google_model_structured_response(allow_model_requests: None, goog
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=123,
-                    response_tokens=21,
-                    total_tokens=144,
-                    details={'text_prompt_tokens': 123, 'text_candidates_tokens': 21},
+                usage=RequestUsage(
+                    input_tokens=123,
+                    output_tokens=21,
+                    details={'text_candidates_tokens': 21, 'text_prompt_tokens': 123},
                 ),
                 model_name='gemini-1.5-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -217,6 +230,25 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
     assert data == snapshot('The capital of France is Paris.\n')
+
+
+async def test_google_model_builtin_code_execution_stream(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+):
+    """Test Gemini streaming only code execution result or executable_code."""
+    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(
+        model=model,
+        system_prompt='Be concise and always use Python to do calculations no matter how small.',
+        builtin_tools=[CodeExecutionTool()],
+    )
+    event_parts: list[str] = []
+    async with agent.run_stream(user_prompt='what is 65465-6544 * 65464-6+1.02255') as result:
+        async for chunk in result.stream_text():
+            event_parts.append(chunk)
+
+    assert event_parts == snapshot(['The answer is -428330955.97745.\n'])
 
 
 async def test_google_model_retry(allow_model_requests: None, google_provider: GoogleProvider):
@@ -245,16 +277,14 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=57,
-                    response_tokens=15,
-                    total_tokens=173,
-                    details={'thoughts_tokens': 101, 'text_prompt_tokens': 57},
+                usage=RequestUsage(
+                    input_tokens=57, output_tokens=170, details={'thoughts_tokens': 155, 'text_prompt_tokens': 57}
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -269,19 +299,17 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='I am sorry, I cannot fulfill this request. The country you provided is not supported.'
+                        content='I am sorry, I cannot fulfill this request. The country "France" is not supported by my system.'
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=104,
-                    response_tokens=18,
-                    total_tokens=122,
-                    details={'text_prompt_tokens': 104},
+                usage=RequestUsage(
+                    input_tokens=104, output_tokens=200, details={'thoughts_tokens': 178, 'text_prompt_tokens': 104}
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -319,43 +347,19 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
         await agent.run('What is the capital of France?')
 
 
-@pytest.fixture(autouse=True)
-def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
-    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
-    if not os.getenv('CI'):
-        return  # pragma: lax no cover
-
-    @dataclass
-    class NoOpCredentials:
-        token = 'my-token'
-        quota_project_id = 'pydantic-ai'
-
-        def refresh(self, request: Request): ...
-
-        def expired(self) -> bool:
-            return False
-
-    return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
-
-
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
-async def test_google_model_vertex_provider(allow_model_requests: None):
-    provider = GoogleProvider(location='global')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_model_vertex_provider(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.')
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is Paris.\n')
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
-async def test_google_model_vertex_labels(allow_model_requests: None):  # pragma: lax no cover
-    provider = GoogleProvider(location='global', project='pydantic-ai')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_model_vertex_labels(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings=settings)
     result = await agent.run('What is the capital of France?')
@@ -402,8 +406,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_capital', content='Paris', tool_call_id=IsStr(), timestamp=IsDatetime()
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
             PartStartEvent(
                 index=0,
@@ -413,12 +416,11 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
             FunctionToolResultEvent(
                 result=ToolReturnPart(
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
-                ),
-                tool_call_id=IsStr(),
+                )
             ),
-            PartStartEvent(index=0, part=TextPart(content='The temperature in')),
+            PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' Paris is 30°C.\n')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C.\n')),
         ]
     )
 
@@ -441,16 +443,28 @@ async def test_google_model_video_as_binary_content_input(
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot("""\
-Okay, I can describe what's visible in the image you sent.
+Okay, I can describe what is visible in the image.
 
-The image shows a camera setup in an outdoor environment. Here's a breakdown of what's in the frame:
+The image shows a camera setup in an outdoor setting. The camera is mounted on a tripod and has an external monitor attached to it. The monitor is displaying a scene that appears to be a desert landscape with rocky formations and mountains in the background. The foreground and background of the overall image, outside of the camera monitor, is also a blurry, desert landscape. The colors in the background are warm and suggest either sunrise, sunset, or reflected light off the rock formations.
 
-*   **Camera Monitor:** A small, external monitor is mounted on top of the camera. The monitor is displaying a preview of the scene the camera is capturing. The preview shows a scene of a dirt road, rocks, and a distant mountain range.
-*   **Camera:** The camera itself is attached to a tripod. It's a compact camera, and the lens is visible.
-*   **Tripod:** The camera is mounted on a tripod to keep it stable.
-*   **Background:** The background is blurred, but it appears to be a mountainous or desert landscape with rocks and vegetation. The colors suggest that it could be late afternoon or early morning, with warm light illuminating the scene.
+It looks like someone is either reviewing footage on the monitor, or using it as an aid for framing the shot.\
+""")
 
-In summary, the image depicts a camera setup being used to film or photograph a desert landscape.\
+
+async def test_google_model_video_as_binary_content_input_with_vendor_metadata(
+    allow_model_requests: None, video_content: BinaryContent, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+    video_content.vendor_metadata = {'start_offset': '2s', 'end_offset': '10s'}
+
+    result = await agent.run(['Explain me this video', video_content])
+    assert result.output == snapshot("""\
+Okay, I can describe what is visible in the image.
+
+The image shows a camera setup in an outdoor setting. The camera is mounted on a tripod and has an external monitor attached to it. The monitor is displaying a scene that appears to be a desert landscape with rocky formations and mountains in the background. The foreground and background of the overall image, outside of the camera monitor, is also a blurry, desert landscape. The colors in the background are warm and suggest either sunrise, sunset, or reflected light off the rock formations.
+
+It looks like someone is either reviewing footage on the monitor, or using it as an aid for framing the shot.\
 """)
 
 
@@ -464,7 +478,7 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.output == snapshot("That's a potato!\n")
+    assert result.output == snapshot('That is a potato.\n')
 
 
 async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -478,11 +492,39 @@ async def test_google_model_video_url_input(allow_model_requests: None, google_p
         ]
     )
     assert result.output == snapshot("""\
-Certainly! Based on the image, here's what I can tell you:
+Okay, based on the image, here's what I can infer:
 
-**Visual Description:**
+*   **A camera monitor is mounted on top of a camera.**
+*   **The monitor's screen is on, displaying a view of the rocky mountains.**
+*   **This setting suggests a professional video shoot.**
 
-The image shows a small video monitor (likely a field monitor used in filmmaking or photography) mounted on top of a camera tripod. The monitor screen displays a scenic shot of a mountainous landscape, possibly a canyon or ravine. The background is a blurred, out-of-focus view of a similar landscape, suggesting that the monitor is set up in the field.
+If you'd like a more detailed explanation, please provide additional information about the video.\
+""")
+
+
+async def test_google_model_youtube_video_url_input_with_vendor_metadata(
+    allow_model_requests: None, google_provider: GoogleProvider
+):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video',
+            VideoUrl(
+                url='https://youtu.be/lCdaVNyHtjU',
+                vendor_metadata={'fps': 0.2},
+            ),
+        ]
+    )
+    assert result.output == snapshot("""\
+Okay, based on the image, here's what I can infer:
+
+*   **A camera monitor is mounted on top of a camera.**
+*   **The monitor's screen is on, displaying a view of the rocky mountains.**
+*   **This setting suggests a professional video shoot.**
+
+If you'd like a more detailed explanation, please provide additional information about the video.\
 """)
 
 
@@ -493,7 +535,7 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot('The main content of the document is the phrase "Dummy PDF file".\n')
+    assert result.output == snapshot('The document appears to be a "Dummy PDF file".\n')
 
 
 async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -504,7 +546,7 @@ async def test_google_model_text_document_url_input(allow_model_requests: None, 
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot(
-        'The main content of this TXT document is an explanation of the placeholder names "John Doe" (and variations) used when the true identity of a person is unknown or withheld, primarily in legal contexts in the United States and Canada. It also discusses alternative names used in other countries, different uses of the name, and the origin of the practice.\n'
+        'The main content of the document is an example of a TXT file, specifically providing information about the placeholder names "John Doe" (and related variations) used for unidentified or anonymous individuals, particularly in legal contexts in the United States and Canada. It also explains alternative names used in other countries and some additional context and examples of when "John Doe" might be used. The document also includes attribution to Wikipedia for the example content and a link to the license under which it is shared.\n'
     )
 
 
@@ -535,16 +577,14 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=13,
-                    response_tokens=8,
-                    total_tokens=21,
-                    details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                usage=RequestUsage(
+                    input_tokens=13, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 13}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -566,7 +606,7 @@ async def test_google_model_multiple_documents_in_history(
         ],
     )
 
-    assert result.output == snapshot('Both documents contain the text "Dummy PDF file".')
+    assert result.output == snapshot('Both documents contain the text "Dummy PDF file" at the top of the page.')
 
 
 async def test_google_model_safety_settings(allow_model_requests: None, google_provider: GoogleProvider):
@@ -585,14 +625,327 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
         await agent.run('Tell me a joke about a Brazilians.')
 
 
+async def test_google_model_web_search_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[WebSearchTool()])
+
+    result = await agent.run('What day is today in Utrecht?')
+    assert result.output == snapshot('Today is Wednesday, May 28, 2025, in Utrecht.\n')
+
+
+async def test_google_model_url_context_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[UrlContextTool()])
+
+    result = await agent.run(
+        'What is the first sentence on the page https://ai.pydantic.dev? Reply with only the sentence.'
+    )
+
+    assert result.output == snapshot(
+        'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.'
+    )
+
+
+async def test_google_model_code_execution_tool(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+    agent = Agent(m, system_prompt='You are a helpful chatbot.', builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('What day is today in Utrecht?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+now = datetime.datetime.now()
+day_of_week = now.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Today is Thursday in Utrecht.\n'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=95,
+                    details={
+                        'tool_use_prompt_tokens': 101,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 13,
+                        'text_tool_use_prompt_tokens': 101,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+    result = await agent.run('What day is tomorrow?', message_history=result.all_messages())
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
+                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine the day of the week in Utrecht, I need to know the current date. I will use the python tool to get the current date and time, and then extract the day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+now = datetime.datetime.now()
+day_of_week = now.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Today is Thursday in Utrecht.\n'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=95,
+                    details={
+                        'tool_use_prompt_tokens': 101,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 13,
+                        'text_tool_use_prompt_tokens': 101,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+To determine what day is tomorrow, I'll use the python tool to calculate tomorrow's date and then find the corresponding day of the week.
+
+"""
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'code': """\
+import datetime
+
+today = datetime.date.today()
+tomorrow = today + datetime.timedelta(days=1)
+day_of_week = tomorrow.strftime("%A")
+print(f'{day_of_week=}')
+""",
+                            'language': Language.PYTHON,
+                        },
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Friday'\n"),
+                        tool_call_id='not_provided',
+                        timestamp=IsDatetime(),
+                        provider_name='google',
+                    ),
+                    TextPart(content='Tomorrow is Friday.\n'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=113,
+                    output_tokens=95,
+                    details={
+                        'tool_use_prompt_tokens': 203,
+                        'text_candidates_tokens': 95,
+                        'text_prompt_tokens': 113,
+                        'text_tool_use_prompt_tokens': 203,
+                    },
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_model_server_tool_receive_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(builtin_tools=[CodeExecutionTool()])
+
+    result = await agent.run('How much is 3 * 12390?', model=anthropic_model)
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [[UserPromptPart], [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart]]
+    )
+
+    result = await agent.run('Multiplied by 12390', model=google_model, message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+            [UserPromptPart],
+            [TextPart, BuiltinToolCallPart, BuiltinToolReturnPart, TextPart],
+        ]
+    )
+
+
+async def test_google_model_receive_web_search_history_from_another_provider(
+    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
+):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    anthropic_model = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    anthropic_agent = Agent(model=anthropic_model, builtin_tools=[WebSearchTool()])
+
+    result = await anthropic_agent.run('What are the latest news in the Netherlands?')
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+            ],
+        ]
+    )
+
+    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_agent = Agent(model=google_model)
+    result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
+    assert part_types_from_messages(result.all_messages()) == snapshot(
+        [
+            [UserPromptPart],
+            [
+                BuiltinToolCallPart,
+                BuiltinToolReturnPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+                TextPart,
+            ],
+            [UserPromptPart],
+            [TextPart],
+        ]
+    )
+
+
 async def test_google_model_empty_user_prompt(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-1.5-flash', provider=google_provider)
     agent = Agent(m, instructions='You are a helpful assistant.')
 
     result = await agent.run()
-    assert result.output == snapshot(
-        'Please provide me with a question or task. I need some information to be able to help you.\n'
+    assert result.output == snapshot("I'm ready to assist you.  Please tell me what you need.\n")
+
+
+async def test_google_model_empty_assistant_response(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-1.5-flash', provider=google_provider)
+    agent = Agent(m)
+
+    result = await agent.run(
+        'Empty?',
+        message_history=[
+            ModelRequest(parts=[UserPromptPart(content='Hi')]),
+            ModelResponse(parts=[TextPart(content='')]),
+        ],
     )
+
+    assert result.output == snapshot('Yes, your previous message was empty.  Is there anything I can help you with?\n')
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
@@ -609,79 +962,15 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 ]
             ),
             ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content="""\
-**My Approach to Street Crossing Advice**
-
-Okay, so the user wants to know how to cross the street. Simple question, right? But safety is paramount here. My brain immediately goes into problem-solving mode. First, I have to *deconstruct* the request. Then, I define the core *goal*: crossing safely.  That means I need to brainstorm the key principles that make that possible.
-
-I'm thinking: **visibility**, **awareness**, **predictability**, **caution**, and using designated crossings.  These are the building blocks.  Now, how to structure this into a clear, helpful response?  A step-by-step approach seems best. I'll break it down into *before*, *during*, and some *general tips*.
-
-Let's flesh this out.  "Before" means finding a safe spot: marked **crosswalks**, intersections with signals, or pedestrian bridges/tunnels are ideal. Avoid darting out!  Then, I need to *stop* at the curb, *look* and *listen* in all directions, and make eye contact with drivers, if possible.  Wait for a *gap* or a signal.
-
-During crossing, the plan is to *walk*, not run. Keep looking and listening, stay in the crosswalk, and be visible. No distractions like phones. That's the basic framework.
-
-Now, for the "general tips." Teaching children how to do it is important. Extra caution at night or in bad weather is obvious. I should emphasize *never assume* drivers see you or will stop. Alcohol and drugs are a huge no-no. Watch out for parked cars, and turning vehicles are another common hazard. Always follow local laws!
-
-Okay, time to refine the language.  I want clear, action-oriented verbs and maybe some bullet points for readability. Bolding key terms helps too. And then, I need to consider edge cases. What if there are no crosswalks? Well, find a spot with good visibility and wait for a large gap. What about different traffic rules?  I'll just say to look in *all* directions.  I want to make sure it covers all bases.
-
-Finally, a quick review to make sure it's logical, comprehensive, easy to understand, and not too complex.  I think this is a good balance between thoroughness and conciseness.  Hopefully, this will keep people safe!
-"""
-                    ),
-                    TextPart(
-                        content="""\
-Crossing the street safely is crucial! Here's a step-by-step guide:
-
-1.  **Find a Safe Place to Cross:**
-    *   **Best:** Use a designated pedestrian crossing (zebra stripes, crosswalk lines) or an intersection with traffic lights and pedestrian signals ("walk/don't walk" signs).
-    *   **Good:** If no designated crossing is nearby, go to a street corner or an area where you have a clear view of traffic in all directions.
-    *   **Avoid:** Crossing between parked cars, on a curve, or near the crest of a hill where drivers can't see you easily.
-
-2.  **Stop at the Edge:**
-    *   Stop at the curb or the edge of the road. Don't step into the street yet.
-
-3.  **Look and Listen for Traffic:**
-    *   **Look Left:** Check for oncoming traffic.
-    *   **Look Right:** Check for oncoming traffic from the other direction.
-    *   **Look Left Again:** Double-check the closest lane of traffic before stepping out.
-    *   **Listen:** Sometimes you can hear traffic before you see it, especially large vehicles or motorcycles.
-
-4.  **Wait for a Safe Gap (or the Signal):**
-    *   **No Signal:** Wait until there's a large enough gap in traffic for you to cross safely without rushing. Make sure drivers have seen you and have time to stop if necessary. Try to make eye contact with drivers.
-    *   **With Signal:** Wait for the "WALK" signal or the little green walking person symbol. Even with a green signal, quickly check for turning vehicles before stepping off the curb.
-
-5.  **Cross Alertly:**
-    *   **Walk, Don't Run:** Walking briskly is good, but running can increase your risk of tripping and falling.
-    *   **Keep Looking and Listening:** Continue to check for traffic as you cross. The situation can change quickly.
-    *   **Stay Visible:** If it's dark or visibility is poor (rain, fog), wear bright or reflective clothing.
-    *   **Avoid Distractions:** Put away your phone, take off headphones, and focus on crossing safely.
-
-6.  **If There's a Median Strip or Island:**
-    *   Cross to the median, stop, and repeat the "Look Left, Right, Left" process for the next set of lanes before continuing.
-
-**Key Things to Remember:**
-
-*   **Never assume a driver sees you.** Always try to make eye contact.
-*   **Be extra careful at night or in bad weather.**
-*   **Teach children these rules** and hold their hands when crossing.
-*   **Obey traffic signals and signs.**
-*   **Don't dart out** into the street.
-
-Stay safe!\
-"""
-                    ),
-                ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=15,
-                    response_tokens=606,
-                    total_tokens=1704,
-                    details={'thoughts_tokens': 1083, 'text_prompt_tokens': 15},
+                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
+                usage=RequestUsage(
+                    input_tokens=15, output_tokens=2688, details={'thoughts_tokens': 1647, 'text_prompt_tokens': 15}
                 ),
-                model_name='models/gemini-2.5-pro-preview-05-06',
+                model_name='models/gemini-2.5-pro',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -703,13 +992,28 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
     assert event_parts == snapshot(
         [
             PartStartEvent(index=0, part=IsInstance(ThinkingPart)),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartStartEvent(index=1, part=IsInstance(TextPart)),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
             PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
@@ -742,9 +1046,6 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
     )
 
 
-@pytest.mark.skipif(
-    not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
-)
 @pytest.mark.parametrize(
     'url,expected_output',
     [
@@ -796,14 +1097,12 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
     ],
 )
 async def test_google_url_input(
-    # Need to use noqa because with runtime annotations this always fails linting
-    # https://docs.astral.sh/ruff/rules/non-pep604-annotation-union/
-    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl],  # noqa
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
     expected_output: str,
     allow_model_requests: None,
-) -> None:
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
-    m = GoogleModel('gemini-2.0-flash', provider=provider)
+    vertex_provider: GoogleProvider,
+) -> None:  # pragma: lax no cover
+    m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
     result = await agent.run(['What is the main content of this URL?', url])
 
@@ -820,11 +1119,12 @@ async def test_google_url_input(
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
-                usage=IsInstance(Usage),
+                usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_name='google-vertex',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -834,9 +1134,10 @@ async def test_google_url_input(
     not os.getenv('CI', False), reason='Requires properly configured local google vertex config to pass'
 )
 @pytest.mark.vcr()
-async def test_google_url_input_force_download(allow_model_requests: None) -> None:
-    provider = GoogleProvider(project='pydantic-ai', location='us-central1')
-    m = GoogleModel('gemini-2.0-flash', provider=provider)
+async def test_google_url_input_force_download(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+) -> None:  # pragma: lax no cover
+    m = GoogleModel('gemini-2.0-flash', provider=vertex_provider)
     agent = Agent(m)
 
     video_url = VideoUrl(url='https://data.grepit.app/assets/tiny_video.mp4', force_download=True)
@@ -857,11 +1158,12 @@ async def test_google_url_input_force_download(allow_model_requests: None) -> No
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
-                usage=IsInstance(Usage),
+                usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                provider_name='google-vertex',
             ),
         ]
     )
@@ -903,16 +1205,14 @@ async def test_google_tool_config_any_with_tool_without_args(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=21,
-                    response_tokens=1,
-                    total_tokens=22,
-                    details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                usage=RequestUsage(
+                    input_tokens=21, output_tokens=1, details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -932,16 +1232,14 @@ async def test_google_tool_config_any_with_tool_without_args(
                         tool_call_id=IsStr(),
                     )
                 ],
-                usage=Usage(
-                    requests=1,
-                    request_tokens=27,
-                    response_tokens=5,
-                    total_tokens=32,
-                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                usage=RequestUsage(
+                    input_tokens=27, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27}
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
             ModelRequest(
                 parts=[
@@ -966,3 +1264,567 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
 
     with pytest.raises(UserError, match='Google does not support setting ModelSettings.timeout to a httpx.Timeout'):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
+
+
+async def test_google_tool_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run('What is the largest city in the user country?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(
+                    input_tokens=33, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33}
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result',
+                        args={'city': 'Mexico City', 'country': 'Mexico'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=47, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47}
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='final_result',
+                        content='Final result processed.',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+
+
+async def test_google_text_output_function(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+
+    def upcase(text: str) -> str:
+        return text.upper()
+
+    agent = Agent(m, output_type=TextOutput(upcase))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run(
+        'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
+    )
+    assert result.output == snapshot('THE LARGEST CITY IN MEXICO IS MEXICO CITY.')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(
+                    input_tokens=49, output_tokens=276, details={'thoughts_tokens': 264, 'text_prompt_tokens': 49}
+                ),
+                model_name='models/gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
+                usage=RequestUsage(
+                    input_tokens=80, output_tokens=159, details={'thoughts_tokens': 150, 'text_prompt_tokens': 80}
+                ),
+                model_name='models/gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_native_output_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in the user country?')
+
+
+async def test_google_native_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+  "city": "Mexico City",
+  "country": "Mexico"
+}\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=25, output_tokens=20, details={'text_candidates_tokens': 20, 'text_prompt_tokens': 25}
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_native_output_multiple(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    class CountryLanguage(BaseModel):
+        country: str
+        language: str
+
+    agent = Agent(m, output_type=NativeOutput([CityLocation, CountryLanguage]))
+
+    result = await agent.run('What is the primarily language spoken in Mexico?')
+    assert result.output == snapshot(CountryLanguage(country='Mexico', language='Spanish'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the primarily language spoken in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+{
+  "result": {
+    "kind": "CountryLanguage",
+    "data": {
+      "country": "Mexico",
+      "language": "Spanish"
+    }
+  }
+}\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=50, output_tokens=46, details={'text_candidates_tokens': 46, 'text_prompt_tokens': 50}
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_prompted_output(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=RequestUsage(
+                    input_tokens=80, output_tokens=13, details={'text_candidates_tokens': 13, 'text_prompt_tokens': 80}
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_prompted_output_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'
+
+    result = await agent.run(
+        'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.'
+    )
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(
+                    input_tokens=123, output_tokens=144, details={'thoughts_tokens': 132, 'text_prompt_tokens': 123}
+                ),
+                model_name='models/gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_user_country',
+                        content='Mexico',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                usage=RequestUsage(
+                    input_tokens=154, output_tokens=166, details={'thoughts_tokens': 153, 'text_prompt_tokens': 154}
+                ),
+                model_name='models/gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_prompted_output_multiple(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.0-flash', provider=google_provider)
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    class CountryLanguage(BaseModel):
+        country: str
+        language: str
+
+    agent = Agent(m, output_type=PromptedOutput([CityLocation, CountryLanguage]))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"type": "object", "properties": {"result": {"anyOf": [{"type": "object", "properties": {"kind": {"type": "string", "const": "CityLocation"}, "data": {"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CityLocation"}, {"type": "object", "properties": {"kind": {"type": "string", "const": "CountryLanguage"}, "data": {"properties": {"country": {"type": "string"}, "language": {"type": "string"}}, "required": ["country", "language"], "type": "object"}}, "required": ["kind", "data"], "additionalProperties": false, "title": "CountryLanguage"}]}}, "required": ["result"], "additionalProperties": false}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='{"result": {"kind": "CityLocation", "data": {"city": "Mexico City", "country": "Mexico"}}}'
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=240,
+                    output_tokens=27,
+                    details={'text_candidates_tokens': 27, 'text_prompt_tokens': 240},
+                ),
+                model_name='gemini-2.0-flash',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_google_model_usage_limit_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    with pytest.raises(
+        UsageLimitExceeded,
+        match='The next request would exceed the input_tokens_limit of 9 \\(input_tokens=12\\)',
+    ):
+        await agent.run(
+            'The quick brown fox jumps over the lazydog.',
+            usage_limits=UsageLimits(input_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+async def test_google_model_usage_limit_not_exceeded(allow_model_requests: None, google_provider: GoogleProvider):
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(model=model)
+
+    result = await agent.run(
+        'The quick brown fox jumps over the lazydog.',
+        usage_limits=UsageLimits(input_tokens_limit=15, count_tokens_before_request=True),
+    )
+    assert result.output == snapshot("""\
+That's a classic! It's famously known as a **pangram**, which means it's a sentence that contains every letter of the alphabet.
+
+It's often used for:
+*   **Typing practice:** To ensure all keys are hit.
+*   **Displaying font samples:** Because it showcases every character.
+
+Just a small note, it's typically written as "lazy dog" (two words) and usually ends with a period:
+
+**The quick brown fox jumps over the lazy dog.**\
+""")
+
+
+async def test_google_vertexai_model_usage_limit_exceeded(
+    allow_model_requests: None, vertex_provider: GoogleProvider
+):  # pragma: lax no cover
+    model = GoogleModel('gemini-2.0-flash', provider=vertex_provider, settings=ModelSettings(max_tokens=100))
+
+    agent = Agent(model, system_prompt='You are a chatbot.')
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(
+        UsageLimitExceeded, match='The next request would exceed the total_tokens_limit of 9 \\(total_tokens=36\\)'
+    ):
+        await agent.run(
+            'What is the largest city in the user country? Use the get_user_country tool and then your own world knowledge.',
+            usage_limits=UsageLimits(total_tokens_limit=9, count_tokens_before_request=True),
+        )
+
+
+def test_map_usage():
+    assert _metadata_as_usage(GenerateContentResponse()) == RequestUsage()
+
+    response = GenerateContentResponse(
+        usage_metadata=GenerateContentResponseUsageMetadata(
+            prompt_token_count=1,
+            candidates_token_count=2,
+            cached_content_token_count=9100,
+            thoughts_token_count=9500,
+            prompt_tokens_details=[ModalityTokenCount(modality=MediaModality.AUDIO, token_count=9200)],
+            cache_tokens_details=[ModalityTokenCount(modality=MediaModality.AUDIO, token_count=9300)],
+            candidates_tokens_details=[ModalityTokenCount(modality=MediaModality.AUDIO, token_count=9400)],
+        )
+    )
+    assert _metadata_as_usage(response) == snapshot(
+        RequestUsage(
+            input_tokens=1,
+            cache_read_tokens=9100,
+            output_tokens=9502,
+            input_audio_tokens=9200,
+            cache_audio_read_tokens=9300,
+            output_audio_tokens=9400,
+            details={
+                'cached_content_tokens': 9100,
+                'thoughts_tokens': 9500,
+                'audio_prompt_tokens': 9200,
+                'audio_cache_tokens': 9300,
+                'audio_candidates_tokens': 9400,
+            },
+        )
+    )
+
+
+async def test_google_builtin_tools_with_other_tools(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+
+    agent = Agent(m, builtin_tools=[UrlContextTool()])
+
+    @agent.tool_plain
+    async def get_user_country() -> str:
+        return 'Mexico'  # pragma: no cover
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Gemini does not support user tools and built-in tools at the same time.'),
+    ):
+        await agent.run('What is the largest city in the user country?')
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[UrlContextTool()])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is the largest city in Mexico?')
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))

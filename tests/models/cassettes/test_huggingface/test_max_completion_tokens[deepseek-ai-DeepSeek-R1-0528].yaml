@@ -1,0 +1,128 @@
+interactions:
+- request:
+    body: null
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+    method: GET
+    uri: https://huggingface.co/api/models/deepseek-ai/DeepSeek-R1-0528?expand=inferenceProviderMapping
+  response:
+    headers:
+      access-control-allow-origin:
+      - https://huggingface.co
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '678'
+      content-type:
+      - application/json; charset=utf-8
+      cross-origin-opener-policy:
+      - same-origin
+      etag:
+      - W/"2a6-gQg+B654Px2F2NUtLDU93uSoBDU"
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      vary:
+      - Origin
+    parsed_body:
+      _id: 6836db82a3626cb7b5343be8
+      id: deepseek-ai/DeepSeek-R1-0528
+      inferenceProviderMapping:
+        fireworks-ai:
+          providerId: accounts/fireworks/models/deepseek-r1-0528
+          status: live
+          task: conversational
+        hyperbolic:
+          providerId: deepseek-ai/DeepSeek-R1-0528
+          status: live
+          task: conversational
+        nebius:
+          providerId: deepseek-ai/DeepSeek-R1-0528
+          status: live
+          task: conversational
+        novita:
+          providerId: deepseek/deepseek-r1-0528
+          status: live
+          task: conversational
+        sambanova:
+          providerId: DeepSeek-R1-0528
+          status: live
+          task: conversational
+        together:
+          providerId: deepseek-ai/DeepSeek-R1
+          status: live
+          task: conversational
+    status:
+      code: 200
+      message: OK
+- request:
+    body: null
+    headers: {}
+    method: POST
+    uri: https://router.huggingface.co/nebius/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      access-control-expose-headers:
+      - X-Repo-Commit,X-Request-Id,X-Error-Code,X-Error-Message,X-Total-Count,ETag,Link,Accept-Ranges,Content-Range,X-Linked-Size,X-Linked-ETag,X-Xet-Hash
+      connection:
+      - keep-alive
+      content-length:
+      - '1325'
+      content-type:
+      - application/json
+      cross-origin-opener-policy:
+      - same-origin
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          audio: null
+          content: "<think>\nOkay, the user just said “hello”. A simple greeting. They might be testing if I'm online, starting
+            a casual chat, or preparing a deeper question.  \n\nSince they didn't add context, I'll match their tone—friendly
+            and open-ended. Short response invites them to lead. Adding the emoji makes it warmer. No need to overthink yet.
+            \n\nHmm… if they're new, they might need reassurance that I'm responsive. If they're regular users, they're probably
+            just warming up. Either way, keeping it light feels safe. \n\nWatch for clues in their next message—if they dive
+            into a topic, they were just being polite before asking. If they reply with small talk, they might want companionship.\n</think>\nHello!
+            \U0001F60A How can I assist you today?"
+          function_call: null
+          reasoning_content: null
+          refusal: null
+          role: assistant
+          tool_calls: []
+        stop_reason: null
+      created: 1752050599
+      id: chatcmpl-25472217e5b643e0a1f3f20dd44ed2c1
+      kv_transfer_params: null
+      model: deepseek-ai/DeepSeek-R1-0528
+      object: chat.completion
+      prompt_logprobs: null
+      service_tier: null
+      system_fingerprint: null
+      usage:
+        completion_tokens: 165
+        completion_tokens_details: null
+        prompt_tokens: 6
+        prompt_tokens_details: null
+        total_tokens: 171
+    status:
+      code: 200
+      message: OK
+version: 1

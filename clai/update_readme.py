@@ -17,7 +17,7 @@ def test_cli_help(capfd: pytest.CaptureFixture[str]):
 
     help_output = capfd.readouterr().out.strip()
     # TODO change when we reach v1
-    help_output = re.sub(r'(PydanticAI CLI v).+', r'\1...', help_output)
+    help_output = re.sub(r'(Pydantic AI CLI v).+', r'\1...', help_output)
 
     this_dir = Path(__file__).parent
     readme = this_dir / 'README.md'

@@ -3,9 +3,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from functools import cached_property
 from typing import Any
 
+from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
+from ..profiles import ModelProfile
 from ..settings import ModelSettings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse, infer_model
 
@@ -21,6 +24,7 @@ class WrapperModel(Model):
     """The underlying model being wrapped."""
 
     def __init__(self, wrapped: Model | KnownModelName):
+        super().__init__()
         self.wrapped = infer_model(wrapped)
 
     async def request(self, *args: Any, **kwargs: Any) -> ModelResponse:
@@ -32,8 +36,11 @@ class WrapperModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
-        async with self.wrapped.request_stream(messages, model_settings, model_request_parameters) as response_stream:
+        async with self.wrapped.request_stream(
+            messages, model_settings, model_request_parameters, run_context
+        ) as response_stream:
             yield response_stream
 
     def customize_request_parameters(self, model_request_parameters: ModelRequestParameters) -> ModelRequestParameters:
@@ -47,5 +54,14 @@ class WrapperModel(Model):
     def system(self) -> str:
         return self.wrapped.system
 
+    @cached_property
+    def profile(self) -> ModelProfile:
+        return self.wrapped.profile
+
+    @property
+    def settings(self) -> ModelSettings | None:
+        """Get the settings from the wrapped model."""
+        return self.wrapped.settings
+
     def __getattr__(self, item: str):
-        return getattr(self.wrapped, item)  # pragma: no cover
+        return getattr(self.wrapped, item)

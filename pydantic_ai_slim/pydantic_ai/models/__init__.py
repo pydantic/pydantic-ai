@@ -7,32 +7,46 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Generic, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, overload
 
 import httpx
-from typing_extensions import Literal, TypeAliasType, TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
-from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
-
+from .. import _utils
+from .._output import OutputObjectDefinition
 from .._parts_manager import ModelResponsePartsManager
+from .._run_context import RunContext
+from ..builtin_tools import AbstractBuiltinTool
 from ..exceptions import UserError
-from ..messages import FileUrl, ModelMessage, ModelRequest, ModelResponse, ModelResponseStreamEvent, VideoUrl
+from ..messages import (
+    FileUrl,
+    FinalResultEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    ModelResponseStreamEvent,
+    PartStartEvent,
+    TextPart,
+    ToolCallPart,
+    VideoUrl,
+)
+from ..output import OutputMode
+from ..profiles import DEFAULT_PROFILE, ModelProfile, ModelProfileSpec
 from ..profiles._json_schema import JsonSchemaTransformer
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from ..usage import Usage
+from ..usage import RequestUsage
 
 KnownModelName = TypeAliasType(
     'KnownModelName',
     Literal[
-        'anthropic:claude-2.0',
-        'anthropic:claude-2.1',
         'anthropic:claude-3-5-haiku-20241022',
         'anthropic:claude-3-5-haiku-latest',
         'anthropic:claude-3-5-sonnet-20240620',
@@ -43,10 +57,10 @@ KnownModelName = TypeAliasType(
         'anthropic:claude-3-haiku-20240307',
         'anthropic:claude-3-opus-20240229',
         'anthropic:claude-3-opus-latest',
-        'anthropic:claude-3-sonnet-20240229',
         'anthropic:claude-4-opus-20250514',
         'anthropic:claude-4-sonnet-20250514',
         'anthropic:claude-opus-4-0',
+        'anthropic:claude-opus-4-1-20250805',
         'anthropic:claude-opus-4-20250514',
         'anthropic:claude-sonnet-4-0',
         'anthropic:claude-sonnet-4-20250514',
@@ -97,8 +111,15 @@ KnownModelName = TypeAliasType(
         'bedrock:mistral.mixtral-8x7b-instruct-v0:1',
         'bedrock:mistral.mistral-large-2402-v1:0',
         'bedrock:mistral.mistral-large-2407-v1:0',
-        'claude-2.0',
-        'claude-2.1',
+        'cerebras:gpt-oss-120b',
+        'cerebras:llama3.1-8b',
+        'cerebras:llama-3.3-70b',
+        'cerebras:llama-4-scout-17b-16e-instruct',
+        'cerebras:llama-4-maverick-17b-128e-instruct',
+        'cerebras:qwen-3-235b-a22b-instruct-2507',
+        'cerebras:qwen-3-32b',
+        'cerebras:qwen-3-coder-480b',
+        'cerebras:qwen-3-235b-a22b-thinking-2507',
         'claude-3-5-haiku-20241022',
         'claude-3-5-haiku-latest',
         'claude-3-5-sonnet-20240620',
@@ -109,10 +130,10 @@ KnownModelName = TypeAliasType(
         'claude-3-haiku-20240307',
         'claude-3-opus-20240229',
         'claude-3-opus-latest',
-        'claude-3-sonnet-20240229',
         'claude-4-opus-20250514',
         'claude-4-sonnet-20250514',
         'claude-opus-4-0',
+        'claude-opus-4-1-20250805',
         'claude-opus-4-20250514',
         'claude-sonnet-4-0',
         'claude-sonnet-4-20250514',
@@ -131,31 +152,15 @@ KnownModelName = TypeAliasType(
         'cohere:command-r7b-12-2024',
         'deepseek:deepseek-chat',
         'deepseek:deepseek-reasoner',
-        'google-gla:gemini-1.5-flash',
-        'google-gla:gemini-1.5-flash-8b',
-        'google-gla:gemini-1.5-pro',
-        'google-gla:gemini-1.0-pro',
         'google-gla:gemini-2.0-flash',
-        'google-gla:gemini-2.0-flash-lite-preview-02-05',
-        'google-gla:gemini-2.0-pro-exp-02-05',
-        'google-gla:gemini-2.5-flash-preview-05-20',
+        'google-gla:gemini-2.0-flash-lite',
         'google-gla:gemini-2.5-flash',
-        'google-gla:gemini-2.5-flash-lite-preview-06-17',
-        'google-gla:gemini-2.5-pro-exp-03-25',
-        'google-gla:gemini-2.5-pro-preview-05-06',
+        'google-gla:gemini-2.5-flash-lite',
         'google-gla:gemini-2.5-pro',
-        'google-vertex:gemini-1.5-flash',
-        'google-vertex:gemini-1.5-flash-8b',
-        'google-vertex:gemini-1.5-pro',
-        'google-vertex:gemini-1.0-pro',
         'google-vertex:gemini-2.0-flash',
-        'google-vertex:gemini-2.0-flash-lite-preview-02-05',
-        'google-vertex:gemini-2.0-pro-exp-02-05',
-        'google-vertex:gemini-2.5-flash-preview-05-20',
+        'google-vertex:gemini-2.0-flash-lite',
         'google-vertex:gemini-2.5-flash',
-        'google-vertex:gemini-2.5-flash-lite-preview-06-17',
-        'google-vertex:gemini-2.5-pro-exp-03-25',
-        'google-vertex:gemini-2.5-pro-preview-05-06',
+        'google-vertex:gemini-2.5-flash-lite',
         'google-vertex:gemini-2.5-pro',
         'gpt-3.5-turbo',
         'gpt-3.5-turbo-0125',
@@ -189,6 +194,7 @@ KnownModelName = TypeAliasType(
         'gpt-4o-audio-preview',
         'gpt-4o-audio-preview-2024-10-01',
         'gpt-4o-audio-preview-2024-12-17',
+        'gpt-4o-audio-preview-2025-06-03',
         'gpt-4o-mini',
         'gpt-4o-mini-2024-07-18',
         'gpt-4o-mini-audio-preview',
@@ -197,6 +203,21 @@ KnownModelName = TypeAliasType(
         'gpt-4o-mini-search-preview-2025-03-11',
         'gpt-4o-search-preview',
         'gpt-4o-search-preview-2025-03-11',
+        'gpt-5',
+        'gpt-5-2025-08-07',
+        'gpt-5-chat-latest',
+        'gpt-5-mini',
+        'gpt-5-mini-2025-08-07',
+        'gpt-5-nano',
+        'gpt-5-nano-2025-08-07',
+        'grok:grok-4',
+        'grok:grok-4-0709',
+        'grok:grok-3',
+        'grok:grok-3-mini',
+        'grok:grok-3-fast',
+        'grok:grok-3-mini-fast',
+        'grok:grok-2-vision-1212',
+        'grok:grok-2-image-1212',
         'groq:distil-whisper-large-v3-en',
         'groq:gemma2-9b-it',
         'groq:llama-3.3-70b-versatile',
@@ -204,6 +225,7 @@ KnownModelName = TypeAliasType(
         'groq:llama-guard-3-8b',
         'groq:llama3-70b-8192',
         'groq:llama3-8b-8192',
+        'groq:moonshotai/kimi-k2-instruct',
         'groq:whisper-large-v3',
         'groq:whisper-large-v3-turbo',
         'groq:playai-tts',
@@ -224,21 +246,48 @@ KnownModelName = TypeAliasType(
         'heroku:claude-3-7-sonnet',
         'heroku:claude-4-sonnet',
         'heroku:claude-3-haiku',
+        'heroku:gpt-oss-120b',
+        'heroku:nova-lite',
+        'heroku:nova-pro',
+        'huggingface:Qwen/QwQ-32B',
+        'huggingface:Qwen/Qwen2.5-72B-Instruct',
+        'huggingface:Qwen/Qwen3-235B-A22B',
+        'huggingface:Qwen/Qwen3-32B',
+        'huggingface:deepseek-ai/DeepSeek-R1',
+        'huggingface:meta-llama/Llama-3.3-70B-Instruct',
+        'huggingface:meta-llama/Llama-4-Maverick-17B-128E-Instruct',
+        'huggingface:meta-llama/Llama-4-Scout-17B-16E-Instruct',
         'mistral:codestral-latest',
         'mistral:mistral-large-latest',
         'mistral:mistral-moderation-latest',
         'mistral:mistral-small-latest',
+        'moonshotai:moonshot-v1-8k',
+        'moonshotai:moonshot-v1-32k',
+        'moonshotai:moonshot-v1-128k',
+        'moonshotai:moonshot-v1-8k-vision-preview',
+        'moonshotai:moonshot-v1-32k-vision-preview',
+        'moonshotai:moonshot-v1-128k-vision-preview',
+        'moonshotai:kimi-latest',
+        'moonshotai:kimi-thinking-preview',
+        'moonshotai:kimi-k2-0711-preview',
         'o1',
         'o1-2024-12-17',
         'o1-mini',
         'o1-mini-2024-09-12',
         'o1-preview',
         'o1-preview-2024-09-12',
+        'o1-pro',
+        'o1-pro-2025-03-19',
         'o3',
         'o3-2025-04-16',
+        'o3-deep-research',
+        'o3-deep-research-2025-06-26',
         'o3-mini',
         'o3-mini-2025-01-31',
+        'o3-pro',
+        'o3-pro-2025-06-10',
         'openai:chatgpt-4o-latest',
+        'openai:codex-mini-latest',
         'openai:gpt-3.5-turbo',
         'openai:gpt-3.5-turbo-0125',
         'openai:gpt-3.5-turbo-0301',
@@ -271,6 +320,7 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-audio-preview',
         'openai:gpt-4o-audio-preview-2024-10-01',
         'openai:gpt-4o-audio-preview-2024-12-17',
+        'openai:gpt-4o-audio-preview-2025-06-03',
         'openai:gpt-4o-mini',
         'openai:gpt-4o-mini-2024-07-18',
         'openai:gpt-4o-mini-audio-preview',
@@ -279,18 +329,35 @@ KnownModelName = TypeAliasType(
         'openai:gpt-4o-mini-search-preview-2025-03-11',
         'openai:gpt-4o-search-preview',
         'openai:gpt-4o-search-preview-2025-03-11',
+        'openai:gpt-5',
+        'openai:gpt-5-2025-08-07',
         'openai:o1',
+        'openai:gpt-5-chat-latest',
         'openai:o1-2024-12-17',
+        'openai:gpt-5-mini',
         'openai:o1-mini',
+        'openai:gpt-5-mini-2025-08-07',
         'openai:o1-mini-2024-09-12',
+        'openai:gpt-5-nano',
         'openai:o1-preview',
+        'openai:gpt-5-nano-2025-08-07',
         'openai:o1-preview-2024-09-12',
+        'openai:o1-pro',
+        'openai:o1-pro-2025-03-19',
         'openai:o3',
         'openai:o3-2025-04-16',
+        'openai:o3-deep-research',
+        'openai:o3-deep-research-2025-06-26',
         'openai:o3-mini',
         'openai:o3-mini-2025-01-31',
         'openai:o4-mini',
         'openai:o4-mini-2025-04-16',
+        'openai:o4-mini-deep-research',
+        'openai:o4-mini-deep-research-2025-06-26',
+        'openai:o3-pro',
+        'openai:o3-pro-2025-06-10',
+        'openai:computer-use-preview',
+        'openai:computer-use-preview-2025-03-11',
         'test',
     ],
 )
@@ -300,19 +367,50 @@ KnownModelName = TypeAliasType(
 """
 
 
-@dataclass
+@dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
     function_tools: list[ToolDefinition] = field(default_factory=list)
-    allow_text_output: bool = True
+    builtin_tools: list[AbstractBuiltinTool] = field(default_factory=list)
+
+    output_mode: OutputMode = 'text'
+    output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
+    allow_text_output: bool = True
+
+    @cached_property
+    def tool_defs(self) -> dict[str, ToolDefinition]:
+        return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 class Model(ABC):
     """Abstract class for a model."""
 
     _profile: ModelProfileSpec | None = None
+    _settings: ModelSettings | None = None
+
+    def __init__(
+        self,
+        *,
+        settings: ModelSettings | None = None,
+        profile: ModelProfileSpec | None = None,
+    ) -> None:
+        """Initialize the model with optional settings and profile.
+
+        Args:
+            settings: Model-specific settings that will be used as defaults for this model.
+            profile: The model profile to use.
+        """
+        self._settings = settings
+        self._profile = profile
+
+    @property
+    def settings(self) -> ModelSettings | None:
+        """Get the model settings."""
+        return self._settings
 
     @abstractmethod
     async def request(
@@ -324,12 +422,23 @@ class Model(ABC):
         """Make a request to the model."""
         raise NotImplementedError()
 
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        """Make a request to the model for counting tokens."""
+        # This method is not required, but you need to implement it if you want to support `UsageLimits.count_tokens_before_request`.
+        raise NotImplementedError(f'Token counting ahead of the request is not supported by {self.__class__.__name__}')
+
     @asynccontextmanager
     async def request_stream(
         self,
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         """Make a request to the model and return a streaming response."""
         # This method is not required, but you need to implement it if you want to support streamed responses
@@ -351,6 +460,11 @@ class Model(ABC):
                 function_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.function_tools],
                 output_tools=[_customize_tool_def(transformer, t) for t in model_request_parameters.output_tools],
             )
+            if output_object := model_request_parameters.output_object:
+                model_request_parameters = replace(
+                    model_request_parameters,
+                    output_object=_customize_output_object(transformer, output_object),
+                )
 
         return model_request_parameters
 
@@ -375,7 +489,7 @@ class Model(ABC):
     @property
     @abstractmethod
     def system(self) -> str:
-        """The system / model provider, ex: openai.
+        """The model provider, ex: openai.
 
         Use to populate the `gen_ai.system` OpenTelemetry semantic convention attribute,
         so should use well-known values listed in
@@ -437,14 +551,41 @@ class Model(ABC):
 class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
+    model_request_parameters: ModelRequestParameters
+
+    final_result_event: FinalResultEvent | None = field(default=None, init=False)
+
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
-    _usage: Usage = field(default_factory=Usage, init=False)
+    _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
+        """Stream the response as an async iterable of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
+
+        This proxies the `_event_iterator()` and emits all events, while also checking for matches
+        on the result schema and emitting a [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent] if/when the
+        first match is found.
+        """
         if self._event_iterator is None:
-            self._event_iterator = self._get_event_iterator()
+
+            async def iterator_with_final_event(
+                iterator: AsyncIterator[ModelResponseStreamEvent],
+            ) -> AsyncIterator[ModelResponseStreamEvent]:
+                async for event in iterator:
+                    yield event
+                    if (
+                        final_result_event := _get_final_result_event(event, self.model_request_parameters)
+                    ) is not None:
+                        self.final_result_event = final_result_event
+                        yield final_result_event
+                        break
+
+                # If we broke out of the above loop, we need to yield the rest of the events
+                # If we didn't, this will just be a no-op
+                async for event in iterator:
+                    yield event
+
+            self._event_iterator = iterator_with_final_event(self._get_event_iterator())
         return self._event_iterator
 
     @abstractmethod
@@ -467,9 +608,10 @@ class StreamedResponse(ABC):
             model_name=self.model_name,
             timestamp=self.timestamp,
             usage=self.usage(),
+            provider_name=self.provider_name,
         )
 
-    def usage(self) -> Usage:
+    def usage(self) -> RequestUsage:
         """Get the usage of the response so far. This will not be the final usage until the stream is exhausted."""
         return self._usage
 
@@ -477,6 +619,12 @@ class StreamedResponse(ABC):
     @abstractmethod
     def model_name(self) -> str:
         """Get the model name of the response."""
+        raise NotImplementedError()
+
+    @property
+    @abstractmethod
+    def provider_name(self) -> str | None:
+        """Get the provider name."""
         raise NotImplementedError()
 
     @property
@@ -526,7 +674,7 @@ def override_allow_model_requests(allow_model_requests: bool) -> Iterator[None]:
         ALLOW_MODEL_REQUESTS = old_value  # pyright: ignore[reportConstantRedefinition]
 
 
-def infer_model(model: Model | KnownModelName | str) -> Model:
+def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     """Infer the model from the name."""
     if isinstance(model, Model):
         return model
@@ -538,28 +686,57 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
     try:
         provider, model_name = model.split(':', maxsplit=1)
     except ValueError:
+        provider = None
         model_name = model
-        # TODO(Marcelo): We should deprecate this way.
         if model_name.startswith(('gpt', 'o1', 'o3')):
             provider = 'openai'
         elif model_name.startswith('claude'):
             provider = 'anthropic'
         elif model_name.startswith('gemini'):
             provider = 'google-gla'
+
+        if provider is not None:
+            warnings.warn(
+                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider}:{model_name}'.",
+                DeprecationWarning,
+            )
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':
-        provider = 'google-vertex'  # pragma: no cover
+    if provider == 'vertexai':  # pragma: no cover
+        warnings.warn(
+            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
+            DeprecationWarning,
+        )
+        provider = 'google-vertex'
 
     if provider == 'cohere':
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)
-    elif provider in ('openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'heroku'):
-        from .openai import OpenAIModel
+    elif provider in (
+        'azure',
+        'deepseek',
+        'cerebras',
+        'fireworks',
+        'github',
+        'grok',
+        'heroku',
+        'moonshotai',
+        'openai',
+        'openai-chat',
+        'openrouter',
+        'together',
+        'vercel',
+        'litellm',
+    ):
+        from .openai import OpenAIChatModel
 
-        return OpenAIModel(model_name, provider=provider)
+        return OpenAIChatModel(model_name, provider=provider)
+    elif provider == 'openai-responses':
+        from .openai import OpenAIResponsesModel
+
+        return OpenAIResponsesModel(model_name, provider='openai')
     elif provider in ('google-gla', 'google-vertex'):
         from .google import GoogleModel
 
@@ -580,6 +757,10 @@ def infer_model(model: Model | KnownModelName | str) -> Model:
         from .bedrock import BedrockConverseModel
 
         return BedrockConverseModel(model_name, provider=provider)
+    elif provider == 'huggingface':
+        from .huggingface import HuggingFaceModel
+
+        return HuggingFaceModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
 
@@ -690,7 +871,7 @@ async def download_item(
 
     data_type = media_type
     if type_format == 'extension':
-        data_type = data_type.split('/')[1]
+        data_type = item.format
 
     data = response.content
     if data_format in ('base64', 'base64_uri'):
@@ -715,6 +896,31 @@ def get_user_agent() -> str:
 def _customize_tool_def(transformer: type[JsonSchemaTransformer], t: ToolDefinition):
     schema_transformer = transformer(t.parameters_json_schema, strict=t.strict)
     parameters_json_schema = schema_transformer.walk()
-    if t.strict is None:
-        t = replace(t, strict=schema_transformer.is_strict_compatible)
-    return replace(t, parameters_json_schema=parameters_json_schema)
+    return replace(
+        t,
+        parameters_json_schema=parameters_json_schema,
+        strict=schema_transformer.is_strict_compatible if t.strict is None else t.strict,
+    )
+
+
+def _customize_output_object(transformer: type[JsonSchemaTransformer], o: OutputObjectDefinition):
+    schema_transformer = transformer(o.json_schema, strict=o.strict)
+    json_schema = schema_transformer.walk()
+    return replace(
+        o,
+        json_schema=json_schema,
+        strict=schema_transformer.is_strict_compatible if o.strict is None else o.strict,
+    )
+
+
+def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestParameters) -> FinalResultEvent | None:
+    """Return an appropriate FinalResultEvent if `e` corresponds to a part that will produce a final result."""
+    if isinstance(e, PartStartEvent):
+        new_part = e.part
+        if isinstance(new_part, TextPart) and params.allow_text_output:  # pragma: no branch
+            return FinalResultEvent(tool_name=None, tool_call_id=None)
+        elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
+            if tool_def.kind == 'output':
+                return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
+            elif tool_def.defer:
+                return FinalResultEvent(tool_name=None, tool_call_id=None)

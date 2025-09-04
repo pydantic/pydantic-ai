@@ -4,8 +4,6 @@ interactions:
     headers:
       accept:
       - '*/*'
-      accept-encoding:
-      - gzip, deflate
       connection:
       - keep-alive
       host:
@@ -15,11 +13,15 @@ interactions:
   response:
     headers:
       content-length:
-      - '545'
+      - '760'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
       - application/json
+      expires:
+      - '0'
+      pragma:
+      - no-cache
       strict-transport-security:
       - max-age=63072000
     parsed_body:
@@ -46,6 +48,7 @@ interactions:
       - text-to-text
     - model_id: claude-4-sonnet
       regions:
+      - eu
       - us
       type:
       - text-to-text
@@ -55,6 +58,23 @@ interactions:
       - us
       type:
       - text-to-embedding
+    - model_id: gpt-oss-120b
+      regions:
+      - us
+      type:
+      - text-to-text
+    - model_id: nova-lite
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
+    - model_id: nova-pro
+      regions:
+      - eu
+      - us
+      type:
+      - text-to-text
     - model_id: stable-image-ultra
       regions:
       - us
@@ -63,4 +83,35 @@ interactions:
     status:
       code: 200
       message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      connection:
+      - keep-alive
+      host:
+      - api.cerebras.ai
+    method: GET
+    uri: https://api.cerebras.ai/v1/models
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-length:
+      - '99'
+      content-type:
+      - application/json
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+    parsed_body:
+      code: wrong_api_key
+      message: Wrong API Key
+      param: api_key
+      type: invalid_request_error
+    status:
+      code: 401
+      message: Unauthorized
 version: 1

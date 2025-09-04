@@ -5,10 +5,10 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Callable, Union, cast
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -17,11 +17,10 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeIs, TypeVar, get_origin
-
-from pydantic_ai.tools import RunContext
+from typing_extensions import ParamSpec, TypeIs, TypeVar
 
 from ._griffe import doc_descriptions
+from ._run_context import RunContext
 from ._utils import check_object_json_schema, is_async_callable, is_model_like, run_in_executor
 
 if TYPE_CHECKING:
@@ -31,12 +30,12 @@ if TYPE_CHECKING:
 __all__ = ('function_schema',)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionSchema:
     """Internal information about a function schema."""
 
     function: Callable[..., Any]
-    description: str
+    description: str | None
     validator: SchemaValidator
     json_schema: ObjectJsonSchema
     # if not None, the function takes a single by that name (besides potentially `info`)
@@ -97,8 +96,13 @@ def function_schema(  # noqa: C901
     config = ConfigDict(title=function.__name__, use_attribute_docstrings=True)
     config_wrapper = ConfigWrapper(config)
     gen_schema = _generate_schema.GenerateSchema(config_wrapper)
+    errors: list[str] = []
 
-    sig = signature(function)
+    try:
+        sig = signature(function)
+    except ValueError as e:
+        errors.append(str(e))
+        sig = signature(lambda: None)
 
     type_hints = _typing_extra.get_function_type_hints(function)
 
@@ -106,7 +110,6 @@ def function_schema(  # noqa: C901
     fields: dict[str, core_schema.TypedDictField] = {}
     positional_fields: list[str] = []
     var_positional_field: str | None = None
-    errors: list[str] = []
     decorators = _decorators.DecoratorInfos()
 
     description, field_descriptions = doc_descriptions(function, sig, docstring_format=docstring_format)
@@ -151,9 +154,13 @@ def function_schema(  # noqa: C901
             if p.kind == Parameter.VAR_POSITIONAL:
                 annotation = list[annotation]
 
-            # FieldInfo.from_annotation expects a type, `annotation` is Any
+            required = p.default is Parameter.empty
+            # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
             annotation = cast(type[Any], annotation)
-            field_info = FieldInfo.from_annotation(annotation)
+            if required:
+                field_info = FieldInfo.from_annotation(annotation)
+            else:
+                field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
 
@@ -161,7 +168,7 @@ def function_schema(  # noqa: C901
                 field_name,
                 field_info,
                 decorators,
-                required=p.default is Parameter.empty,
+                required=required,
             )
             # noinspection PyTypeChecker
             td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)
@@ -224,7 +231,7 @@ R = TypeVar('R')
 
 WithCtx = Callable[Concatenate[RunContext[Any], P], R]
 WithoutCtx = Callable[P, R]
-TargetFunc = Union[WithCtx[P, R], WithoutCtx[P, R]]
+TargetFunc = WithCtx[P, R] | WithoutCtx[P, R]
 
 
 def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
@@ -236,14 +243,19 @@ def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
     Returns:
         `True` if the function takes a `RunContext` as first argument, `False` otherwise.
     """
-    sig = signature(function)
+    try:
+        sig = signature(function)
+    except ValueError:  # pragma: no cover
+        return False  # pragma: no cover
     try:
         first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
         return False
     else:
         type_hints = _typing_extra.get_function_type_hints(function)
-        annotation = type_hints[first_param_name]
+        annotation = type_hints.get(first_param_name)
+        if annotation is None:
+            return False  # pragma: no cover
         return True is not sig.empty and _is_call_ctx(annotation)
 
 
@@ -273,7 +285,6 @@ def _build_schema(
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
-        total=var_kwargs_schema is None,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None
@@ -281,6 +292,4 @@ def _build_schema(
 
 def _is_call_ctx(annotation: Any) -> bool:
     """Return whether the annotation is the `RunContext` class, parameterized or not."""
-    from .tools import RunContext
-
     return annotation is RunContext or get_origin(annotation) is RunContext

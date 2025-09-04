@@ -3,12 +3,18 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.server.session import ServerSessionT
-from mcp.shared.context import LifespanContextT, RequestT
-from mcp.types import BlobResourceContents, EmbeddedResource, SamplingMessage, TextContent, TextResourceContents
-from pydantic import AnyUrl
+from mcp.server.session import ServerSession
+from mcp.types import (
+    BlobResourceContents,
+    EmbeddedResource,
+    ResourceLink,
+    SamplingMessage,
+    TextContent,
+    TextResourceContents,
+)
+from pydantic import AnyUrl, BaseModel
 
-mcp = FastMCP('PydanticAI MCP Server')
+mcp = FastMCP('Pydantic AI MCP Server')
 log_level = 'unset'
 
 
@@ -44,11 +50,25 @@ async def get_image_resource() -> EmbeddedResource:
     return EmbeddedResource(
         type='resource',
         resource=BlobResourceContents(
-            uri='resource://kiwi.png',  # type: ignore
+            uri=AnyUrl('resource://kiwi.png'),
             blob=base64.b64encode(data).decode('utf-8'),
             mimeType='image/png',
         ),
     )
+
+
+@mcp.tool()
+async def get_image_resource_link() -> ResourceLink:
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl('resource://kiwi.png'),
+        name='kiwi.png',
+    )
+
+
+@mcp.resource('resource://kiwi.png', mime_type='image/png')
+async def kiwi_resource() -> bytes:
+    return Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()
 
 
 @mcp.tool()
@@ -65,14 +85,42 @@ async def get_audio_resource() -> EmbeddedResource:
 
 
 @mcp.tool()
+async def get_audio_resource_link() -> ResourceLink:
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl('resource://marcelo.mp3'),
+        name='marcelo.mp3',
+    )
+
+
+@mcp.resource('resource://marcelo.mp3', mime_type='audio/mpeg')
+async def marcelo_resource() -> bytes:
+    return Path(__file__).parent.joinpath('assets/marcelo.mp3').read_bytes()
+
+
+@mcp.tool()
 async def get_product_name() -> EmbeddedResource:
     return EmbeddedResource(
         type='resource',
         resource=TextResourceContents(
-            uri='resource://product_name.txt',  # type: ignore
-            text='PydanticAI',
+            uri=AnyUrl('resource://product_name.txt'),
+            text='Pydantic AI',
         ),
     )
+
+
+@mcp.tool()
+async def get_product_name_link() -> ResourceLink:
+    return ResourceLink(
+        type='resource_link',
+        uri=AnyUrl('resource://product_name.txt'),
+        name='product_name.txt',
+    )
+
+
+@mcp.resource('resource://product_name.txt', mime_type='text/plain')
+async def product_name_resource() -> str:
+    return Path(__file__).parent.joinpath('assets/product_name.txt').read_text()
 
 
 @mcp.tool()
@@ -121,7 +169,7 @@ async def get_log_level(ctx: Context) -> str:  # type: ignore
 
 
 @mcp.tool()
-async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) -> dict[str, Any]:
+async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
     """Echo the run context.
 
     Args:
@@ -137,7 +185,7 @@ async def echo_deps(ctx: Context[ServerSessionT, LifespanContextT, RequestT]) ->
 
 
 @mcp.tool()
-async def use_sampling(ctx: Context, foo: str) -> str:  # type: ignore
+async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> str:
     """Use sampling callback."""
 
     result = await ctx.session.create_message(
@@ -151,6 +199,22 @@ async def use_sampling(ctx: Context, foo: str) -> str:  # type: ignore
         stop_sequences=['potato'],
     )
     return result.model_dump_json(indent=2)
+
+
+class UserResponse(BaseModel):
+    response: str
+
+
+@mcp.tool()
+async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> str:
+    """Use elicitation callback to ask the user a question."""
+
+    result = await ctx.elicit(message=question, schema=UserResponse)
+
+    if result.action == 'accept' and result.data:
+        return f'User responded: {result.data.response}'
+    else:
+        return f'User {result.action}ed the elicitation'
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]

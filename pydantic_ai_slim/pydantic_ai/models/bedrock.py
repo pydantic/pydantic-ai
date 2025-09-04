@@ -2,22 +2,25 @@ from __future__ import annotations
 
 import functools
 import typing
-import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import count
-from typing import TYPE_CHECKING, Any, Generic, Literal, Union, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
 import anyio
 import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
 from pydantic_ai import _utils, usage
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -59,9 +62,12 @@ if TYPE_CHECKING:
         MessageUnionTypeDef,
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
+        ReasoningContentBlockOutputTypeDef,
+        ReasoningTextBlockTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
+        ToolSpecificationTypeDef,
         ToolTypeDef,
         VideoBlockTypeDef,
     )
@@ -118,7 +124,7 @@ LatestBedrockModelNames = Literal[
 ]
 """Latest Bedrock models."""
 
-BedrockModelName = Union[str, LatestBedrockModelNames]
+BedrockModelName = str | LatestBedrockModelNames
 """Possible Bedrock model names.
 
 Since Bedrock supports a variety of date-stamped models, we explicitly list the latest models but allow any name in the type hints.
@@ -133,11 +139,11 @@ T = typing.TypeVar('T')
 class BedrockModelSettings(ModelSettings, total=False):
     """Settings for Bedrock models.
 
-    ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
-
     See [the Bedrock Converse API docs](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax) for a full list.
     See [the boto3 implementation](https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/bedrock-runtime/client/converse.html) of the Bedrock Converse API.
     """
+
+    # ALL FIELDS MUST BE `bedrock_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
 
     bedrock_guardrail_config: GuardrailConfigurationTypeDef
     """Content moderation and safety settings for Bedrock API requests.
@@ -183,17 +189,7 @@ class BedrockConverseModel(Model):
     client: BedrockRuntimeClient
 
     _model_name: BedrockModelName = field(repr=False)
-    _system: str = field(default='bedrock', repr=False)
-
-    @property
-    def model_name(self) -> str:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider, ex: openai."""
-        return self._system
+    _provider: Provider[BaseClient] = field(repr=False)
 
     def __init__(
         self,
@@ -201,6 +197,7 @@ class BedrockConverseModel(Model):
         *,
         provider: Literal['bedrock'] | Provider[BaseClient] = 'bedrock',
         profile: ModelProfileSpec | None = None,
+        settings: ModelSettings | None = None,
     ):
         """Initialize a Bedrock model.
 
@@ -212,33 +209,42 @@ class BedrockConverseModel(Model):
                 'bedrock' or an instance of `Provider[BaseClient]`. If not provided, a new provider will be
                 created using the other parameters.
             profile: The model profile to use. Defaults to a profile picked by the provider based on the model name.
+            settings: Model-specific settings that will be used as defaults for this model.
         """
         self._model_name = model_name
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
+        self._provider = provider
         self.client = cast('BedrockRuntimeClient', provider.client)
-        self._profile = profile or provider.model_profile
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
-        tools = [self._map_tool_definition(r) for r in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [self._map_tool_definition(r) for r in model_request_parameters.output_tools]
-        return tools
-
-    @staticmethod
-    def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
-        return {
-            'toolSpec': {
-                'name': f.name,
-                'description': f.description,
-                'inputSchema': {'json': f.parameters_json_schema},
-            }
-        }
+        super().__init__(settings=settings, profile=profile or provider.model_profile)
 
     @property
     def base_url(self) -> str:
         return str(self.client.meta.endpoint_url)
+
+    @property
+    def model_name(self) -> str:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
+
+    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolTypeDef]:
+        return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
+
+    @staticmethod
+    def _map_tool_definition(f: ToolDefinition) -> ToolTypeDef:
+        tool_spec: ToolSpecificationTypeDef = {'name': f.name, 'inputSchema': {'json': f.parameters_json_schema}}
+
+        if f.description:  # pragma: no branch
+            tool_spec['description'] = f.description
+
+        return {'toolSpec': tool_spec}
 
     async def request(
         self,
@@ -249,7 +255,6 @@ class BedrockConverseModel(Model):
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
-        model_response.usage.requests = 1
         return model_response
 
     @asynccontextmanager
@@ -258,10 +263,16 @@ class BedrockConverseModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
-        yield BedrockStreamedResponse(_model_name=self.model_name, _event_stream=response)
+        yield BedrockStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self.model_name,
+            _event_stream=response,
+            _provider_name=self._provider.name,
+        )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
@@ -270,9 +281,10 @@ class BedrockConverseModel(Model):
                 if reasoning_content := item.get('reasoningContent'):
                     reasoning_text = reasoning_content.get('reasoningText')
                     if reasoning_text:  # pragma: no branch
-                        thinking_part = ThinkingPart(content=reasoning_text['text'])
-                        if reasoning_signature := reasoning_text.get('signature'):
-                            thinking_part.signature = reasoning_signature
+                        thinking_part = ThinkingPart(
+                            content=reasoning_text['text'],
+                            signature=reasoning_text.get('signature'),
+                        )
                         items.append(thinking_part)
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
@@ -284,13 +296,18 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
-        u = usage.Usage(
-            request_tokens=response['usage']['inputTokens'],
-            response_tokens=response['usage']['outputTokens'],
-            total_tokens=response['usage']['totalTokens'],
+        u = usage.RequestUsage(
+            input_tokens=response['usage']['inputTokens'],
+            output_tokens=response['usage']['outputTokens'],
         )
-        vendor_id = response.get('ResponseMetadata', {}).get('RequestId', None)
-        return ModelResponse(items, usage=u, model_name=self.model_name, vendor_id=vendor_id)
+        response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
+        return ModelResponse(
+            parts=items,
+            usage=u,
+            model_name=self.model_name,
+            provider_response_id=response_id,
+            provider_name=self._provider.name,
+        )
 
     @overload
     async def _messages_create(
@@ -332,6 +349,9 @@ class BedrockConverseModel(Model):
         tool_config = self._map_tool_config(model_request_parameters)
         if tool_config:
             params['toolConfig'] = tool_config
+
+        if model_request_parameters.builtin_tools:
+            raise UserError('Bedrock does not support built-in tools')
 
         # Bedrock supports a set of specific extra parameters
         if model_settings:
@@ -406,7 +426,7 @@ class BedrockConverseModel(Model):
         for message in messages:
             if isinstance(message, ModelRequest):
                 for part in message.parts:
-                    if isinstance(part, SystemPromptPart):
+                    if isinstance(part, SystemPromptPart) and part.content:
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
                         bedrock_messages.extend(await self._map_user_prompt(part, document_count))
@@ -456,7 +476,20 @@ class BedrockConverseModel(Model):
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't pass the thinking part to Bedrock since it raises an error.
+                        if BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts:
+                            reasoning_text: ReasoningTextBlockTypeDef = {
+                                'text': item.content,
+                            }
+                            if item.signature:
+                                reasoning_text['signature'] = item.signature
+                            reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                'reasoningText': reasoning_text,
+                            }
+                            content.append({'reasoningContent': reasoning_content})
+                        else:
+                            # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
+                            pass
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     else:
                         assert isinstance(item, ToolCallPart)
@@ -512,7 +545,7 @@ class BedrockConverseModel(Model):
                         content.append({'video': {'format': format, 'source': {'bytes': item.data}}})
                     else:
                         raise NotImplementedError('Binary content is not supported yet.')
-                elif isinstance(item, (ImageUrl, DocumentUrl, VideoUrl)):
+                elif isinstance(item, ImageUrl | DocumentUrl | VideoUrl):
                     downloaded_item = await download_item(item, data_format='bytes', type_format='extension')
                     format = downloaded_item['data_type']
                     if item.kind == 'image-url':
@@ -564,6 +597,7 @@ class BedrockStreamedResponse(StreamedResponse):
 
     _model_name: BedrockModelName
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -575,69 +609,74 @@ class BedrockStreamedResponse(StreamedResponse):
         chunk: ConverseStreamOutputTypeDef
         tool_id: str | None = None
         async for chunk in _AsyncIteratorWrapper(self._event_stream):
-            # TODO(Marcelo): Switch this to `match` when we drop Python 3.9 support.
-            if 'messageStart' in chunk:
-                continue
-            if 'messageStop' in chunk:
-                continue
-            if 'metadata' in chunk:
-                if 'usage' in chunk['metadata']:  # pragma: no branch
-                    self._usage += self._map_usage(chunk['metadata'])
-                continue
-            if 'contentBlockStart' in chunk:
-                index = chunk['contentBlockStart']['contentBlockIndex']
-                start = chunk['contentBlockStart']['start']
-                if 'toolUse' in start:  # pragma: no branch
-                    tool_use_start = start['toolUse']
-                    tool_id = tool_use_start['toolUseId']
-                    tool_name = tool_use_start['name']
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=index,
-                        tool_name=tool_name,
-                        args=None,
-                        tool_call_id=tool_id,
-                    )
-                    if maybe_event:  # pragma: no branch
-                        yield maybe_event
-            if 'contentBlockDelta' in chunk:
-                index = chunk['contentBlockDelta']['contentBlockIndex']
-                delta = chunk['contentBlockDelta']['delta']
-                if 'reasoningContent' in delta:
-                    if text := delta['reasoningContent'].get('text'):
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id=index, content=text)
-                    else:  # pragma: no cover
-                        warnings.warn(
-                            f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
-                            'Please report this to the maintainers.',
-                            UserWarning,
+            match chunk:
+                case {'messageStart': _}:
+                    continue
+                case {'messageStop': _}:
+                    continue
+                case {'metadata': metadata}:
+                    if 'usage' in metadata:  # pragma: no branch
+                        self._usage += self._map_usage(metadata)
+                    continue
+                case {'contentBlockStart': content_block_start}:
+                    index = content_block_start['contentBlockIndex']
+                    start = content_block_start['start']
+                    if 'toolUse' in start:  # pragma: no branch
+                        tool_use_start = start['toolUse']
+                        tool_id = tool_use_start['toolUseId']
+                        tool_name = tool_use_start['name']
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=index,
+                            tool_name=tool_name,
+                            args=None,
+                            tool_call_id=tool_id,
                         )
-                if 'text' in delta:
-                    yield self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
-                if 'toolUse' in delta:
-                    tool_use = delta['toolUse']
-                    maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=index,
-                        tool_name=tool_use.get('name'),
-                        args=tool_use.get('input'),
-                        tool_call_id=tool_id,
-                    )
-                    if maybe_event:  # pragma: no branch
-                        yield maybe_event
-
-    @property
-    def timestamp(self) -> datetime:
-        return self._timestamp
+                        if maybe_event:  # pragma: no branch
+                            yield maybe_event
+                case {'contentBlockDelta': content_block_delta}:
+                    index = content_block_delta['contentBlockIndex']
+                    delta = content_block_delta['delta']
+                    if 'reasoningContent' in delta:
+                        yield self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=index,
+                            content=delta['reasoningContent'].get('text'),
+                            signature=delta['reasoningContent'].get('signature'),
+                        )
+                    if 'text' in delta:
+                        maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
+                        if maybe_event is not None:  # pragma: no branch
+                            yield maybe_event
+                    if 'toolUse' in delta:
+                        tool_use = delta['toolUse']
+                        maybe_event = self._parts_manager.handle_tool_call_delta(
+                            vendor_part_id=index,
+                            tool_name=tool_use.get('name'),
+                            args=tool_use.get('input'),
+                            tool_call_id=tool_id,
+                        )
+                        if maybe_event:  # pragma: no branch
+                            yield maybe_event
+                case _:
+                    pass  # pyright wants match statements to be exhaustive
 
     @property
     def model_name(self) -> str:
         """Get the model name of the response."""
         return self._model_name
 
-    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.Usage:
-        return usage.Usage(
-            request_tokens=metadata['usage']['inputTokens'],
-            response_tokens=metadata['usage']['outputTokens'],
-            total_tokens=metadata['usage']['totalTokens'],
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
+
+    @property
+    def timestamp(self) -> datetime:
+        return self._timestamp
+
+    def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        return usage.RequestUsage(
+            input_tokens=metadata['usage']['inputTokens'],
+            output_tokens=metadata['usage']['outputTokens'],
         )
 
 

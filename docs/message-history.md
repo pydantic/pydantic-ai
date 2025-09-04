@@ -1,26 +1,26 @@
 # Messages and chat history
 
-PydanticAI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
+Pydantic AI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
 
 ### Accessing Messages from Results
 
 After running an agent, you can access the messages exchanged during that run from the `result` object.
 
 Both [`RunResult`][pydantic_ai.agent.AgentRunResult]
-(returned by [`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync])
-and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.Agent.run_stream]) have the following methods:
+(returned by [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync])
+and [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] (returned by [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream]) have the following methods:
 
-* [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json].
-* [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.agent.AgentRunResult.new_messages_json].
+- [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages]: returns all messages, including messages from prior runs. There's also a variant that returns JSON bytes, [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json].
+- [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages]: returns only the messages from the current run. There's also a variant that returns JSON bytes, [`new_messages_json()`][pydantic_ai.agent.AgentRunResult.new_messages_json].
 
 !!! info "StreamedRunResult and complete messages"
     On [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult], the messages returned from these methods will only include the final result message once the stream has finished.
 
     E.g. you've awaited one of the following coroutines:
 
-    * [`StreamedRunResult.stream()`][pydantic_ai.result.StreamedRunResult.stream]
+    * [`StreamedRunResult.stream_output()`][pydantic_ai.result.StreamedRunResult.stream_output]
     * [`StreamedRunResult.stream_text()`][pydantic_ai.result.StreamedRunResult.stream_text]
-    * [`StreamedRunResult.stream_structured()`][pydantic_ai.result.StreamedRunResult.stream_structured]
+    * [`StreamedRunResult.stream_responses()`][pydantic_ai.result.StreamedRunResult.stream_responses]
     * [`StreamedRunResult.get_output()`][pydantic_ai.result.StreamedRunResult.get_output]
 
     **Note:** The final result message will NOT be added to result messages if you use [`.stream_text(delta=True)`][pydantic_ai.result.StreamedRunResult.stream_text] since in this case the result content is never built as one string.
@@ -58,13 +58,14 @@ print(result.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
 ]
 """
 ```
+
 _(This example is complete, it can be run "as is")_
 
 Example of accessing methods on a [`StreamedRunResult`][pydantic_ai.result.StreamedRunResult] :
@@ -125,22 +126,23 @@ async def main():
                         content='Did you hear about the toothpaste scandal? They called it Colgate.'
                     )
                 ],
-                usage=Usage(request_tokens=50, response_tokens=12, total_tokens=62),
+                usage=RequestUsage(input_tokens=50, output_tokens=12),
                 model_name='gpt-4o',
                 timestamp=datetime.datetime(...),
             ),
         ]
         """
 ```
+
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
 ### Using Messages as Input for Further Agent Runs
 
-The primary use of message histories in PydanticAI is to maintain context across multiple agent runs.
+The primary use of message histories in Pydantic AI is to maintain context across multiple agent runs.
 
 To use existing messages in a run, pass them to the `message_history` parameter of
-[`Agent.run`][pydantic_ai.Agent.run], [`Agent.run_sync`][pydantic_ai.Agent.run_sync] or
-[`Agent.run_stream`][pydantic_ai.Agent.run_stream].
+[`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
+[`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
 If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt.
 
@@ -178,7 +180,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -196,13 +198,14 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
+        usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
 ]
 """
 ```
+
 _(This example is complete, it can be run "as is")_
 
 ## Storing and loading messages (to JSON)
@@ -296,7 +299,7 @@ print(result2.all_messages())
                 content='Did you hear about the toothpaste scandal? They called it Colgate.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=60, response_tokens=12, total_tokens=72),
+        usage=RequestUsage(input_tokens=60, output_tokens=12),
         model_name='gpt-4o',
         timestamp=datetime.datetime(...),
     ),
@@ -314,7 +317,7 @@ print(result2.all_messages())
                 content='This is an excellent joke invented by Samuel Colvin, it needs no explanation.'
             )
         ],
-        usage=Usage(requests=1, request_tokens=61, response_tokens=26, total_tokens=87),
+        usage=RequestUsage(input_tokens=61, output_tokens=26),
         model_name='gemini-1.5-pro',
         timestamp=datetime.datetime(...),
     ),
@@ -328,8 +331,12 @@ Sometimes you may want to modify the message history before it's sent to the mod
 reasons (filtering out sensitive information), to save costs on tokens, to give less context to the LLM, or
 custom processing logic.
 
-PydanticAI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
+Pydantic AI provides a `history_processors` parameter on `Agent` that allows you to intercept and modify
 the message history before each model request.
+
+!!! warning "History processors replace the message history"
+    History processors replace the message history in the state with the processed messages, including the new user prompt part.
+    This means that if you want to keep the original message history, you need to make a copy of it.
 
 ### Usage
 
@@ -386,15 +393,17 @@ long_conversation_history: list[ModelMessage] = []  # Your long conversation his
 # result = agent.run_sync('What did we discuss?', message_history=long_conversation_history)
 ```
 
+!!! warning "Be careful when slicing the message history"
+    When slicing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269).
+
 #### `RunContext` parameter
 
 History processors can optionally accept a [`RunContext`][pydantic_ai.tools.RunContext] parameter to access
 additional information about the current run, such as dependencies, model information, and usage statistics:
 
 ```python {title="context_aware_processor.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.tools import RunContext
 
 
 def context_aware_processor(
@@ -445,6 +454,9 @@ async def summarize_old_messages(messages: list[ModelMessage]) -> list[ModelMess
 
 agent = Agent('openai:gpt-4o', history_processors=[summarize_old_messages])
 ```
+
+!!! warning "Be careful when summarizing the message history"
+    When summarizing the message history, you need to make sure that tool calls and returns are paired, otherwise the LLM may return an error. For more details, refer to [this GitHub issue](https://github.com/pydantic/pydantic-ai/issues/2050#issuecomment-3019976269), where you can find examples of summarizing the message history.
 
 ### Testing History Processors
 

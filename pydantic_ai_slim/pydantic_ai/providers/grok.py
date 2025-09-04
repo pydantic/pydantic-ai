@@ -1,9 +1,9 @@
 from __future__ import annotations as _annotations
 
 import os
-from typing import overload
+from typing import Literal, overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 from openai import AsyncOpenAI
 
 from pydantic_ai.exceptions import UserError
@@ -20,6 +20,18 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `openai` package to use the Grok provider, '
         'you can use the `openai` optional group — `pip install "pydantic-ai-slim[openai]"`'
     ) from _import_error
+
+# https://docs.x.ai/docs/models
+GrokModelName = Literal[
+    'grok-4',
+    'grok-4-0709',
+    'grok-3',
+    'grok-3-mini',
+    'grok-3-fast',
+    'grok-3-mini-fast',
+    'grok-2-vision-1212',
+    'grok-2-image-1212',
+]
 
 
 class GrokProvider(Provider[AsyncOpenAI]):
@@ -54,7 +66,7 @@ class GrokProvider(Provider[AsyncOpenAI]):
     def __init__(self, *, api_key: str) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, http_client: AsyncHTTPClient) -> None: ...
+    def __init__(self, *, api_key: str, http_client: httpx.AsyncClient) -> None: ...
 
     @overload
     def __init__(self, *, openai_client: AsyncOpenAI | None = None) -> None: ...
@@ -64,7 +76,7 @@ class GrokProvider(Provider[AsyncOpenAI]):
         *,
         api_key: str | None = None,
         openai_client: AsyncOpenAI | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         api_key = api_key or os.getenv('GROK_API_KEY')
         if not api_key and openai_client is None:

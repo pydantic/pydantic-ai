@@ -1,14 +1,14 @@
 # Pydantic Model
 
-Simple example of using PydanticAI to construct a Pydantic model from a text input.
+Simple example of using Pydantic AI to construct a Pydantic model from a text input.
 
 Demonstrates:
 
-* [structured `output_type`](../output.md#structured-output)
+- [structured `output_type`](../output.md#structured-output)
 
 ## Running the Example
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.pydantic_model
@@ -25,6 +25,4 @@ PYDANTIC_AI_MODEL=gemini-1.5-pro python/uv-run -m pydantic_ai_examples.pydantic_
 
 ## Example Code
 
-```python {title="pydantic_model.py"}
-#! examples/pydantic_ai_examples/pydantic_model.py
-```
+```snippet {path="/examples/pydantic_ai_examples/pydantic_model.py"}```

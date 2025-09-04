@@ -7,7 +7,7 @@
   </a>
 </div>
 <div align="center">
-  <h3>LLM Agent Framework, the Pydantic way</h3>
+  <h3>GenAI Agent Framework, the Pydantic way</h3>
 </div>
 <div align="center">
   <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI"></a>
@@ -27,42 +27,42 @@
 ### <em>Pydantic AI is a Python agent framework designed to help you quickly, confidently, and painlessly build production grade applications and workflows with Generative AI.</em>
 
 
-FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic](https://docs.pydantic.dev) and modern Python features like type hints.
+FastAPI revolutionized web development by offering an innovative and ergonomic design, built on the foundation of [Pydantic Validation](https://docs.pydantic.dev) and modern Python features like type hints.
 
-Yet despite the fact that virtually every agent framework and LLM library in Python uses Pydantic, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
+Yet despite virtually every Python agent framework and LLM library using Pydantic Validation, when we began to use LLMs in [Pydantic Logfire](https://pydantic.dev/logfire), we couldn't find anything that gave us the same feeling.
 
 We built Pydantic AI with one simple aim: to bring that FastAPI feeling to GenAI app and agent development.
 
 ## Why use Pydantic AI
 
-1. __Built by the Pydantic Team__:
-[Pydantic](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
+1. **Built by the Pydantic Team**:
+[Pydantic Validation](https://docs.pydantic.dev/latest/) is the validation layer of the OpenAI SDK, the Google ADK, the Anthropic SDK, LangChain, LlamaIndex, AutoGPT, Transformers, CrewAI, Instructor and many more. _Why use the derivative when you can go straight to the source?_ :smiley:
 
-2. __Model-agnostic__:
-Supports virtually every [model](https://ai.pydantic.dev/models) and provider under the sun: OpenAI, Anthropic, Gemini, DeepSeek, Ollama, Grok, Cohere, and Mistral; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Groq, Together AI, Fireworks AI, OpenRouter, and Heroku. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models#custom-models).
+2. **Model-agnostic**:
+Supports virtually every [model](https://ai.pydantic.dev/models) and provider: OpenAI, Anthropic, Gemini, DeepSeek, Grok, Cohere, Mistral, and Perplexity; Azure AI Foundry, Amazon Bedrock, Google Vertex AI, Ollama, LiteLLM, Groq, OpenRouter, Together AI, Fireworks AI, Cerebras, Hugging Face, GitHub, Heroku, Vercel. If your favorite model or provider is not listed, you can easily implement a [custom model](https://ai.pydantic.dev/models#custom-models).
 
-3. __Seamless Observability__:
+3. **Seamless Observability**:
 Tightly [integrates](https://ai.pydantic.dev/logfire) with [Pydantic Logfire](https://pydantic.dev/logfire), our general-purpose OpenTelemetry observability platform, for real-time debugging, evals-based performance monitoring, and behavior and cost tracking. If you already have an observability platform that supports OTel, you can use that too.
 
-4. __Fully Type-safe__:
+4. **Fully Type-safe**:
 Designed to give your IDE or AI coding agent as much context as possible for auto-completion and [type checking](https://ai.pydantic.dev/agents#static-type-checking), moving entire classes of errors from runtime to write-time for a bit of that Rust "if it compiles, it works" feel.
 
-5. __Powerful Evals__:
+5. **Powerful Evals**:
 Enables you to systematically test and [evaluate](https://ai.pydantic.dev/evals) the performance and accuracy of the agentic systems you build, and monitor the performance over time in Pydantic Logfire.
 
-6. __MCP and A2A__:
+6. **MCP and A2A**:
 Integrates the [Model Context Protocol](https://ai.pydantic.dev/mcp) and [Agent2Agent](https://ai.pydantic.dev/a2a) standards to give your agent access to external tools and data and let it interoperate with other agents.
 
-7. __Multi-Modal Input__:
+7. **Multi-Modal Input**:
 Lets you easily share images, documents, videos and audio [input](https://ai.pydantic.dev/input) with the LLM to go beyond the limitations of text.
 
-8. __Streamed Outputs__:
+8. **Streamed Outputs**:
 Provides the ability to [stream](https://ai.pydantic.dev/output#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
 
-9. __Dependency Injection__:
+9. **Dependency Injection**:
 Offers an optional [dependency injection](https://ai.pydantic.dev/dependencies) system to provide data and services to your agent's [instructions](https://ai.pydantic.dev/agents#instructions), [tools](https://ai.pydantic.dev/tools) and [output functions](https://ai.pydantic.dev/output#output-functions).
 
-10. __Graph Support__:
+10. **Graph Support**:
 Provides a powerful way to define [graphs](https://ai.pydantic.dev/graph) using type hints, for use in complex applications where standard control flow can degrade to spaghetti code.
 
 Realistically though, no list is going to be as convincing as [giving it a try](#next-steps) and seeing how it makes you feel!
@@ -135,7 +135,7 @@ class SupportOutput(BaseModel):
 # Agents are generic in the type of dependencies they accept and the type of output they return.
 # In this case, the support agent has type `Agent[SupportDependencies, SupportOutput]`.
 support_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-5',
     deps_type=SupportDependencies,
     # The response from the agent will, be guaranteed to be a SupportOutput,
     # if validation fails the agent is prompted to try again.

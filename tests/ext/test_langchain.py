@@ -1,12 +1,12 @@
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic.json_schema import JsonSchemaValue
 
 from pydantic_ai import Agent
-from pydantic_ai.ext.langchain import tool_from_langchain
+from pydantic_ai.ext.langchain import LangChainToolset, tool_from_langchain
 
 
 @dataclass
@@ -18,18 +18,18 @@ class SimulatedLangChainTool:
 
     def run(
         self,
-        tool_input: Union[str, dict[str, Any]],
-        verbose: Union[bool, None] = None,
-        start_color: Union[str, None] = 'green',
-        color: Union[str, None] = 'green',
+        tool_input: str | dict[str, Any],
+        verbose: bool | None = None,
+        start_color: str | None = 'green',
+        color: str | None = 'green',
         callbacks: Any = None,
         *,
-        tags: Union[list[str], None] = None,
-        metadata: Union[dict[str, Any], None] = None,
-        run_name: Union[str, None] = None,
-        run_id: Union[Any, None] = None,
-        config: Union[Any, None] = None,
-        tool_call_id: Union[str, None] = None,
+        tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        run_name: str | None = None,
+        run_id: Any | None = None,
+        config: Any | None = None,
+        tool_call_id: str | None = None,
         **kwargs: Any,
     ) -> Any:
         if isinstance(tool_input, dict):
@@ -49,27 +49,36 @@ class SimulatedLangChainTool:
         }
 
 
-def test_langchain_tool_conversion():
-    langchain_tool = SimulatedLangChainTool(
-        name='file_search',
-        description='Recursively search for files in a subdirectory that match the regex pattern',
-        args={
-            'dir_path': {
-                'default': '.',
-                'description': 'Subdirectory to search in.',
-                'title': 'Dir Path',
-                'type': 'string',
-            },
-            'pattern': {
-                'description': 'Unix shell regex, where * matches everything.',
-                'title': 'Pattern',
-                'type': 'string',
-            },
+langchain_tool = SimulatedLangChainTool(
+    name='file_search',
+    description='Recursively search for files in a subdirectory that match the regex pattern',
+    args={
+        'dir_path': {
+            'default': '.',
+            'description': 'Subdirectory to search in.',
+            'title': 'Dir Path',
+            'type': 'string',
         },
-    )
+        'pattern': {
+            'description': 'Unix shell regex, where * matches everything.',
+            'title': 'Pattern',
+            'type': 'string',
+        },
+    },
+)
+
+
+def test_langchain_tool_conversion():
     pydantic_tool = tool_from_langchain(langchain_tool)
 
     agent = Agent('test', tools=[pydantic_tool], retries=7)
+    result = agent.run_sync('foobar')
+    assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
+
+
+def test_langchain_toolset():
+    toolset = LangChainToolset([langchain_tool])
+    agent = Agent('test', toolsets=[toolset], retries=7)
     result = agent.run_sync('foobar')
     assert result.output == snapshot("{\"file_search\":\"I was called with {'dir_path': '.', 'pattern': 'a'}\"}")
 

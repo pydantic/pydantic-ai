@@ -4,12 +4,12 @@ RAG search example. This demo allows you to ask question of the [logfire](https:
 
 Demonstrates:
 
-* [tools](../tools.md)
-* [agent dependencies](../dependencies.md)
-* RAG search
+- [tools](../tools.md)
+- [agent dependencies](../dependencies.md)
+- RAG search
 
 This is done by creating a database containing each section of the markdown documentation, then registering
-the search tool with the PydanticAI agent.
+the search tool with the Pydantic AI agent.
 
 Logic for extracting sections from markdown files and a JSON file with that data is available in
 [this gist](https://gist.github.com/samuelcolvin/4b5bb9bb163b1122ff17e29e48c10992).
@@ -28,13 +28,13 @@ docker run --rm \
 As with the [SQL gen](./sql-gen.md) example, we run postgres on port `54320` to avoid conflicts with any other postgres instances you may have running.
 We also mount the PostgreSQL `data` directory locally to persist the data if you need to stop and restart the container.
 
-With that running and [dependencies installed and environment variables set](./index.md#usage), we can build the search database with (**WARNING**: this requires the `OPENAI_API_KEY` env variable and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):
+With that running and [dependencies installed and environment variables set](./setup.md#usage), we can build the search database with (**WARNING**: this requires the `OPENAI_API_KEY` env variable and will calling the OpenAI embedding API around 300 times to generate embeddings for each section of the documentation):
 
 ```bash
 python/uv-run -m pydantic_ai_examples.rag build
 ```
 
-(Note building the database doesn't use PydanticAI right now, instead it uses the OpenAI SDK directly.)
+(Note building the database doesn't use Pydantic AI right now, instead it uses the OpenAI SDK directly.)
 
 You can then ask the agent a question with:
 
@@ -44,6 +44,4 @@ python/uv-run -m pydantic_ai_examples.rag search "How do I configure logfire to 
 
 ## Example Code
 
-```python {title="rag.py"}
-#! examples/pydantic_ai_examples/rag.py
-```
+```snippet {path="/examples/pydantic_ai_examples/rag.py"}```

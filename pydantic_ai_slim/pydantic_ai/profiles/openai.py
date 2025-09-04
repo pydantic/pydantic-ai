@@ -1,16 +1,20 @@
 from __future__ import annotations as _annotations
 
 import re
+import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from . import ModelProfile
 from ._json_schema import JsonSchema, JsonSchemaTransformer
 
+OpenAISystemPromptRole = Literal['system', 'developer', 'user']
 
-@dataclass
+
+@dataclass(kw_only=True)
 class OpenAIModelProfile(ModelProfile):
-    """Profile for models used with OpenAIModel.
+    """Profile for models used with `OpenAIChatModel`.
 
     ALL FIELDS MUST BE `openai_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     """
@@ -21,24 +25,64 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_sampling_settings: bool = True
     """Turn off to don't send sampling settings like `temperature` and `top_p` to models that don't support them, like OpenAI's o-series reasoning models."""
 
+    openai_unsupported_model_settings: Sequence[str] = ()
+    """A list of model settings that are not supported by the model."""
+
+    # Some OpenAI-compatible providers (e.g. MoonshotAI) currently do **not** accept
+    # `tool_choice="required"`.  This flag lets the calling model know whether it's
+    # safe to pass that value along.  Default is `True` to preserve existing
+    # behaviour for OpenAI itself and most providers.
+    openai_supports_tool_choice_required: bool = True
+    """Whether the provider accepts the value ``tool_choice='required'`` in the request payload."""
+
+    openai_system_prompt_role: OpenAISystemPromptRole | None = None
+    """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
+
+    def __post_init__(self):  # pragma: no cover
+        if not self.openai_supports_sampling_settings:
+            warnings.warn(
+                'The `openai_supports_sampling_settings` has no effect, and it will be removed in future versions. '
+                'Use `openai_unsupported_model_settings` instead.',
+                DeprecationWarning,
+            )
+
 
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
-    is_reasoning_model = model_name.startswith('o')
+    is_reasoning_model = model_name.startswith('o') or model_name.startswith('gpt-5')
+    # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
+    # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
+    # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
+
+    if is_reasoning_model:
+        openai_unsupported_model_settings = (
+            'temperature',
+            'top_p',
+            'presence_penalty',
+            'frequency_penalty',
+            'logit_bias',
+            'logprobs',
+            'top_logprobs',
+        )
+    else:
+        openai_unsupported_model_settings = ()
+
+    # The o1-mini model doesn't support the `system` role, so we default to `user`.
+    # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
+    openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else None
+
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
-        openai_supports_sampling_settings=not is_reasoning_model,
+        supports_json_schema_output=True,
+        supports_json_object_output=True,
+        openai_unsupported_model_settings=openai_unsupported_model_settings,
+        openai_system_prompt_role=openai_system_prompt_role,
     )
 
 
 _STRICT_INCOMPATIBLE_KEYS = [
     'minLength',
     'maxLength',
-    'pattern',
-    'format',
-    'minimum',
-    'maximum',
-    'multipleOf',
     'patternProperties',
     'unevaluatedProperties',
     'propertyNames',
@@ -48,15 +92,25 @@ _STRICT_INCOMPATIBLE_KEYS = [
     'contains',
     'minContains',
     'maxContains',
-    'minItems',
-    'maxItems',
     'uniqueItems',
+]
+
+_STRICT_COMPATIBLE_STRING_FORMATS = [
+    'date-time',
+    'time',
+    'date',
+    'duration',
+    'email',
+    'hostname',
+    'ipv4',
+    'ipv6',
+    'uuid',
 ]
 
 _sentinel = object()
 
 
-@dataclass
+@dataclass(init=False)
 class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     """Recursively handle the schema to make it compatible with OpenAI strict mode.
 
@@ -88,9 +142,17 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
     def transform(self, schema: JsonSchema) -> JsonSchema:  # noqa C901
         # Remove unnecessary keys
         schema.pop('title', None)
-        schema.pop('default', None)
         schema.pop('$schema', None)
         schema.pop('discriminator', None)
+
+        default = schema.get('default', _sentinel)
+        if default is not _sentinel:
+            # the "default" keyword is not allowed in strict mode, but including it makes some Ollama models behave
+            # better, so we keep it around when not strict
+            if self.strict is True:
+                schema.pop('default', None)
+            elif self.strict is None:  # pragma: no branch
+                self.is_strict_compatible = False
 
         if schema_ref := schema.get('$ref'):
             if schema_ref == self.root_ref:
@@ -106,6 +168,9 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
             value = schema.get(key, _sentinel)
             if value is not _sentinel:
                 incompatible_values[key] = value
+        if format := schema.get('format'):
+            if format not in _STRICT_COMPATIBLE_STRING_FORMATS:
+                incompatible_values['format'] = format
         description = schema.get('description')
         if incompatible_values:
             if self.strict is True:
@@ -137,11 +202,13 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
                 schema['required'] = list(schema['properties'].keys())
 
             elif self.strict is None:
-                if (
-                    schema.get('additionalProperties') is not False
-                    or 'properties' not in schema
-                    or 'required' not in schema
-                ):
+                if schema.get('additionalProperties', None) not in (None, False):
+                    self.is_strict_compatible = False
+                else:
+                    # additional properties are disallowed by default
+                    schema['additionalProperties'] = False
+
+                if 'properties' not in schema or 'required' not in schema:
                     self.is_strict_compatible = False
                 else:
                     required = schema['required']

@@ -33,11 +33,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1598'
+      - '1384'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2281
+      - gfet4t7; dur=1776
       transfer-encoding:
       - chunked
       vary:
@@ -46,35 +46,31 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.6083203943764292
+      - avgLogprobs: -0.7381779328557371
         content:
           parts:
           - text: |-
-              Okay, I can describe what's visible in the image you sent.
+              Okay, I can describe what is visible in the image.
 
-              The image shows a camera setup in an outdoor environment. Here's a breakdown of what's in the frame:
+              The image shows a camera setup in an outdoor setting. The camera is mounted on a tripod and has an external monitor attached to it. The monitor is displaying a scene that appears to be a desert landscape with rocky formations and mountains in the background. The foreground and background of the overall image, outside of the camera monitor, is also a blurry, desert landscape. The colors in the background are warm and suggest either sunrise, sunset, or reflected light off the rock formations.
 
-              *   **Camera Monitor:** A small, external monitor is mounted on top of the camera. The monitor is displaying a preview of the scene the camera is capturing. The preview shows a scene of a dirt road, rocks, and a distant mountain range.
-              *   **Camera:** The camera itself is attached to a tripod. It's a compact camera, and the lens is visible.
-              *   **Tripod:** The camera is mounted on a tripod to keep it stable.
-              *   **Background:** The background is blurred, but it appears to be a mountainous or desert landscape with rocks and vegetation. The colors suggest that it could be late afternoon or early morning, with warm light illuminating the scene.
-
-              In summary, the image depicts a camera setup being used to film or photograph a desert landscape.
+              It looks like someone is either reviewing footage on the monitor, or using it as an aid for framing the shot.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
+      responseId: 21peaP3fE4fJ1PIPhdaDmA0
       usageMetadata:
-        candidatesTokenCount: 205
+        candidatesTokenCount: 131
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 205
+          tokenCount: 131
         promptTokenCount: 270
         promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 10
         - modality: VIDEO
           tokenCount: 260
-        totalTokenCount: 475
+        - modality: TEXT
+          tokenCount: 10
+        totalTokenCount: 401
     status:
       code: 200
       message: OK

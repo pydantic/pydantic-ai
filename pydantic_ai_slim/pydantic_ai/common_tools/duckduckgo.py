@@ -1,5 +1,5 @@
 import functools
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 
 import anyio
 import anyio.to_thread
@@ -9,10 +9,13 @@ from typing_extensions import TypedDict
 from pydantic_ai.tools import Tool
 
 try:
-    from duckduckgo_search import DDGS
+    try:
+        from ddgs import DDGS
+    except ImportError:  # Fallback for older versions of ddgs
+        from duckduckgo_search import DDGS
 except ImportError as _import_error:
     raise ImportError(
-        'Please install `duckduckgo-search` to use the DuckDuckGo search tool, '
+        'Please install `ddgs` to use the DuckDuckGo search tool, '
         'you can use the `duckduckgo` optional group — `pip install "pydantic-ai-slim[duckduckgo]"`'
     ) from _import_error
 
@@ -40,7 +43,9 @@ class DuckDuckGoSearchTool:
     client: DDGS
     """The DuckDuckGo search client."""
 
-    max_results: int | None = None
+    _: KW_ONLY
+
+    max_results: int | None
     """The maximum number of results. If None, returns results only from the first response."""
 
     async def __call__(self, query: str) -> list[DuckDuckGoResult]:

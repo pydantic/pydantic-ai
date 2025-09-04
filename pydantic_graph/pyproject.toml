@@ -14,7 +14,13 @@ bump = true
 name = "pydantic-graph"
 dynamic = ["version"]
 description = "Graph and state machine library"
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
@@ -22,7 +28,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -38,10 +43,10 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "httpx>=0.27",
-    "logfire-api>=1.2.0",
+    "logfire-api>=3.14.1",
     "pydantic>=2.10",
     "typing-inspection>=0.4.0",
 ]

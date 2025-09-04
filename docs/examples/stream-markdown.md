@@ -8,7 +8,7 @@ Demonstrates:
 
 ## Running the Example
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.stream_markdown
@@ -16,6 +16,4 @@ python/uv-run -m pydantic_ai_examples.stream_markdown
 
 ## Example Code
 
-```python
-#! examples/pydantic_ai_examples/stream_markdown.py
-```
+```snippet {path="/examples/pydantic_ai_examples/stream_markdown.py"}```

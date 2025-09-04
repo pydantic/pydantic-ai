@@ -1,17 +1,17 @@
 # Unit testing
 
-Writing unit tests for PydanticAI code is just like unit tests for any other Python code.
+Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.
 
 Because for the most part they're nothing new, we have pretty well established tools and patterns for writing and running these kinds of tests.
 
 Unless you're really sure you know better, you'll probably want to follow roughly this strategy:
 
-* Use [`pytest`](https://docs.pytest.org/en/stable/) as your test harness
-* If you find yourself typing out long assertions, use [inline-snapshot](https://15r10nk.github.io/inline-snapshot/latest/)
-* Similarly, [dirty-equals](https://dirty-equals.helpmanual.io/latest/) can be useful for comparing large data structures
-* Use [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in place of your actual model to avoid the usage, latency and variability of real LLM calls
-* Use [`Agent.override`][pydantic_ai.agent.Agent.override] to replace your model inside your application logic
-* Set [`ALLOW_MODEL_REQUESTS=False`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] globally to block any requests from being made to non-test models accidentally
+- Use [`pytest`](https://docs.pytest.org/en/stable/) as your test harness
+- If you find yourself typing out long assertions, use [inline-snapshot](https://15r10nk.github.io/inline-snapshot/latest/)
+- Similarly, [dirty-equals](https://dirty-equals.helpmanual.io/latest/) can be useful for comparing large data structures
+- Use [`TestModel`][pydantic_ai.models.test.TestModel] or [`FunctionModel`][pydantic_ai.models.function.FunctionModel] in place of your actual model to avoid the usage, latency and variability of real LLM calls
+- Use [`Agent.override`][pydantic_ai.agent.Agent.override] to replace an agent's model, dependencies, or toolsets inside your application logic
+- Set [`ALLOW_MODEL_REQUESTS=False`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] globally to block any requests from being made to non-test models accidentally
 
 ### Unit testing with `TestModel`
 
@@ -86,7 +86,7 @@ import pytest
 
 from dirty_equals import IsNow, IsStr
 
-from pydantic_ai import models, capture_run_messages
+from pydantic_ai import models, capture_run_messages, RequestUsage
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.messages import (
     ModelResponse,
@@ -97,7 +97,6 @@ from pydantic_ai.messages import (
     UserPromptPart,
     ModelRequest,
 )
-from pydantic_ai.usage import Usage
 
 from fake_database import DatabaseConn
 from weather_app import run_weather_forecast, weather_agent
@@ -141,12 +140,9 @@ async def test_forecast():
                     tool_call_id=IsStr(),
                 )
             ],
-            usage=Usage(
-                requests=1,
-                request_tokens=71,
-                response_tokens=7,
-                total_tokens=78,
-                details=None,
+            usage=RequestUsage(
+                input_tokens=71,
+                output_tokens=7,
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
@@ -167,12 +163,9 @@ async def test_forecast():
                     content='{"weather_forecast":"Sunny with a chance of rain"}',
                 )
             ],
-            usage=Usage(
-                requests=1,
-                request_tokens=77,
-                response_tokens=16,
-                total_tokens=93,
-                details=None,
+            usage=RequestUsage(
+                input_tokens=77,
+                output_tokens=16,
             ),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
@@ -258,9 +251,10 @@ Here's an example of a fixture that overrides the model with `TestModel`:
 
 ```python {title="test_agent.py" requires="weather_app.py"}
 import pytest
-from weather_app import weather_agent
 
 from pydantic_ai.models.test import TestModel
+
+from weather_app import weather_agent
 
 
 @pytest.fixture

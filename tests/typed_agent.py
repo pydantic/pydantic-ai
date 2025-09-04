@@ -1,15 +1,18 @@
 """This file is used to test static typing, it's analyzed with pyright and mypy."""
+# pyright: reportUnnecessaryTypeIgnoreComment=false
 
-from collections.abc import Awaitable
+import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Callable, TypeAlias, Union
+from decimal import Decimal
+from typing import Any, TypeAlias
 
 from typing_extensions import assert_type
 
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
-from pydantic_ai._output import ToolOutput
 from pydantic_ai.agent import AgentRunResult
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.output import StructuredDict, TextOutput, ToolOutput
+from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 
 # Define here so we can check `if MYPY` below. This will not be executed, MYPY will always set it to True
 MYPY = False
@@ -81,7 +84,7 @@ def ok_tool_plain(x: str) -> dict[str, str]:
 
 
 @typed_agent.tool_plain
-async def ok_json_list(x: str) -> list[Union[str, int]]:
+async def ok_json_list(x: str) -> list[str | int]:
     return [x, 1]
 
 
@@ -131,7 +134,7 @@ def run_sync() -> None:
 
 async def run_stream() -> None:
     async with typed_agent.run_stream('testing', deps=MyDeps(foo=1, bar=2)) as streamed_result:
-        result_items = [chunk async for chunk in streamed_result.stream()]
+        result_items = [chunk async for chunk in streamed_result.stream_output()]
         assert_type(result_items, list[str])
 
 
@@ -154,27 +157,41 @@ class Bar:
     b: str
 
 
-union_agent: Agent[None, Union[Foo, Bar]] = Agent(output_type=Union[Foo, Bar])  # type: ignore[call-overload]
-assert_type(union_agent, Agent[None, Union[Foo, Bar]])
+union_agent: Agent[None, Foo | Bar] = Agent(output_type=Foo | Bar)  # type: ignore[call-overload]
+assert_type(union_agent, Agent[None, Foo | Bar])
 
 
 def run_sync3() -> None:
     result = union_agent.run_sync('testing')
-    assert_type(result, AgentRunResult[Union[Foo, Bar]])
-    assert_type(result.output, Union[Foo, Bar])
+    assert_type(result, AgentRunResult[Foo | Bar])
+    assert_type(result.output, Foo | Bar)
 
 
 MyUnion: TypeAlias = 'Foo | Bar'
 union_agent2: Agent[None, MyUnion] = Agent(output_type=MyUnion)  # type: ignore[call-overload]
 assert_type(union_agent2, Agent[None, MyUnion])
 
+structured_dict = StructuredDict(
+    {
+        'type': 'object',
+        'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+        'required': ['name', 'age'],
+    }
+)
+structured_dict_agent = Agent(output_type=structured_dict)
+assert_type(structured_dict_agent, Agent[None, dict[str, Any]])
 
-def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> str:
-    return f'{x} {y}'
+
+def foobar_ctx(ctx: RunContext[int], x: str, y: int) -> Decimal:
+    return Decimal(x) + y
 
 
 async def foobar_plain(x: int, y: int) -> int:
     return x * y
+
+
+def str_to_regex(text: str) -> re.Pattern[str]:
+    return re.compile(text)
 
 
 class MyClass:
@@ -182,8 +199,8 @@ class MyClass:
         return True
 
 
-str_function_agent = Agent(output_type=foobar_ctx)
-assert_type(str_function_agent, Agent[None, str])
+decimal_function_agent = Agent(output_type=foobar_ctx)
+assert_type(decimal_function_agent, Agent[None, Decimal])
 
 bool_method_agent = Agent(output_type=MyClass().my_method)
 assert_type(bool_method_agent, Agent[None, bool])
@@ -200,10 +217,20 @@ if MYPY:
     assert_type(two_scalars_output_agent, Agent[None, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
-    complex_output_agent = Agent[None, Foo | Bar | str | int | bool | tuple[str, int]](
-        output_type=[Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker]
+    complex_output_agent = Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]](
+        output_type=[str, Foo, Bar, foobar_ctx, ToolOutput[int](foobar_plain), marker, TextOutput(str_to_regex)]
     )
-    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
+    assert_type(
+        complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
+    )
+
+    complex_deferred_output_agent = Agent[
+        None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests
+    ](output_type=[complex_output_agent.output_type, DeferredToolRequests])
+    assert_type(
+        complex_deferred_output_agent,
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
+    )
 else:
     # pyright is able to correctly infer the type here
     async_int_function_agent = Agent(output_type=foobar_plain)
@@ -216,8 +243,18 @@ else:
     assert_type(two_scalars_output_agent, Agent[None, int | str])
 
     marker: ToolOutput[bool | tuple[str, int]] = ToolOutput(bool | tuple[str, int])  # type: ignore
-    complex_output_agent = Agent(output_type=[Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker])
-    assert_type(complex_output_agent, Agent[None, Foo | Bar | str | int | bool | tuple[str, int]])
+    complex_output_agent = Agent(
+        output_type=[str, Foo, Bar, foobar_ctx, ToolOutput(foobar_plain), marker, TextOutput(str_to_regex)]
+    )
+    assert_type(
+        complex_output_agent, Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str]]
+    )
+
+    complex_deferred_output_agent = Agent(output_type=[complex_output_agent.output_type, DeferredToolRequests])
+    assert_type(
+        complex_deferred_output_agent,
+        Agent[None, Foo | Bar | Decimal | int | bool | tuple[str, int] | str | re.Pattern[str] | DeferredToolRequests],
+    )
 
 
 Tool(foobar_ctx, takes_ctx=True)

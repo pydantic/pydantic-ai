@@ -2,30 +2,38 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import importlib.util
+import logging
 import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
+from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
-from typing_extensions import TypeAlias
-from vcr import VCR
+from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
+from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
 
+# Configure VCR logger to WARNING as it is too verbose by default
+# specifically, it logs every request and response including binary
+# content in Cassette.append, which is causing log downloads from
+# GitHub action to fail.
+logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
 
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
@@ -42,6 +50,7 @@ if TYPE_CHECKING:
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
 else:
     from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
@@ -50,6 +59,44 @@ else:
         if 'delta' not in kwargs:  # pragma: no branch
             kwargs['delta'] = 10
         return _IsNow(*args, **kwargs)
+
+    class IsSameStr(IsStr):
+        """
+        Checks if the value is a string, and that subsequent uses have the same value as the first one.
+
+        Example:
+        ```python {test="skip"}
+        assert events == [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': '(no tool calls)',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+        ```
+        """
+
+        _first_other: str | None = None
+
+        def equals(self, other: Any) -> bool:
+            if self._first_other is None:
+                self._first_other = other
+                return super().equals(other)
+            else:
+                return other == self._first_other
 
 
 class TestEnv:
@@ -82,7 +129,7 @@ def env() -> Iterator[TestEnv]:
     test_env.reset()
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def anyio_backend():
     return 'asyncio'
 
@@ -175,12 +222,30 @@ def try_import() -> Iterator[Callable[[], bool]]:
         import_success = True
 
 
-@pytest.fixture(autouse=True)
-def set_event_loop() -> Iterator[None]:
+@pytest.fixture(scope='session', autouse=True)
+def event_loop() -> Iterator[None]:
     new_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(new_loop)
     yield
     new_loop.close()
+
+
+@pytest.fixture(autouse=True)
+def no_instrumentation_by_default():
+    Agent.instrument_all(False)
+
+
+try:
+    import logfire
+
+    logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
+
+    @pytest.fixture(autouse=True)
+    def fresh_logfire():
+        logfire.shutdown(flush=False)
+
+except ImportError:
+    pass
 
 
 def raise_if_exception(e: Any) -> None:
@@ -192,6 +257,29 @@ def pytest_recording_configure(config: Any, vcr: VCR):
     from . import json_body_serializer
 
     vcr.register_serializer('yaml', json_body_serializer)
+
+    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
+        if r1.method.upper() != r2.method.upper():
+            raise AssertionError(f'{r1.method} != {r2.method}')
+
+    vcr.register_matcher('method', method_matcher)
+
+
+@pytest.fixture(autouse=True)
+def mock_vcr_aiohttp_content(mocker: MockerFixture):
+    try:
+        from vcr.stubs import aiohttp_stubs
+    except ImportError:  # pragma: lax no cover
+        return
+
+    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
+    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
+    # So we turn `content` into a cached property to return the same one each time.
+    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
+    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # type: ignore
+    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
+    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
 
 
 @pytest.fixture(scope='module')
@@ -205,7 +293,7 @@ def vcr_config():
 
 
 @pytest.fixture(autouse=True)
-async def close_cached_httpx_client() -> AsyncIterator[None]:
+async def close_cached_httpx_client(anyio_backend: str) -> AsyncIterator[None]:
     yield
     for provider in [
         'openai',
@@ -292,8 +380,18 @@ def openrouter_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def huggingface_api_key() -> str:
+    return os.getenv('HF_TOKEN', 'hf_token')
+
+
+@pytest.fixture(scope='session')
 def heroku_inference_key() -> str:
     return os.getenv('HEROKU_INFERENCE_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
+def cerebras_api_key() -> str:
+    return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
 
 
 @pytest.fixture(scope='session')
@@ -316,6 +414,55 @@ def bedrock_provider():
 
 
 @pytest.fixture()
+def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
+    # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
+    if not os.getenv('CI', False):
+        return  # pragma: lax no cover
+
+    try:
+        from google.genai import _api_client
+    except ImportError:
+        return  # do nothing if this isn't installed
+
+    @dataclass
+    class NoOpCredentials:
+        token = 'my-token'
+        quota_project_id = 'pydantic-ai'
+
+        def refresh(self, request: httpx.Request): ...
+
+        def expired(self) -> bool:
+            return False
+
+    return_value = (NoOpCredentials(), 'pydantic-ai')
+    mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
+
+
+@pytest.fixture()
+async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
+    # NOTE: You need to comment out this line to rewrite the cassettes locally.
+    if not os.getenv('CI', False):
+        pytest.skip('Requires properly configured local google vertex config to pass')
+
+    try:
+        from google.genai import Client
+
+        from pydantic_ai.providers.google import GoogleProvider
+    except ImportError:  # pragma: lax no cover
+        pytest.skip('google is not installed')
+
+    project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
+    location = os.getenv('GOOGLE_LOCATION', 'us-central1')
+    client = Client(vertexai=True, project=project, location=location)
+
+    try:
+        yield GoogleProvider(client=client)
+    finally:
+        client.aio._api_client._httpx_client.close()  # type: ignore
+        await client.aio._api_client._async_httpx_client.aclose()  # type: ignore
+
+
+@pytest.fixture()
 def model(
     request: pytest.FixtureRequest,
     openai_api_key: str,
@@ -324,14 +471,19 @@ def model(
     groq_api_key: str,
     co_api_key: str,
     gemini_api_key: str,
+    huggingface_api_key: str,
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
-        if request.param == 'openai':
-            from pydantic_ai.models.openai import OpenAIModel
+        if request.param == 'test':
+            from pydantic_ai.models.test import TestModel
+
+            return TestModel()
+        elif request.param == 'openai':
+            from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
-            return OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+            return OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
         elif request.param == 'anthropic':
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -353,10 +505,10 @@ def model(
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
         elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider
+            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
+            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
 
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider
@@ -366,6 +518,14 @@ def model(
             from pydantic_ai.models.bedrock import BedrockConverseModel
 
             return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
+        elif request.param == 'huggingface':
+            from pydantic_ai.models.huggingface import HuggingFaceModel
+            from pydantic_ai.providers.huggingface import HuggingFaceProvider
+
+            return HuggingFaceModel(
+                'Qwen/Qwen2.5-72B-Instruct',
+                provider=HuggingFaceProvider(provider_name='nebius', api_key=huggingface_api_key),
+            )
         else:
             raise ValueError(f'Unknown model: {request.param}')
     except ImportError:

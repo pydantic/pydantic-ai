@@ -1,17 +1,17 @@
 # Server
 
-PydanticAI models can also be used within MCP Servers.
+Pydantic AI models can also be used within MCP Servers.
 
 ## MCP Server
 
-Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using PydanticAI within a tool call:
+Here's a simple example of a [Python MCP server](https://github.com/modelcontextprotocol/python-sdk) using Pydantic AI within a tool call:
 
-```py {title="mcp_server.py" py="3.10"}
+```py {title="mcp_server.py"}
 from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent
 
-server = FastMCP('PydanticAI Server')
+server = FastMCP('Pydantic AI Server')
 server_agent = Agent(
     'anthropic:claude-3-5-haiku-latest', system_prompt='always reply in rhyme'
 )
@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
 This server can be queried with any MCP client. Here is an example using the Python SDK directly:
 
-```py {title="mcp_client.py" py="3.10" requires="mcp_server.py" dunder_name="not_main"}
+```py {title="mcp_client.py" requires="mcp_server.py" dunder_name="not_main"}
 import asyncio
 import os
 
@@ -70,13 +70,13 @@ When Pydantic AI agents are used within MCP servers, they can use sampling via [
 
 We can extend the above example to use sampling so instead of connecting directly to the LLM, the agent calls back through the MCP client to make LLM calls.
 
-```py {title="mcp_server_sampling.py" py="3.10"}
+```py {title="mcp_server_sampling.py"}
 from mcp.server.fastmcp import Context, FastMCP
 
 from pydantic_ai import Agent
 from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
-server = FastMCP('PydanticAI Server with sampling')
+server = FastMCP('Pydantic AI Server with sampling')
 server_agent = Agent(system_prompt='always reply in rhyme')
 
 
@@ -95,14 +95,19 @@ The [above](#simple-client) client does not support sampling, so if you tried to
 
 The simplest way to support sampling in an MCP client is to [use](./client.md#mcp-sampling) a Pydantic AI agent as the client, but if you wanted to support sampling with the vanilla MCP SDK, you could do so like this:
 
-```py {title="mcp_client_sampling.py" py="3.10" requires="mcp_server_sampling.py"}
+```py {title="mcp_client_sampling.py" requires="mcp_server_sampling.py"}
 import asyncio
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.shared.context import RequestContext
-from mcp.types import CreateMessageRequestParams, CreateMessageResult, ErrorData, TextContent
+from mcp.types import (
+    CreateMessageRequestParams,
+    CreateMessageResult,
+    ErrorData,
+    TextContent,
+)
 
 
 async def sampling_callback(
@@ -117,7 +122,10 @@ async def sampling_callback(
         SamplingMessage(
             role='user',
             content=TextContent(
-                type='text', text='write a poem about socks', annotations=None
+                type='text',
+                text='write a poem about socks',
+                annotations=None,
+                meta=None,
             ),
         )
     ]
@@ -147,4 +155,4 @@ if __name__ == '__main__':
     asyncio.run(client())
 ```
 
-_(This example is complete, it can be run "as is" with Python 3.10+)_
+_(This example is complete, it can be run "as is")_
