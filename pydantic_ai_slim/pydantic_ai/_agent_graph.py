@@ -301,16 +301,21 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if self.system_prompt_dynamic_functions:
             for msg in messages:
                 if isinstance(msg, _messages.ModelRequest):
-                    for i, part in enumerate(msg.parts):
+                    reevaluated_message_parts: list[_messages.ModelRequestPart] = []
+                    for part in msg.parts:
                         if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
                             # Look up the runner by its ref
                             if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
                                 part.dynamic_ref
                             ):
                                 updated_part_content = await runner.run(run_context)
-                                msg.parts[i] = _messages.SystemPromptPart(
-                                    updated_part_content, dynamic_ref=part.dynamic_ref
-                                )
+                                part = _messages.SystemPromptPart(updated_part_content, dynamic_ref=part.dynamic_ref)
+
+                        reevaluated_message_parts.append(part)
+
+                    # Replace message parts with reevaluated ones to prevent mutating parts list
+                    if reevaluated_message_parts != msg.parts:
+                        msg.parts = reevaluated_message_parts
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
