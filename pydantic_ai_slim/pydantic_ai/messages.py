@@ -1014,14 +1014,22 @@ class ModelResponse:
     provider_name: str | None = None
     """The name of the LLM provider that generated the response."""
 
-    provider_details: dict[str, Any] | None = field(default=None)
+    provider_details: Annotated[
+        dict[str, Any] | None,
+        # `vendor_details` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_details', 'vendor_details')),
+    ] = None
     """Additional provider-specific details in a serializable format.
 
     This allows storing selected vendor-specific data that isn't mapped to standard ModelResponse fields.
     For OpenAI models, this may include 'logprobs', 'finish_reason', etc.
     """
 
-    provider_response_id: str | None = None
+    provider_response_id: Annotated[
+        str | None,
+        # `vendor_id` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id')),
+    ] = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
     @deprecated('`price` is deprecated, use `cost` instead')

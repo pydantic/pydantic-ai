@@ -3,7 +3,9 @@ from __future__ import annotations as _annotations
 import dataclasses
 from copy import copy
 from dataclasses import dataclass, fields
+from typing import Annotated
 
+from pydantic import AliasChoices, BeforeValidator, Field
 from typing_extensions import deprecated, overload
 
 from . import _utils
@@ -14,7 +16,11 @@ __all__ = 'RequestUsage', 'RunUsage', 'Usage', 'UsageLimits'
 
 @dataclass(repr=False, kw_only=True)
 class UsageBase:
-    input_tokens: int = 0
+    input_tokens: Annotated[
+        int,
+        # `request_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        Field(validation_alias=AliasChoices('input_tokens', 'request_tokens')),
+    ] = 0
     """Number of input/prompt tokens."""
 
     cache_write_tokens: int = 0
@@ -22,7 +28,11 @@ class UsageBase:
     cache_read_tokens: int = 0
     """Number of tokens read from the cache."""
 
-    output_tokens: int = 0
+    output_tokens: Annotated[
+        int,
+        # `response_tokens` is deprecated, but we still want to support deserializing model responses stored in a DB before the name was changed
+        Field(validation_alias=AliasChoices('output_tokens', 'response_tokens')),
+    ] = 0
     """Number of output/completion tokens."""
 
     input_audio_tokens: int = 0
@@ -32,7 +42,11 @@ class UsageBase:
     output_audio_tokens: int = 0
     """Number of audio output tokens."""
 
-    details: dict[str, int] = dataclasses.field(default_factory=dict)
+    details: Annotated[
+        dict[str, int],
+        # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
+        BeforeValidator(lambda d: d or {}),
+    ] = dataclasses.field(default_factory=dict)
     """Any extra details returned by the model."""
 
     @property
