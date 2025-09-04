@@ -2876,13 +2876,13 @@ def test_deprecated_openai_model(openai_api_key: str):
 
 @pytest.mark.parametrize('model_name', ['gpt-5', 'gpt-5-mini', 'gpt-5-nano'])
 def test_model_profile_gpt5_freeform_function_calling_support(model_name: str):
-    profile: OpenAIModelProfile = openai_model_profile(model_name)
+    profile = cast('OpenAIModelProfile', openai_model_profile(model_name))
     assert profile.openai_supports_freeform_function_calling
 
 
 @pytest.mark.parametrize('model_name', ['gpt-4.1', 'gpt-4o', 'gpt-o4-mini'])
 def test_model_profile_gpt4_freeform_function_calling_support(model_name: str):
-    gpt4_profile = openai_model_profile(model_name)
+    gpt4_profile = cast('OpenAIModelProfile', openai_model_profile(model_name))
     assert not gpt4_profile.openai_supports_freeform_function_calling
 
 

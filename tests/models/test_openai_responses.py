@@ -42,6 +42,8 @@ from ..parts_from_messages import part_types_from_messages
 from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
+    from openai import NOT_GIVEN
+    from openai.types.responses.response_output_item import ResponseCustomToolCall
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_usage import ResponseUsage
 
@@ -1148,7 +1150,7 @@ def test_openai_responses_model_parallel_tool_calling_enabled():
 
     params_regular_only = ModelRequestParameters(function_tools=[regular_tool])
     parallel_calling = model._get_parallel_tool_calling({}, params_regular_only)  # type: ignore[reportPrivateUsage]
-    assert parallel_calling is not False  # it's NOT_GIVEN but the import fails
+    assert parallel_calling == NOT_GIVEN
 
 
 def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform():
@@ -1234,12 +1236,12 @@ async def test_openai_responses_model_custom_tool_call_response_processing(allow
     from pydantic_ai.models import ModelRequestParameters
 
     content_data = [
-        {
-            'type': 'custom_tool_call',
-            'name': 'analyze_content',
-            'call_id': 'call_custom_456',
-            'input': 'This is the raw content input',
-        }
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='analyze_content',
+            call_id='call_custom_456',
+            input='This is the raw content input',
+        )
     ]
 
     mock_response = response_message(content_data)
@@ -1282,12 +1284,12 @@ async def test_openai_responses_model_custom_tool_call_unknown_tool_error(allow_
     from pydantic_ai.models import ModelRequestParameters
 
     content_data = [
-        {
-            'type': 'custom_tool_call',
-            'name': 'unknown_analyzer',
-            'call_id': 'call_unknown_456',
-            'input': 'Some content',
-        }
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='unknown_analyzer',
+            call_id='call_unknown_456',
+            input='Some content',
+        )
     ]
 
     mock_response = response_message(content_data)
@@ -1305,12 +1307,12 @@ async def test_openai_responses_model_custom_tool_call_invalid_signature_error(a
     from pydantic_ai.models import ModelRequestParameters
 
     content_data = [
-        {
-            'type': 'custom_tool_call',
-            'name': 'invalid_analyzer',
-            'call_id': 'call_invalid_456',
-            'input': 'Some content',
-        }
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='invalid_analyzer',
+            call_id='call_invalid_456',
+            input='Some content',
+        )
     ]
 
     mock_response = response_message(content_data)
