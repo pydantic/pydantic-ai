@@ -27,7 +27,6 @@ with try_import() as imports_successful:
         IsInstance,
         LLMJudge,
         MaxDuration,
-        Python,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.evaluators.evaluator import (
@@ -577,36 +576,3 @@ async def test_span_query_evaluator(
     evaluator = HasMatchingSpan(query=query)
     result = evaluator.evaluate(context)
     assert result is False
-
-
-async def test_python_evaluator(test_context: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]):
-    """Test the python evaluator."""
-    # Test with a simple condition
-    evaluator = Python(expression="ctx.output.answer == '4'")
-    assert evaluator.evaluate(test_context) == snapshot(True)
-
-    # Test type sensitivity
-    evaluator = Python(expression='ctx.output.answer == 4')
-    assert evaluator.evaluate(test_context) == snapshot(False)
-
-    # Test with a named condition
-    evaluator = Python(expression="{'correct_answer': ctx.output.answer == '4'}")
-    assert evaluator.evaluate(test_context) == snapshot({'correct_answer': True})
-
-    # Test with a condition that returns false
-    evaluator = Python(expression="ctx.output.answer == '5'")
-    assert evaluator.evaluate(test_context) == snapshot(False)
-
-    # Test with a condition that accesses context properties
-    evaluator = Python(expression="ctx.output.answer == '4' and ctx.metadata.difficulty == 'easy'")
-    assert evaluator.evaluate(test_context) == snapshot(True)
-
-    # Test reason rendering for strings
-    evaluator = Python(expression='ctx.output.answer')
-    assert evaluator.evaluate(test_context) == snapshot('4')
-
-    # Test with a condition that returns a dict
-    evaluator = Python(
-        expression="{'is_correct': ctx.output.answer == '4', 'is_easy': ctx.metadata.difficulty == 'easy'}"
-    )
-    assert evaluator.evaluate(test_context) == snapshot({'is_correct': True, 'is_easy': True})
