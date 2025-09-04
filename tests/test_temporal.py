@@ -1617,12 +1617,12 @@ hitl_agent = Agent(
 
 
 @hitl_agent.tool
-def create_file(ctx: RunContext[None], path: str) -> None:
+async def create_file(ctx: RunContext[None], path: str) -> None:
     raise CallDeferred
 
 
 @hitl_agent.tool
-def delete_file(ctx: RunContext[None], path: str) -> bool:
+async def delete_file(ctx: RunContext[None], path: str) -> bool:
     if not ctx.tool_call_approved:
         raise ApprovalRequired
     return True
