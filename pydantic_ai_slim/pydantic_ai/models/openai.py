@@ -226,6 +226,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -253,6 +254,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -279,6 +281,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -1218,6 +1221,10 @@ class OpenAIStreamedResponse(StreamedResponse):
             try:
                 choice = chunk.choices[0]
             except IndexError:
+                continue
+
+            # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
+            if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
 
             # Handle the text part of the response

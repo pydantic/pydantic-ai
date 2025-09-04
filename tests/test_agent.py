@@ -2993,6 +2993,27 @@ def test_dynamic_true_reevaluate_system_prompt():
     )
 
 
+def test_dynamic_system_prompt_no_changes():
+    """Test coverage for _reevaluate_dynamic_prompts branch where no parts are changed
+    and the messages loop continues after replacement of parts.
+    """
+    agent = Agent('test')
+
+    @agent.system_prompt(dynamic=True)
+    async def dynamic_func() -> str:
+        return 'Dynamic'
+
+    result1 = agent.run_sync('Hello')
+
+    # Create ModelRequest with non-dynamic SystemPromptPart (no dynamic_ref)
+    manual_request = ModelRequest(parts=[SystemPromptPart(content='Static'), UserPromptPart(content='Manual')])
+
+    # Mix dynamic and non-dynamic messages to trigger branch coverage
+    result2 = agent.run_sync('Second call', message_history=result1.all_messages() + [manual_request])
+
+    assert result2.output == 'success (no tool calls)'
+
+
 def test_capture_run_messages_tool_agent() -> None:
     agent_outer = Agent('test')
     agent_inner = Agent(TestModel(custom_output_text='inner agent result'))

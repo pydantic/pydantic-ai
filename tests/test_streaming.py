@@ -83,6 +83,7 @@ async def test_streamed_text_response():
                 requests=2,
                 input_tokens=103,
                 output_tokens=5,
+                tool_calls=1,
             )
         )
         response = await result.get_output()
@@ -120,6 +121,7 @@ async def test_streamed_text_response():
                 requests=2,
                 input_tokens=103,
                 output_tokens=11,
+                tool_calls=1,
             )
         )
 
