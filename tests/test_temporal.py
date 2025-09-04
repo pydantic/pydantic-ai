@@ -375,25 +375,56 @@ async def test_complex_agent_run_in_workflow(
                                             ],
                                         )
                                     ],
-                                ),
-                                BasicSpan(content='ctx.run_step=1'),
+                                )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=1'),
                         BasicSpan(
-                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
-                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=1'),
+                                        BasicSpan(
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='running 2 tools',
                             children=[
                                 BasicSpan(content='running tool: get_country'),
                                 BasicSpan(
-                                    content=IsStr(
-                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                                    )
+                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__event_stream_handler',
+                                            children=[
+                                                BasicSpan(content='ctx.run_step=1'),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                    )
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                                 BasicSpan(
                                     content='running tool: get_product_name',
@@ -409,9 +440,20 @@ async def test_complex_agent_run_in_workflow(
                                     ],
                                 ),
                                 BasicSpan(
-                                    content=IsStr(
-                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                                    )
+                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__event_stream_handler',
+                                            children=[
+                                                BasicSpan(content='ctx.run_step=1'),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                    )
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                             ],
                         ),
@@ -455,13 +497,22 @@ async def test_complex_agent_run_in_workflow(
                                             ],
                                         )
                                     ],
-                                ),
-                                BasicSpan(content='ctx.run_step=2'),
+                                )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=2'),
                         BasicSpan(
-                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                            content='StartActivity:agent__complex_agent__event_stream_handler',
+                            children=[
+                                BasicSpan(
+                                    content='RunActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(content='ctx.run_step=2'),
+                                        BasicSpan(
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\":\\"Mexico City\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
+                                        ),
+                                    ],
+                                )
+                            ],
                         ),
                         BasicSpan(
                             content='running 1 tool',
@@ -480,9 +531,20 @@ async def test_complex_agent_run_in_workflow(
                                     ],
                                 ),
                                 BasicSpan(
-                                    content=IsStr(
-                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
-                                    )
+                                    content='StartActivity:agent__complex_agent__event_stream_handler',
+                                    children=[
+                                        BasicSpan(
+                                            content='RunActivity:agent__complex_agent__event_stream_handler',
+                                            children=[
+                                                BasicSpan(content='ctx.run_step=2'),
+                                                BasicSpan(
+                                                    content=IsStr(
+                                                        regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
+                                                    )
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                             ],
                         ),
@@ -631,11 +693,9 @@ async def test_complex_agent_run_in_workflow(
                                             ],
                                         )
                                     ],
-                                ),
-                                BasicSpan(content='ctx.run_step=3'),
+                                )
                             ],
                         ),
-                        BasicSpan(content='ctx.run_step=3'),
                     ],
                 ),
                 BasicSpan(content='CompleteWorkflow:ComplexAgentWorkflow'),
