@@ -988,7 +988,7 @@ ModelResponsePart = Annotated[
 class ModelResponse:
     """A response from a model, e.g. a message from the model to the Pydantic AI app."""
 
-    parts: list[ModelResponsePart]
+    parts: Sequence[ModelResponsePart]
     """The parts of the model message."""
 
     _: KW_ONLY
