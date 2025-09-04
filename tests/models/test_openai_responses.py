@@ -1,6 +1,6 @@
 import json
 from dataclasses import replace
-from datetime import timezone, datetime
+from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
