@@ -1024,8 +1024,12 @@ class ModelResponse:
     provider_response_id: str | None = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
-    def price(self) -> genai_types.PriceCalculation:
-        """Calculate the price of the usage.
+    @deprecated('`price` is deprecated, use `cost` instead')
+    def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
+        return self.cost()
+
+    def cost(self) -> genai_types.PriceCalculation:
+        """Calculate the cost of the usage.
 
         Uses [`genai-prices`](https://github.com/pydantic/genai-prices).
         """
