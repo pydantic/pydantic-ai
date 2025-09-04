@@ -1171,6 +1171,25 @@ def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform():
     assert not parallel_calling
 
 
+def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform_output():
+    freeform_tool = ToolDefinition(
+        name='freeform_analyzer',
+        description='A freeform analyzer',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format='text',
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    params_with_freeform = ModelRequestParameters(output_tools=[freeform_tool])
+    parallel_calling = model._get_parallel_tool_calling({}, params_with_freeform)  # type: ignore[reportPrivateUsage]
+    assert not parallel_calling
+
+
 def test_openai_responses_model_freeform_function_unsupported_model_error():
     freeform_tool = ToolDefinition(
         name='freeform_analyzer',
@@ -1276,7 +1295,7 @@ async def test_openai_responses_model_custom_tool_call_unknown_tool_error(allow_
     mock_client = MockOpenAIResponses.create_mock(mock_response)
     m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
 
-    params = ModelRequestParameters()  # No tools defined
+    params = ModelRequestParameters()
 
     with pytest.raises(UnexpectedModelBehavior, match='Unknown tool called: unknown_analyzer'):
         m._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
