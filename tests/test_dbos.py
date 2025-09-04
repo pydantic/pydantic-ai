@@ -167,19 +167,22 @@ class Deps(BaseModel):
     country: str
 
 
-# Make this event stream handler run in a DBOS step if it's called within a DBOS workflow.
-# Otherwise , it will just run as a normal function.
+# Wrap external calls in DBOS steps so they're logged in the DBOS database.
 @DBOS.step()
+def loginfo_step(*args: Any, **kwargs: Any) -> None:
+    logfire.info(*args, **kwargs)
+
+
 async def event_stream_handler(
     ctx: RunContext[Deps],
     stream: AsyncIterable[AgentStreamEvent],
 ):
-    logfire.info(f'{ctx.run_step=}')
+    loginfo_step(f'{ctx.run_step=}')
     async for event in stream:
-        logfire.info('event', event=event)
+        loginfo_step('event', event=event)
 
 
-# Do not run it as a step
+# This doesn't need to be a step
 async def get_country(ctx: RunContext[Deps]) -> str:
     return ctx.deps.country
 
@@ -251,21 +254,27 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
 
     # Make sure the steps are persisted correctly in the DBOS database.
     steps = await dbos.list_workflow_steps_async(wfid)
-    assert len(steps) == 12
     assert [step['function_name'] for step in steps] == snapshot(
         [
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
-            'event_stream_handler',
-            'event_stream_handler',
+            'loginfo_step',
+            'loginfo_step',
+            'loginfo_step',
+            'loginfo_step',
+            'complex_agent__mcp_server__mcp.call_tool',
+            'loginfo_step',
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
-            'event_stream_handler',
-            'event_stream_handler',
+            'loginfo_step',
+            'loginfo_step',
+            'loginfo_step',
+            'get_weather',
+            'loginfo_step',
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
-            'event_stream_handler',
-            'event_stream_handler',
+            'loginfo_step',
+            'loginfo_step',
         ]
     )
 
