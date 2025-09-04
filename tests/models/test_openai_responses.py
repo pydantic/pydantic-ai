@@ -1,6 +1,6 @@
 import json
 from dataclasses import replace
-from datetime import datetime
+from datetime import timezone, datetime
 from typing import Any, cast
 
 import pytest
@@ -1272,7 +1272,7 @@ async def test_openai_responses_model_custom_tool_call_response_processing(allow
                 )
             ],
             model_name='gpt-4o-123',
-            timestamp=datetime(2024, 1, 1, 0, 0),
+            timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
             provider_name='openai',
             provider_response_id='123',
         )
