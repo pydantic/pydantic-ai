@@ -53,8 +53,8 @@ Enables you to systematically test and [evaluate](https://ai.pydantic.dev/evals)
 6. **MCP, A2A, and AG-UI**:
 Integrates the [Model Context Protocol](https://ai.pydantic.dev/mcp), [Agent2Agent](https://ai.pydantic.dev/a2a), and [AG-UI](https://ai.pydantic.dev/ag-ui) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
-7. **Multi-Modal Input**:
-Lets you easily share images, documents, videos and audio [input](https://ai.pydantic.dev/input) with the LLM to go beyond the limitations of text.
+7. **Durable Execution**:
+Enables you to build [durable agents](https://ai.pydantic.dev/temporal) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
 8. **Streamed Outputs**:
 Provides the ability to [stream](https://ai.pydantic.dev/output#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.

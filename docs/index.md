@@ -28,8 +28,8 @@ Enables you to systematically test and [evaluate](evals.md) the performance and 
 6. **MCP, A2A, and AG-UI**:
 Integrates the [Model Context Protocol](mcp/index.md), [Agent2Agent](a2a.md), and [AG-UI](ag-ui.md) standards to give your agent access to external tools and data, let it interoperate with other agents, and build interactive applications with streaming event-based communication.
 
-7. **Multi-Modal Input**:
-Lets you easily share images, documents, videos and audio [input](input.md) with the LLM to go beyond the limitations of text.
+7. **Durable Execution**:
+Enables you to build [durable agents](temporal.md) that can preserve their progress across transient API failures and application errors or restarts, and handle long-running, asynchronous, and human-in-the-loop workflows with production-grade reliability.
 
 8. **Streamed Outputs**:
 Provides the ability to [stream](output.md#streamed-results) structured output continuously, with immediate validation, ensuring real time access to generated data.
