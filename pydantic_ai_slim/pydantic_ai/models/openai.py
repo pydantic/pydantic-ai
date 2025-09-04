@@ -985,17 +985,9 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
-        previous_response_id: str | None = None
-        for message in reversed(messages):
-            # Instead of sending the full message history, get provider_response_id
-            # (openai-compatible) from the latest matching ModelResponse and
-            # pass it to the next ModelRequest as previous_response_id to preserve context.
-            # Since the full history isn't needed, only the latest message is kept.
-            if isinstance(message, ModelResponse) and message.model_name:
-                if self._model_name in message.model_name:
-                    previous_response_id = message.provider_response_id
-                    messages = [messages[-1]]
-                    break
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if not previous_response_id:
+            messages, previous_response_id = self._get_response_id_and_trim(messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings)
         reasoning = self._get_reasoning(model_settings)
@@ -1047,8 +1039,7 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
-                previous_response_id=previous_response_id
-                or model_settings.get('openai_previous_response_id', NOT_GIVEN),
+                previous_response_id=previous_response_id,
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
@@ -1113,6 +1104,31 @@ class OpenAIResponsesModel(Model):
                 f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
+
+    def _get_response_id_and_trim(
+        self, messages: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], str | NotGiven | None]:
+        # If the message history contains only openai responses,
+        # we can limit the history to the most recent ModelRequest.
+        # The provider_response_id from the latest ModelResponse is
+        # then passed as previous_response_id to preserve context.
+        response_id = NOT_GIVEN
+        latest_model_response: list[ModelMessage] = []
+        for m in messages:
+            # Openai may return a dated model_name that differs from self.model_name
+            # (e.g., "gpt-5" vs "gpt-5-2025-08-07").
+            if isinstance(m, ModelResponse) and (self.model_name in m.model_name):  # type: ignore
+                response_id = m.provider_response_id
+            elif isinstance(m, ModelRequest):
+                latest_model_response = [m]
+            else:
+                # Mixed model responses invalidate response_id,
+                # so the history is kept intact.
+                response_id = NOT_GIVEN
+                break
+        if response_id:
+            messages = latest_model_response
+        return messages, response_id
 
     async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
