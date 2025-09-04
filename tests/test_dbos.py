@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -42,7 +43,7 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import IsDatetime, IsStr
 
 try:
-    from dbos import DBOS, DBOSConfig
+    from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
 except ImportError:  # pragma: lax no cover
@@ -166,6 +167,9 @@ class Deps(BaseModel):
     country: str
 
 
+# Make this event stream handler run in a DBOS step if it's called within a DBOS workflow.
+# Otherwise , it will just run as a normal function.
+@DBOS.step()
 async def event_stream_handler(
     ctx: RunContext[Deps],
     stream: AsyncIterable[AgentStreamEvent],
@@ -228,10 +232,13 @@ complex_dbos_agent = DBOSAgent(complex_agent)
 
 
 async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: DBOS, capfire: CaptureLogfire) -> None:
-    # DBOSAgent already wraps the `run` function as a DBOS workflow, so we can just call it directly.
-    result = await complex_dbos_agent.run(
-        'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
-    )
+    # Set a workflow ID for testing list steps
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        # DBOSAgent already wraps the `run` function as a DBOS workflow, so we can just call it directly.
+        result = await complex_dbos_agent.run(
+            'Tell me: the capital of the country; the weather there; the product name', deps=Deps(country='Mexico')
+        )
     assert result.output == snapshot(
         Response(
             answers=[
@@ -240,6 +247,26 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                 Answer(label='Product Name', answer='Pydantic AI'),
             ]
         )
+    )
+
+    # Make sure the steps are persisted correctly in the DBOS database.
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert len(steps) == 12
+    assert [step['function_name'] for step in steps] == snapshot(
+        [
+            'complex_agent__mcp_server__mcp.get_tools',
+            'complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
+            'complex_agent__mcp_server__mcp.get_tools',
+            'complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
+            'complex_agent__mcp_server__mcp.get_tools',
+            'complex_agent__model.request_stream',
+            'event_stream_handler',
+            'event_stream_handler',
+        ]
     )
 
     exporter = capfire.exporter
