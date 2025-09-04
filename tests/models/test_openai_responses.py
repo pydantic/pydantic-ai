@@ -1148,7 +1148,7 @@ def test_openai_responses_model_parallel_tool_calling_enabled():
 
     params_regular_only = ModelRequestParameters(function_tools=[regular_tool])
     parallel_calling = model._get_parallel_tool_calling({}, params_regular_only)  # type: ignore[reportPrivateUsage]
-    assert parallel_calling is not False # it's NOT_GIVEN but the import fails
+    assert parallel_calling is not False  # it's NOT_GIVEN but the import fails
 
 
 def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform():
