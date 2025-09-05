@@ -61,7 +61,9 @@ try:
         ImageURLChunk as MistralImageURLChunk,
         Mistral,
         OptionalNullable as MistralOptionalNullable,
+        ReferenceChunk as MistralReferenceChunk,
         TextChunk as MistralTextChunk,
+        ThinkChunk as MistralThinkChunk,
         ToolChoiceEnum as MistralToolChoiceEnum,
     )
     from mistralai.models import (
@@ -339,7 +341,10 @@ class MistralModel(Model):
         tool_calls = choice.message.tool_calls
 
         parts: list[ModelResponsePart] = []
-        if text := _map_content(content):
+        text, thinking = _map_content(content)
+        for thought in thinking:
+            parts.append(ThinkingPart(content=thought))
+        if text:
             parts.extend(split_content_into_text_and_thinking(text, self.profile.thinking_tags))
 
         if isinstance(tool_calls, list):
@@ -503,16 +508,14 @@ class MistralModel(Model):
                 mistral_messages.extend(self._map_user_message(message))
             elif isinstance(message, ModelResponse):
                 content_chunks: list[MistralContentChunk] = []
+                thinking_chunks: list[MistralTextChunk | MistralReferenceChunk] = []
                 tool_calls: list[MistralToolCall] = []
 
                 for part in message.parts:
                     if isinstance(part, TextPart):
                         content_chunks.append(MistralTextChunk(text=part.content))
                     elif isinstance(part, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # content_chunks.append(MistralTextChunk(text=f'<think>{part.content}</think>'))
-                        pass
+                        thinking_chunks.append(MistralTextChunk(text=part.content))
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
                     elif isinstance(part, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
@@ -520,6 +523,8 @@ class MistralModel(Model):
                         pass
                     else:
                         assert_never(part)
+                if thinking_chunks:
+                    content_chunks.insert(0, MistralThinkChunk(thinking=thinking_chunks))
                 mistral_messages.append(MistralAssistantMessage(content=content_chunks, tool_calls=tool_calls))
             else:
                 assert_never(message)
@@ -602,7 +607,8 @@ class MistralStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            text = _map_content(content)
+            text, _ = _map_content(content)
+            # TODO: Handle thinking deltas
             if text:
                 # Attempt to produce an output tool call from the received text
                 output_tools = {c.name: c for c in self.model_request_parameters.output_tools}
@@ -715,32 +721,37 @@ def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk)
     """Maps a Mistral Completion Chunk or Chat Completion Response to a Usage."""
     if response.usage:
         return RequestUsage(
-            input_tokens=response.usage.prompt_tokens,
-            output_tokens=response.usage.completion_tokens,
+            input_tokens=response.usage.prompt_tokens or 0,
+            output_tokens=response.usage.completion_tokens or 0,
         )
     else:
         return RequestUsage()  # pragma: no cover
 
 
-def _map_content(content: MistralOptionalNullable[MistralContent]) -> str | None:
+def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str | None, list[str]]:
     """Maps the delta content from a Mistral Completion Chunk to a string or None."""
-    output: str | None = None
+    text: str | None = None
+    thinking: list[str] = []
 
     if isinstance(content, MistralUnset) or not content:
-        output = None
+        return None, []
     elif isinstance(content, list):
         for chunk in content:
             if isinstance(chunk, MistralTextChunk):
-                output = output or '' + chunk.text
+                text = text or '' + chunk.text
+            elif isinstance(chunk, MistralThinkChunk):
+                for thought in chunk.thinking:
+                    if thought.type == 'text':
+                        thinking.append(thought.text)
             else:
                 assert False, (  # pragma: no cover
                     f'Other data types like (Image, Reference) are not yet supported,  got {type(chunk)}'
                 )
     elif isinstance(content, str):
-        output = content
+        text = content
 
     # Note: Check len to handle potential mismatch between function calls and responses from the API. (`msg: not the same number of function class and responses`)
-    if output and len(output) == 0:  # pragma: no cover
-        output = None
+    if text and len(text) == 0:  # pragma: no cover
+        text = None
 
-    return output
+    return text, thinking

@@ -72,6 +72,7 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_reasoning_item_param import Summary
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -474,6 +475,8 @@ class OpenAIChatModel(Model):
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
             items.append(ThinkingPart(content=reasoning_content))
 
+        # TODO: Handle OpenRouter reasoning_details: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+
         vendor_details: dict[str, Any] | None = None
 
         # Add logprobs to vendor_details if available
@@ -571,9 +574,7 @@ class OpenAIChatModel(Model):
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # texts.append(f'<think>\n{item.content}\n</think>')
+                        # TODO: Send back in <think> tags (Ollama etc), `reasoning` field (DeepSeek), or `reasoning_content` field (OpenRouter)?
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
@@ -812,16 +813,19 @@ class OpenAIResponsesModel(Model):
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
         for item in response.output:
-            if item.type == 'reasoning':
+            if isinstance(item, responses.ResponseReasoningItem):
+                signature = item.encrypted_content
                 for summary in item.summary:
-                    # NOTE: We use the same id for all summaries because we can merge them on the round trip.
-                    # The providers don't force the signature to be unique.
-                    items.append(ThinkingPart(content=summary.text, id=item.id))
-            elif item.type == 'message':
+                    # We use the same id for all summaries so that we can merge them on the round trip.
+                    # We only need to store the signature once.
+                    items.append(ThinkingPart(content=summary.text, id=item.id, signature=signature))
+                    signature = None
+                # TODO: Handle gpt-oss reasoning_text: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
+            elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
-                    if content.type == 'output_text':  # pragma: no branch
+                    if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
                         items.append(TextPart(content.text))
-            elif item.type == 'function_call':
+            elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
             parts=items,
@@ -938,6 +942,7 @@ class OpenAIResponsesModel(Model):
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
+                include=['reasoning.encrypted_content'],
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -999,7 +1004,7 @@ class OpenAIResponsesModel(Model):
             ),
         }
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage]
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
@@ -1036,33 +1041,31 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                # last_thinking_part_idx: int | None = None
+                reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
-                    # OpenAI doesn't return built-in tool calls
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
+                        # We don't currently track built-in tool calls from OpenAI
                         pass
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # if last_thinking_part_idx is not None:
-                        #     reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
-                        #     if item.id == reasoning_item['id']:
-                        #         assert isinstance(reasoning_item['summary'], list)
-                        #         reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
-                        #         continue
-                        # last_thinking_part_idx = len(openai_messages)
-                        # openai_messages.append(
-                        #     responses.ResponseReasoningItemParam(
-                        #         id=item.id or generate_tool_call_id(),
-                        #         summary=[Summary(text=item.content, type='summary_text')],
-                        #         type='reasoning',
-                        #     )
-                        # )
-                        pass
+                        if reasoning_item is not None and item.id == reasoning_item['id']:
+                            reasoning_item['summary'] = [
+                                *reasoning_item['summary'],
+                                Summary(text=item.content, type='summary_text'),
+                            ]
+                            continue
+
+                        reasoning_item = responses.ResponseReasoningItemParam(
+                            id=item.id or _utils.generate_tool_call_id(),
+                            summary=[Summary(text=item.content, type='summary_text')],
+                            # TODO: Store `provider_name` on ThinkingPart, only send back `encrypted_content` if it matches?
+                            encrypted_content=item.signature,
+                            type='reasoning',
+                        )
+                        openai_messages.append(reasoning_item)
                     else:
                         assert_never(item)
             else:
@@ -1289,7 +1292,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                # NOTE: We only need this if the tool call deltas don't include the final info.
+                if isinstance(chunk.item, responses.ResponseReasoningItem):
+                    # Add the signature to the part corresponding to the first summary item
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=f'{chunk.item.id}-0',
+                        signature=chunk.item.encrypted_content,
+                    )
                 pass
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):

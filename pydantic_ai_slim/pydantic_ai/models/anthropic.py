@@ -309,6 +309,7 @@ class AnthropicModel(Model):
                     )
                 )
             elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
+                # TODO: Handle redacted thinking
                 warnings.warn(
                     'Pydantic AI currently does not handle redacted thinking blocks. '
                     'If you have a suggestion on how we should handle them, please open an issue.',
@@ -439,11 +440,13 @@ class AnthropicModel(Model):
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
-                        # NOTE: We only send thinking part back for Anthropic, otherwise they raise an error.
                         if response_part.signature is not None:  # pragma: no branch
                             assistant_content_params.append(
                                 BetaThinkingBlockParam(
-                                    thinking=response_part.content, signature=response_part.signature, type='thinking'
+                                    # TODO: Store `provider_name` on ThinkingPart, only send back `signature` if it matches?
+                                    thinking=response_part.content,
+                                    signature=response_part.signature,
+                                    type='thinking',
                                 )
                             )
                     elif isinstance(response_part, BuiltinToolCallPart):

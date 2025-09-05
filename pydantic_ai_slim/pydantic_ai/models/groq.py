@@ -306,8 +306,8 @@ class GroqModel(Model):
                         provider_name='groq', tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id
                     )
                 )
-        # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
         if choice.message.reasoning is not None:
+            # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
             items.append(ThinkingPart(content=choice.message.reasoning))
         if choice.message.content is not None:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
@@ -376,8 +376,8 @@ class GroqModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        # Skip thinking parts when mapping to Groq messages
-                        continue
+                        # Groq does not yet support sending back reasoning
+                        pass
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from groq
                         pass

@@ -886,7 +886,7 @@ class ThinkingPart:
     signature: str | None = None
     """The signature of the thinking.
 
-    The signature is only available on the Anthropic models.
+    This corresponds to the `signature` field on Anthropic thinking parts, and the `encrypted_content` field on OpenAI reasoning parts.
     """
 
     part_kind: Literal['thinking'] = 'thinking'
