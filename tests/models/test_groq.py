@@ -6,13 +6,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import cached_property
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import httpx
 import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
+from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
@@ -37,6 +38,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.output import NativeOutput, PromptedOutput
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
@@ -59,9 +61,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.groq import GroqModel, GroqModelSettings
     from pydantic_ai.providers.groq import GroqProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockChatCompletion = Union[chat.ChatCompletion, Exception]
-    MockChatCompletionChunk = Union[chat.ChatCompletionChunk, Exception]
+    MockChatCompletion = chat.ChatCompletion | Exception
+    MockChatCompletionChunk = chat.ChatCompletionChunk | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
@@ -1004,4 +1005,304 @@ async def test_groq_model_thinking_part_iter(allow_model_requests: None, groq_ap
             },
             length=996,
         )
+    )
+
+
+async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, instructions='Be concise. Never use pretty double quotes, just regular ones.')
+
+    @agent.tool_plain
+    async def get_something_by_name(name: str) -> str:
+        return f'Something with name: {name}'
+
+    result = await agent.run(
+        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args={'invalid_param': 'test'},
+                        tool_call_id=IsStr(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'missing',
+                                'loc': ('name',),
+                                'msg': 'Field required',
+                                'input': {'invalid_param': 'test'},
+                            },
+                            {
+                                'type': 'extra_forbidden',
+                                'loc': ('invalid_param',),
+                                'msg': 'Extra inputs are not permitted',
+                                'input': 'test',
+                            },
+                        ],
+                        tool_name='get_something_by_name',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='We need to call with correct param name: name. Provide a non-existent name perhaps "nonexistent".'
+                    ),
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args='{"name":"nonexistent"}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=283, output_tokens=49),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_something_by_name',
+                        content='Something with name: nonexistent',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user asked: "Please call the \'get_something_by_name\' tool with non-existent parameters to test error handling". They wanted to test error handling with non-existent parameters, but we corrected to proper parameters. The response from tool: "Something with name: nonexistent". Should we respond? Probably just output the result. Follow developer instruction: be concise, no fancy quotes. Use regular quotes only.'
+                    ),
+                    TextPart(content='Something with name: nonexistent'),
+                ],
+                usage=RequestUsage(input_tokens=319, output_tokens=96),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m, instructions='Be concise. Never use pretty double quotes, just regular ones.')
+
+    @agent.tool_plain
+    async def get_something_by_name(name: str) -> str:
+        return f'Something with name: {name}'
+
+    async with agent.iter(
+        'Please call the "get_something_by_name" tool with non-existent parameters to test error handling'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Please call the "get_something_by_name" tool with non-existent parameters to test error handling',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=''),
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args={'nonexistent': 'test'},
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content=[
+                            {
+                                'type': 'missing',
+                                'loc': ('name',),
+                                'msg': 'Field required',
+                                'input': {'nonexistent': 'test'},
+                            },
+                            {
+                                'type': 'extra_forbidden',
+                                'loc': ('nonexistent',),
+                                'msg': 'Extra inputs are not permitted',
+                                'input': 'test',
+                            },
+                        ],
+                        tool_name='get_something_by_name',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content=''),
+                    ToolCallPart(
+                        tool_name='get_something_by_name',
+                        args='{"name":"test_name"}',
+                        tool_call_id=IsStr(),
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=283, output_tokens=43),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_something_by_name',
+                        content='Something with name: test_name',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise. Never use pretty double quotes, just regular ones.',
+            ),
+            ModelResponse(
+                parts=[TextPart(content='The tool call succeeded with the name "test_name".')],
+                usage=RequestUsage(input_tokens=320, output_tokens=15),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+            ),
+        ]
+    )
+
+
+async def test_tool_regular_error(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('non-existent', provider=GroqProvider(api_key=groq_api_key))
+    agent = Agent(m)
+
+    with pytest.raises(
+        ModelHTTPError, match='The model `non-existent` does not exist or you do not have access to it.'
+    ):
+        await agent.run('hello')
+
+
+async def test_groq_native_output(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        """A city and its country."""
+
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=NativeOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='The user asks: "What is the largest city in Mexico?" The system expects a JSON object conforming to CityLocation schema: properties city (string) and country (string), required both. Provide largest city in Mexico: Mexico City. So output JSON: {"city":"Mexico City","country":"Mexico"} in compact format, no extra text.'
+                    ),
+                    TextPart(content='{"city":"Mexico City","country":"Mexico"}'),
+                ],
+                usage=RequestUsage(input_tokens=178, output_tokens=94),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+        ]
+    )
+
+
+async def test_groq_prompted_output(allow_model_requests: None, groq_api_key: str):
+    m = GroqModel('openai/gpt-oss-120b', provider=GroqProvider(api_key=groq_api_key))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    agent = Agent(m, output_type=PromptedOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+    assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the largest city in Mexico?',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="""\
+Always respond with a JSON object that's compatible with this schema:
+
+{"properties": {"city": {"type": "string"}, "country": {"type": "string"}}, "required": ["city", "country"], "title": "CityLocation", "type": "object"}
+
+Don't include any text or Markdown fencing before or after.\
+""",
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='We need to respond with JSON object with properties city and country. The question: "What is the largest city in Mexico?" The answer: City is Mexico City, country is Mexico. Must output compact JSON without any extra text or markdown. So {"city":"Mexico City","country":"Mexico"} Ensure valid JSON.'
+                    ),
+                    TextPart(content='{"city":"Mexico City","country":"Mexico"}'),
+                ],
+                usage=RequestUsage(input_tokens=177, output_tokens=87),
+                model_name='openai/gpt-oss-120b',
+                timestamp=IsDatetime(),
+                provider_name='groq',
+                provider_response_id=IsStr(),
+            ),
+        ]
     )

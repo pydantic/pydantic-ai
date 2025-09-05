@@ -6,7 +6,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
@@ -90,7 +90,7 @@ __all__ = (
     'OpenAIModelName',
 )
 
-OpenAIModelName = Union[str, AllModels]
+OpenAIModelName = str | AllModels
 """
 Possible OpenAI model names.
 
@@ -226,6 +226,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -254,6 +255,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -281,6 +283,7 @@ class OpenAIChatModel(Model):
             'openrouter',
             'together',
             'vercel',
+            'litellm',
         ]
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
@@ -412,13 +415,6 @@ class OpenAIChatModel(Model):
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
 
-        # TODO(Marcelo): Deprecate this in favor of `openai_unsupported_model_settings`.
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIChatModelSettings()
-        )
-
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
@@ -440,13 +436,13 @@ class OpenAIChatModel(Model):
                 web_search_options=web_search_options or NOT_GIVEN,
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
                 prediction=model_settings.get('openai_prediction', NOT_GIVEN),
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
-                presence_penalty=sampling_settings.get('presence_penalty', NOT_GIVEN),
-                frequency_penalty=sampling_settings.get('frequency_penalty', NOT_GIVEN),
-                logit_bias=sampling_settings.get('logit_bias', NOT_GIVEN),
-                logprobs=sampling_settings.get('openai_logprobs', NOT_GIVEN),
-                top_logprobs=sampling_settings.get('openai_top_logprobs', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
+                presence_penalty=model_settings.get('presence_penalty', NOT_GIVEN),
+                frequency_penalty=model_settings.get('frequency_penalty', NOT_GIVEN),
+                logit_bias=model_settings.get('logit_bias', NOT_GIVEN),
+                logprobs=model_settings.get('openai_logprobs', NOT_GIVEN),
+                top_logprobs=model_settings.get('openai_top_logprobs', NOT_GIVEN),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -515,7 +511,7 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
@@ -585,7 +581,7 @@ class OpenAIChatModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         pass
                     else:
                         assert_never(item)
@@ -616,7 +612,7 @@ class OpenAIChatModel(Model):
     def _map_json_schema(self, o: OutputObjectDefinition) -> chat.completion_create_params.ResponseFormat:
         response_format_param: chat.completion_create_params.ResponseFormatJSONSchema = {  # pyright: ignore[reportPrivateImportUsage]
             'type': 'json_schema',
-            'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema, 'strict': True},
+            'json_schema': {'name': o.name or DEFAULT_OUTPUT_TOOL_NAME, 'schema': o.json_schema},
         }
         if o.description:
             response_format_param['json_schema']['description'] = o.description
@@ -831,7 +827,7 @@ class OpenAIResponsesModel(Model):
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
@@ -921,11 +917,9 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        sampling_settings = (
-            model_settings
-            if OpenAIModelProfile.from_profile(self.profile).openai_supports_sampling_settings
-            else OpenAIResponsesModelSettings()
-        )
+        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        for setting in unsupported_model_settings:
+            model_settings.pop(setting, None)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -939,8 +933,8 @@ class OpenAIResponsesModel(Model):
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
                 stream=stream,
-                temperature=sampling_settings.get('temperature', NOT_GIVEN),
-                top_p=sampling_settings.get('top_p', NOT_GIVEN),
+                temperature=model_settings.get('temperature', NOT_GIVEN),
+                top_p=model_settings.get('top_p', NOT_GIVEN),
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
@@ -1052,7 +1046,7 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     elif isinstance(item, ThinkingPart):
                         # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
@@ -1183,6 +1177,10 @@ class OpenAIStreamedResponse(StreamedResponse):
             except IndexError:
                 continue
 
+            # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
+            if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
+                continue
+
             # Handle the text part of the response
             content = choice.delta.content
             if content is not None:
@@ -1282,12 +1280,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         tool_call_id=chunk.item.call_id,
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
-                    content = chunk.item.summary[0].text if chunk.item.summary else ''
-                    yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=chunk.item.id,
-                        content=content,
-                        signature=chunk.item.id,
-                    )
+                    pass
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
@@ -1303,7 +1296,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
-                pass  # there's nothing we need to do here
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
+                    content=chunk.part.text,
+                    id=chunk.item_id,
+                )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
                 pass  # there's nothing we need to do here
@@ -1313,9 +1310,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryTextDeltaEvent):
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id=chunk.item_id,
+                    vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.delta,
-                    signature=chunk.item_id,
+                    id=chunk.item_id,
                 )
 
             # TODO(Marcelo): We should support annotations in the future.
@@ -1323,9 +1320,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(
-                    vendor_part_id=chunk.content_index, content=chunk.delta
-                )
+                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 

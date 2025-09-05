@@ -5,10 +5,10 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Callable, Union, cast
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -17,7 +17,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeIs, TypeVar, get_origin
+from typing_extensions import ParamSpec, TypeIs, TypeVar
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 __all__ = ('function_schema',)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionSchema:
     """Internal information about a function schema."""
 
@@ -231,7 +231,7 @@ R = TypeVar('R')
 
 WithCtx = Callable[Concatenate[RunContext[Any], P], R]
 WithoutCtx = Callable[P, R]
-TargetFunc = Union[WithCtx[P, R], WithoutCtx[P, R]]
+TargetFunc = WithCtx[P, R] | WithoutCtx[P, R]
 
 
 def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:

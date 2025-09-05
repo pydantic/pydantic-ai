@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import itertools
 import json
-from collections.abc import AsyncIterator, Iterator, Mapping
+import warnings
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
 from opentelemetry._events import (
@@ -93,36 +94,41 @@ class InstrumentationSettings:
     def __init__(
         self,
         *,
-        event_mode: Literal['attributes', 'logs'] = 'attributes',
         tracer_provider: TracerProvider | None = None,
         meter_provider: MeterProvider | None = None,
-        event_logger_provider: EventLoggerProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2] = 1,
+        version: Literal[1, 2] = 2,
+        event_mode: Literal['attributes', 'logs'] = 'attributes',
+        event_logger_provider: EventLoggerProvider | None = None,
     ):
         """Create instrumentation options.
 
         Args:
-            event_mode: The mode for emitting events. If `'attributes'`, events are attached to the span as attributes.
-                If `'logs'`, events are emitted as OpenTelemetry log-based events.
             tracer_provider: The OpenTelemetry tracer provider to use.
                 If not provided, the global tracer provider is used.
                 Calling `logfire.configure()` sets the global tracer provider, so most users don't need this.
             meter_provider: The OpenTelemetry meter provider to use.
                 If not provided, the global meter provider is used.
                 Calling `logfire.configure()` sets the global meter provider, so most users don't need this.
-            event_logger_provider: The OpenTelemetry event logger provider to use.
-                If not provided, the global event logger provider is used.
-                Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
-                This is only used if `event_mode='logs'`.
             include_binary_content: Whether to include binary content in the instrumentation events.
             include_content: Whether to include prompts, completions, and tool call arguments and responses
                 in the instrumentation events.
-            version: Version of the data format.
-                Version 1 is based on the legacy event-based OpenTelemetry GenAI spec.
-                Version 2 stores messages in the attributes `gen_ai.input.messages` and `gen_ai.output.messages`.
-                Version 2 is still WIP and experimental, but will become the default in Pydantic AI v1.
+            version: Version of the data format. This is unrelated to the Pydantic AI package version.
+                Version 1 is based on the legacy event-based OpenTelemetry GenAI spec
+                    and will be removed in a future release.
+                    The parameters `event_mode` and `event_logger_provider` are only relevant for version 1.
+                Version 2 uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
+                    - `gen_ai.system_instructions` for instructions passed to the agent.
+                    - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
+                    - `pydantic_ai.all_messages` on agent run spans.
+            event_mode: The mode for emitting events in version 1.
+                If `'attributes'`, events are attached to the span as attributes.
+                If `'logs'`, events are emitted as OpenTelemetry log-based events.
+            event_logger_provider: The OpenTelemetry event logger provider to use.
+                If not provided, the global event logger provider is used.
+                Calling `logfire.configure()` sets the global event logger provider, so most users don't need this.
+                This is only used if `event_mode='logs'` and `version=1`.
         """
         from pydantic_ai import __version__
 
@@ -136,6 +142,14 @@ class InstrumentationSettings:
         self.event_mode = event_mode
         self.include_binary_content = include_binary_content
         self.include_content = include_content
+
+        if event_mode == 'logs' and version != 1:
+            warnings.warn(
+                'event_mode is only relevant for version=1 which is deprecated and will be removed in a future release.',
+                stacklevel=2,
+            )
+            version = 1
+
         self.version = version
 
         # As specified in the OpenTelemetry GenAI metrics spec:
@@ -366,7 +380,7 @@ class InstrumentedModel(WrapperModel):
 
         if model_settings:
             for key in MODEL_SETTING_ATTRIBUTES:
-                if isinstance(value := model_settings.get(key), (float, int)):
+                if isinstance(value := model_settings.get(key), float | int):
                     attributes[f'gen_ai.request.{key}'] = value
 
         record_metrics: Callable[[], None] | None = None
@@ -406,10 +420,15 @@ class InstrumentedModel(WrapperModel):
                         return
 
                     self.instrumentation_settings.handle_messages(messages, response, system, span)
+                    try:
+                        cost_attributes = {'operation.cost': float(response.cost().total_price)}
+                    except LookupError:
+                        cost_attributes = {}
                     span.set_attributes(
                         {
                             **response.usage.opentelemetry_attributes(),
                             'gen_ai.response.model': response_model,
+                            **cost_attributes,
                         }
                     )
                     span.update_name(f'{operation} {request_model}')

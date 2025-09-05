@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 from uuid import uuid4
 
 from typing_extensions import assert_never
@@ -91,7 +91,7 @@ LatestGoogleModelNames = Literal[
 ]
 """Latest Gemini models."""
 
-GoogleModelName = Union[str, LatestGoogleModelNames]
+GoogleModelName = str | LatestGoogleModelNames
 """Possible Gemini model names.
 
 Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
@@ -264,6 +264,14 @@ class GoogleModel(Model):
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[ToolDict] | None:
+        if model_request_parameters.builtin_tools:
+            if model_request_parameters.output_tools:
+                raise UserError(
+                    'Gemini does not support output tools and built-in tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                )
+            if model_request_parameters.function_tools:
+                raise UserError('Gemini does not support user tools and built-in tools at the same time.')
+
         tools: list[ToolDict] = [
             ToolDict(function_declarations=[_function_declaration_from_tool(t)])
             for t in model_request_parameters.tool_defs.values()
@@ -334,7 +342,9 @@ class GoogleModel(Model):
         response_schema = None
         if model_request_parameters.output_mode == 'native':
             if tools:
-                raise UserError('Gemini does not support structured output and tools at the same time.')
+                raise UserError(
+                    'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                )
             response_mime_type = 'application/json'
             output_object = model_request_parameters.output_object
             assert output_object is not None
@@ -349,7 +359,7 @@ class GoogleModel(Model):
             'headers': {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         }
         if timeout := model_settings.get('timeout'):
-            if isinstance(timeout, (int, float)):
+            if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
             else:
                 raise UserError('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
@@ -559,6 +569,10 @@ class GeminiStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif part.executable_code is not None:
+                    pass
+                elif part.code_execution_result is not None:
+                    pass
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 

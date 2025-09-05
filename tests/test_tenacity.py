@@ -1,9 +1,11 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import threading
 import time
 from datetime import datetime, timezone
 from email.utils import formatdate
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, Mock
 
 import httpx
@@ -30,6 +32,8 @@ class TestTenacityTransport:
     def test_successful_request(self):
         """Test that successful requests pass through without retry."""
         mock_transport = Mock(spec=httpx.BaseTransport)
+        mock_transport.__enter__ = Mock(return_value=mock_transport)
+        mock_transport.__exit__ = Mock(return_value=None)
         mock_response = Mock(spec=httpx.Response)
         mock_transport.handle_request.return_value = mock_response
 
@@ -37,7 +41,8 @@ class TestTenacityTransport:
         transport = TenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
-        result = transport.handle_request(request)
+        with transport:
+            result = transport.handle_request(request)
 
         assert result is mock_response
         mock_transport.handle_request.assert_called_once_with(request)
@@ -194,7 +199,8 @@ class TestAsyncTenacityTransport:
         transport = AsyncTenacityTransport(config, mock_transport)
 
         request = httpx.Request('GET', 'https://example.com')
-        result = await transport.handle_async_request(request)
+        async with transport:
+            result = await transport.handle_async_request(request)
 
         assert result is mock_response
         mock_transport.handle_async_request.assert_called_once_with(request)
@@ -665,3 +671,54 @@ class TestIntegration:
         # Should have waited approximately 0.2 seconds (capped by max_wait)
         duration = end_time - start_time
         assert 0.1 <= duration <= 0.2
+
+
+class TestConnectionPool:
+    class AlwaysReturnHTTP429Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(429)
+            self.send_header('Retry-After', '1')
+            self.end_headers()
+            self.wfile.write(b'Rate limited')
+
+    def start_test_server(self, port: int = 8429) -> HTTPServer:
+        server = HTTPServer(('localhost', port), self.AlwaysReturnHTTP429Handler)
+
+        def run_server():
+            server.serve_forever()
+
+        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_thread.start()
+        time.sleep(0.1)
+        return server
+
+    async def test_connection_pool(self):
+        server = self.start_test_server(8429)
+        test_url = 'http://localhost:8429/test'
+
+        def validate_response(response: httpx.Response) -> None:
+            response.raise_for_status()
+
+        retry_strategy = RetryConfig(
+            stop=stop_after_attempt(5),
+            wait=wait_retry_after(max_wait=5, fallback_strategy=wait_fixed(2)),
+            retry=retry_if_exception_type(httpx.HTTPStatusError),
+            reraise=True,
+        )
+
+        transport = AsyncTenacityTransport(
+            config=retry_strategy,
+            validate_response=validate_response,
+            wrapped=httpx.AsyncHTTPTransport(
+                limits=httpx.Limits(max_connections=2, max_keepalive_connections=2, keepalive_expiry=30)
+            ),
+        )
+
+        client = httpx.AsyncClient(transport=transport)
+
+        with pytest.raises(httpx.HTTPStatusError, match='429 Too Many Requests'):
+            try:
+                await client.get(test_url)
+            finally:
+                await client.aclose()
+                server.shutdown()

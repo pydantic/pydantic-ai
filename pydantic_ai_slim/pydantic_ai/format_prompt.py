@@ -72,9 +72,9 @@ class _ToXml:
             element.text = self.none_str
         elif isinstance(value, str):
             element.text = value
-        elif isinstance(value, (bytes, bytearray)):
+        elif isinstance(value, bytes | bytearray):
             element.text = value.decode(errors='ignore')
-        elif isinstance(value, (bool, int, float)):
+        elif isinstance(value, bool | int | float):
             element.text = str(value)
         elif isinstance(value, date):
             element.text = value.isoformat()

@@ -4,7 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timezone
-from typing import Any, Union, cast
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -44,8 +44,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
-    # note: we use Union here for compatibility with Python 3.9
-    MockChatResponse = Union[ChatResponse, Exception]
+    MockChatResponse = ChatResponse | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
@@ -331,6 +330,7 @@ async def test_request_tool_call(allow_model_requests: None):
             input_tokens=5,
             output_tokens=3,
             details={'input_tokens': 4, 'output_tokens': 2},
+            tool_calls=1,
         )
     )
 

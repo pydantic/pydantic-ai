@@ -2,14 +2,14 @@ from __future__ import annotations as _annotations
 
 import inspect
 import re
-from collections.abc import AsyncIterator, Awaitable, Iterable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Any, Callable, Union
+from typing import Any, TypeAlias
 
-from typing_extensions import TypeAlias, assert_never, overload
+from typing_extensions import assert_never, overload
 
 from .. import _utils, usage
 from .._run_context import RunContext
@@ -44,8 +44,8 @@ class FunctionModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    function: FunctionDef | None = None
-    stream_function: StreamFunctionDef | None = None
+    function: FunctionDef | None
+    stream_function: StreamFunctionDef | None
 
     _model_name: str = field(repr=False)
     _system: str = field(default='function', repr=False)
@@ -120,10 +120,10 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         agent_info = AgentInfo(
-            model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
-            model_request_parameters.output_tools,
-            model_settings,
+            function_tools=model_request_parameters.function_tools,
+            allow_text_output=model_request_parameters.allow_text_output,
+            output_tools=model_request_parameters.output_tools,
+            model_settings=model_settings,
         )
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -149,10 +149,10 @@ class FunctionModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
-            model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
-            model_request_parameters.output_tools,
-            model_settings,
+            function_tools=model_request_parameters.function_tools,
+            allow_text_output=model_request_parameters.allow_text_output,
+            output_tools=model_request_parameters.output_tools,
+            model_settings=model_settings,
         )
 
         assert self.stream_function is not None, (
@@ -182,7 +182,7 @@ class FunctionModel(Model):
         return self._system
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class AgentInfo:
     """Information about an agent.
 
@@ -212,13 +212,17 @@ class DeltaToolCall:
 
     name: str | None = None
     """Incremental change to the name of the tool."""
+
     json_args: str | None = None
     """Incremental change to the arguments as JSON"""
+
+    _: KW_ONLY
+
     tool_call_id: str | None = None
     """Incremental change to the tool call ID."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeltaThinkingPart:
     """Incremental change to a thinking part.
 
@@ -237,18 +241,16 @@ DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 """A mapping of thinking call IDs to incremental changes."""
 
-# TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParameters], ...]
-FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
+FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
 
-# TODO: Change signature as indicated above
 StreamFunctionDef: TypeAlias = Callable[
-    [list[ModelMessage], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls, DeltaThinkingCalls]]
+    [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
 ]
 """A function used to generate a streamed response.
 
-While this is defined as having return type of `AsyncIterator[Union[str, DeltaToolCalls, DeltaThinkingCalls]]`, it should
-really be considered as `Union[AsyncIterator[str], AsyncIterator[DeltaToolCalls], AsyncIterator[DeltaThinkingCalls]]`,
+While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]`, it should
+really be considered as `AsyncIterator[str] | AsyncIterator[DeltaToolCalls] | AsyncIterator[DeltaThinkingCalls]`,
 
 E.g. you need to yield all text, all `DeltaToolCalls`, or all `DeltaThinkingCalls`, not mix them.
 """
@@ -326,7 +328,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, (SystemPromptPart, UserPromptPart)):
+                if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())

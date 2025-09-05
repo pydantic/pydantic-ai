@@ -2,12 +2,12 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Any, Callable, TypeVar, Union, cast
+from typing import Any, TypeVar, cast
 
 import httpx
 import pytest
@@ -81,9 +81,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockAnthropicMessage = Union[BetaMessage, Exception]
-    MockRawMessageStreamEvent = Union[BetaRawMessageStreamEvent, Exception]
+    MockAnthropicMessage = BetaMessage | Exception
+    MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -253,7 +252,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     )
     last_message = result.all_messages()[-1]
     assert isinstance(last_message, ModelResponse)
-    assert last_message.price().total_price == snapshot(Decimal('0.00003488'))
+    assert last_message.cost().total_price == snapshot(Decimal('0.00003488'))
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -609,7 +608,7 @@ async def test_stream_structured(allow_model_requests: None):
         BetaRawMessageDeltaEvent(
             type='message_delta',
             delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(output_tokens=5),
+            usage=BetaMessageDeltaUsage(input_tokens=20, output_tokens=5),
         ),
         # Mark message as complete
         BetaRawMessageStopEvent(type='message_stop'),
@@ -668,6 +667,7 @@ async def test_stream_structured(allow_model_requests: None):
                 requests=2,
                 input_tokens=20,
                 output_tokens=5,
+                tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
             )
         )
@@ -1292,12 +1292,11 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             snapshot(RequestUsage(output_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
-        pytest.param(
-            lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(RequestUsage()), id='RawMessageStopEvent'
-        ),
     ],
 )
-def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: RunUsage):
+def test_usage(
+    message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
+):
     assert _map_usage(message_callback()) == usage
 
 

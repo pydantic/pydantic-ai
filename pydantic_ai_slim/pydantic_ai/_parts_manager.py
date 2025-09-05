@@ -15,7 +15,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Hashable
 from dataclasses import dataclass, field, replace
-from typing import Any, Union
+from typing import Any
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
@@ -38,7 +38,7 @@ VendorId = Hashable
 Type alias for a vendor identifier, which can be any hashable type (e.g., a string, UUID, etc.)
 """
 
-ManagedPart = Union[ModelResponsePart, ToolCallPartDelta]
+ManagedPart = ModelResponsePart | ToolCallPartDelta
 """
 A union of types that are managed by the ModelResponsePartsManager.
 Because many vendors have streaming APIs that may produce not-fully-formed tool calls,
@@ -154,6 +154,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: Hashable | None,
         content: str | None = None,
+        id: str | None = None,
         signature: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
@@ -167,6 +168,7 @@ class ModelResponsePartsManager:
                 of thinking. If None, a new part will be created unless the latest part is already
                 a ThinkingPart.
             content: The thinking content to append to the appropriate ThinkingPart.
+            id: An optional id for the thinking part.
             signature: An optional signature for the thinking content.
 
         Returns:
@@ -197,7 +199,7 @@ class ModelResponsePartsManager:
             if content is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
-                part = ThinkingPart(content=content, signature=signature)
+                part = ThinkingPart(content=content, id=id, signature=signature)
                 if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)
@@ -262,14 +264,14 @@ class ModelResponsePartsManager:
             if tool_name is None and self._parts:
                 part_index = len(self._parts) - 1
                 latest_part = self._parts[part_index]
-                if isinstance(latest_part, (ToolCallPart, ToolCallPartDelta)):  # pragma: no branch
+                if isinstance(latest_part, ToolCallPart | ToolCallPartDelta):  # pragma: no branch
                     existing_matching_part_and_index = latest_part, part_index
         else:
             # vendor_part_id is provided, so look up the corresponding part or delta
             part_index = self._vendor_id_to_part_index.get(vendor_part_id)
             if part_index is not None:
                 existing_part = self._parts[part_index]
-                if not isinstance(existing_part, (ToolCallPartDelta, ToolCallPart)):
+                if not isinstance(existing_part, ToolCallPartDelta | ToolCallPart):
                     raise UnexpectedModelBehavior(f'Cannot apply a tool call delta to {existing_part=}')
                 existing_matching_part_and_index = existing_part, part_index
 

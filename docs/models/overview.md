@@ -27,12 +27,13 @@ In addition, many providers are compatible with the OpenAI API, and can be used 
 - [Heroku](openai.md#heroku-ai)
 - [GitHub Models](openai.md#github-models)
 - [Cerebras](openai.md#cerebras)
+- [LiteLLM](openai.md#litellm)
 
 Pydantic AI also comes with [`TestModel`](../api/models/test.md) and [`FunctionModel`](../api/models/function.md)
 for testing and development.
 
 To use each model provider, you need to configure your local environment and make sure you have the right
-packages installed.
+packages installed. If you try to use the model without having done so, you'll be told what to install.
 
 ## Models and Providers
 
@@ -63,6 +64,9 @@ If you want to use a different provider or profile, you can instantiate a model 
 
 ## Custom Models
 
+!!! note
+    If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
+
 To implement support for a model API that's not already supported, you will need to subclass the [`Model`][pydantic_ai.models.Model] abstract base class.
 For streaming, you'll also need to implement the [`StreamedResponse`][pydantic_ai.models.StreamedResponse] abstract base class.
 
@@ -70,7 +74,6 @@ The best place to start is to review the source code for existing implementation
 
 For details on when we'll accept contributions adding new models to Pydantic AI, see the [contributing guidelines](../contributing.md#new-model-rules).
 
-If a model API is compatible with the OpenAI API, you do not need a custom model class and can provide your own [custom provider](openai.md#openai-compatible-models) instead.
 
 <!-- TODO(Marcelo): We need to create a section in the docs about reliability. -->
 
@@ -134,11 +137,10 @@ The `ModelResponse` message above indicates in the `model_name` field that the o
 You can configure different [`ModelSettings`][pydantic_ai.settings.ModelSettings] for each model in a fallback chain by passing the `settings` parameter when creating each model. This is particularly useful when different providers have different optimal configurations:
 
 ```python {title="fallback_model_per_settings.py"}
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.settings import ModelSettings
 
 # Configure each model with provider-specific optimal settings
 openai_model = OpenAIChatModel(
@@ -169,8 +171,7 @@ contains all the exceptions encountered during the `run` execution.
 === "Python >=3.11"
 
     ```python {title="fallback_model_failure.py" py="3.11"}
-    from pydantic_ai import Agent
-    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai import Agent, ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -196,8 +197,7 @@ contains all the exceptions encountered during the `run` execution.
     ```python {title="fallback_model_failure.py" noqa="F821" test="skip"}
     from exceptiongroup import catch
 
-    from pydantic_ai import Agent
-    from pydantic_ai.exceptions import ModelHTTPError
+    from pydantic_ai import Agent, ModelHTTPError
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.fallback import FallbackModel
     from pydantic_ai.models.openai import OpenAIChatModel
