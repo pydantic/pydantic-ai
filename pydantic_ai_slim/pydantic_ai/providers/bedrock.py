@@ -43,7 +43,7 @@ class BedrockModelProfile(ModelProfile):
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an Amazon model used via Bedrock."""
     profile = amazon_model_profile(model_name)
-    if 'nova' in model_name:  # pragma: no branch
+    if 'nova' in model_name:
         return BedrockModelProfile(bedrock_supports_tool_choice=True).update(profile)
     return profile
 

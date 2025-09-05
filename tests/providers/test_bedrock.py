@@ -90,6 +90,11 @@ def test_bedrock_provider_model_profile(env: TestEnv, mocker: MockerFixture):
     assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
     assert amazon_profile.bedrock_supports_tool_choice is True
 
+    amazon_profile = provider.model_profile('us.amazon.titan-text-express-v1:0')
+    amazon_model_profile_mock.assert_called_with('titan-text-express')
+    assert amazon_profile is not None
+    assert amazon_profile.json_schema_transformer == InlineDefsJsonSchemaTransformer
+
     unknown_model = provider.model_profile('unknown-model')
     assert unknown_model is None
 
