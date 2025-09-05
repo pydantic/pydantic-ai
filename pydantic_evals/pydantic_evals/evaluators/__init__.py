@@ -39,4 +39,4 @@ def __getattr__(name: str):
         raise ImportError(  # pragma: no cover
             'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
         )
-    raise AttributeError(f'module {__name__} has no attribute {name}')
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
