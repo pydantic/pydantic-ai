@@ -50,7 +50,7 @@ Any agent can be wrapped in a [`DBOSAgent`][pydantic_ai.durable_exec.dbos.DBOSAg
 * Wraps `Agent.run` and `Agent.run_sync` as DBOS workflows.
 * Wraps [model requests](../models/overview.md) and [MCP communication](../mcp/client.md) as DBOS steps.
 
-Custom tool functions are not wrapped automatically. You can decorate them with `@DBOS.workflow` or `@DBOS.step` as needed.
+Custom tool functions and event stream handlers are not wrapped automatically. You can decorate them with `@DBOS.workflow` or `@DBOS.step` as needed.
 
 The original agent, model, and MCP server can still be used as normal outside the DBOS workflow.
 

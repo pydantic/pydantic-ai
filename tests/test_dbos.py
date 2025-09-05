@@ -167,7 +167,7 @@ class Deps(BaseModel):
     country: str
 
 
-# Wrap external calls in DBOS steps so they're logged in the DBOS database.
+# Wrap event_stream_handler as a DBOS step because it's non-deterministic (uses logfire)
 @DBOS.step()
 async def event_stream_handler(
     ctx: RunContext[Deps],
