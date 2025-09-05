@@ -169,17 +169,13 @@ class Deps(BaseModel):
 
 # Wrap external calls in DBOS steps so they're logged in the DBOS database.
 @DBOS.step()
-def loginfo_step(*args: Any, **kwargs: Any) -> None:
-    logfire.info(*args, **kwargs)
-
-
 async def event_stream_handler(
     ctx: RunContext[Deps],
     stream: AsyncIterable[AgentStreamEvent],
 ):
-    loginfo_step(f'{ctx.run_step=}')
+    logfire.info(f'{ctx.run_step=}')
     async for event in stream:
-        loginfo_step('event', event=event)
+        logfire.info('event', event=event)
 
 
 # This doesn't need to be a step
@@ -258,23 +254,17 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
         [
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
-            'loginfo_step',
-            'loginfo_step',
-            'loginfo_step',
-            'loginfo_step',
+            'event_stream_handler',
+            'event_stream_handler',
             'complex_agent__mcp_server__mcp.call_tool',
-            'loginfo_step',
+            'event_stream_handler',
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
-            'loginfo_step',
-            'loginfo_step',
-            'loginfo_step',
+            'event_stream_handler',
             'get_weather',
-            'loginfo_step',
+            'event_stream_handler',
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
-            'loginfo_step',
-            'loginfo_step',
         ]
     )
 
@@ -321,13 +311,13 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                         BasicSpan(
                             content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                         ),
-                        BasicSpan(content='ctx.run_step=1'),
                     ],
                 ),
                 BasicSpan(content='ctx.run_step=1'),
                 BasicSpan(
                     content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                 ),
+                BasicSpan(content='ctx.run_step=1'),
                 BasicSpan(
                     content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","part_kind":"tool-call"},"event_kind":"function_tool_call"}'
                 ),
@@ -335,12 +325,14 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                     content='running 2 tools',
                     children=[
                         BasicSpan(content='running tool: get_country'),
+                        BasicSpan(content='ctx.run_step=1'),
                         BasicSpan(
                             content=IsStr(
                                 regex=r'{"result":{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_3rqTYrA6H21AYUaRGP4F66oq","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
                             )
                         ),
                         BasicSpan(content='running tool: get_product_name'),
+                        BasicSpan(content='ctx.run_step=1'),
                         BasicSpan(
                             content=IsStr(
                                 regex=r'{"result":{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_Xw9XMKBJU48kAAd78WgIswDx","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
@@ -373,7 +365,6 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                         BasicSpan(
                             content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"\\"}","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                         ),
-                        BasicSpan(content='ctx.run_step=2'),
                     ],
                 ),
                 BasicSpan(content='ctx.run_step=2'),
@@ -384,6 +375,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                     content='running 1 tool',
                     children=[
                         BasicSpan(content='running tool: get_weather'),
+                        BasicSpan(content='ctx.run_step=2'),
                         BasicSpan(
                             content=IsStr(
                                 regex=r'{"result":{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_Vz0Sie91Ap56nH0ThKGrZXT7","metadata":null,"timestamp":".+?","part_kind":"tool-return"},"event_kind":"function_tool_result"}'
@@ -521,10 +513,8 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
                         BasicSpan(
                             content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_4kc6691zCzjPnOuEtbEGUvz2","part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                         ),
-                        BasicSpan(content='ctx.run_step=3'),
                     ],
                 ),
-                BasicSpan(content='ctx.run_step=3'),
             ],
         )
     )

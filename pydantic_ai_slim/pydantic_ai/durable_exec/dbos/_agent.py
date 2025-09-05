@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import Any, overload
 
@@ -23,6 +23,7 @@ from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     DeferredToolResults,
+    RunContext,
     Tool,
     ToolFuncEither,
 )
@@ -58,6 +59,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         super().__init__(wrapped)
 
         self._name = name or wrapped.name
+        self._event_stream_handler = event_stream_handler
         if self._name is None:
             raise UserError(
                 "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
@@ -76,7 +78,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             wrapped.model,
             step_name_prefix=self._name,
             step_config=self._model_step_config,
-            event_stream_handler=event_stream_handler or wrapped.event_stream_handler,
+            event_stream_handler=self.event_stream_handler,
         )
         self._model = dbos_model
 
@@ -184,6 +186,29 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     @property
     def model(self) -> Model:
         return self._model
+
+    @property
+    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        handler = self._event_stream_handler or super().event_stream_handler
+        if handler is None:
+            return None
+        elif DBOS.workflow_id is not None and DBOS.step_id is None:
+            # Special case if it's in a DBOS workflow but not a step, we need to iterate through all events and call the handler.
+            return self._call_event_stream_handler_in_workflow
+        else:
+            return handler
+
+    async def _call_event_stream_handler_in_workflow(
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
+    ) -> None:
+        handler = self._event_stream_handler or super().event_stream_handler
+        assert handler is not None
+
+        async def streamed_response(event: _messages.AgentStreamEvent):
+            yield event
+
+        async for event in stream:
+            await handler(ctx, streamed_response(event))
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
