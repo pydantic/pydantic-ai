@@ -34,6 +34,7 @@ making it ideal for queries that require up-to-date data.
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
+| Outlines | ❌ | Not supported |
 
 ### Usage
 
@@ -96,16 +97,17 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 ### Provider Support
 
-| Provider | Supported | Notes |
-|----------|-----------|-------|
-| OpenAI | ✅ | |
+| Provider | Supported |
+|----------|-----------|
+| OpenAI | ✅ |
 | Anthropic | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Google | ✅ | |
-| Groq | ❌ | |
-| Bedrock | ❌ | |
-| Mistral | ❌ | |
-| Cohere | ❌ | |
-| HuggingFace | ❌ | |
+| Google | ✅ |
+| Groq | ❌ |
+| Bedrock | ❌ |
+| Mistral | ❌ |
+| Cohere | ❌ |
+| HuggingFace | ❌ |
+| Outlines | ❌ |
 
 ### Usage
 
@@ -125,16 +127,17 @@ allowing it to pull up-to-date information from the web.
 
 ### Provider Support
 
-| Provider | Supported | Notes |
-|----------|-----------|-------|
+| Provider | Supported |
+|----------|-----------|
 | Google | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| OpenAI | ❌ | |
-| Anthropic | ❌ | |
-| Groq | ❌ | |
-| Bedrock | ❌ | |
-| Mistral | ❌ | |
-| Cohere | ❌ | |
-| HuggingFace | ❌ | |
+| OpenAI | ❌ |
+| Anthropic | ❌ |
+| Groq | ❌ |
+| Bedrock | ❌ |
+| Mistral | ❌ |
+| Cohere | ❌ |
+| HuggingFace | ❌ |
+| Outlines | ❌ |
 
 ### Usage
 
