@@ -155,13 +155,19 @@ For more information on how to use Temporal in Python applications, see their [P
 
 There are a few considerations specific to agents and toolsets when using Temporal for durable execution. These are important to understand to ensure that your agents and toolsets work correctly with Temporal's workflow and activity model.
 
-### Agent and Toolset Requirements
+### Agent Names and Toolset IDs
 
 To ensure that Temporal knows what code to run when an activity fails or is interrupted and then restarted, even if your code is changed in between, each activity needs to have a name that's stable and unique.
 
 When `TemporalAgent` dynamically creates activities for the wrapped agent's model requests and toolsets (specifically those that implement their own tool listing and calling, i.e. [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] and [`MCPServer`][pydantic_ai.mcp.MCPServer]), their names are derived from the agent's [`name`][pydantic_ai.agent.AbstractAgent.name] and the toolsets' [`id`s][pydantic_ai.toolsets.AbstractToolset.id]. These fields are normally optional, but are required to be set when using Temporal. They should not be changed once the durable agent has been deployed to production as this would break active workflows.
 
 Other than that, any agent and toolset will just work!
+
+### Instructions Functions, Output Functions, and History Processors
+
+Pydantic AI runs non-async [instructions](agents.md#instructions) and [system prompt](agents.md#system-prompts) functions, [history processors](message-history.md#processing-message-history), [output functions](output.md#output-functions), and [output validators](output.md#output-validator-functions) in threads, which are not supported inside Temporal workflows and require an activity. Ensure that these functions are async instead.
+
+Synchronous tool functions are supported, as tools are automatically run in activities unless this is [explicitly disabled](#activity-configuration). Still, it's recommended to make tool functions async as well to improve performance.
 
 ### Agent Run Context and Dependencies
 

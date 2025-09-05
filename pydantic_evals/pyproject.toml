@@ -52,7 +52,6 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-ai-slim=={{ version }}",
     "anyio>=0",
-    "eval-type-backport>=0; python_version < '3.11'",
     "pyyaml>=6.0.2",
 ]
 
