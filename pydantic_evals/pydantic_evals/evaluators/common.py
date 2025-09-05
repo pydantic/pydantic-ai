@@ -21,7 +21,6 @@ __all__ = (
     'MaxDuration',
     'LLMJudge',
     'HasMatchingSpan',
-    'Python',
     'OutputConfig',
 )
 
@@ -268,22 +267,6 @@ class HasMatchingSpan(Evaluator[object, object, object]):
         return ctx.span_tree.any(self.query)
 
 
-# TODO: Consider moving this to docs rather than providing it with the library, given the security implications
-@dataclass(repr=False)
-class Python(Evaluator[object, object, object]):
-    """The output of this evaluator is the result of evaluating the provided Python expression.
-
-    ***WARNING***: this evaluator runs arbitrary Python code, so you should ***NEVER*** use it with untrusted inputs.
-    """
-
-    expression: str
-    evaluation_name: str | None = field(default=None)
-
-    def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
-        # Evaluate the condition, exposing access to the evaluator context as `ctx`.
-        return eval(self.expression, {'ctx': ctx})
-
-
 DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     Equals,
     EqualsExpected,
@@ -292,5 +275,12 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     MaxDuration,
     LLMJudge,
     HasMatchingSpan,
-    # Python,  # not included by default for security reasons
 )
+
+
+def __getattr__(name: str):
+    if name == 'Python':
+        raise ImportError(
+            'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
+        )
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

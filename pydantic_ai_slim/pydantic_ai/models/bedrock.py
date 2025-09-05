@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import functools
 import typing
-import warnings
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -601,7 +600,7 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
@@ -638,18 +637,11 @@ class BedrockStreamedResponse(StreamedResponse):
                     index = content_block_delta['contentBlockIndex']
                     delta = content_block_delta['delta']
                     if 'reasoningContent' in delta:
-                        if text := delta['reasoningContent'].get('text'):
-                            yield self._parts_manager.handle_thinking_delta(
-                                vendor_part_id=index,
-                                content=text,
-                                signature=delta['reasoningContent'].get('signature'),
-                            )
-                        else:  # pragma: no cover
-                            warnings.warn(
-                                f'Only text reasoning content is supported yet, but you got {delta["reasoningContent"]}. '
-                                'Please report this to the maintainers.',
-                                UserWarning,
-                            )
+                        yield self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=index,
+                            content=delta['reasoningContent'].get('text'),
+                            signature=delta['reasoningContent'].get('signature'),
+                        )
                     if 'text' in delta:
                         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
                         if maybe_event is not None:  # pragma: no branch

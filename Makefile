@@ -8,12 +8,8 @@
 .pre-commit: ## Check that pre-commit is installed
 	@pre-commit -V || echo 'Please install pre-commit: https://pre-commit.com/'
 
-.PHONY: .deno
-.deno: ## Check that deno is installed
-	@deno --version > /dev/null 2>&1 || (printf "\033[0;31m✖ Error: deno is not installed, but is needed for mcp-run-python\033[0m\n    Please install deno: https://docs.deno.com/runtime/getting_started/installation/\n" && exit 1)
-
 .PHONY: install
-install: .uv .pre-commit .deno ## Install the package, dependencies, and pre-commit for local development
+install: .uv .pre-commit ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --all-packages --group lint --group docs
 	pre-commit install --install-hooks
 
@@ -37,10 +33,6 @@ format: ## Format the code
 lint: ## Lint the code
 	uv run ruff format --check
 	uv run ruff check
-
-.PHONY: lint-js
-lint-js: ## Lint JS and TS code
-	cd mcp-run-python && deno task lint-format
 
 .PHONY: typecheck-pyright
 typecheck-pyright:
@@ -76,11 +68,6 @@ test-all-python: ## Run tests on Python 3.10 to 3.13
 testcov: test ## Run tests and generate an HTML coverage report
 	@echo "building coverage html"
 	@uv run coverage html
-
-.PHONY: test-mrp
-test-mrp: ## Build and tests of mcp-run-python
-	cd mcp-run-python && deno task build
-	uv run --package mcp-run-python pytest mcp-run-python -v
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples

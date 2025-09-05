@@ -19,7 +19,7 @@ Pydantic AI comes with two ways to connect to MCP servers:
 - [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] which connects to an MCP server using the [HTTP SSE](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) transport
 - [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] which runs the server as a subprocess and connects to it using the [stdio](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) transport
 
-Examples of all three are shown below; [mcp-run-python](run-python.md) is used as the MCP server in all examples.
+Examples of all three are shown below.
 
 Each MCP server instance is a [toolset](../toolsets.md) and can be registered with an [`Agent`][pydantic_ai.Agent] using the `toolsets` argument.
 
@@ -59,9 +59,9 @@ agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 async def main():
     async with agent:  # (3)!
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+        result = await agent.run('What is 7 plus 5?')
     print(result.output)
-    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+    #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
@@ -97,32 +97,39 @@ Will display as follows:
 [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] connects over HTTP using the [HTTP + Server Sent Events transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#http-with-sse) to a server.
 
 !!! note
-    [`MCPServerSSE`][pydantic_ai.mcp.MCPServerSSE] requires an MCP server to be running and accepting HTTP connections before running the agent. Running the server is not managed by Pydantic AI.
+    The SSE transport in MCP is deprecated, you should use Streamable HTTP instead.
 
-The name "HTTP" is used since this implementation will be adapted in future to use the new
-[Streamable HTTP](https://github.com/modelcontextprotocol/specification/pull/206) currently in development.
+Before creating the SSE client, we need to run a server that supports the SSE transport.
 
-Before creating the SSE client, we need to run the server (docs [here](run-python.md)):
 
-```bash {title="terminal (run sse server)"}
-deno run \
-  -N -R=node_modules -W=node_modules --node-modules-dir=auto \
-  jsr:@pydantic/mcp-run-python sse
+```python {title="sse_server.py" dunder_name="not_main"}
+from mcp.server.fastmcp import FastMCP
+
+app = FastMCP()
+
+@app.tool()
+def add(a: int, b: int) -> int:
+    return a + b
+
+if __name__ == '__main__':
+    app.run(transport='sse')
 ```
+
+Then we can create the client:
 
 ```python {title="mcp_sse_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerSSE
 
-server = MCPServerSSE(url='http://localhost:3001/sse')  # (1)!
+server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
 agent = Agent('openai:gpt-4o', toolsets=[server])  # (2)!
 
 
 async def main():
     async with agent:  # (3)!
-        result = await agent.run('How many days between 2000-01-01 and 2025-03-18?')
+        result = await agent.run('What is 7 plus 5?')
     print(result.output)
-    #> There are 9,208 days between January 1, 2000, and March 18, 2025.
+    #> The answer is 12.
 ```
 
 1. Define the MCP server with the URL used to connect.
@@ -133,23 +140,16 @@ _(This example is complete, it can be run "as is" — you'll need to add `asynci
 
 ### MCP "stdio" Server
 
-The other transport offered by MCP is the [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
+MCP also offers [stdio transport](https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#stdio) where the server is run as a subprocess and communicates with the client over `stdin` and `stdout`. In this case, you'd use the [`MCPServerStdio`][pydantic_ai.mcp.MCPServerStdio] class.
+
+In this example [mcp-run-python](https://github.com/pydantic/mcp-run-python) is used as the MCP server.
 
 ```python {title="mcp_stdio_client.py"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(  # (1)!
-    'deno',
-    args=[
-        'run',
-        '-N',
-        '-R=node_modules',
-        '-W=node_modules',
-        '--node-modules-dir=auto',
-        'jsr:@pydantic/mcp-run-python',
-        'stdio',
-    ]
+    'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
 )
 agent = Agent('openai:gpt-4o', toolsets=[server])
 
@@ -161,7 +161,7 @@ async def main():
     #> There are 9,208 days between January 1, 2000, and March 18, 2025.
 ```
 
-1. See [MCP Run Python](run-python.md) for more information.
+1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
 
 ## Tool call customisation
 
@@ -189,7 +189,7 @@ async def process_tool_call(
     return await call_tool(name, tool_args, {'deps': ctx.deps})
 
 
-server = MCPServerStdio('python', ['mcp_server.py'], process_tool_call=process_tool_call)
+server = MCPServerStdio('python', args=['mcp_server.py'], process_tool_call=process_tool_call)
 agent = Agent(
     model=TestModel(call_tools=['echo_deps']),
     deps_type=int,
@@ -216,12 +216,12 @@ from pydantic_ai.mcp import MCPServerSSE
 
 # Create two servers with different prefixes
 weather_server = MCPServerSSE(
-    url='http://localhost:3001/sse',
+    'http://localhost:3001/sse',
     tool_prefix='weather'  # Tools will be prefixed with 'weather_'
 )
 
 calculator_server = MCPServerSSE(
-    url='http://localhost:3002/sse',
+    'http://localhost:3002/sse',
     tool_prefix='calc'  # Tools will be prefixed with 'calc_'
 )
 
@@ -263,7 +263,7 @@ http_client = httpx.AsyncClient(
 )
 
 server = MCPServerSSE(
-    url='http://localhost:3001/sse',
+    'http://localhost:3001/sse',
     http_client=http_client,  # (1)!
 )
 agent = Agent('openai:gpt-4o', toolsets=[server])
@@ -362,7 +362,7 @@ Using this server with an `Agent` will automatically allow sampling:
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
 
-server = MCPServerStdio(command='python', args=['generate_svg.py'])
+server = MCPServerStdio('python', args=['generate_svg.py'])
 agent = Agent('openai:gpt-4o', toolsets=[server])
 
 
@@ -382,7 +382,7 @@ You can disallow sampling by setting [`allow_sampling=False`][pydantic_ai.mcp.MC
 from pydantic_ai.mcp import MCPServerStdio
 
 server = MCPServerStdio(
-    command='python',
+    'python',
     args=['generate_svg.py'],
     allow_sampling=False,
 )
@@ -502,7 +502,7 @@ async def handle_elicitation(
 
 # Set up MCP server connection
 restaurant_server = MCPServerStdio(
-    command='python', args=['restaurant_server.py'], elicitation_callback=handle_elicitation
+    'python', args=['restaurant_server.py'], elicitation_callback=handle_elicitation
 )
 
 # Create agent

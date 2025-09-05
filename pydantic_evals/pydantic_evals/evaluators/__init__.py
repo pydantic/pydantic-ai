@@ -7,7 +7,6 @@ from .common import (
     LLMJudge,
     MaxDuration,
     OutputConfig,
-    Python,
 )
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationResult, Evaluator, EvaluatorFailure, EvaluatorOutput, EvaluatorSpec
@@ -22,7 +21,6 @@ __all__ = (
     'LLMJudge',
     'HasMatchingSpan',
     'OutputConfig',
-    'Python',
     # context
     'EvaluatorContext',
     # evaluator
@@ -34,3 +32,11 @@ __all__ = (
     'EvaluationReason',
     'EvaluationResult',
 )
+
+
+def __getattr__(name: str):
+    if name == 'Python':
+        raise ImportError(
+            'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
+        )
+    raise AttributeError(f'module {__name__!r} has no attribute {name!r}')

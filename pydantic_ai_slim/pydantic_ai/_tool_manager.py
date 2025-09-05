@@ -14,6 +14,7 @@ from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior
 from .messages import ToolCallPart
 from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .usage import UsageLimits
 
 
 @dataclass
@@ -66,7 +67,11 @@ class ToolManager(Generic[AgentDepsT]):
             return None
 
     async def handle_call(
-        self, call: ToolCallPart, allow_partial: bool = False, wrap_validation_errors: bool = True
+        self,
+        call: ToolCallPart,
+        allow_partial: bool = False,
+        wrap_validation_errors: bool = True,
+        usage_limits: UsageLimits | None = None,
     ) -> Any:
         """Handle a tool call by validating the arguments, calling the tool, and handling retries.
 
@@ -74,13 +79,14 @@ class ToolManager(Generic[AgentDepsT]):
             call: The tool call part to handle.
             allow_partial: Whether to allow partial validation of the tool arguments.
             wrap_validation_errors: Whether to wrap validation errors in a retry prompt part.
+            usage_limits: Optional usage limits to check before executing tools.
         """
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
         if (tool := self.tools.get(call.tool_name)) and tool.tool_def.kind == 'output':
-            # Output tool calls are not traced
-            return await self._call_tool(call, allow_partial, wrap_validation_errors)
+            # Output tool calls are not traced and not counted
+            return await self._call_tool(call, allow_partial, wrap_validation_errors, count_tool_usage=False)
         else:
             return await self._call_tool_traced(
                 call,
@@ -88,9 +94,17 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors,
                 self.ctx.tracer,
                 self.ctx.trace_include_content,
+                usage_limits,
             )
 
-    async def _call_tool(self, call: ToolCallPart, allow_partial: bool, wrap_validation_errors: bool) -> Any:
+    async def _call_tool(
+        self,
+        call: ToolCallPart,
+        allow_partial: bool,
+        wrap_validation_errors: bool,
+        usage_limits: UsageLimits | None = None,
+        count_tool_usage: bool = True,
+    ) -> Any:
         if self.tools is None or self.ctx is None:
             raise ValueError('ToolManager has not been prepared for a run step yet')  # pragma: no cover
 
@@ -121,7 +135,15 @@ class ToolManager(Generic[AgentDepsT]):
             else:
                 args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
 
-            return await self.toolset.call_tool(name, args_dict, ctx, tool)
+            if usage_limits is not None and count_tool_usage:
+                usage_limits.check_before_tool_call(self.ctx.usage)
+
+            result = await self.toolset.call_tool(name, args_dict, ctx, tool)
+
+            if count_tool_usage:
+                self.ctx.usage.tool_calls += 1
+
+            return result
         except (ValidationError, ModelRetry) as e:
             max_retries = tool.max_retries if tool is not None else 1
             current_retry = self.ctx.retries.get(name, 0)
@@ -160,6 +182,7 @@ class ToolManager(Generic[AgentDepsT]):
         wrap_validation_errors: bool,
         tracer: Tracer,
         include_content: bool = False,
+        usage_limits: UsageLimits | None = None,
     ) -> Any:
         """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
         span_attributes = {
@@ -189,7 +212,7 @@ class ToolManager(Generic[AgentDepsT]):
         }
         with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
             try:
-                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors)
+                tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors, usage_limits)
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():

@@ -211,7 +211,9 @@ class GeminiModel(Model):
         generation_config = _settings_to_generation_config(model_settings)
         if model_request_parameters.output_mode == 'native':
             if tools:
-                raise UserError('Gemini does not support structured output and tools at the same time.')
+                raise UserError(
+                    'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                )
 
             generation_config['response_mime_type'] = 'application/json'
 

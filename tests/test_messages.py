@@ -1,8 +1,25 @@
 import sys
+from datetime import datetime, timezone
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, ThinkingPartDelta, VideoUrl
+from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    RequestUsage,
+    TextPart,
+    ThinkingPartDelta,
+    UserPromptPart,
+    VideoUrl,
+)
+
+from .conftest import IsNow
 
 
 def test_image_url():
@@ -325,3 +342,63 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
     assert result.content_delta == 'new_content'
+
+
+def test_pre_usage_refactor_messages_deserializable():
+    # https://github.com/pydantic/pydantic-ai/pull/2378 changed the `ModelResponse` fields,
+    # but we as tell people to store those in the DB we want to be very careful not to break deserialization.
+    data = [
+        {
+            'parts': [
+                {
+                    'content': 'What is the capital of Mexico?',
+                    'timestamp': datetime.now(tz=timezone.utc),
+                    'part_kind': 'user-prompt',
+                }
+            ],
+            'instructions': None,
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Mexico City.', 'part_kind': 'text'}],
+            'usage': {
+                'requests': 1,
+                'request_tokens': 13,
+                'response_tokens': 76,
+                'total_tokens': 89,
+                'details': None,
+            },
+            'model_name': 'gpt-5-2025-08-07',
+            'timestamp': datetime.now(tz=timezone.utc),
+            'kind': 'response',
+            'vendor_details': {
+                'finish_reason': 'STOP',
+            },
+            'vendor_id': 'chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
+        },
+    ]
+    messages = ModelMessagesTypeAdapter.validate_python(data)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Mexico City.')],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=76,
+                    details={},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
+            ),
+        ]
+    )

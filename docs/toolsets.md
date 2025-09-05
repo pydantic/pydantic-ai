@@ -243,7 +243,7 @@ _(This example is complete, it can be run "as is")_
 
 [`PreparedToolset`][pydantic_ai.toolsets.PreparedToolset] lets you modify the entire list of available tools ahead of each step of the agent run using a user-defined function that takes the  agent [run context][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] and returns a list of modified `ToolDefinition`s.
 
-This is the toolset-specific equivalent of the [`prepare_tools`](tools.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
+This is the toolset-specific equivalent of the [`prepare_tools`](tools-advanced.md#prepare-tools) argument to `Agent` that prepares all tool definitions registered on an agent across toolsets.
 
 Note that it is not possible to add or rename tools using `PreparedToolset`. Instead, you can use [`FunctionToolset.add_function()`](#function-toolset) or [`RenamedToolset`](#renaming-tools).
 
@@ -328,11 +328,11 @@ print(test_model.last_model_request_parameters.function_tools)
 
 ### Requiring Tool Approval
 
-[`ApprovalRequiredToolset`][pydantic_ai.toolsets.ApprovalRequiredToolset] wraps a toolset and lets you dynamically [require approval](tools.md#human-in-the-loop-tool-approval) for a given tool call based on a user-defined function that is passed the agent [run context][pydantic_ai.tools.RunContext], the tool's [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and the validated tool call arguments. If no function is provided, all tool calls will require approval.
+[`ApprovalRequiredToolset`][pydantic_ai.toolsets.ApprovalRequiredToolset] wraps a toolset and lets you dynamically [require approval](deferred-tools.md#human-in-the-loop-tool-approval) for a given tool call based on a user-defined function that is passed the agent [run context][pydantic_ai.tools.RunContext], the tool's [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and the validated tool call arguments. If no function is provided, all tool calls will require approval.
 
 To easily chain different modifications, you can also call [`approval_required()`][pydantic_ai.toolsets.AbstractToolset.approval_required] on any toolset instead of directly constructing a `ApprovalRequiredToolset`.
 
-See the [Human-in-the-Loop Tool Approval](tools.md#human-in-the-loop-tool-approval) documentation for more information on how to handle agent runs that call tools that require approval and how to pass in the results.
+See the [Human-in-the-Loop Tool Approval](deferred-tools.md#human-in-the-loop-tool-approval) documentation for more information on how to handle agent runs that call tools that require approval and how to pass in the results.
 
 ```python {title="approval_required_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
 from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
@@ -446,13 +446,13 @@ _(This example is complete, it can be run "as is")_
 
 ## External Toolset
 
-If your agent needs to be able to call [external tools](tools.md#external-tool-execution) that are provided and executed by an upstream service or frontend, you can build an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] from a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] containing the tool names, arguments JSON schemas, and descriptions.
+If your agent needs to be able to call [external tools](deferred-tools.md#external-tool-execution) that are provided and executed by an upstream service or frontend, you can build an [`ExternalToolset`][pydantic_ai.toolsets.ExternalToolset] from a list of [`ToolDefinition`s][pydantic_ai.tools.ToolDefinition] containing the tool names, arguments JSON schemas, and descriptions.
 
-When the model calls an external tool, the call is considered to be ["deferred"](tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
+When the model calls an external tool, the call is considered to be ["deferred"](deferred-tools.md#deferred-tools), and the agent run will end with a [`DeferredToolRequests`][pydantic_ai.output.DeferredToolRequests] output object with a `calls` list holding [`ToolCallPart`s][pydantic_ai.messages.ToolCallPart] containing the tool name, validated arguments, and a unique tool call ID, which are expected to be passed to the upstream service or frontend that will produce the results.
 
-When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools.md#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
+When the tool call results are received from the upstream service or frontend, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with a `calls` dictionary that maps each tool call ID to an arbitrary value to be returned to the model, a [`ToolReturn`](tools-advanced.md#advanced-tool-returns) object, or a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] exception in case the tool call failed and the model should [try again](tools-advanced.md#tool-retries). This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md).
 
-Note that you need to add `DeferredToolRequests` to the `Agent`'s or `agent.run()`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. For more information, see the [Deferred Tools](tools.md#deferred-tools) documentation.
+Note that you need to add `DeferredToolRequests` to the `Agent`'s or `agent.run()`'s [`output_type`](output.md#structured-output) so that the possible types of the agent run output are correctly inferred. For more information, see the [Deferred Tools](deferred-tools.md#deferred-tools) documentation.
 
 To demonstrate, let us first define a simple agent _without_ deferred tools:
 
@@ -512,8 +512,8 @@ def run_agent(
     return result.output, result.new_messages()
 ```
 
-1. As mentioned in the [Deferred Tools](tools.md#deferred-tools) documentation, these `toolsets` are additional to those provided to the `Agent` constructor
-2. As mentioned in the [Deferred Tools](tools.md#deferred-tools) documentation, this `output_type` overrides the one provided to the `Agent` constructor, so we have to make sure to not lose it
+1. As mentioned in the [Deferred Tools](deferred-tools.md#deferred-tools) documentation, these `toolsets` are additional to those provided to the `Agent` constructor
+2. As mentioned in the [Deferred Tools](deferred-tools.md#deferred-tools) documentation, this `output_type` overrides the one provided to the `Agent` constructor, so we have to make sure to not lose it
 3. We don't include an `user_prompt` keyword argument as we expect the frontend to provide it via `messages`
 
 Now, imagine that the code below is implemented on the frontend, and `run_agent` stands in for an API call to the backend that runs the agent. This is where we actually execute the deferred tool calls and start a new run with the new result included:

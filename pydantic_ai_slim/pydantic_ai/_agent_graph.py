@@ -2,7 +2,6 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
-import hashlib
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -302,16 +301,21 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         if self.system_prompt_dynamic_functions:
             for msg in messages:
                 if isinstance(msg, _messages.ModelRequest):
-                    for i, part in enumerate(msg.parts):
+                    reevaluated_message_parts: list[_messages.ModelRequestPart] = []
+                    for part in msg.parts:
                         if isinstance(part, _messages.SystemPromptPart) and part.dynamic_ref:
                             # Look up the runner by its ref
                             if runner := self.system_prompt_dynamic_functions.get(  # pragma: lax no cover
                                 part.dynamic_ref
                             ):
                                 updated_part_content = await runner.run(run_context)
-                                msg.parts[i] = _messages.SystemPromptPart(
-                                    updated_part_content, dynamic_ref=part.dynamic_ref
-                                )
+                                part = _messages.SystemPromptPart(updated_part_content, dynamic_ref=part.dynamic_ref)
+
+                        reevaluated_message_parts.append(part)
+
+                    # Replace message parts with reevaluated ones to prevent mutating parts list
+                    if reevaluated_message_parts != msg.parts:
+                        msg.parts = reevaluated_message_parts
 
     async def _sys_parts(self, run_context: RunContext[DepsT]) -> list[_messages.ModelRequestPart]:
         """Build the initial messages for the conversation."""
@@ -650,13 +654,6 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
     )
 
 
-def multi_modal_content_identifier(identifier: str | bytes) -> str:
-    """Generate stable identifier for multi-modal content to help LLM in finding a specific file in tool call responses."""
-    if isinstance(identifier, str):
-        identifier = identifier.encode('utf-8')
-    return hashlib.sha1(identifier).hexdigest()[:6]
-
-
 async def process_function_tools(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
@@ -764,6 +761,7 @@ async def process_function_tools(  # noqa: C901
             calls_to_run,
             deferred_tool_results,
             ctx.deps.tracer,
+            ctx.deps.usage_limits,
             output_parts,
             deferred_calls,
         ):
@@ -810,6 +808,7 @@ async def _call_tools(
     tool_calls: list[_messages.ToolCallPart],
     deferred_tool_results: dict[str, DeferredToolResult],
     tracer: Tracer,
+    usage_limits: _usage.UsageLimits | None,
     output_parts: list[_messages.ModelRequestPart],
     output_deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]],
 ) -> AsyncIterator[_messages.HandleResponseEvent]:
@@ -830,7 +829,7 @@ async def _call_tools(
     ):
         tasks = [
             asyncio.create_task(
-                _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id)),
+                _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
                 name=call.tool_name,
             )
             for call in tool_calls
@@ -870,14 +869,15 @@ async def _call_tool(
     tool_manager: ToolManager[DepsT],
     tool_call: _messages.ToolCallPart,
     tool_call_result: DeferredToolResult | None,
+    usage_limits: _usage.UsageLimits | None,
 ) -> tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]:
     try:
         if tool_call_result is None:
-            tool_result = await tool_manager.handle_call(tool_call)
+            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
         elif isinstance(tool_call_result, ToolApproved):
             if tool_call_result.override_args is not None:
                 tool_call = dataclasses.replace(tool_call, args=tool_call_result.override_args)
-            tool_result = await tool_manager.handle_call(tool_call)
+            tool_result = await tool_manager.handle_call(tool_call, usage_limits=usage_limits)
         elif isinstance(tool_call_result, ToolDenied):
             return _messages.ToolReturnPart(
                 tool_name=tool_call.tool_name,
@@ -915,10 +915,7 @@ async def _call_tool(
                     f'`ToolReturn` should be used directly.'
                 )
             elif isinstance(content, _messages.MultiModalContent):
-                if isinstance(content, _messages.BinaryContent):
-                    identifier = content.identifier or multi_modal_content_identifier(content.data)
-                else:
-                    identifier = multi_modal_content_identifier(content.url)
+                identifier = content.identifier
 
                 return_values.append(f'See file {identifier}')
                 user_contents.extend([f'This is file {identifier}:', content])

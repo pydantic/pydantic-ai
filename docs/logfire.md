@@ -262,6 +262,7 @@ The following providers have dedicated documentation on Pydantic AI:
 - [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
 - [Confident AI](https://documentation.confident-ai.com/docs/llm-tracing/integrations/pydanticai)
+- [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
 
 ## Advanced usage
 

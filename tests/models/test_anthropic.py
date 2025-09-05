@@ -252,7 +252,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     )
     last_message = result.all_messages()[-1]
     assert isinstance(last_message, ModelResponse)
-    assert last_message.price().total_price == snapshot(Decimal('0.00003488'))
+    assert last_message.cost().total_price == snapshot(Decimal('0.00003488'))
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -608,7 +608,7 @@ async def test_stream_structured(allow_model_requests: None):
         BetaRawMessageDeltaEvent(
             type='message_delta',
             delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(output_tokens=5),
+            usage=BetaMessageDeltaUsage(input_tokens=20, output_tokens=5),
         ),
         # Mark message as complete
         BetaRawMessageStopEvent(type='message_stop'),
@@ -667,6 +667,7 @@ async def test_stream_structured(allow_model_requests: None):
                 requests=2,
                 input_tokens=20,
                 output_tokens=5,
+                tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
             )
         )
@@ -1291,12 +1292,11 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             snapshot(RequestUsage(output_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
-        pytest.param(
-            lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(RequestUsage()), id='RawMessageStopEvent'
-        ),
     ],
 )
-def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: RunUsage):
+def test_usage(
+    message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
+):
     assert _map_usage(message_callback()) == usage
 
 

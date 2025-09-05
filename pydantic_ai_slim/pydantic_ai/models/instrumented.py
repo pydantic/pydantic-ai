@@ -420,10 +420,15 @@ class InstrumentedModel(WrapperModel):
                         return
 
                     self.instrumentation_settings.handle_messages(messages, response, system, span)
+                    try:
+                        cost_attributes = {'operation.cost': float(response.cost().total_price)}
+                    except LookupError:
+                        cost_attributes = {}
                     span.set_attributes(
                         {
                             **response.usage.opentelemetry_attributes(),
                             'gen_ai.response.model': response_model,
+                            **cost_attributes,
                         }
                     )
                     span.update_name(f'{operation} {request_model}')

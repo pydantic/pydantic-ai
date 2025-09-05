@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +27,6 @@ with try_import() as imports_successful:
         EvaluatorOutput,
         EvaluatorSpec,
         LLMJudge,
-        Python,
     )
     from pydantic_evals.evaluators.context import EvaluatorContext
     from pydantic_evals.reporting import EvaluationReport, ReportCase, ReportCaseAdapter, ReportCaseFailure
@@ -40,6 +39,15 @@ with try_import() as imports_successful:
 
         def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
             return self.output
+
+    @dataclass(repr=False)
+    class Python(Evaluator[object, object, object]):
+        expression: str
+        evaluation_name: str | None = field(default=None)
+
+        def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+            # Evaluate the condition, exposing access to the evaluator context as `ctx`.
+            return eval(self.expression, {'ctx': ctx})
 
 
 with try_import() as tenacity_import_successful:
@@ -135,6 +143,7 @@ async def test_add_evaluator(
     simple_evaluator: type[Evaluator[TaskInput, TaskOutput, TaskMetadata]],
 ):
     """Test adding evaluators to a dataset."""
+
     assert len(example_dataset.evaluators) == 0
 
     example_dataset.add_evaluator(simple_evaluator())

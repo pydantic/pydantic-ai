@@ -18,7 +18,6 @@ with try_import() as imports_successful:
 
     from pydantic_evals.evaluators import EvaluationReason, EvaluatorContext
     from pydantic_evals.evaluators.common import (
-        DEFAULT_EVALUATORS,
         Contains,
         Equals,
         EqualsExpected,
@@ -27,7 +26,6 @@ with try_import() as imports_successful:
         LLMJudge,
         MaxDuration,
         OutputConfig,
-        Python,
     )
     from pydantic_evals.otel._context_in_memory_span_exporter import context_subtree
     from pydantic_evals.otel._errors import SpanTreeRecordingError
@@ -393,68 +391,6 @@ async def test_llm_judge_evaluator_with_model_settings(mocker: MockerFixture):
         'openai:gpt-3.5-turbo',
         custom_model_settings,
     )
-
-
-async def test_python():
-    """Test Python evaluator."""
-    evaluator = Python(expression='ctx.output > 0')
-
-    # Test with valid expression
-    assert evaluator.evaluate(MockContext(output=42)) is True
-    assert evaluator.evaluate(MockContext(output=-1)) is False
-
-    # Test with invalid expression
-    evaluator_invalid = Python(expression='invalid syntax')
-    with pytest.raises(SyntaxError):
-        evaluator_invalid.evaluate(MockContext(output=42))
-
-
-async def test_python_evaluator():
-    """Test Python evaluator."""
-    ctx = EvaluatorContext(
-        name='test',
-        inputs={'x': 42},
-        metadata=None,
-        expected_output=None,
-        output={'y': 84},
-        duration=0.0,
-        _span_tree=SpanTreeRecordingError('did not record spans'),
-        attributes={},
-        metrics={},
-    )
-
-    # Test simple expression
-    evaluator = Python(expression='ctx.output["y"] == 84')
-    assert evaluator.evaluate(ctx) is True
-
-    # Test accessing inputs
-    evaluator = Python(expression='ctx.inputs["x"] * 2 == ctx.output["y"]')
-    assert evaluator.evaluate(ctx) is True
-
-    # Test complex expression
-    evaluator = Python(expression='all(k in ctx.output for k in ["y"])')
-    assert evaluator.evaluate(ctx) is True
-
-    # Test invalid expression
-    evaluator = Python(expression='invalid syntax')
-    with pytest.raises(SyntaxError):
-        evaluator.evaluate(ctx)
-
-    # Test expression with undefined variables
-    evaluator = Python(expression='undefined_var')
-    with pytest.raises(NameError):
-        evaluator.evaluate(ctx)
-
-    # Test expression with type error
-    evaluator = Python(expression='ctx.output + 1')  # Can't add dict and int
-    with pytest.raises(TypeError):
-        evaluator.evaluate(ctx)
-
-
-def test_default_evaluators():
-    """Test DEFAULT_EVALUATORS tuple."""
-    # Verify that Python evaluator is not included for security reasons
-    assert Python not in DEFAULT_EVALUATORS
 
 
 async def test_span_query_evaluator(capfire: CaptureLogfire):

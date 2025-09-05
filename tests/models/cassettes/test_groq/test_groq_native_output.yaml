@@ -1,0 +1,89 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '416'
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the largest city in Mexico?
+        role: user
+      model: openai/gpt-oss-120b
+      n: 1
+      response_format:
+        json_schema:
+          description: A city and its country.
+          name: CityLocation
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
+          strict: true
+        type: json_schema
+      stream: false
+    uri: https://api.groq.com/openai/v1/chat/completions
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-length:
+      - '947'
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          content: '{"city":"Mexico City","country":"Mexico"}'
+          reasoning: 'The user asks: "What is the largest city in Mexico?" The system expects a JSON object conforming to
+            CityLocation schema: properties city (string) and country (string), required both. Provide largest city in Mexico:
+            Mexico City. So output JSON: {"city":"Mexico City","country":"Mexico"} in compact format, no extra text.'
+          role: assistant
+      created: 1756843265
+      id: chatcmpl-92437948-262c-49fe-87d1-774e54201105
+      model: openai/gpt-oss-120b
+      object: chat.completion
+      service_tier: on_demand
+      system_fingerprint: fp_213abb2467
+      usage:
+        completion_time: 0.186978247
+        completion_tokens: 94
+        prompt_time: 0.008149307
+        prompt_tokens: 178
+        queue_time: 1.095749809
+        total_time: 0.195127554
+        total_tokens: 272
+      usage_breakdown: null
+      x_groq:
+        id: req_01k4609j8zemga5d9erfnwbfma
+    status:
+      code: 200
+      message: OK
+version: 1
