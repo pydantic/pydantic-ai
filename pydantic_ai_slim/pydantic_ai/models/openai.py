@@ -1115,18 +1115,15 @@ class OpenAIResponsesModel(Model):
         for m in messages:
             # Openai may return a dated model_name that differs from self.model_name
             # (e.g., "gpt-5" vs "gpt-5-2025-08-07").
-            if isinstance(m, ModelResponse) and m.model_name:
-                if self.model_name in m.model_name:
-                    response_id = m.provider_response_id
-                else:
-                    # Mixed model responses invalidate response_id,
-                    # so the history is kept intact.
-                    response_id = None
-                    break
+            if isinstance(m, ModelResponse) and m.model_name and (self.model_name in m.model_name):
+                response_id = m.provider_response_id
             elif isinstance(m, ModelRequest):
                 latest_model_request = m
             else:
-                pass
+                # Mixed model responses invalidate response_id,
+                # so the history is kept intact.
+                response_id = None
+                break
         if response_id and latest_model_request:
             messages = [latest_model_request]
         return messages, response_id
