@@ -169,7 +169,39 @@ The MCP servers provide the ability to set a `process_tool_call` which allows
 the customisation of tool call requests and their responses.
 
 A common use case for this is to inject metadata to the requests which the server
-call needs.
+call needs. Accessing the metadata is then SDK specific, for example with the
+MCP Python SDK, it is accessible via the
+[Context](https://github.com/modelcontextprotocol/python-sdk#context) parameter
+for tool calls.
+
+```python {title="mcp_server.py"}
+from typing import Any
+
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.session import ServerSession
+
+mcp = FastMCP('Pydantic AI MCP Server')
+log_level = 'unset'
+
+
+@mcp.tool()
+async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+    """Echo the run context.
+
+    Args:
+        ctx: Context object containing request and session information.
+
+    Returns:
+        Dictionary with an echo message and the deps.
+    """
+    await ctx.info('This is an info message')
+
+    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    return {'echo': 'This is an echo message', 'deps': deps}
+
+if __name__ == '__main__':
+    mcp.run()
+```
 
 ```python {title="mcp_process_tool_call.py"}
 from typing import Any
