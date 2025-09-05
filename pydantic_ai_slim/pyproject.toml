@@ -94,6 +94,8 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 retries = ["tenacity>=8.2.3"]
 # Temporal
 temporal = ["temporalio==1.16.0"]
+outlines = ["outlines>=1.0.0, <1.3.0"]
+outlines-transformers = ["outlines[transformers]>=1.0.0, <1.3.0"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
