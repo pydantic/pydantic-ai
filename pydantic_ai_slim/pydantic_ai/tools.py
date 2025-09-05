@@ -259,7 +259,9 @@ class FunctionTextFormat:
                 except GrammarError as e:
                     raise ValueError('Lark grammar is invalid') from e
             except ImportError:
-                warn('Cannot validate lark grammar as the lark optional dependency group has not been installed')  # pragma: no cover
+                warn(
+                    'Cannot validate lark grammar as the lark optional dependency group has not been installed'
+                )  # pragma: no cover
         elif self.syntax == 'regex':  # pragma: no branch
             try:
                 re.compile(self.grammar)
