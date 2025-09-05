@@ -30,6 +30,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
+    from pydantic_ai.providers.outlines import OutlinesProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
 
@@ -52,6 +53,7 @@ with try_import() as imports_successful:
         ('heroku', HerokuProvider, 'HEROKU_INFERENCE_KEY'),
         ('github', GitHubProvider, 'GITHUB_API_KEY'),
         ('ollama', OllamaProvider, 'OLLAMA_BASE_URL'),
+        ('outlines', OutlinesProvider, None),
     ]
 
 if not imports_successful():
