@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
+from openai.types.chat.chat_completion_named_tool_choice_param import Function
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
 
@@ -56,6 +57,8 @@ try:
         ChatCompletionContentPartParam,
         ChatCompletionContentPartTextParam,
     )
+    from openai.types.chat.chat_completion_allowed_tool_choice_param import ChatCompletionAllowedToolChoiceParam
+    from openai.types.chat.chat_completion_allowed_tools_param import ChatCompletionAllowedToolsParam
     from openai.types.chat.chat_completion_content_part_image_param import ImageURL
     from openai.types.chat.chat_completion_content_part_input_audio_param import InputAudio
     from openai.types.chat.chat_completion_content_part_param import File, FileFile
@@ -64,7 +67,9 @@ try:
     from openai.types.chat.chat_completion_message_function_tool_call_param import (
         ChatCompletionMessageFunctionToolCallParam,
     )
+    from openai.types.chat.chat_completion_named_tool_choice_param import ChatCompletionNamedToolChoiceParam
     from openai.types.chat.chat_completion_prediction_content_param import ChatCompletionPredictionContentParam
+    from openai.types.chat.chat_completion_tool_choice_option_param import ChatCompletionToolChoiceOptionParam
     from openai.types.chat.completion_create_params import (
         WebSearchOptions,
         WebSearchOptionsUserLocation,
@@ -386,13 +391,30 @@ class OpenAIChatModel(Model):
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
+        tool_choice: ChatCompletionToolChoiceOptionParam | None
+        model_settings_tool_choice = model_settings.get('tool_choice', None)
         if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
+            tool_choice = None
         elif (
             not model_request_parameters.allow_text_output
             and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+            and not isinstance(model_settings_tool_choice, list)
         ):
             tool_choice = 'required'
+        elif isinstance(model_settings_tool_choice, list):
+            if len(model_settings_tool_choice) == 1:
+                tool_choice = ChatCompletionNamedToolChoiceParam(
+                    type='function',
+                    function=Function(name=model_settings_tool_choice[0]),
+                )
+            else:
+                tool_choice = ChatCompletionAllowedToolChoiceParam(
+                    type='allowed_tools',
+                    allowed_tools=ChatCompletionAllowedToolsParam(
+                        mode='required' if not model_request_parameters.allow_text_output else 'auto',
+                        tools=[{'type': 'function', 'function': {'name': name}} for name in model_settings_tool_choice],
+                    ),
+                )
         else:
             tool_choice = 'auto'
 
