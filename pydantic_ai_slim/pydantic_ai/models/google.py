@@ -472,7 +472,10 @@ class GoogleModel(Model):
                     message_parts = [{'text': ''}]
                 contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
-                contents.append(_content_model_response(m))
+                model_content = _content_model_response(m)
+                # Skip model responses with empty parts (e.g., thinking-only responses)
+                if model_content.get('parts'):
+                    contents.append(model_content)
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages):
@@ -594,12 +597,17 @@ class GeminiStreamedResponse(StreamedResponse):
 
 def _content_model_response(m: ModelResponse) -> ContentDict:
     parts: list[PartDict] = []
+    has_function_calls = False
+    has_text_parts = False
+
     for item in m.parts:
         if isinstance(item, ToolCallPart):
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
             parts.append({'function_call': function_call})
+            has_function_calls = True
         elif isinstance(item, TextPart):
             parts.append({'text': item.content})
+            has_text_parts = True
         elif isinstance(item, ThinkingPart):  # pragma: no cover
             # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
             # please open an issue. The below code is the code to send thinking to the provider.
@@ -615,6 +623,11 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
                     parts.append({'code_execution_result': item.content})
         else:
             assert_never(item)
+
+    # If we only have function calls without text, add minimal text to satisfy Google API
+    if has_function_calls and not has_text_parts:
+        parts.append({'text': 'I have completed the function calls above.'})
+
     return ContentDict(role='model', parts=parts)
 
 
