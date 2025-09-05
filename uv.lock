@@ -3106,7 +3106,6 @@ requires-dist = [
 name = "pydantic-ai-slim"
 source = { editable = "pydantic_ai_slim" }
 dependencies = [
-    { name = "eval-type-backport" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "genai-prices" },
     { name = "griffe" },
@@ -3189,7 +3188,6 @@ requires-dist = [
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.16.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
-    { name = "eval-type-backport", specifier = ">=0.2.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
     { name = "genai-prices", specifier = ">=0.0.22" },
@@ -3311,7 +3309,6 @@ name = "pydantic-evals"
 source = { editable = "pydantic_evals" }
 dependencies = [
     { name = "anyio" },
-    { name = "eval-type-backport", marker = "python_full_version < '3.11'" },
     { name = "logfire-api" },
     { name = "pydantic" },
     { name = "pydantic-ai-slim" },
@@ -3327,7 +3324,6 @@ logfire = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=0" },
-    { name = "eval-type-backport", marker = "python_full_version < '3.11'", specifier = ">=0" },
     { name = "logfire", marker = "extra == 'logfire'", specifier = ">=3.14.1" },
     { name = "logfire-api", specifier = ">=3.14.1" },
     { name = "pydantic", specifier = ">=2.10" },
