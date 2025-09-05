@@ -385,6 +385,7 @@ def test_logfire(
                                 },
                                 'outer_typed_dict_key': None,
                                 'strict': None,
+                                'sequential': False,
                                 'kind': 'function',
                             }
                         ],
@@ -777,6 +778,7 @@ def test_instructions_with_structured_output_exclude_content_v2(
                                 'description': 'The final response which ends this conversation',
                                 'outer_typed_dict_key': None,
                                 'strict': None,
+                                'sequential': False,
                                 'kind': 'output',
                             }
                         ],

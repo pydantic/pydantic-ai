@@ -56,6 +56,17 @@ class ToolManager(Generic[AgentDepsT]):
 
         return [tool.tool_def for tool in self.tools.values()]
 
+    def should_sequential_tool_call(self, calls: list[ToolCallPart]) -> bool:
+        """Whether to allow sequential tool calls for a list of tool calls."""
+        for call in calls:
+            if not (tool_def := self.get_tool_def(call.tool_name)):
+                continue
+
+            if tool_def.sequential:
+                return True
+
+        return False
+
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""
         if self.tools is None:
