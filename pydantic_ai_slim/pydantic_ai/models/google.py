@@ -600,11 +600,14 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             parts.append({'function_call': function_call})
         elif isinstance(item, TextPart):
             parts.append({'text': item.content})
-        elif isinstance(item, ThinkingPart):  # pragma: no cover
-            # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-            # please open an issue. The below code is the code to send thinking to the provider.
-            # parts.append({'text': item.content, 'thought': True})
-            pass
+        elif isinstance(item, ThinkingPart):
+            parts.append(
+                {
+                    'text': item.content,
+                    'thought': True,
+                    'thought_signature': item.signature.encode('utf-8') if item.signature else None,
+                }
+            )
         elif isinstance(item, BuiltinToolCallPart):
             if item.provider_name == 'google':
                 if item.tool_name == 'code_execution':  # pragma: no branch
@@ -645,7 +648,8 @@ def _process_response_from_parts(
             )
         elif part.text is not None:
             if part.thought:
-                items.append(ThinkingPart(content=part.text))
+                signature = part.thought_signature.decode('utf-8') if part.thought_signature else None
+                items.append(ThinkingPart(content=part.text, signature=signature))
             else:
                 items.append(TextPart(content=part.text))
         elif part.function_call:

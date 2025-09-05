@@ -2073,22 +2073,31 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                        signature=IsStr(),
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                    ),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1789, details={'reasoning_tokens': 1344}),
+                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_response_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+                provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
             ),
         ]
     )
 
-    mistral_model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    mistral_model = MistralModel('magistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
         model=mistral_model,
@@ -2099,50 +2108,26 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    TextPart(
-                        content="""\
-I'm not a traffic safety expert, but here are some general guidelines that many people follow when crossing a street safely. Remember that local rules and conditions might vary, so always follow local traffic laws and pay close attention to your surroundings.
-
-1. Find a Designated Crossing Point
- • Look for crosswalks, pedestrian signals, or marked intersections. These areas are designed for safe crossing.
- • If no crosswalk is available, choose a spot where you have clear visibility of oncoming traffic in all directions.
-
-2. Stop at the Curb or Edge of the Road
- • Before stepping off the curb, pause to assess the situation.
- • Resist the urge to step into the street immediately—this helps you avoid unpredictable traffic behavior.
-
-3. Look and Listen
- • Look left, then right, and left again. In some places, you might need to check right a second time depending on the flow of traffic.
- • Pay attention to the sound of approaching vehicles or any signals that indicate vehicles may be turning into your path.
- • Remove or lower distractions like headphones so you can be fully aware of your environment.
-
-4. Follow Pedestrian Signals (if available)
- • If you're at an intersection with traffic signals, wait for the "Walk" signal.
- • Even when the signal is in your favor, ensure that any turning vehicles (cars or bikes) see you and are stopping.
-
-5. Make Eye Contact
- • If possible, make eye contact with drivers who might be turning. This can help ensure that they see you and are taking appropriate action.
-
-6. Cross Quickly and Carefully
- • Once you've determined that it's safe, proceed at a steady pace.
- • Continue to be alert while you cross, watching for any unexpected vehicle movements.
-
-7. Stay on the Sidewalk Once You've Crossed
- • After reaching the other side, stick to areas designated for pedestrians rather than walking immediately back into the roadway.
-
-These suggestions are meant to help you think through pedestrian safety. Different regions may have additional rules or different signals, so if you're unsure, it might help to check local guidelines or ask someone familiar with the area. Stay safe!\
-"""
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                        signature=IsStr(),
                     ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                    ),
+                    TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1789, details={'reasoning_tokens': 1344}),
+                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_response_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+                provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
             ),
             ModelRequest(
                 parts=[
@@ -2153,12 +2138,15 @@ These suggestions are meant to help you think through pedestrian safety. Differe
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=1036, output_tokens=691),
-                model_name='mistral-large-latest',
+                parts=[
+                    ThinkingPart(content=IsStr()),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=664, output_tokens=747),
+                model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
-                provider_response_id='a088e80a476e44edaaa959a1ff08f358',
+                provider_response_id='9abe8b736bff46af8e979b52334a57cd',
             ),
         ]
     )

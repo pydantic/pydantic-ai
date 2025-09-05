@@ -481,12 +481,14 @@ class BedrockConverseModel(Model):
                                 'text': item.content,
                             }
                             if item.signature:
+                                # TODO: Store `provider_name` on ThinkingPart, only send back `signature` if it matches?
                                 reasoning_text['signature'] = item.signature
                             reasoning_content: ReasoningContentBlockOutputTypeDef = {
                                 'reasoningText': reasoning_text,
                             }
                             content.append({'reasoningContent': reasoning_content})
                         else:
+                            # TODO: Should we send in `<think>` tags in case thinking from another model was forwarded to Bedrock?
                             # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
                             pass
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):

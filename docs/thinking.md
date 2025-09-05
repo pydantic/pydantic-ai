@@ -74,6 +74,8 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+<!-- TODO: gpt-oss sends reasoning by default: https://console.groq.com/docs/reasoning#gptoss-models -->
+
 ## Google
 
 To enable thinking, use the `google_thinking_config` field in the
@@ -92,3 +94,6 @@ agent = Agent(model, model_settings=settings)
 ## Mistral / Cohere
 
 Neither Mistral nor Cohere generate thinking parts.
+
+<!-- TODO: Document Bedrock etc -->
+<!-- TODO: Document ModelProfile.thinking_tags -->
