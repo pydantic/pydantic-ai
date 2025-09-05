@@ -99,7 +99,7 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 retries = ["tenacity>=8.2.3"]
 # Temporal
 temporal = ["temporalio==1.16.0"]
-# free form function callins with lark context free grammar
+# free form function calling with lark context free grammar
 lark = ["lark>=1.2.2"]
 
 [tool.hatch.metadata]
