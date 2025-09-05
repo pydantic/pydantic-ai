@@ -161,9 +161,11 @@ result = agent.run_sync('What is the secret code?', model_settings=model_setting
 print(result.output)
 #> 1234
 ```
+
 By passing the `provider_response_id` from an earlier run, you can allow the model to build on its own prior reasoning without needing to resend the full message history.
-If message history is provided and all responses come from the same openai model,
-only the latest request and the `previous_response_id` from the latest response are sent to the server for efficiency.
+
+If message history is provided and all responses come from the same OpenAI model,
+Pydantic AI will automatically only send the the latest request and the `previous_response_id` from the latest response to the API for efficiency.
 
 ## OpenAI-compatible Models
 
