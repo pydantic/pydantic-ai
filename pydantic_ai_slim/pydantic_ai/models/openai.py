@@ -393,7 +393,10 @@ class OpenAIChatModel(Model):
 
         tool_choice: ChatCompletionToolChoiceOptionParam | None
         model_settings_tool_choice = model_settings.get('tool_choice', None)
-        if not tools:
+        # Respect an explicit request to disable tool calls.
+        if model_settings_tool_choice == 'none':
+            tool_choice = 'none'
+        elif not tools:
             tool_choice = None
         elif (
             not model_request_parameters.allow_text_output
