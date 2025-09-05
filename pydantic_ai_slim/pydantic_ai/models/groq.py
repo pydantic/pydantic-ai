@@ -124,7 +124,7 @@ class GroqModel(Model):
         self,
         model_name: GroqModelName,
         *,
-        provider: Literal['groq'] | Provider[AsyncGroq] = 'groq',
+        provider: Literal['groq', 'gateway'] | Provider[AsyncGroq] = 'groq',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):

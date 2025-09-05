@@ -215,6 +215,7 @@ class OpenAIChatModel(Model):
             'deepseek',
             'cerebras',
             'fireworks',
+            'gateway',
             'github',
             'grok',
             'heroku',
@@ -242,6 +243,7 @@ class OpenAIChatModel(Model):
             'deepseek',
             'cerebras',
             'fireworks',
+            'gateway',
             'github',
             'grok',
             'heroku',
@@ -268,6 +270,7 @@ class OpenAIChatModel(Model):
             'deepseek',
             'cerebras',
             'fireworks',
+            'gateway',
             'github',
             'grok',
             'heroku',
@@ -752,7 +755,7 @@ class OpenAIResponsesModel(Model):
         self,
         model_name: OpenAIModelName,
         *,
-        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together']
+        provider: Literal['openai', 'deepseek', 'azure', 'openrouter', 'grok', 'fireworks', 'together', 'gateway']
         | Provider[AsyncOpenAI] = 'openai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,

@@ -150,7 +150,7 @@ class GoogleModel(Model):
         self,
         model_name: GoogleModelName,
         *,
-        provider: Literal['google-gla', 'google-vertex'] | Provider[Client] = 'google-gla',
+        provider: Literal['google-gla', 'google-vertex', 'gateway'] | Provider[Client] = 'google-gla',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
     ):
