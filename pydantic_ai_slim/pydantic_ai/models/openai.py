@@ -1032,8 +1032,9 @@ class OpenAIResponsesModel(Model):
                 response_id = None
                 break
         if response_id and latest_model_request:
-            messages = [latest_model_request]
-        return messages, response_id
+            return [latest_model_request], response_id
+        else:
+            return messages, None
 
     async def _map_messages(
         self, messages: list[ModelMessage]
