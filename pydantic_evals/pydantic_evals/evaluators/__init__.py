@@ -36,7 +36,7 @@ __all__ = (
 
 def __getattr__(name: str):
     if name == 'Python':
-        raise ImportError(  # pragma: no cover
+        raise ImportError(
             'The `Python` evaluator has been removed for security reasons. See https://github.com/pydantic/pydantic-ai/pull/2808 for more details and a workaround.'
         )
     raise AttributeError(f'module {__name__!r} has no attribute {name!r}')
