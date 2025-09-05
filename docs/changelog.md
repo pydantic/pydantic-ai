@@ -7,6 +7,12 @@ Once we release V2, in April 2026 at the earliest, we'll continue to provide sec
 
 Here's a filtered list of the breaking changes for each version to help you upgrade Pydantic AI.
 
+### v1.0.1 (2025-09-05)
+
+The following breaking change was accidentally left out of v1.0.0:
+
+- See [#2808](https://github.com/pydantic/pydantic-ai/pull/2808) - Remove `Python` evaluator from `pydantic_evals` for security reasons
+
 ### v1.0.0 (2025-09-04)
 
 - See [#2725](https://github.com/pydantic/pydantic-ai/pull/2725) - Drop support for Python 3.9
