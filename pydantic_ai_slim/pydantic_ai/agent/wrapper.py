@@ -81,6 +81,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -98,6 +99,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -115,6 +117,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -149,6 +152,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                     system_prompts=(),
                     system_prompt_functions=[],
                     system_prompt_dynamic_functions={},
+                    response_prefix=None,
                 ),
                 ModelRequestNode(
                     request=ModelRequest(
@@ -158,7 +162,8 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 timestamp=datetime.datetime(...),
                             )
                         ]
-                    )
+                    ),
+                    response_prefix=None,
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
@@ -188,6 +193,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            response_prefix: Optional prefix to prepend to the model's response. Only supported by certain models.
 
         Returns:
             The result of the run.
@@ -204,6 +210,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            response_prefix=response_prefix,
         ) as run:
             yield run
 
