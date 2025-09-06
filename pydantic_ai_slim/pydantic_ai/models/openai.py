@@ -17,7 +17,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import CodeExecutionTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import UserError, WebSearchNotSupportedError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -543,6 +543,15 @@ class OpenAIChatModel(Model):
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
+                # Check if the current model supports web search using the model profile
+                if not OpenAIModelProfile.from_profile(self.profile).openai_supports_web_search:
+                    raise WebSearchNotSupportedError(
+                        f"WebSearchTool is not supported with model '{self.model_name}'. "
+                        f'Please use one of the following options:\n'
+                        f'1. Use a supported ChatCompletion model: gpt-4o-search-preview, gpt-4o-mini-search-preview\n'
+                        f'2. Use OpenAI Responses API instead: OpenAIResponsesModel()'
+                    )
+
                 if tool.user_location:
                     return WebSearchOptions(
                         search_context_size=tool.search_context_size,
