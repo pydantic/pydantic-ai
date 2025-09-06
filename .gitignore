@@ -20,3 +20,4 @@ node_modules/
 .coverage*
 /test_tmp/
 .mcp.json
+.claude/
