@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -2929,3 +2930,50 @@ def test_deprecated_openai_model(openai_api_key: str):
 
         provider = OpenAIProvider(api_key=openai_api_key)
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
+
+
+async def test_openai_response_prefix(allow_model_requests: None):
+    """Test that OpenAI models correctly handle response prefix."""
+    c = completion_message(
+        ChatCompletionMessage(content='Red', role='assistant'),
+    )
+    mock_client = MockOpenAI.create_mock(c)
+    # Use a model name that supports response prefix (DeepSeek models do)
+    m = OpenAIChatModel('deepseek-chat', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    # Test non-streaming response
+    result = await agent.run('What is the name of color #FF0000', response_prefix="It's name is ")
+    assert result.output == "It's name is Red"
+
+    # Verify that the response prefix was added to the request
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'messages' in kwargs
+    messages = kwargs['messages']
+    # Should have user message and assistant message with prefix
+    assert len(messages) == 2
+    assert messages[0]['role'] == 'user'
+    assert messages[1]['role'] == 'assistant'
+    assert messages[1]['content'] == "It's name is "
+
+
+async def test_openai_response_prefix_stream(allow_model_requests: None):
+    """Test that OpenAI models correctly handle response prefix in streaming."""
+    stream = [text_chunk('Red'), chunk([])]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    # Use a model name that supports response prefix (DeepSeek models do)
+    m = OpenAIChatModel('deepseek-chat', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    event_parts: list[Any] = []
+    async with agent.iter(user_prompt='What is the name of color #FF0000', response_prefix="It's name is ") as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    # Check that the first text part starts with the prefix
+    text_parts = [p for p in event_parts if isinstance(p, PartStartEvent) and isinstance(p.part, TextPart)]
+    assert len(text_parts) > 0
+    assert cast(TextPart, text_parts[0].part).content == "It's name is Red"
