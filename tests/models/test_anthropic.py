@@ -2726,19 +2726,19 @@ async def test_anthropic_response_prefix(allow_model_requests: None, anthropic_a
     agent = Agent(m)
 
     # Test non-streaming response
-    result = await agent.run('What is your favorite color?', response_prefix='My favorite color is')
-    assert result.output.startswith('My favorite color is')
+    result = await agent.run('What is the name of color #FF0000', response_prefix="It's name is")
+    assert result.output.startswith("It's name is")
 
     # Test streaming response
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='Hello', response_prefix='My favorite color is') as agent_run:
+    async with agent.iter(user_prompt='Hello', response_prefix="It's name is") as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
                         event_parts.append(event)
 
-    # Check that the first text part starts with the prefix
+    # Check that the first text part xpstarts with the prefix
     text_parts = [p for p in event_parts if isinstance(p, PartStartEvent) and isinstance(p.part, TextPart)]
     assert len(text_parts) > 0
-    assert cast(TextPart, text_parts[0].part).content.startswith('My favorite color is')
+    assert cast(TextPart, text_parts[0].part).content.startswith("It's name is")

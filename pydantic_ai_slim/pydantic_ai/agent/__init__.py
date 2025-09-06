@@ -513,6 +513,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     system_prompts=(),
                     system_prompt_functions=[],
                     system_prompt_dynamic_functions={},
+                    response_prefix=None,
                 ),
                 ModelRequestNode(
                     request=ModelRequest(
