@@ -27,6 +27,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    OtelFinishReason,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -41,6 +42,26 @@ from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+
+
+def _map_anthropic_finish_reason(raw: str | None) -> OtelFinishReason | None:
+    """Map Anthropic stop_reason to OTEL finish reasons.
+
+    Known Anthropic values include: 'end_turn', 'max_tokens', 'stop_sequence', 'tool_use',
+    as well as 'content_filtered' or 'safety' when content is filtered.
+    """
+    if raw is None:
+        return None
+    if raw in ('end_turn', 'stop_sequence'):
+        return 'stop'
+    if raw == 'max_tokens':
+        return 'length'
+    if raw in ('content_filtered', 'safety'):
+        return 'content_filter'
+    if raw == 'tool_use':
+        return 'other'
+    return None
+
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
@@ -326,12 +347,19 @@ class AnthropicModel(Model):
                     )
                 )
 
+        # Map finish_reason from Anthropic stop_reason
+        raw_finish: str | None = response.stop_reason
+        mapped_finish: OtelFinishReason | None = _map_anthropic_finish_reason(raw_finish)
+        provider_details: dict[str, Any] | None = {'finish_reason': raw_finish} if raw_finish is not None else None
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=mapped_finish,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -583,6 +611,13 @@ class AnthropicStreamedResponse(StreamedResponse):
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
                 self._usage = _map_usage(event)
+                # Capture provider response id from start event
+                try:
+                    if self.provider_response_id is None:
+                        self.provider_response_id = getattr(event.message, 'id', None)
+                except Exception:
+                    pass
+                pass
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
@@ -648,6 +683,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                 self._usage = _map_usage(event)
 
             elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
+                # Capture mapped finish reason on message stop
+                try:
+                    raw_reason = getattr(getattr(event, 'message', None), 'stop_reason', None)
+                    if self.finish_reason is None and raw_reason is not None:
+                        self.finish_reason = _map_anthropic_finish_reason(raw_reason)
+                except Exception:
+                    pass
                 current_block = None
 
     @property

@@ -77,16 +77,24 @@ def get_mock_chat_completion_kwargs(async_open_ai: AsyncOpenAI) -> list[dict[str
 
 
 def completion_message(
-    message: ChatCompletionMessage, *, usage: CompletionUsage | None = None, logprobs: ChoiceLogprobs | None = None
+    message: ChatCompletionMessage,
+    *,
+    usage: CompletionUsage | None = None,
+    logprobs: ChoiceLogprobs | None = None,
+    provider_response_id: str | None = None,
+    finish_reason: str | None = None,
+    model: str | None = None,
+    created: int | None = None,
 ) -> chat.ChatCompletion:
-    choices = [Choice(finish_reason='stop', index=0, message=message)]
+    fr = finish_reason or 'stop'
+    choices = [Choice(finish_reason=fr, index=0, message=message)]
     if logprobs:
-        choices = [Choice(finish_reason='stop', index=0, message=message, logprobs=logprobs)]
+        choices = [Choice(finish_reason=fr, index=0, message=message, logprobs=logprobs)]
     return chat.ChatCompletion(
-        id='123',
+        id=provider_response_id or '123',
         choices=choices,
-        created=1704067200,  # 2024-01-01
-        model='gpt-4o-123',
+        created=created or 1704067200,  # 2024-01-01
+        model=model or 'gpt-4o-123',
         object='chat.completion',
         usage=usage,
     )
