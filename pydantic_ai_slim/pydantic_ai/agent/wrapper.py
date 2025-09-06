@@ -81,6 +81,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -98,6 +99,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -115,6 +117,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -188,6 +191,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            response_prefix: Optional prefix to prepend to the model's response. Only supported by certain models.
 
         Returns:
             The result of the run.
@@ -204,6 +208,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            response_prefix=response_prefix,
         ) as run:
             yield run
 
