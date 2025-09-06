@@ -4,6 +4,7 @@ from __future__ import annotations as _annotations
 
 import os
 from typing import TYPE_CHECKING, Any, Literal, overload
+from urllib.parse import urljoin
 
 import httpx
 
@@ -41,7 +42,7 @@ class GatewayProvider(Provider[InterfaceClient]):
     @overload
     def __new__(
         cls,
-        provider: Literal['openai'],
+        provider: Literal['openai', 'openai-chat', 'openai-responses'],
         *,
         api_key: str | None = None,
         base_url: str | None = None,
@@ -72,7 +73,7 @@ class GatewayProvider(Provider[InterfaceClient]):
 
     def __new__(
         cls,
-        provider: Literal['openai', 'groq', 'google-vertex'] | str,
+        provider: Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex'] | str,
         *,
         # Every provider
         api_key: str | None = None,
@@ -84,42 +85,53 @@ class GatewayProvider(Provider[InterfaceClient]):
         project: str | None = None,
         location: VertexAILocation | Literal['global'] | None = None,
     ) -> Provider[Any]:
-        api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_PROVIDER')
+        api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY')
         if not api_key:
             raise UserError(
                 'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `GatewayProvider(api_key=...)`'
                 'to use the Pydantic AI Gateway provider.'
             )
 
-        # NOTE(Marcelo): What's the real URL?
-        base_url = base_url or 'https://ai-gateway.pydantic.dev'
+        base_url = base_url or 'http://localhost:8787/'
+        http_client = http_client or httpx.AsyncClient()
+        http_client.event_hooks = {'request': [_request_hook]}
 
-        if provider == 'openai':
+        if provider in ('openai', 'openai-chat', 'openai-responses'):
             from .openai import OpenAIProvider
 
-            return OpenAIProvider(api_key=api_key, base_url=base_url, http_client=http_client)
+            return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai'), http_client=http_client)
         elif provider == 'groq':
             from .groq import GroqProvider
 
-            return GroqProvider(api_key=api_key, http_client=http_client)
+            return GroqProvider(api_key=api_key, base_url=urljoin(base_url, 'groq'), http_client=http_client)
         elif provider == 'google-vertex':
-            from google.auth.api_key import Credentials as APIKeyCredentials
             from google.genai import Client as GoogleClient
 
             from .google import GoogleProvider
 
-            credentials = APIKeyCredentials(token=api_key)
             return GoogleProvider(
                 client=GoogleClient(
-                    credentials=credentials,
                     location=location,
                     project=project,
                     http_options={
-                        'base_url': base_url,
-                        'headers': {'User-Agent': get_user_agent()},
-                        'async_client_args': {'transport': httpx.AsyncHTTPTransport()},
+                        'base_url': urljoin(base_url, 'google'),
+                        'headers': {'User-Agent': get_user_agent(), 'Authorization': f'Bearer {api_key}'},
+                        'async_client_args': {
+                            'transport': httpx.AsyncHTTPTransport(),
+                            'event_hooks': {'request': [_request_hook]},
+                        },
                     },
                 )
             )
         else:
             raise UserError(f'Unknown provider: {provider}')
+
+
+async def _request_hook(request: httpx.Request) -> httpx.Request:
+    from opentelemetry.propagate import inject
+
+    headers: dict[str, Any] = {}
+    inject(headers)
+    request.headers.update(headers)
+
+    return request
