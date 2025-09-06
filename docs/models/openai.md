@@ -191,8 +191,8 @@ agent = Agent(model)
 
 timestamp_grammar_definition = r'^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) (?:[01]\d|2[0-3]):[0-5]\d$'
 
-@agent.tool_plain(text_format=FunctionTextFormat(syntax='regex', grammar=timestamp_grammar_definition)  # (2)!
-def timestamp_accepting_tool(timestamp: str) -> ...
+@agent.tool_plain(text_format=FunctionTextFormat(syntax='regex', grammar=timestamp_grammar_definition))  # (2)!
+def timestamp_accepting_tool(timestamp: str): ...
 ```
 
 1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately gpt-5-nano often struggles with these calls.
@@ -208,7 +208,7 @@ from pydantic_ai.tools import FunctionTextFormat
 model = OpenAIResponsesModel('gpt-5')  # (1)!
 agent = Agent(model)
 
-timestamp_grammar_definition = '''
+timestamp_grammar_definition = r'''
 start: timestamp
 
 timestamp: YEAR "-" MONTH "-" DAY " " HOUR ":" MINUTE
@@ -222,8 +222,8 @@ HOUR: /([01]\d|2[0-3])/
 MINUTE: /[0-5]\d/
 '''
 
-@agent.tool_plain(text_format=FunctionTextFormat(syntax='lark', grammar=timestamp_grammar_definition)  # (2)!
-def i_like_iso_dates(date: str) -> ...
+@agent.tool_plain(text_format=FunctionTextFormat(syntax='lark', grammar=timestamp_grammar_definition))  # (2)!
+def i_like_iso_dates(date: str): ...
 ```
 
 1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately gpt-5-nano often struggles with these calls.
@@ -235,29 +235,25 @@ There is a limit to the grammar complexity that GPT-5 supports, as such it is im
 
 Lark grammars can be tricky to perfect. While simple grammars perform most reliably, complex grammars often require iteration on the grammar definition itself, the prompt, and the tool description to ensure that the model does not go out of distribution.
 
-    Keep terminals bounded – use /[^.\n]{0,10}*\./ rather than /.*\./. Limit matches both by content (negated character class) and by length ({M,N} quantifier).
-    Prefer explicit char‑classes over . wildcards.
-    Thread whitespace explicitly, e.g. using SP = " ", instead of a global %ignore.
-    Describe your tool: tell the model exactly what the CFG accepts and instruct it to reason heavily about compliance.
+* Keep terminals bounded – use /[^.\n]{0,10}*\./ rather than /.*\./. Limit matches both by content (negated character class) and by length ({M,N} quantifier).
+* Prefer explicit char‑classes over . wildcards.
+* Thread whitespace explicitly, e.g. using SP = " ", instead of a global %ignore.
+* Describe your tool: tell the model exactly what the CFG accepts and instruct it to reason heavily about compliance.
 
 Troubleshooting
 
-    API rejects the grammar because it is too complex ➜ Simplify rules and terminals, remove %ignore.*.
-    Unexpected tokens ➜ Confirm terminals aren’t overlapping; check greedy lexer.
-    When the model drifts "out‑of‑distribution" (shows up as the model producing excessively long or repetitive outputs, it is syntactically valid but is semantically wrong):
-        Tighten the grammar.
-        Iterate on the prompt (add few-shot examples) and tool description (explain the grammar and instruct the model to reason to conform to it).
-        Experiment with a higher reasoning effort (e.g, bump from medium to high).
+* API rejects the grammar because it is too complex ➜ Simplify rules and terminals, remove %ignore.*.
+* Unexpected tokens ➜ Confirm terminals aren’t overlapping; check greedy lexer.
+* When the model drifts "out‑of‑distribution" (shows up as the model producing excessively long or repetitive outputs, it is syntactically valid but is semantically wrong):
+  - Tighten the grammar.
+  - Iterate on the prompt (add few-shot examples) and tool description (explain the grammar and instruct the model to reason to conform to it).
+  - Experiment with a higher reasoning effort (e.g, bump from medium to high).
 
 Resources:
 
-    Lark Docs – https://lark-parser.readthedocs.io/en/stable/
-    Lark IDE – https://www.lark-parser.org/ide/
-    LLGuidance Syntax – https://github.com/guidance-ai/llguidance/blob/main/docs/syntax.md
-    Regex (Rust crate) – https://docs.rs/regex/latest/regex/#syntax
-
-
-You can read more about this function calling style in the [openai documentation](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#3-contextfree-grammar-cfg).
+* [Lark Docs](https://lark-parser.readthedocs.io/en/stable/)
+* [Lark IDE](https://www.lark-parser.org/ide/)
+* [OpenAI Cookbook on CFG](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#3-contextfree-grammar-cfg)
 
 ## OpenAI-compatible Models
 
