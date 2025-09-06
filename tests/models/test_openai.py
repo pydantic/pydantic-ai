@@ -2966,7 +2966,9 @@ async def test_openai_response_prefix_stream(allow_model_requests: None):
     agent = Agent(m)
 
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='What is the name of color #FF0000', response_prefix="It's name is ") as agent_run:
+    async with agent.iter(
+        user_prompt='What is the name of color #FF0000', response_prefix="It's name is "
+    ) as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
