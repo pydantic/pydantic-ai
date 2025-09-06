@@ -476,6 +476,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -549,6 +550,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            response_prefix: Optional prefix to prepend to the model's response. Only supported by certain models.
 
         Returns:
             The result of the run.
@@ -557,6 +559,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             self._infer_name(inspect.currentframe())
         model_used = self._get_model(model)
         del model
+
+        # Validate response_prefix support
+        if response_prefix is not None and not model_used.profile.supports_response_prefix:
+            raise exceptions.UserError(
+                f'Model {model_used.model_name} does not support response prefix. '
+                'Response prefix is only supported by certain models like Anthropic Claude and some OpenAI-compatible models.'
+            )
 
         deps = self._get_deps(deps)
         new_message_index = len(message_history) if message_history else 0
@@ -663,6 +672,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
+            response_prefix=response_prefix,
         )
 
         agent_name = self.name or 'agent'
