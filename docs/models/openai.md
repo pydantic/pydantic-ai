@@ -164,7 +164,7 @@ model = OpenAIResponsesModel('gpt-5')  # (1)!
 agent = Agent(model)
 
 @agent.tool_plain(text_format='text')  # (2)!
-def freeform_tool(sql: str) -> ...
+def freeform_tool(sql: str): ...
 ```
 
 1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling.
