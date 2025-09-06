@@ -1,16 +1,29 @@
 # Evals
 
-"Evals" refers to evaluating a model's performance for a specific application.
+_Evals_ is shorthand for both AI system _Evaluation_ as a broad topic and for specific _Evaluation Metrics_ or _Evaluators_ as individual tests. Ironically, the overloading of this term makes it difficult to evaluate what people are even talking about when they say "Evals" (without further context).
 
 !!! danger "Warning"
     Unlike unit tests, evals are an emerging art/science; anyone who claims to know for sure exactly how your evals should be defined can safely be ignored.
 
-Pydantic Evals is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, especially when working with LLMs.
+## Pydantic Evals Package
+
+**Pydantic Evals** is a powerful evaluation framework designed to help you systematically test and evaluate the performance and accuracy of the systems you build, from augmented LLMs to multi-agent systems.
+
+Install Pydantic Evals as part of the Pydantic AI (agent framework) package, or stand-alone.
 
 We've designed Pydantic Evals to be useful while not being too opinionated since we (along with everyone else) are still figuring out best practices. We'd love your [feedback](help.md) on the package and how we can improve it.
 
 !!! note "In Beta"
     Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
+
+
+## Code-First Evaluation
+
+Pydantic Evals follows a **code-first approach** where you define all evaluation components (datasets, experiments, tasks, cases and evaluators) in Python code. This differs from platforms with fully web-based configuration.
+
+When you run an _Experiment_ you'll see results appear wherever you run your python code (IDE, terminal, etc) - send this data to any notebook or application for further visualisation and analysis.
+
+If you are using [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/), your experiment results automatically appear in the Logfire web interface for visualization, comparison, and collaborative analysis. Logfire serves as a read-only observability layer - you write and run evals in code, then view and analyze results in the web UI.
 
 ## Installation
 
@@ -27,12 +40,47 @@ use OpenTelemetry traces in your evals, or send evaluation results to [logfire](
 pip/uv-add 'pydantic-evals[logfire]'
 ```
 
+## Pydantic Evals Data Model
+
+### Data Model Diagram
+
+```
+Dataset (1) ──────────── (Many) Case
+│                        │
+│                        │
+└─── (Many) Experiment ──┴─── (Many) Case results
+     │
+     └─── (1) Task
+     │
+     └─── (Many) Evaluator
+```
+
+### Key Relationships
+
+1. **Dataset → Cases**: One Dataset contains many Cases (composition)
+2. **Dataset → Experiments**: One Dataset can be used in many Experiments
+over time (aggregation)
+3. **Experiment → Case results**: One Experiment generates results by
+executing each Case
+4. **Experiment → Task**: One Experiment evaluates one defined Task
+5. **Experiment → Evaluators**: One Experiment uses multiple Evaluators (dataset-level + case-specific)
+6. **Case results → Evaluators**: Individual Case results are scored by both dataset-level evaluators and case-specific evaluators (if they exist)
+
+### Data Flow
+
+1. **Dataset creation**: Define case templates and evaluators in YAML/JSON
+2. **Experiment execution**: Run `dataset.evaluate_sync(task_function)`
+3. **Cases run**: Each Case is executed against the Task
+4. **Evaluation**: Evaluators score the Task outputs for each Case
+5. **Results**: Experiment collects all Case results and returns a summary report
+
+
 ## Datasets and Cases
 
 In Pydantic Evals, everything begins with `Dataset`s and `Case`s:
 
-- [`Case`][pydantic_evals.Case]: A single test scenario corresponding to "task" inputs. Can also optionally have a name, expected outputs, metadata, and evaluators.
-- [`Dataset`][pydantic_evals.Dataset]: A collection of test cases designed for the evaluation of a specific task or function.
+- [`Case`][pydantic_evals.Case]: A single test scenario corresponding to Task inputs. Can also optionally have a name, expected outputs, metadata, and evaluators.
+- [`Dataset`][pydantic_evals.Dataset]: A collection of test Cases designed for the evaluation of a specific task or function.
 
 ```python {title="simple_eval_dataset.py"}
 from pydantic_evals import Case, Dataset
@@ -51,9 +99,13 @@ _(This example is complete, it can be run "as is")_
 
 ## Evaluators
 
-Evaluators are the components that analyze and score the results of your task when tested against a case.
+Evaluators analyze and score the results of your Task when tested against a Case.
 
-Pydantic Evals includes several built-in evaluators and allows you to create custom evaluators:
+These can be a classic unit test: deterministic, code-based checks, such as testing model output format with a regex, or checking for the appearance of PII or sensitive data. Alternatively Evaluators can assess the non-deterministic model outputs for qualities like accuracy, precision/recall, hallucinations or instruction-following.
+
+While both kinds of testing are necessary and useful in LLM systems, classical code-based tests are cheaper and easier than tests which require either human or machine review of model outputs. We encourage you to look for quick wins of this type, when setting up a test framework for your system.
+
+Pydantic Evals includes several built-in evaluators and allows you to define custom evaluators:
 
 ```python {title="simple_eval_evaluator.py" requires="simple_eval_dataset.py"}
 from dataclasses import dataclass
@@ -691,7 +743,7 @@ Pydantic Evals is implemented using OpenTelemetry to record traces of the evalua
 the information included in the terminal output as attributes, but also include full tracing from the executions of the
 evaluation task function.
 
-You can send these traces to any OpenTelemetry-compatible backend, including [Pydantic Logfire](https://logfire.pydantic.dev/docs).
+You can send these traces to any OpenTelemetry-compatible backend, including [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/).
 
 All you need to do is configure Logfire via `logfire.configure`:
 
@@ -738,3 +790,55 @@ to ensure specific tools are (or are not) called during the execution of specifi
 Using OpenTelemetry in this way also means that all data used to evaluate the task executions will be accessible in
 the traces produced by production runs of the code, making it straightforward to perform the same evaluations on
 production data.
+
+
+## Advanced Features
+
+### LLM-Based Evaluation
+
+Pydantic Evals includes [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] for sophisticated evaluation using language models. See the [LLM Judge example](https://docs.pydantic.dev/pydantic-ai/evals/#evaluation-with-llmjudge) for detailed usage.
+
+### Dataset Management
+
+Datasets can be saved to and loaded from YAML or JSON files with automatic schema generation for better editor support. See [Saving and Loading Datasets](https://docs.pydantic.dev/pydantic-ai/evals/#saving-and-loading-datasets).
+
+### Test Data Generation
+
+Generate synthetic test datasets using [`generate_dataset`][pydantic_evals.generation.generate_dataset] for rapid evaluation setup. See [Generating Test Datasets](https://docs.pydantic.dev/pydantic-ai/evals/#generating-test-datasets).
+
+### Concurrency Control
+
+Control evaluation performance with configurable concurrency limits for rate limiting and resource management. See [Parallel Evaluation](https://docs.pydantic.dev/pydantic-ai/evals/#parallel-evaluation).
+
+### OpenTelemetry Integration
+
+Access detailed execution traces through the [`span_tree`][pydantic_evals.otel.span_tree.SpanTree] for advanced analysis of code paths and performance. See [OpenTelemetry Integration](https://docs.pydantic.dev/pydantic-ai/evals/#opentelemetry-integration).
+
+
+## API Reference
+
+For comprehensive coverage of all classes, methods, and configuration options, see the detailed [API Reference documentation](https://docs.pydantic.dev/pydantic-ai/api/evals/).
+
+Key reference sections include:
+
+- **[Dataset API][pydantic_evals.Dataset]** - Complete dataset configuration and methods
+- **[Case API][pydantic_evals.Case]** - Test case definition and options
+- **[Evaluators][pydantic_evals.evaluators]** - Built-in and custom evaluator implementation
+- **[Generation][pydantic_evals.generation]** - Synthetic dataset creation tools
+- **[Reporting][pydantic_evals.reporting]** - Result analysis and output formatting
+
+https://ai.pydantic.dev/api/pydantic_evals/dataset/
+https://ai.pydantic.dev/api/pydantic_evals/evaluators/
+https://ai.pydantic.dev/api/pydantic_evals/reporting/
+https://ai.pydantic.dev/api/pydantic_evals/otel/
+https://ai.pydantic.dev/api/pydantic_evals/generation/
+
+## Next Steps
+
+1. **Start with simple evaluations** using basic evaluators like [`IsInstance`][pydantic_evals.evaluators.IsInstance] and [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected]
+2. **Integrate with Logfire** to visualize results and enable team collaboration
+3. **Build comprehensive test suites** with diverse cases covering edge cases and performance requirements
+4. **Implement custom evaluators** for domain-specific quality metrics
+5. **Automate evaluation runs** as part of your development and deployment pipeline
+
+For detailed examples and advanced usage patterns, explore the complete [Pydantic Evals documentation](https://docs.pydantic.dev/pydantic-ai/evals/) and [API reference](https://docs.pydantic.dev/pydantic-ai/api/evals/).
