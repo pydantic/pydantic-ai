@@ -663,6 +663,49 @@ If you want to reuse a network connection or session across tool listings and ca
 
 See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers with Pydantic AI.
 
+### FastMCP Tools {#fastmcp-tools}
+
+If you'd like to use tools from a [FastMCP](https://fastmcp.dev) Server, Client, or JSON MCP Configuration with Pydantic AI, you can use the [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset] [toolset](toolsets.md).
+
+You will need to install the `fastmcp` package and any others required by the tools in question.
+
+```python {test="skip"}
+from fastmcp import FastMCP
+
+from pydantic_ai import Agent
+from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+fastmcp_server = FastMCP('my_server')
+@fastmcp_server.tool()
+async def my_tool(a: int, b: int) -> int:
+    return a + b
+
+toolset = FastMCPToolset.from_fastmcp_server(fastmcp_server)
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+```
+
+You can also use the [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset] to create a toolset from a JSON MCP Configuration.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+mcp_config = {
+    'mcpServers': {
+        'time_mcp_server': {
+            'command': 'uvx',
+            'args': ['mcp-server-time']
+        }
+    }
+}
+
+toolset = FastMCPToolset.from_mcp_config(mcp_config)
+
+agent = Agent('openai:gpt-4o', toolsets=[toolset])
+```
+
+
 ### LangChain Tools {#langchain-tools}
 
 If you'd like to use tools or a [toolkit](https://python.langchain.com/docs/concepts/tools/#toolkits) from LangChain's [community tool library](https://python.langchain.com/docs/integrations/tools/) with Pydantic AI, you can use the [`LangChainToolset`][pydantic_ai.ext.langchain.LangChainToolset] which takes a list of LangChain tools. Note that Pydantic AI will not validate the arguments in this case -- it's up to the model to provide arguments matching the schema specified by the LangChain tool, and up to the LangChain tool to raise an error if the arguments are invalid.
