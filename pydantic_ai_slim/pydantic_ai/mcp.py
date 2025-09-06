@@ -306,8 +306,12 @@ class MCPServer(AbstractToolset[Any], ABC):
         async with self._enter_lock:
             self._running_count -= 1
             if self._running_count == 0 and self._exit_stack is not None:
-                await self._exit_stack.aclose()
-                self._exit_stack = None
+                try:
+                    await self._exit_stack.aclose()
+                except RuntimeError:
+                    pass
+                finally:
+                    self._exit_stack = None
 
     @property
     def is_running(self) -> bool:
