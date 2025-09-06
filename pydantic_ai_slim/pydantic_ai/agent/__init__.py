@@ -522,7 +522,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                                 timestamp=datetime.datetime(...),
                             )
                         ]
-                    )
+                    ),
+                    response_prefix=None,
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
