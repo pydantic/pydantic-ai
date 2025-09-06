@@ -167,6 +167,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
     system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]]
 
+    response_prefix: str | None = None
+
     async def run(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | CallToolsNode[DepsT, NodeRunEndT]:
@@ -225,7 +227,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         instructions = await ctx.deps.get_instructions(run_context)
         next_message = _messages.ModelRequest(parts, instructions=instructions)
 
-        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
+        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message, response_prefix=self.response_prefix)
 
     async def _handle_message_history_model_response(
         self,
@@ -333,6 +335,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    response_prefix: str | None = None,
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
@@ -358,6 +361,7 @@ async def _prepare_request_parameters(
         output_tools=output_tools,
         output_object=output_object,
         allow_text_output=allow_text_output,
+        response_prefix=response_prefix,
     )
 
 
@@ -366,6 +370,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
+    response_prefix: str | None = None
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
@@ -442,7 +447,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, run_context)
 
-        model_request_parameters = await _prepare_request_parameters(ctx)
+        model_request_parameters = await _prepare_request_parameters(ctx, self.response_prefix)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
         model_settings = ctx.deps.model_settings

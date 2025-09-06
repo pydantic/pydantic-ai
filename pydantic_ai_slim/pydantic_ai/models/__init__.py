@@ -380,6 +380,8 @@ class ModelRequestParameters:
     output_tools: list[ToolDefinition] = field(default_factory=list)
     allow_text_output: bool = True
 
+    response_prefix: str | None = None
+
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
         return {tool_def.name: tool_def for tool_def in [*self.function_tools, *self.output_tools]}

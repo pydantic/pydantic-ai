@@ -203,7 +203,7 @@ class AnthropicModel(Model):
         response = await self._messages_create(
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
-        model_response = self._process_response(response)
+        model_response = self._process_response(response, model_request_parameters)
         return model_response
 
     @asynccontextmanager
@@ -268,6 +268,10 @@ class AnthropicModel(Model):
 
         system_prompt, anthropic_messages = await self._map_message(messages)
 
+        # Add response prefix as assistant message if provided
+        if model_request_parameters.response_prefix:
+            anthropic_messages.append({'role': 'assistant', 'content': model_request_parameters.response_prefix})
+
         try:
             extra_headers = model_settings.get('extra_headers', {})
             for k, v in tool_headers.items():
@@ -296,12 +300,18 @@ class AnthropicModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
 
-    def _process_response(self, response: BetaMessage) -> ModelResponse:
+    def _process_response(
+        self, response: BetaMessage, model_request_parameters: ModelRequestParameters
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         items: list[ModelResponsePart] = []
-        for item in response.content:
+        for i, item in enumerate(response.content):
             if isinstance(item, BetaTextBlock):
-                items.append(TextPart(content=item.text))
+                content = item.text
+                # Prepend response prefix to the first text block if provided
+                if i == 0 and model_request_parameters.response_prefix:
+                    content = model_request_parameters.response_prefix + content
+                items.append(TextPart(content=content))
             elif isinstance(item, BetaWebSearchToolResultBlock | BetaCodeExecutionToolResultBlock):
                 items.append(
                     BuiltinToolReturnPart(
@@ -616,6 +626,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
+        first_text_delta = True
 
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
@@ -659,9 +670,12 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id=event.index, content=event.delta.text
-                    )
+                    content = event.delta.text
+                    # Prepend response prefix to the first text delta if provided
+                    if first_text_delta and self.model_request_parameters.response_prefix:
+                        content = self.model_request_parameters.response_prefix + content
+                        first_text_delta = False
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=event.index, content=content)
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
