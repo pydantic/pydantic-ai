@@ -14,4 +14,5 @@ def test_model_request_parameters_are_serializable():
         'allow_text_output': True,
         'output_tools': [],
         'output_object': None,
+        'response_prefix': None,
     }

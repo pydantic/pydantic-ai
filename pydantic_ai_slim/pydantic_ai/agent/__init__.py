@@ -442,6 +442,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -459,6 +460,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager

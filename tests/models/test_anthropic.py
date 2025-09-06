@@ -2741,4 +2741,4 @@ async def test_anthropic_response_prefix(allow_model_requests: None):
     # Check that the first text part starts with the prefix
     text_parts = [p for p in event_parts if isinstance(p, PartStartEvent) and isinstance(p.part, TextPart)]
     assert len(text_parts) > 0
-    assert text_parts[0].part.content.startswith('Assistant: ')
+    assert cast(TextPart, text_parts[0].part).content.startswith('Assistant: ')

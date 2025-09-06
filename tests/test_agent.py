@@ -4821,7 +4821,7 @@ def test_response_prefix_parameter_passed():
     # Create a mock model that supports response prefix
     class MockResponsePrefixModel(TestModel):
         @property
-        def profile(self):
+        def profile(self):  # pyright: ignore[reportIncompatibleVariableOverride]
             profile = super().profile
             profile.supports_response_prefix = True
             return profile
