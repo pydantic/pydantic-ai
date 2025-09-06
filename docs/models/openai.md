@@ -243,7 +243,7 @@ Lark grammars can be tricky to perfect. While simple grammars perform most relia
 Troubleshooting
 
 * API rejects the grammar because it is too complex ➜ Simplify rules and terminals, remove %ignore.*.
-* Unexpected tokens ➜ Confirm terminals aren’t overlapping; check greedy lexer.
+* Unexpected tokens ➜ Confirm terminals aren't overlapping; check greedy lexer.
 * When the model drifts "out‑of‑distribution" (shows up as the model producing excessively long or repetitive outputs, it is syntactically valid but is semantically wrong):
   - Tighten the grammar.
   - Iterate on the prompt (add few-shot examples) and tool description (explain the grammar and instruct the model to reason to conform to it).
