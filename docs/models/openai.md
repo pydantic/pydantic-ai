@@ -234,15 +234,16 @@ There is a limit to the grammar complexity that GPT-5 supports, as such it is im
 Freeform function calling, with or without a context free grammar, can be used with the output tool for the agent:
 
 ```python
-from pydantic_ai import Agent, Tool
+from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import FunctionTextFormat
 
 sql_grammar_definition = '...'  # (1)!
 def database_query(sql: str) -> str:
     return sql  # (2)!
 
-output_tool = Tool(database_query, text_format=FunctionTextFormat(syntax='lark', grammar=sql_grammar_definition))
+output_tool = ToolOutput(database_query, text_format=FunctionTextFormat(syntax='lark', grammar=sql_grammar_definition))
 model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model, output_type=output_tool)
 ```
