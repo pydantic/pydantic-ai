@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -426,6 +427,8 @@ class HuggingFaceModel(Model):
                     raise NotImplementedError('DocumentUrl is not supported for Hugging Face')
                 elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for Hugging Face')
+                elif isinstance(item, CachePoint):
+                    raise NotImplementedError('CachePoint is not supported for Hugging Face')
                 else:
                     assert_never(item)
         return ChatCompletionInputMessage(role='user', content=content)  # type: ignore

@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     DocumentUrl,
     ImageUrl,
     ModelMessage,
@@ -296,9 +297,14 @@ class BedrockConverseModel(Model):
                             tool_call_id=tool_use['toolUseId'],
                         ),
                     )
+        cache_read_tokens = response['usage'].get('cacheReadInputTokens', 0)
+        cache_write_tokens = response['usage'].get('cacheWriteInputTokens', 0)
+        input_tokens = response['usage']['inputTokens'] + cache_read_tokens + cache_write_tokens
         u = usage.RequestUsage(
-            input_tokens=response['usage']['inputTokens'],
+            input_tokens=input_tokens,
             output_tokens=response['usage']['outputTokens'],
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
         return ModelResponse(
@@ -346,7 +352,12 @@ class BedrockConverseModel(Model):
             'inferenceConfig': inference_config,
         }
 
-        tool_config = self._map_tool_config(model_request_parameters)
+        tool_config = self._map_tool_config(
+            model_request_parameters,
+            should_add_cache_point=(
+                not system_prompt and BedrockModelProfile.from_profile(self.profile).bedrock_supports_prompt_caching
+            ),
+        )
         if tool_config:
             params['toolConfig'] = tool_config
 
@@ -395,10 +406,15 @@ class BedrockConverseModel(Model):
 
         return inference_config
 
-    def _map_tool_config(self, model_request_parameters: ModelRequestParameters) -> ToolConfigurationTypeDef | None:
+    def _map_tool_config(
+        self, model_request_parameters: ModelRequestParameters, should_add_cache_point: bool = False
+    ) -> ToolConfigurationTypeDef | None:
         tools = self._get_tools(model_request_parameters)
         if not tools:
             return None
+
+        if should_add_cache_point:
+            tools[-1]['cachePoint'] = {'type': 'default'}
 
         tool_choice: ToolChoiceTypeDef
         if not model_request_parameters.allow_text_output:
@@ -429,7 +445,12 @@ class BedrockConverseModel(Model):
                     if isinstance(part, SystemPromptPart) and part.content:
                         system_prompt.append({'text': part.content})
                     elif isinstance(part, UserPromptPart):
-                        bedrock_messages.extend(await self._map_user_prompt(part, document_count))
+                        has_leading_cache_point, user_messages = await self._map_user_prompt(
+                            part, document_count, profile.bedrock_supports_prompt_caching
+                        )
+                        if has_leading_cache_point:
+                            system_prompt.append({'cachePoint': {'type': 'default'}})
+                        bedrock_messages.extend(user_messages)
                     elif isinstance(part, ToolReturnPart):
                         assert part.tool_call_id is not None
                         bedrock_messages.append(
@@ -522,13 +543,22 @@ class BedrockConverseModel(Model):
 
         return system_prompt, processed_messages
 
-    @staticmethod
-    async def _map_user_prompt(part: UserPromptPart, document_count: Iterator[int]) -> list[MessageUnionTypeDef]:
+    async def _map_user_prompt(  # noqa: C901
+        self, part: UserPromptPart, document_count: Iterator[int], supports_caching: bool
+    ) -> tuple[bool, list[MessageUnionTypeDef]]:
         content: list[ContentBlockUnionTypeDef] = []
+        has_leading_cache_point = False
+
         if isinstance(part.content, str):
             content.append({'text': part.content})
         else:
-            for item in part.content:
+            if part.content and isinstance(part.content[0], CachePoint):
+                has_leading_cache_point = True
+                items_to_process = part.content[1:]
+            else:
+                items_to_process = part.content
+
+            for item in items_to_process:
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
@@ -578,11 +608,15 @@ class BedrockConverseModel(Model):
                         ), f'Unsupported video format: {format}'
                         video: VideoBlockTypeDef = {'format': format, 'source': {'bytes': downloaded_item['data']}}
                         content.append({'video': video})
+                elif isinstance(item, CachePoint):
+                    if supports_caching:
+                        content.append({'cachePoint': {'type': 'default'}})
+                    continue
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     raise NotImplementedError('Audio is not supported yet.')
                 else:
                     assert_never(item)
-        return [{'role': 'user', 'content': content}]
+        return has_leading_cache_point, [{'role': 'user', 'content': content}]
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> ContentBlockOutputTypeDef:
@@ -674,9 +708,14 @@ class BedrockStreamedResponse(StreamedResponse):
         return self._timestamp
 
     def _map_usage(self, metadata: ConverseStreamMetadataEventTypeDef) -> usage.RequestUsage:
+        cache_read_tokens = metadata['usage'].get('cacheReadInputTokens', 0)
+        cache_write_tokens = metadata['usage'].get('cacheWriteInputTokens', 0)
+        input_tokens = metadata['usage']['inputTokens'] + cache_read_tokens + cache_write_tokens
         return usage.RequestUsage(
-            input_tokens=metadata['usage']['inputTokens'],
+            input_tokens=input_tokens,
             output_tokens=metadata['usage']['outputTokens'],
+            cache_write_tokens=cache_write_tokens,
+            cache_read_tokens=cache_read_tokens,
         )
 
 

@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    CachePoint,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -514,6 +515,8 @@ class GoogleModel(Model):
                         content.append(
                             {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
                         )  # pragma: lax no cover
+                elif isinstance(item, CachePoint):
+                    raise NotImplementedError('CachePoint is not supported for Google')
                 else:
                     assert_never(item)
         return content

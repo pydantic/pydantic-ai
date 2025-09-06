@@ -38,13 +38,41 @@ class BedrockModelProfile(ModelProfile):
     bedrock_supports_tool_choice: bool = False
     bedrock_tool_result_format: Literal['text', 'json'] = 'text'
     bedrock_send_back_thinking_parts: bool = False
+    bedrock_supports_prompt_caching: bool = False
+
+
+# Supported models: https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+ANTHROPIC_CACHING_SUPPORTED_MODELS = {'claude-3-5-sonnet', 'claude-3-5-haiku', 'claude-3-7-sonnet', 'claude-sonnet-4'}
+
+# Supported models: https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+AMAZON_CACHING_SUPPORTED_MODELS = {'nova-micro', 'nova-lite', 'nova-pro', 'nova-premier'}
+
+
+def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
+    """Create a Bedrock model profile for Anthropic models with caching support where applicable."""
+    return BedrockModelProfile(
+        bedrock_supports_tool_choice=True,
+        bedrock_send_back_thinking_parts=True,
+        bedrock_supports_prompt_caching=any(
+            supported in model_name for supported in ANTHROPIC_CACHING_SUPPORTED_MODELS
+        ),
+    ).update(anthropic_model_profile(model_name))
+
+
+def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
+    """Create a Bedrock model profile for Mistral models."""
+    return BedrockModelProfile(bedrock_tool_result_format='json').update(mistral_model_profile(model_name))
 
 
 def bedrock_amazon_model_profile(model_name: str) -> ModelProfile | None:
-    """Get the model profile for an Amazon model used via Bedrock."""
+    """Get the model profile for an Amazon model used via Bedrock with caching support where applicable."""
     profile = amazon_model_profile(model_name)
     if 'nova' in model_name:
-        return BedrockModelProfile(bedrock_supports_tool_choice=True).update(profile)
+        # Check if this Nova model supports prompt caching
+        supports_caching = any(supported in model_name for supported in AMAZON_CACHING_SUPPORTED_MODELS)
+        return BedrockModelProfile(
+            bedrock_supports_tool_choice=True, bedrock_supports_prompt_caching=supports_caching
+        ).update(profile)
     return profile
 
 
@@ -65,12 +93,8 @@ class BedrockProvider(Provider[BaseClient]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': lambda model_name: BedrockModelProfile(
-                bedrock_supports_tool_choice=True, bedrock_send_back_thinking_parts=True
-            ).update(anthropic_model_profile(model_name)),
-            'mistral': lambda model_name: BedrockModelProfile(bedrock_tool_result_format='json').update(
-                mistral_model_profile(model_name)
-            ),
+            'anthropic': bedrock_anthropic_model_profile,
+            'mistral': bedrock_mistral_model_profile,
             'cohere': cohere_model_profile,
             'amazon': bedrock_amazon_model_profile,
             'meta': meta_model_profile,

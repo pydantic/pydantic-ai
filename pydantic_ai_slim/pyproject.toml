@@ -74,7 +74,7 @@ google = ["google-genai>=1.31.0"]
 anthropic = ["anthropic>=0.61.0"]
 groq = ["groq>=0.25.0"]
 mistral = ["mistralai>=1.9.2"]
-bedrock = ["boto3>=1.39.0"]
+bedrock = ["boto3>=1.40.21", "mypy-boto3-bedrock-runtime>=1.40.21"]
 huggingface = ["huggingface-hub[inference]>=0.33.5"]
 # Tools
 duckduckgo = ["ddgs>=9.0.0"]

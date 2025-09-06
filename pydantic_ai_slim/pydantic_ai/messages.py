@@ -520,8 +520,20 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@dataclass
+class CachePoint:
+    """A cache point marker for prompt caching.
+
+    Can be inserted into UserPromptPart.content to mark cache boundaries.
+    Models that don't support caching will filter these out.
+    """
+
+    kind: Literal['cache-point'] = 'cache-point'
+    """Type identifier, this is available on all parts as a discriminator."""
+
+
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
-UserContent: TypeAlias = str | MultiModalContent
+UserContent: TypeAlias = str | MultiModalContent | CachePoint
 
 
 @dataclass(repr=False)
@@ -637,6 +649,8 @@ class UserPromptPart:
                 if settings.include_content and settings.include_binary_content:
                     converted_part['content'] = base64.b64encode(part.data).decode()
                 parts.append(converted_part)
+            elif isinstance(part, CachePoint):
+                parts.append(_otel_messages.CachePointPart(type=part.kind))
             else:
                 parts.append({'type': part.kind})  # pragma: no cover
         return parts
