@@ -28,7 +28,7 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic
-    * OpenAI
+    * OpenAI Responses
     * Groq
     * Google
     """
@@ -38,7 +38,7 @@ class WebSearchTool(AbstractBuiltinTool):
 
     Supported by:
 
-    * OpenAI
+    * OpenAI Responses
     """
 
     user_location: WebSearchUserLocation | None = None
@@ -47,7 +47,7 @@ class WebSearchTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic
-    * OpenAI
+    * OpenAI Responses
     """
 
     blocked_domains: list[str] | None = None
@@ -87,7 +87,7 @@ class WebSearchUserLocation(TypedDict, total=False):
     Supported by:
 
     * Anthropic
-    * OpenAI
+    * OpenAI Responses
     """
 
     city: str
@@ -109,7 +109,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     Supported by:
 
     * Anthropic
-    * OpenAI
+    * OpenAI Responses
     * Google
     """
 
