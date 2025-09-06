@@ -437,6 +437,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             event_stream_handler: Optional handler for events from the model's streaming response and the agent's execution of tools to use for this run.
                 It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
                 Note that it does _not_ receive any events after the final result is found.
+            response_prefix: Optional prefix to prepend to the model's response. Only supported by certain models.
 
         Returns:
             The result of the run.
@@ -652,7 +653,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 timestamp=datetime.datetime(...),
                             )
                         ]
-                    )
+                    ),
+                    response_prefix=None,
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
@@ -683,7 +685,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             response_prefix: Optional prefix to prepend to the model's response. Only supported by certain models.
-            
+
         Returns:
             The result of the run.
         """

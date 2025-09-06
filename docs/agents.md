@@ -294,7 +294,8 @@ async def main():
                         timestamp=datetime.datetime(...),
                     )
                 ]
-            )
+            ),
+            response_prefix=None,
         ),
         CallToolsNode(
             model_response=ModelResponse(
@@ -357,7 +358,8 @@ async def main():
                             timestamp=datetime.datetime(...),
                         )
                     ]
-                )
+                ),
+                response_prefix=None,
             ),
             CallToolsNode(
                 model_response=ModelResponse(

@@ -2720,18 +2720,18 @@ These stories represent major international diplomatic developments, significant
     )
 
 
-async def test_anthropic_response_prefix(allow_model_requests: None):
+async def test_anthropic_response_prefix(allow_model_requests: None, anthropic_api_key: str):
     """Test that Anthropic models correctly handle response prefix."""
-    m = AnthropicModel('claude-sonnet-4-0')
+    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
     agent = Agent(m)
 
     # Test non-streaming response
-    result = await agent.run('Hello', response_prefix='Assistant: ')
-    assert result.output.startswith('Assistant: ')
+    result = await agent.run('What is your favorite color?', response_prefix='My favorite color is')
+    assert result.output.startswith('My favorite color is')
 
     # Test streaming response
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='Hello', response_prefix='Assistant: ') as agent_run:
+    async with agent.iter(user_prompt='Hello', response_prefix='My favorite color is') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
@@ -2741,4 +2741,4 @@ async def test_anthropic_response_prefix(allow_model_requests: None):
     # Check that the first text part starts with the prefix
     text_parts = [p for p in event_parts if isinstance(p, PartStartEvent) and isinstance(p.part, TextPart)]
     assert len(text_parts) > 0
-    assert cast(TextPart, text_parts[0].part).content.startswith('Assistant: ')
+    assert cast(TextPart, text_parts[0].part).content.startswith('My favorite color is')

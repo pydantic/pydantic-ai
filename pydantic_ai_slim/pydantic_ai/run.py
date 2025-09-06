@@ -62,7 +62,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                             timestamp=datetime.datetime(...),
                         )
                     ]
-                )
+                ),
+                response_prefix=None,
             ),
             CallToolsNode(
                 model_response=ModelResponse(
@@ -197,7 +198,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                                     timestamp=datetime.datetime(...),
                                 )
                             ]
-                        )
+                        ),
+                        response_prefix=None,
                     ),
                     CallToolsNode(
                         model_response=ModelResponse(
