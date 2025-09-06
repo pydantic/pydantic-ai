@@ -238,7 +238,7 @@ from pydantic_ai import Agent, Tool
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.tools import FunctionTextFormat
 
-sql_grammar_definition = "..."  # (1)!
+sql_grammar_definition = '...'  # (1)!
 def database_query(sql: str) -> str:
     return sql  # (2)!
 
