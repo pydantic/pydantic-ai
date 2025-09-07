@@ -1,23 +1,25 @@
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Annotated, Any, Callable, Literal, Union
+from typing import Annotated, Any, Literal
 
 import pydantic_core
 import pytest
 from _pytest.logging import LogCaptureFixture
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, Field, TypeAdapter, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -26,9 +28,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, ToolOutput
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.toolsets.deferred import DeferredToolset
+from pydantic_ai.output import ToolOutput
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.toolsets.external import ExternalToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
@@ -569,7 +571,7 @@ def test_repeat_tool_by_rename():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -593,7 +595,7 @@ def test_repeat_tool():
 
     agent = Agent('test')
 
-    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def change_tool_name(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         tool_def.name = 'bar'
         return tool_def
 
@@ -667,7 +669,7 @@ def test_init_plain_tool_invalid():
         ('{"a": 1, "b": "c"}', {'a': 1, 'b': 'c'}),
     ],
 )
-def test_tool_call_part_args_as_dict(args: Union[str, dict[str, Any]], expected: dict[str, Any]):
+def test_tool_call_part_args_as_dict(args: str | dict[str, Any], expected: dict[str, Any]):
     part = ToolCallPart(tool_name='foo', args=args)
     result = part.args_as_dict()
     assert result == expected
@@ -733,7 +735,7 @@ def test_dynamic_cls_tool():
         def tool_function(self, x: int, y: str) -> str:
             return f'{self.spam} {x} {y}'
 
-        async def prepare_tool_def(self, ctx: RunContext[int]) -> Union[ToolDefinition, None]:
+        async def prepare_tool_def(self, ctx: RunContext[int]) -> ToolDefinition | None:
             if ctx.deps != 42:
                 return await super().prepare_tool_def(ctx)
 
@@ -748,7 +750,7 @@ def test_dynamic_cls_tool():
 def test_dynamic_plain_tool_decorator():
     agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps != 42:
             return tool_def
 
@@ -766,7 +768,7 @@ def test_dynamic_plain_tool_decorator():
 def test_dynamic_tool_decorator():
     agent = Agent('test', deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if ctx.deps != 42:
             return tool_def
 
@@ -813,7 +815,7 @@ def test_dynamic_tool_use_messages():
 
     agent = Agent(FunctionModel(repeat_call_foobar), deps_type=int)
 
-    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[int], tool_def: ToolDefinition) -> ToolDefinition | None:
         if len(ctx.messages) < 5:
             return tool_def
 
@@ -1021,7 +1023,7 @@ def test_schema_generator():
 
     agent = Agent(FunctionModel(get_json_schema))
 
-    def my_tool(x: Annotated[Union[str, None], WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
+    def my_tool(x: Annotated[str | None, WithJsonSchema({'type': 'string'})] = None, **kwargs: Any):
         return x  # pragma: no cover
 
     agent.tool_plain(name='my_tool_1')(my_tool)
@@ -1093,9 +1095,7 @@ def test_tool_parameters_with_attribute_docstrings():
 
 
 def test_dynamic_tools_agent_wide():
-    async def prepare_tool_defs(
-        ctx: RunContext[int], tool_defs: list[ToolDefinition]
-    ) -> Union[list[ToolDefinition], None]:
+    async def prepare_tool_defs(ctx: RunContext[int], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         if ctx.deps == 42:
             return []
         elif ctx.deps == 43:
@@ -1231,9 +1231,7 @@ def test_tool_retries():
     prepare_retries: list[int] = []
     call_retries: list[int] = []
 
-    async def prepare_tool_defs(
-        ctx: RunContext[None], tool_defs: list[ToolDefinition]
-    ) -> Union[list[ToolDefinition], None]:
+    async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         nonlocal prepare_tools_retries
         retry = ctx.retries.get('infinite_retry_tool', 0)
         prepare_tools_retries.append(retry)
@@ -1241,7 +1239,7 @@ def test_tool_retries():
 
     agent = Agent(TestModel(), retries=3, prepare_tools=prepare_tool_defs)
 
-    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> Union[ToolDefinition, None]:
+    async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
         return tool_def
@@ -1260,43 +1258,96 @@ def test_tool_retries():
     assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
 
 
-def test_deferred_tool():
-    deferred_toolset = DeferredToolset(
-        [
-            ToolDefinition(
-                name='my_tool',
-                description='',
-                parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'integer'}}, 'required': ['x']},
-            ),
-        ]
-    )
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls], toolsets=[deferred_toolset])
+def test_tool_raises_call_deferred():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(
-        DeferredToolCalls(
-            tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-            tool_defs={
-                'my_tool': ToolDefinition(
-                    name='my_tool',
-                    description='',
-                    parameters_json_schema={
-                        'type': 'object',
-                        'properties': {'x': {'type': 'integer'}},
-                        'required': ['x'],
-                    },
-                    kind='deferred',
-                )
-            },
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
         )
     )
+
+
+def test_tool_raises_approval_required():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('my_tool', {'x': 1}, tool_call_id='my_tool'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x * 42
+
+    result = agent.run_sync('Hello')
+    messages = result.all_messages()
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')])
+    )
+
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved(override_args={'x': 2})}),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='my_tool')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='my_tool',
+                        content=84,
+                        tool_call_id='my_tool',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=52, output_tokens=5),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('Done!')
 
 
 def test_deferred_tool_with_output_type():
     class MyModel(BaseModel):
         foo: str
 
-    deferred_toolset = DeferredToolset(
+    deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
                 name='my_tool',
@@ -1305,7 +1356,7 @@ def test_deferred_tool_with_output_type():
             ),
         ]
     )
-    agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolCalls], toolsets=[deferred_toolset])
+    agent = Agent(TestModel(call_tools=[]), output_type=[MyModel, DeferredToolRequests], toolsets=[deferred_toolset])
 
     result = agent.run_sync('Hello')
     assert result.output == snapshot(MyModel(foo='a'))
@@ -1315,7 +1366,7 @@ def test_deferred_tool_with_tool_output_type():
     class MyModel(BaseModel):
         foo: str
 
-    deferred_toolset = DeferredToolset(
+    deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
                 name='my_tool',
@@ -1326,7 +1377,7 @@ def test_deferred_tool_with_tool_output_type():
     )
     agent = Agent(
         TestModel(call_tools=[]),
-        output_type=[[ToolOutput(MyModel), ToolOutput(MyModel)], DeferredToolCalls],
+        output_type=[[ToolOutput(MyModel), ToolOutput(MyModel)], DeferredToolRequests],
         toolsets=[deferred_toolset],
     )
 
@@ -1335,7 +1386,7 @@ def test_deferred_tool_with_tool_output_type():
 
 
 async def test_deferred_tool_without_output_type():
-    deferred_toolset = DeferredToolset(
+    deferred_toolset = ExternalToolset(
         [
             ToolDefinition(
                 name='my_tool',
@@ -1346,7 +1397,7 @@ async def test_deferred_tool_without_output_type():
     )
     agent = Agent(TestModel(), toolsets=[deferred_toolset])
 
-    msg = 'A deferred tool call was present, but `DeferredToolCalls` is not among output types. To resolve this, add `DeferredToolCalls` to the list of output types for this agent.'
+    msg = 'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
 
     with pytest.raises(UserError, match=msg):
         await agent.run('Hello')
@@ -1356,9 +1407,9 @@ async def test_deferred_tool_without_output_type():
             await result.get_output()
 
 
-def test_output_type_deferred_tool_calls_by_itself():
-    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolCalls`.'):
-        Agent(TestModel(), output_type=DeferredToolCalls)
+def test_output_type_deferred_tool_requests_by_itself():
+    with pytest.raises(UserError, match='At least one output type must be provided other than `DeferredToolRequests`.'):
+        Agent(TestModel(), output_type=DeferredToolRequests)
 
 
 def test_output_type_empty():
@@ -1366,11 +1417,18 @@ def test_output_type_empty():
         Agent(TestModel(), output_type=[])
 
 
-def test_parallel_tool_return():
+def test_parallel_tool_return_with_deferred():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
-                parts=[ToolCallPart('get_price', {'fruit': 'apple'}), ToolCallPart('get_price', {'fruit': 'banana'})]
+                parts=[
+                    ToolCallPart('get_price', {'fruit': 'apple'}, tool_call_id='get_price_apple'),
+                    ToolCallPart('get_price', {'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart('get_price', {'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart('get_price', {'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart('buy', {'fruit': 'banana'}, tool_call_id='buy_banana'),
+                ]
             )
         else:
             return ModelResponse(
@@ -1379,42 +1437,46 @@ def test_parallel_tool_return():
                 ]
             )
 
-    agent = Agent(FunctionModel(llm))
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
 
     @agent.tool_plain
     def get_price(fruit: str) -> ToolReturn:
-        return ToolReturn(
-            return_value=10.0,
-            content=f'The price of {fruit} is 10.0',
-            metadata={'foo': 'bar'},
-        )
+        if fruit in ['apple', 'pear']:
+            return ToolReturn(
+                return_value=10.0,
+                content=f'The price of {fruit} is 10.0.',
+                metadata={'fruit': fruit, 'price': 10.0},
+            )
+        else:
+            raise ModelRetry(f'Unknown fruit: {fruit}')
 
-    result = agent.run_sync('What do an apple and a banana cost?')
+    @agent.tool_plain
+    def buy(fruit: str):
+        raise CallDeferred
 
-    assert result.all_messages() == snapshot(
+    result = agent.run_sync('What do an apple, a banana, a pear and a grape cost? Also buy me a pear.')
+
+    messages = result.all_messages()
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='What do an apple and a banana cost?',
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
                         timestamp=IsDatetime(),
                     )
                 ]
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(
-                        tool_name='get_price',
-                        args={'fruit': 'apple'},
-                        tool_call_id=IsStr(),
-                    ),
-                    ToolCallPart(
-                        tool_name='get_price',
-                        args={'fruit': 'banana'},
-                        tool_call_id=IsStr(),
-                    ),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
                 ],
-                usage=RequestUsage(input_tokens=58, output_tokens=10),
+                usage=RequestUsage(input_tokens=68, output_tokens=30),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1423,32 +1485,371 @@ def test_parallel_tool_return():
                     ToolReturnPart(
                         tool_name='get_price',
                         content=10.0,
-                        tool_call_id=IsStr(),
-                        metadata={'foo': 'bar'},
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: banana',
+                        tool_name='get_price',
+                        tool_call_id='get_price_banana',
                         timestamp=IsDatetime(),
                     ),
                     ToolReturnPart(
                         tool_name='get_price',
                         content=10.0,
-                        tool_call_id=IsStr(),
-                        metadata={'foo': 'bar'},
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='The price of apple is 10.0',
+                        content='The price of apple is 10.0.',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
-                        content='The price of banana is 10.0',
+                        content='The price of pear is 10.0.',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            calls=[
+                ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+            ],
+        )
+    )
+
+    result = agent.run_sync(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            calls={
+                'buy_apple': ModelRetry('Apples are not available'),
+                'buy_banana': ToolReturn(
+                    return_value=True,
+                    content='I bought a banana',
+                    metadata={'fruit': 'banana', 'price': 100.0},
+                ),
+            },
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                ],
+                usage=RequestUsage(input_tokens=68, output_tokens=30),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: banana',
+                        tool_name='get_price',
+                        tool_call_id='get_price_banana',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Apples are not available',
+                        tool_name='buy',
+                        tool_call_id='buy_apple',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='buy',
+                        content=True,
+                        tool_call_id='buy_banana',
+                        metadata={'fruit': 'banana', 'price': 100.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content=[
+                            'The price of apple is 10.0.',
+                            'The price of pear is 10.0.',
+                        ],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='I bought a banana',
                         timestamp=IsDatetime(),
                     ),
                 ]
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=76, output_tokens=11),
+                usage=RequestUsage(input_tokens=124, output_tokens=31),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
         ]
     )
+    assert result.output == snapshot('Done!')
+
+
+def test_deferred_tool_call_approved_fails():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('foo', {'x': 0}, tool_call_id='foo'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    async def defer(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
+        return replace(tool_def, kind='external')
+
+    @agent.tool_plain(prepare=defer)
+    def foo(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    result = agent.run_sync('foo')
+    assert result.output == snapshot(
+        DeferredToolRequests(calls=[ToolCallPart(tool_name='foo', args={'x': 0}, tool_call_id='foo')])
+    )
+
+    with pytest.raises(RuntimeError, match='Deferred tools cannot be called'):
+        agent.run_sync(
+            message_history=result.all_messages(),
+            deferred_tool_results=DeferredToolResults(
+                approvals={
+                    'foo': True,
+                },
+            ),
+        )
+
+
+async def test_approval_required_toolset():
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('foo', {'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart('foo', {'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart('bar', {'x': 3}, tool_call_id='bar'),
+                ]
+            )
+        else:
+            return ModelResponse(
+                parts=[
+                    TextPart('Done!'),
+                ]
+            )
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool
+    def foo(x: int) -> int:
+        return x * 2
+
+    @toolset.tool
+    def bar(x: int) -> int:
+        return x * 3
+
+    toolset = toolset.approval_required(lambda ctx, tool_def, tool_args: tool_def.name == 'foo')
+
+    agent = Agent(FunctionModel(llm), toolsets=[toolset], output_type=[str, DeferredToolRequests])
+
+    result = await agent.run('foo')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='foo',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart(tool_name='bar', args={'x': 3}, tool_call_id='bar'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content=9,
+                        tool_call_id='bar',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )
+    assert result.output == snapshot(
+        DeferredToolRequests(
+            approvals=[
+                ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+            ]
+        )
+    )
+
+    result = await agent.run(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(
+            approvals={
+                'foo1': True,
+                'foo2': False,
+            },
+        ),
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='foo',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='foo', args={'x': 1}, tool_call_id='foo1'),
+                    ToolCallPart(tool_name='foo', args={'x': 2}, tool_call_id='foo2'),
+                    ToolCallPart(tool_name='bar', args={'x': 3}, tool_call_id='bar'),
+                ],
+                usage=RequestUsage(input_tokens=51, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='foo',
+                        content=2,
+                        tool_call_id='foo1',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='foo',
+                        content='The tool call was denied.',
+                        tool_call_id='foo2',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='bar',
+                        content=9,
+                        tool_call_id='bar',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=59, output_tokens=13),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.output == snapshot('Done!')
+
+
+def test_deferred_tool_results_serializable():
+    results = DeferredToolResults(
+        calls={
+            'tool-return': ToolReturn(
+                return_value=1,
+                content='The tool call was approved.',
+                metadata={'foo': 'bar'},
+            ),
+            'model-retry': ModelRetry('The tool call was denied.'),
+            'retry-prompt-part': RetryPromptPart(
+                content='The tool call was denied.',
+                tool_name='foo',
+                tool_call_id='foo',
+            ),
+            'any': {'foo': 'bar'},
+        },
+        approvals={
+            'true': True,
+            'false': False,
+            'tool-approved': ToolApproved(override_args={'foo': 'bar'}),
+            'tool-denied': ToolDenied('The tool call was denied.'),
+        },
+    )
+    results_ta = TypeAdapter(DeferredToolResults)
+    serialized = results_ta.dump_python(results)
+    assert serialized == snapshot(
+        {
+            'calls': {
+                'tool-return': {
+                    'return_value': 1,
+                    'content': 'The tool call was approved.',
+                    'metadata': {'foo': 'bar'},
+                    'kind': 'tool-return',
+                },
+                'model-retry': {'message': 'The tool call was denied.', 'kind': 'model-retry'},
+                'retry-prompt-part': {
+                    'content': 'The tool call was denied.',
+                    'tool_name': 'foo',
+                    'tool_call_id': 'foo',
+                    'timestamp': IsDatetime(),
+                    'part_kind': 'retry-prompt',
+                },
+                'any': {'foo': 'bar'},
+            },
+            'approvals': {
+                'true': True,
+                'false': False,
+                'tool-approved': {'override_args': {'foo': 'bar'}, 'kind': 'tool-approved'},
+                'tool-denied': {'message': 'The tool call was denied.', 'kind': 'tool-denied'},
+            },
+        }
+    )
+    deserialized = results_ta.validate_python(serialized)
+    assert deserialized == results

@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
 from dataclasses import Field, dataclass, replace
 from http import HTTPStatus
 from typing import (
     Any,
-    Callable,
     ClassVar,
     Final,
     Generic,
@@ -28,11 +27,11 @@ from ._agent_graph import CallToolsNode, ModelRequestNode
 from .agent import AbstractAgent, AgentRun
 from .exceptions import UserError
 from .messages import (
-    AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseStreamEvent,
     PartDeltaEvent,
     PartStartEvent,
     SystemPromptPart,
@@ -46,11 +45,11 @@ from .messages import (
     UserPromptPart,
 )
 from .models import KnownModelName, Model
-from .output import DeferredToolCalls, OutputDataT, OutputSpec
+from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
-from .tools import AgentDepsT, ToolDefinition
+from .tools import AgentDepsT, DeferredToolRequests, ToolDefinition
 from .toolsets import AbstractToolset
-from .toolsets.deferred import DeferredToolset
+from .toolsets.external import ExternalToolset
 from .usage import RunUsage, UsageLimits
 
 try:
@@ -69,6 +68,9 @@ try:
         TextMessageContentEvent,
         TextMessageEndEvent,
         TextMessageStartEvent,
+        # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+        # ThinkingEndEvent,
+        # ThinkingStartEvent,
         ThinkingTextMessageContentEvent,
         ThinkingTextMessageEndEvent,
         ThinkingTextMessageStartEvent,
@@ -343,7 +345,7 @@ async def run_ag_ui(
 
         async with agent.iter(
             user_prompt=None,
-            output_type=[output_type or agent.output_type, DeferredToolCalls],
+            output_type=[output_type or agent.output_type, DeferredToolRequests],
             message_history=messages,
             model=model,
             deps=deps,
@@ -393,6 +395,12 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEve
                 if stream_ctx.part_end:  # pragma: no branch
                     yield stream_ctx.part_end
                     stream_ctx.part_end = None
+                if stream_ctx.thinking:
+                    # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+                    # yield ThinkingEndEvent(
+                    #     type=EventType.THINKING_END,
+                    # )
+                    stream_ctx.thinking = False
         elif isinstance(node, CallToolsNode):
             async with node.stream(run.ctx) as handle_stream:
                 async for event in handle_stream:
@@ -401,9 +409,9 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEve
                             yield msg
 
 
-async def _handle_model_request_event(
+async def _handle_model_request_event(  # noqa: C901
     stream_ctx: _RequestStreamContext,
-    agent_event: AgentStreamEvent,
+    agent_event: ModelResponseStreamEvent,
 ) -> AsyncIterator[BaseEvent]:
     """Handle an agent event and yield AG-UI protocol events.
 
@@ -421,56 +429,70 @@ async def _handle_model_request_event(
             stream_ctx.part_end = None
 
         part = agent_event.part
-        if isinstance(part, TextPart):
-            message_id = stream_ctx.new_message_id()
-            yield TextMessageStartEvent(
-                message_id=message_id,
-            )
-            if part.content:  # pragma: no branch
-                yield TextMessageContentEvent(
-                    message_id=message_id,
+        if isinstance(part, ThinkingPart):  # pragma: no branch
+            if not stream_ctx.thinking:
+                # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+                # yield ThinkingStartEvent(
+                #     type=EventType.THINKING_START,
+                # )
+                stream_ctx.thinking = True
+
+            if part.content:
+                yield ThinkingTextMessageStartEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_START,
+                )
+                yield ThinkingTextMessageContentEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
                     delta=part.content,
                 )
-            stream_ctx.part_end = TextMessageEndEvent(
-                message_id=message_id,
-            )
-        elif isinstance(part, ToolCallPart):  # pragma: no branch
-            message_id = stream_ctx.message_id or stream_ctx.new_message_id()
-            yield ToolCallStartEvent(
-                tool_call_id=part.tool_call_id,
-                tool_call_name=part.tool_name,
-                parent_message_id=message_id,
-            )
-            if part.args:
-                yield ToolCallArgsEvent(
-                    tool_call_id=part.tool_call_id,
-                    delta=part.args if isinstance(part.args, str) else json.dumps(part.args),
+                stream_ctx.part_end = ThinkingTextMessageEndEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_END,
                 )
-            stream_ctx.part_end = ToolCallEndEvent(
-                tool_call_id=part.tool_call_id,
-            )
+        else:
+            if stream_ctx.thinking:
+                # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
+                # yield ThinkingEndEvent(
+                #     type=EventType.THINKING_END,
+                # )
+                stream_ctx.thinking = False
 
-        elif isinstance(part, ThinkingPart):  # pragma: no branch
-            yield ThinkingTextMessageStartEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_START,
-            )
-            # Always send the content even if it's empty, as it may be
-            # used to indicate the start of thinking.
-            yield ThinkingTextMessageContentEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
-                delta=part.content,
-            )
-            stream_ctx.part_end = ThinkingTextMessageEndEvent(
-                type=EventType.THINKING_TEXT_MESSAGE_END,
-            )
+            if isinstance(part, TextPart):
+                message_id = stream_ctx.new_message_id()
+                yield TextMessageStartEvent(
+                    message_id=message_id,
+                )
+                if part.content:  # pragma: no branch
+                    yield TextMessageContentEvent(
+                        message_id=message_id,
+                        delta=part.content,
+                    )
+                stream_ctx.part_end = TextMessageEndEvent(
+                    message_id=message_id,
+                )
+            elif isinstance(part, ToolCallPart):  # pragma: no branch
+                message_id = stream_ctx.message_id or stream_ctx.new_message_id()
+                yield ToolCallStartEvent(
+                    tool_call_id=part.tool_call_id,
+                    tool_call_name=part.tool_name,
+                    parent_message_id=message_id,
+                )
+                if part.args:
+                    yield ToolCallArgsEvent(
+                        tool_call_id=part.tool_call_id,
+                        delta=part.args if isinstance(part.args, str) else json.dumps(part.args),
+                    )
+                stream_ctx.part_end = ToolCallEndEvent(
+                    tool_call_id=part.tool_call_id,
+                )
 
     elif isinstance(agent_event, PartDeltaEvent):
         delta = agent_event.delta
         if isinstance(delta, TextPartDelta):
-            yield TextMessageContentEvent(
-                message_id=stream_ctx.message_id,
-                delta=delta.content_delta,
-            )
+            if delta.content_delta:  # pragma: no branch
+                yield TextMessageContentEvent(
+                    message_id=stream_ctx.message_id,
+                    delta=delta.content_delta,
+                )
         elif isinstance(delta, ToolCallPartDelta):  # pragma: no branch
             assert delta.tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
             yield ToolCallArgsEvent(
@@ -479,6 +501,14 @@ async def _handle_model_request_event(
             )
         elif isinstance(delta, ThinkingPartDelta):  # pragma: no branch
             if delta.content_delta:  # pragma: no branch
+                if not isinstance(stream_ctx.part_end, ThinkingTextMessageEndEvent):
+                    yield ThinkingTextMessageStartEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_START,
+                    )
+                    stream_ctx.part_end = ThinkingTextMessageEndEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_END,
+                    )
+
                 yield ThinkingTextMessageContentEvent(
                     type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
                     delta=delta.content_delta,
@@ -515,7 +545,7 @@ async def _handle_tool_result_event(
     content = result.content
     if isinstance(content, BaseEvent):
         yield content
-    elif isinstance(content, (str, bytes)):  # pragma: no branch
+    elif isinstance(content, str | bytes):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(content, Iterable):  # pragma: no branch
@@ -630,6 +660,7 @@ class _RequestStreamContext:
 
     message_id: str = ''
     part_end: BaseEvent | None = None
+    thinking: bool = False
 
     def new_message_id(self) -> str:
         """Generate a new message ID for the request stream.
@@ -681,7 +712,7 @@ class _ToolCallNotFoundError(_RunError, ValueError):
         )
 
 
-class _AGUIFrontendToolset(DeferredToolset[AgentDepsT]):
+class _AGUIFrontendToolset(ExternalToolset[AgentDepsT]):
     def __init__(self, tools: list[AGUITool]):
         super().__init__(
             [

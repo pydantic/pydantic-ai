@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal, Union, cast, overload
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
@@ -99,7 +99,7 @@ except ImportError as _import_error:
 LatestAnthropicModelNames = ModelParam
 """Latest Anthropic models."""
 
-AnthropicModelName = Union[str, LatestAnthropicModelNames]
+AnthropicModelName = str | LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 Since Anthropic supports a variety of date-stamped models, we explicitly list the latest models but
@@ -290,7 +290,7 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
-            elif isinstance(item, (BetaWebSearchToolResultBlock, BetaCodeExecutionToolResultBlock)):
+            elif isinstance(item, BetaWebSearchToolResultBlock | BetaCodeExecutionToolResultBlock):
                 items.append(
                     BuiltinToolReturnPart(
                         provider_name='anthropic',
@@ -327,10 +327,10 @@ class AnthropicModel(Model):
                 )
 
         return ModelResponse(
-            items,
+            parts=items,
             usage=_map_usage(response),
             model_name=response.model,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             provider_name=self._provider.name,
         )
 
@@ -536,7 +536,7 @@ class AnthropicModel(Model):
         }
 
 
-def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.RequestUsage:
+def _map_usage(message: BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent) -> usage.RequestUsage:
     if isinstance(message, BetaMessage):
         response_usage = message.usage
     elif isinstance(message, BetaRawMessageStartEvent):
@@ -544,12 +544,7 @@ def _map_usage(message: BetaMessage | BetaRawMessageStreamEvent) -> usage.Reques
     elif isinstance(message, BetaRawMessageDeltaEvent):
         response_usage = message.usage
     else:
-        # No usage information provided in:
-        # - RawMessageStopEvent
-        # - RawContentBlockStartEvent
-        # - RawContentBlockDeltaEvent
-        # - RawContentBlockStopEvent
-        return usage.RequestUsage()
+        assert_never(message)
 
     # Store all integer-typed usage values in the details, except 'output_tokens' which is represented exactly by
     # `response_tokens`
@@ -586,10 +581,8 @@ class AnthropicStreamedResponse(StreamedResponse):
         current_block: BetaContentBlock | None = None
 
         async for event in self._response:
-            self._usage += _map_usage(event)
-
             if isinstance(event, BetaRawMessageStartEvent):
-                pass
+                self._usage = _map_usage(event)
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
@@ -652,9 +645,9 @@ class AnthropicStreamedResponse(StreamedResponse):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
-                pass
+                self._usage = _map_usage(event)
 
-            elif isinstance(event, (BetaRawContentBlockStopEvent, BetaRawMessageStopEvent)):  # pragma: no branch
+            elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
                 current_block = None
 
     @property

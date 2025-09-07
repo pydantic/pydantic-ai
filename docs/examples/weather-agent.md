@@ -18,7 +18,7 @@ To run this example properly, you might want to add two extra API keys **(Note i
 - A weather API key from [tomorrow.io](https://www.tomorrow.io/weather-api/) set via `WEATHER_API_KEY`
 - A geocoding API key from [geocode.maps.co](https://geocode.maps.co/) set via `GEO_API_KEY`
 
-With [dependencies installed and environment variables set](./index.md#usage), run:
+With [dependencies installed and environment variables set](./setup.md#usage), run:
 
 ```bash
 python/uv-run -m pydantic_ai_examples.weather_agent
@@ -35,7 +35,6 @@ Here's what the UI looks like for the weather agent:
 
 {{ video('c549d8d8827ded15f326f998e428e6c3', 6) }}
 
-Note, to run the UI, you'll need Python 3.10+.
 
 ```bash
 pip install gradio>=5.9.0

@@ -12,8 +12,6 @@ interactions:
     uri: https://us.inference.heroku.com/available-models
   response:
     headers:
-      connection:
-      - keep-alive
       content-length:
       - '760'
       content-security-policy:
@@ -85,4 +83,35 @@ interactions:
     status:
       code: 200
       message: OK
+- request:
+    body: ''
+    headers:
+      accept:
+      - application/json
+      connection:
+      - keep-alive
+      host:
+      - api.cerebras.ai
+    method: GET
+    uri: https://api.cerebras.ai/v1/models
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-length:
+      - '99'
+      content-type:
+      - application/json
+      referrer-policy:
+      - strict-origin-when-cross-origin
+      strict-transport-security:
+      - max-age=3600; includeSubDomains
+    parsed_body:
+      code: wrong_api_key
+      message: Wrong API Key
+      param: api_key
+      type: invalid_request_error
+    status:
+      code: 401
+      message: Unauthorized
 version: 1

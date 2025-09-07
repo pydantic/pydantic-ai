@@ -530,3 +530,64 @@ You can set the `HEROKU_INFERENCE_KEY` and `HEROKU_INFERENCE_URL` environment va
 export HEROKU_INFERENCE_KEY='your-heroku-inference-key'
 export HEROKU_INFERENCE_URL='https://us.inference.heroku.com'
 ```
+
+### Cerebras
+
+To use [Cerebras](https://cerebras.ai/), you need to create an API key in the [Cerebras Console](https://cloud.cerebras.ai/).
+
+Once you've set the `CEREBRAS_API_KEY` environment variable, you can run the following:
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('cerebras:llama3.3-70b')
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+If you need to configure the provider, you can use the [`CerebrasProvider`][pydantic_ai.providers.cerebras.CerebrasProvider] class:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.cerebras import CerebrasProvider
+
+model = OpenAIChatModel(
+    'llama3.3-70b',
+    provider=CerebrasProvider(api_key='your-cerebras-api-key'),
+)
+agent = Agent(model)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+```
+
+### LiteLLM
+
+To use [LiteLLM](https://www.litellm.ai/), set the configs as outlined in the [doc](https://docs.litellm.ai/docs/set_keys). In `LiteLLMProvider`, you can pass `api_base` and `api_key`. The value of these configs will depend on your setup. For example, if you are using OpenAI models, then you need to pass `https://api.openai.com/v1` as the `api_base` and your OpenAI API key as the `api_key`. If you are using a LiteLLM proxy server running on your local machine, then you need to pass `http://localhost:<port>` as the `api_base` and your LiteLLM API key (or a placeholder) as the `api_key`.
+
+To use custom LLMs, use `custom/` prefix in the model name.
+
+Once you have the configs, use the [`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] as follows:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.litellm import LiteLLMProvider
+
+model = OpenAIChatModel(
+    'openai/gpt-3.5-turbo',
+    provider=LiteLLMProvider(
+        api_base='<api-base-url>',
+        api_key='<api-key>'
+    )
+)
+agent = Agent(model)
+
+result = agent.run_sync('What is the capital of France?')
+print(result.output)
+#> The capital of France is Paris.
+...
+```

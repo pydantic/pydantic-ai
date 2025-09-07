@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
-from httpx import AsyncClient as AsyncHTTPClient
+import httpx
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -14,6 +14,7 @@ from pydantic_ai.profiles.groq import groq_model_profile
 from pydantic_ai.profiles.meta import meta_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
 from pydantic_ai.profiles.moonshotai import moonshotai_model_profile
+from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.profiles.qwen import qwen_model_profile
 from pydantic_ai.providers import Provider
 
@@ -24,6 +25,23 @@ except ImportError as _import_error:  # pragma: no cover
         'Please install the `groq` package to use the Groq provider, '
         'you can use the `groq` optional group — `pip install "pydantic-ai-slim[groq]"`'
     ) from _import_error
+
+
+def groq_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for an MoonshotAI model used with the Groq provider."""
+    return ModelProfile(supports_json_object_output=True, supports_json_schema_output=True).update(
+        moonshotai_model_profile(model_name)
+    )
+
+
+def meta_groq_model_profile(model_name: str) -> ModelProfile | None:
+    """Get the model profile for a Meta model used with the Groq provider."""
+    if model_name in {'llama-4-maverick-17b-128e-instruct', 'llama-4-scout-17b-16e-instruct'}:
+        return ModelProfile(supports_json_object_output=True, supports_json_schema_output=True).update(
+            meta_model_profile(model_name)
+        )
+    else:
+        return meta_model_profile(model_name)
 
 
 class GroqProvider(Provider[AsyncGroq]):
@@ -44,13 +62,14 @@ class GroqProvider(Provider[AsyncGroq]):
     def model_profile(self, model_name: str) -> ModelProfile | None:
         prefix_to_profile = {
             'llama': meta_model_profile,
-            'meta-llama/': meta_model_profile,
+            'meta-llama/': meta_groq_model_profile,
             'gemma': google_model_profile,
             'qwen': qwen_model_profile,
             'deepseek': deepseek_model_profile,
             'mistral': mistral_model_profile,
-            'moonshotai/': moonshotai_model_profile,
+            'moonshotai/': groq_moonshotai_model_profile,
             'compound-': groq_model_profile,
+            'openai/': openai_model_profile,
         }
 
         for prefix, profile_func in prefix_to_profile.items():
@@ -66,14 +85,14 @@ class GroqProvider(Provider[AsyncGroq]):
     def __init__(self, *, groq_client: AsyncGroq | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | None = None, http_client: AsyncHTTPClient | None = None) -> None: ...
+    def __init__(self, *, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
         groq_client: AsyncGroq | None = None,
-        http_client: AsyncHTTPClient | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """Create a new Groq provider.
 

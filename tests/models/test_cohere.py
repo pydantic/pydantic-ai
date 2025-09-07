@@ -4,7 +4,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import timezone
-from typing import Any, Union, cast
+from typing import Any, cast
 
 import pytest
 from inline_snapshot import snapshot
@@ -44,8 +44,7 @@ with try_import() as imports_successful:
     from pydantic_ai.models.cohere import CohereModel
     from pydantic_ai.providers.cohere import CohereProvider
 
-    # note: we use Union here for compatibility with Python 3.9
-    MockChatResponse = Union[ChatResponse, Exception]
+    MockChatResponse = ChatResponse | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
@@ -331,6 +330,7 @@ async def test_request_tool_call(allow_model_requests: None):
             input_tokens=5,
             output_tokens=3,
             details={'input_tokens': 4, 'output_tokens': 2},
+            tool_calls=1,
         )
     )
 
@@ -443,7 +443,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+                provider_response_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
         ]
     )
@@ -468,7 +468,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+                provider_response_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
             ),
             ModelRequest(
                 parts=[
