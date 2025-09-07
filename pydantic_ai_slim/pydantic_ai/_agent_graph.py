@@ -2,9 +2,10 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import inspect
 from asyncio import Task
 from collections import defaultdict, deque
-from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Iterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import field
@@ -828,15 +829,15 @@ async def _call_tools(
     ):
 
         async def handle_call_or_result(
-            coro_or_task: Coroutine[
-                Any, Any, tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+            coro_or_task: Awaitable[
+                tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
             ]
             | Task[tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]],
             index: int,
         ) -> _messages.HandleResponseEvent | None:
             try:
                 tool_part, tool_user_part = (
-                    (await coro_or_task) if isinstance(coro_or_task, Coroutine) else coro_or_task.result()
+                    (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
                 )
             except exceptions.CallDeferred:
                 deferred_calls_by_index[index] = 'external'
@@ -849,9 +850,8 @@ async def _call_tools(
 
                 return _messages.FunctionToolResultEvent(tool_part)
 
-        if tool_manager.should_sequential_tool_call(tool_calls):
-            for call in tool_calls:
-                index = tool_calls.index(call)
+        if tool_manager.should_call_sequentially(tool_calls):
+            for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
                     _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
                     index,

@@ -253,7 +253,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
-    sequential: bool | None
+    sequential: bool
     requires_approval: bool
     function_schema: _function_schema.FunctionSchema
     """
@@ -275,7 +275,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
-        sequential: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
@@ -360,8 +360,8 @@ class Tool(Generic[AgentDepsT]):
         name: str,
         description: str | None,
         json_schema: JsonSchemaValue,
-        sequential: bool | None = None,
         takes_ctx: bool = False,
+        sequential: bool = False,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -373,9 +373,9 @@ class Tool(Generic[AgentDepsT]):
             description: Used to tell the model how/when/why to use the tool.
                 You can provide few-shot examples as a part of the description.
             json_schema: The schema for the function arguments
-            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
 
         Returns:
             A Pydantic tool that calls the function
@@ -405,7 +405,7 @@ class Tool(Generic[AgentDepsT]):
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
-            sequential=self.sequential or False,
+            sequential=self.sequential,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
