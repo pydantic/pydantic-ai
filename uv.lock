@@ -3076,6 +3076,7 @@ docs = [
     { name = "mkdocs-material", extra = ["imaging"] },
     { name = "mkdocs-redirects" },
     { name = "mkdocstrings-python" },
+    { name = "pillow" },
     { name = "pydantic-ai", extra = ["a2a"] },
 ]
 docs-upload = [
@@ -3127,6 +3128,7 @@ docs = [
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.6.19" },
     { name = "mkdocs-redirects", specifier = ">=1.2.2" },
     { name = "mkdocstrings-python", specifier = ">=1.12.2" },
+    { name = "pillow", specifier = ">=11.3.0" },
     { name = "pydantic-ai", extras = ["a2a"], editable = "." },
 ]
 docs-upload = [

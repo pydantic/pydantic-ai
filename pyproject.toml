@@ -114,6 +114,7 @@ docs = [
     "mkdocs-llmstxt>=0.2.0",
     "mkdocs-redirects>=1.2.2",
     "mkdocs-material[imaging]>=9.6.19",
+    "pillow>=11.3.0",
     "mkdocstrings-python>=1.12.2",
     "griffe-warnings-deprecated>=1.1.0",
 ]
