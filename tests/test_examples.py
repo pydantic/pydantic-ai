@@ -305,6 +305,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Use the web to get the current time.': "In San Francisco, it's 8:21:41 pm PDT on Wednesday, August 6, 2025.",
     'Give me a sentence with the biggest news in AI this week.': 'Scientists have developed a universal AI detector that can identify deepfake videos.',
     'How many days between 2000-01-01 and 2025-03-18?': 'There are 9,208 days between January 1, 2000, and March 18, 2025.',
+    'What is 7 plus 5?': 'The answer is 12.',
     'What is the weather like in West London and in Wiltshire?': (
         'The weather in West London is raining, while in Wiltshire it is sunny.'
     ),
@@ -386,6 +387,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         'The capital of Italy is Rome (Roma, in Italian), which has been a cultural and political center for centuries.'
         'Rome is known for its rich history, stunning architecture, and delicious cuisine.'
     ),
+    'Please call the tool twice': ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id'),
     'Begin infinite retry loop!': ToolCallPart(
         tool_name='infinite_retry_tool', args={}, tool_call_id='pyd_ai_tool_call_id'
     ),
@@ -659,6 +661,8 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[ToolCallPart(tool_name='final_result', args=args, tool_call_id='pyd_ai_tool_call_id')]
         )
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'do_work':
+        return ModelResponse(parts=[ToolCallPart(tool_name='do_work', args={}, tool_call_id='pyd_ai_tool_call_id')])
     elif isinstance(m, RetryPromptPart) and m.tool_name == 'calc_volume':
         return ModelResponse(
             parts=[ToolCallPart(tool_name='calc_volume', args={'size': 6}, tool_call_id='pyd_ai_tool_call_id')]
@@ -773,7 +777,7 @@ async def model_logic(  # noqa: C901
         return ModelResponse(
             parts=[
                 TextPart(
-                    'I successfully deleted `__init__.py` and updated `README.md`, but was not able to delete `.env`.'
+                    'I successfully updated `README.md` and cleared `.env`, but was not able to delete `__init__.py`.'
                 )
             ]
         )

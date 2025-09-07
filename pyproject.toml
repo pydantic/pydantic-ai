@@ -24,7 +24,7 @@ authors = [
 license = "MIT"
 readme = "README.md"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -177,7 +177,6 @@ docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
-"mcp-run-python/**/*.py" = ["D", "TID251"]
 "examples/**/*.py" = ["D101", "D103"]
 "tests/**/*.py" = ["D"]
 "docs/**/*.py" = ["D"]
@@ -206,7 +205,7 @@ executionEnvironments = [
 ]
 exclude = [
     "examples/pydantic_ai_examples/weather_agent_gradio.py",
-    "pydantic_ai_slim/pydantic_ai/ext/aci.py", # aci-sdk is too niche to be added as an (optional) dependency
+    "pydantic_ai_slim/pydantic_ai/ext/aci.py",               # aci-sdk is too niche to be added as an (optional) dependency
 ]
 
 [tool.mypy]
@@ -264,7 +263,7 @@ disable_warnings = ["include-ignored"]
 source = [
     ".",
     "/home/runner/work/pydantic-ai/pydantic-ai",
-    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai"
+    "/System/Volumes/Data/home/runner/work/pydantic-ai/pydantic-ai",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report

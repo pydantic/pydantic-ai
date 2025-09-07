@@ -9,7 +9,6 @@ from typing import Annotated, Any, Literal, cast
 
 import httpx
 import pytest
-from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from pydantic import AnyUrl, BaseModel, ConfigDict, Discriminator, Field, Tag
 from typing_extensions import NotRequired, TypedDict
@@ -20,18 +19,13 @@ from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,
-    FinalResultEvent,
     ImageUrl,
     ModelRequest,
     ModelResponse,
-    PartDeltaEvent,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
-    TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -352,7 +346,9 @@ async def test_request_tool_call(allow_model_requests: None):
             ),
         ]
     )
-    assert result.usage() == snapshot(RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3))
+    assert result.usage() == snapshot(
+        RunUsage(requests=3, cache_read_tokens=3, input_tokens=5, output_tokens=3, tool_calls=1)
+    )
 
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
@@ -595,6 +591,37 @@ async def test_no_content(allow_model_requests: None):
 async def test_no_delta(allow_model_requests: None):
     stream = [
         chunk([]),
+        text_chunk('hello '),
+        text_chunk('world'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('') as result:
+        assert not result.is_complete
+        assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
+        assert result.is_complete
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatCompletionChunk:
+    choice = ChunkChoice(index=0, delta=ChoiceDelta())
+    # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
+    choice.delta = None  # pyright: ignore[reportAttributeAccessIssue]
+    return chat.ChatCompletionChunk(
+        id='x',
+        choices=[choice],
+        created=1704067200,  # 2024-01-01
+        model='gpt-4o',
+        object='chat.completion.chunk',
+        usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
+    )
+
+
+async def test_none_delta(allow_model_requests: None):
+    stream = [
+        none_delta_chunk(),
         text_chunk('hello '),
         text_chunk('world'),
     ]
@@ -1911,78 +1938,6 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
     )
 
 
-async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
-    agent = Agent(m, model_settings=settings)
-
-    result = await agent.run('How do I cross the street?')
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
-            ),
-        ]
-    )
-
-    result = await agent.run(
-        'Considering the way to cross the street, analogously, how do I cross the river?',
-        message_history=result.all_messages(),
-    )
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
-            ),
-            ModelRequest(
-                parts=[
-                    UserPromptPart(
-                        content='Considering the way to cross the street, analogously, how do I cross the river?',
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=424, output_tokens=2033, details={'reasoning_tokens': 1408}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_response_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
-            ),
-        ]
-    )
-
-
 async def test_openai_model_thinking_part(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
@@ -2058,34 +2013,6 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_response_id='chatcmpl-BP7ocN6qxho4C1UzUJWnU5tPJno55',
             ),
         ]
-    )
-
-
-async def test_openai_model_thinking_part_iter(allow_model_requests: None, openai_api_key: str):
-    provider = OpenAIProvider(api_key=openai_api_key)
-    responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
-    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
-    agent = Agent(responses_model, model_settings=settings)
-
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
-
-    assert event_parts == snapshot(
-        IsListOrTuple(
-            positions={
-                0: PartStartEvent(index=0, part=ThinkingPart(content='', signature=IsStr())),
-                1: PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-                87: PartStartEvent(index=1, part=TextPart(content="I'm")),
-                88: FinalResultEvent(tool_name=None, tool_call_id=None),
-                89: PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            },
-            length=443,
-        )
     )
 
 

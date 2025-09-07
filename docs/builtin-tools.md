@@ -1,10 +1,10 @@
 # Builtin Tools
 
-Builtin tools are native tools provided by LLM providers that can be used to enhance your agent's capabilities. Unlike [common tools](common-tools.md), which are custom implementations that PydanticAI executes, builtin tools are executed directly by the model provider.
+Builtin tools are native tools provided by LLM providers that can be used to enhance your agent's capabilities. Unlike [common tools](common-tools.md), which are custom implementations that Pydantic AI executes, builtin tools are executed directly by the model provider.
 
 ## Overview
 
-PydanticAI supports the following builtin tools:
+Pydantic AI supports the following builtin tools:
 
 - **[`WebSearchTool`][pydantic_ai.builtin_tools.WebSearchTool]**: Allows agents to search the web
 - **[`CodeExecutionTool`][pydantic_ai.builtin_tools.CodeExecutionTool]**: Enables agents to execute code in a secure environment
@@ -13,7 +13,9 @@ PydanticAI supports the following builtin tools:
 These tools are passed to the agent via the `builtin_tools` parameter and are executed by the model provider's infrastructure.
 
 !!! warning "Provider Support"
-    Not all model providers support builtin tools. If you use a builtin tool with an unsupported provider, PydanticAI will raise a [`UserError`][pydantic_ai.exceptions.UserError] when you try to run the agent.
+    Not all model providers support builtin tools. If you use a builtin tool with an unsupported provider, Pydantic AI will raise a [`UserError`][pydantic_ai.exceptions.UserError] when you try to run the agent.
+
+    If a provider supports a built-in tool that is not currently supported by Pydantic AI, please file an issue.
 
 ## Web Search Tool
 
@@ -26,15 +28,12 @@ making it ideal for queries that require up-to-date data.
 |----------|-----------|-------|
 | OpenAI | ✅ | Full feature support |
 | Anthropic | ✅ | Full feature support |
-| Groq | ✅ | Limited parameter support |
-| Google | ✅ | No parameter support |
+| Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
+| Google | ✅ | No parameter support. Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
 | HuggingFace | ❌ | Not supported |
-
-!!! note "Groq Support"
-    To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound).
 
 ### Usage
 
@@ -97,16 +96,16 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 ### Provider Support
 
-| Provider | Supported |
-|----------|-----------|
-| OpenAI | ✅ |
-| Anthropic | ✅ |
-| Google | ✅ |
-| Groq | ❌ |
-| Bedrock | ❌ |
-| Mistral | ❌ |
-| Cohere | ❌ |
-| HuggingFace | ❌ |
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| OpenAI | ✅ | |
+| Anthropic | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Google | ✅ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
 
 ### Usage
 
@@ -126,16 +125,16 @@ allowing it to pull up-to-date information from the web.
 
 ### Provider Support
 
-| Provider | Supported |
-|----------|-----------|
-| Google | ✅ |
-| OpenAI | ❌ |
-| Anthropic | ❌ |
-| Groq | ❌ |
-| Bedrock | ❌ |
-| Mistral | ❌ |
-| Cohere | ❌ |
-| HuggingFace | ❌ |
+| Provider | Supported | Notes |
+|----------|-----------|-------|
+| Google | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| OpenAI | ❌ | |
+| Anthropic | ❌ | |
+| Groq | ❌ | |
+| Bedrock | ❌ | |
+| Mistral | ❌ | |
+| Cohere | ❌ | |
+| HuggingFace | ❌ | |
 
 ### Usage
 

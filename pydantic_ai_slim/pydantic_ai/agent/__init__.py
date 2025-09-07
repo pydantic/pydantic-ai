@@ -4,15 +4,15 @@ import dataclasses
 import inspect
 import json
 import warnings
+from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
 
-import anyio
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
-from typing_extensions import TypeVar, deprecated
+from typing_extensions import Self, TypeVar, deprecated
 
 from pydantic_graph import Graph
 
@@ -157,7 +157,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
-    _enter_lock: anyio.Lock = dataclasses.field(repr=False)
+    _enter_lock: Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
@@ -374,7 +374,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
 
-        self._enter_lock = anyio.Lock()
+        self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
 
@@ -1066,7 +1066,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
-                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(
@@ -1165,7 +1165,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
-                See the [tools documentation](../tools.md#human-in-the-loop-tool-approval) for more info.
+                See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1355,7 +1355,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return schema  # pyright: ignore[reportReturnType]
 
-    async def __aenter__(self) -> AbstractAgent[AgentDepsT, OutputDataT]:
+    async def __aenter__(self) -> Self:
         """Enter the agent context.
 
         This will start all [`MCPServerStdio`s][pydantic_ai.mcp.MCPServerStdio] registered as `toolsets` so they are ready to be used.

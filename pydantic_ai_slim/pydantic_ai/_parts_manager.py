@@ -154,6 +154,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: Hashable | None,
         content: str | None = None,
+        id: str | None = None,
         signature: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
@@ -167,6 +168,7 @@ class ModelResponsePartsManager:
                 of thinking. If None, a new part will be created unless the latest part is already
                 a ThinkingPart.
             content: The thinking content to append to the appropriate ThinkingPart.
+            id: An optional id for the thinking part.
             signature: An optional signature for the thinking content.
 
         Returns:
@@ -197,7 +199,7 @@ class ModelResponsePartsManager:
             if content is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
-                part = ThinkingPart(content=content, signature=signature)
+                part = ThinkingPart(content=content, id=id, signature=signature)
                 if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)

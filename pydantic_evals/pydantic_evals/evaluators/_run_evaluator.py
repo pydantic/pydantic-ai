@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import traceback
 from collections.abc import Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import logfire_api
 from pydantic import (
     TypeAdapter,
     ValidationError,
 )
 from typing_extensions import TypeVar
+
+from pydantic_evals._utils import logfire_span
 
 from .context import EvaluatorContext
 from .evaluator import (
@@ -25,8 +25,6 @@ from .evaluator import (
 if TYPE_CHECKING:
     from pydantic_ai.retries import RetryConfig
 
-_logfire = logfire_api.Logfire(otel_scope='pydantic-evals')
-logfire_api.add_non_user_code_prefix(Path(__file__).parent.absolute())
 
 InputsT = TypeVar('InputsT', default=Any, contravariant=True)
 OutputT = TypeVar('OutputT', default=Any, contravariant=True)
@@ -62,7 +60,7 @@ async def run_evaluator(
         evaluate = tenacity_retry(**retry)(evaluate)
 
     try:
-        with _logfire.span(
+        with logfire_span(
             'evaluator: {evaluator_name}',
             evaluator_name=evaluator.get_default_evaluation_name(),
         ):

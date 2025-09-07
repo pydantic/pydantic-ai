@@ -13,6 +13,8 @@ The module includes:
 
 from __future__ import annotations
 
+from types import TracebackType
+
 from httpx import (
     AsyncBaseTransport,
     AsyncHTTPTransport,
@@ -185,10 +187,29 @@ class TenacityTransport(BaseTransport):
             response.request = req
 
             if self.validate_response:
-                self.validate_response(response)
+                try:
+                    self.validate_response(response)
+                except Exception:
+                    response.close()
+                    raise
             return response
 
         return handle_request(request)
+
+    def __enter__(self) -> TenacityTransport:
+        self.wrapped.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        self.wrapped.__exit__(exc_type, exc_value, traceback)
+
+    def close(self) -> None:
+        self.wrapped.close()  # pragma: no cover
 
 
 class AsyncTenacityTransport(AsyncBaseTransport):
@@ -263,10 +284,29 @@ class AsyncTenacityTransport(AsyncBaseTransport):
             response.request = req
 
             if self.validate_response:
-                self.validate_response(response)
+                try:
+                    self.validate_response(response)
+                except Exception:
+                    await response.aclose()
+                    raise
             return response
 
         return await handle_async_request(request)
+
+    async def __aenter__(self) -> AsyncTenacityTransport:
+        await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        await self.wrapped.__aexit__(exc_type, exc_value, traceback)
+
+    async def aclose(self) -> None:
+        await self.wrapped.aclose()
 
 
 def wait_retry_after(

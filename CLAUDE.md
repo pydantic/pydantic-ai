@@ -83,7 +83,6 @@ This is a uv workspace with multiple packages:
 - **`pydantic_graph/`**: Graph execution engine
 - **`examples/`**: Example applications
 - **`clai/`**: CLI tool
-- **`mcp-run-python/`**: MCP server implementation (Deno/TypeScript)
 
 ## Testing Strategy
 

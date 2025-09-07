@@ -859,14 +859,18 @@ async def test_tool_local_parts() -> None:
 
 
 async def test_thinking() -> None:
-    """Test thinking events - now supported by FunctionModel."""
-
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaThinkingCalls | str]:
-        yield {0: DeltaThinkingPart(content='Thinking ')}
-        yield {0: DeltaThinkingPart(content='about the weather')}
-        yield 'Thought about the weather'
+        yield {0: DeltaThinkingPart(content='')}
+        yield "Let's do some thinking"
+        yield ''
+        yield {1: DeltaThinkingPart(content='Thinking ')}
+        yield {1: DeltaThinkingPart(content='about the weather')}
+        yield {2: DeltaThinkingPart(content='')}
+        yield {3: DeltaThinkingPart(content='')}
+        yield {3: DeltaThinkingPart(content='Thinking about the meaning of life')}
+        yield {4: DeltaThinkingPart(content='Thinking about the universe')}
 
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
@@ -888,17 +892,23 @@ async def test_thinking() -> None:
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'THINKING_TEXT_MESSAGE_START'},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking '},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'about the weather'},
-            {'type': 'THINKING_TEXT_MESSAGE_END'},
             {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
                 'messageId': message_id,
-                'delta': 'Thought about the weather',
+                'delta': "Let's do some thinking",
             },
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking '},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'about the weather'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking about the meaning of life'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking about the universe'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
             {
                 'type': 'RUN_FINISHED',
                 'threadId': thread_id,
