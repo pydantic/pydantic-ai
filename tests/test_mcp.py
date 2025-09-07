@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import base64
+import logging
+import os
 import re
 from datetime import timezone
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import pytest
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
@@ -29,7 +33,6 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
-
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -103,6 +106,17 @@ async def test_context_manager_initialization_error() -> None:
 
     assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
     assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_stdio_server_propagate_exceptions(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-mm'])
+    with pytest.raises(OSError):
+        try:
+            async with server:
+                pass
+        except* OSError as exc:
+            os_errors, others = exc.split(OSError)
+            raise os_errors.exceptions[0]
 
 
 async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):

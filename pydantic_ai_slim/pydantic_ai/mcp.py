@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import os
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
@@ -508,9 +509,35 @@ class MCPServerStdio(MCPServer):
             MemoryObjectSendStream[SessionMessage],
         ]
     ]:
+        r_fd, w_fd = os.pipe()
+        err_read_stream: MemoryObjectReceiveStream
+        err_read_stream_writer: MemoryObjectSendStream
+        err_read_stream_writer, err_read_stream = anyio.create_memory_object_stream(0)
+
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
-        async with stdio_client(server=server) as (read_stream, write_stream):
-            yield read_stream, write_stream
+
+        async def read_stderr():
+            async with err_read_stream_writer:
+                async with await anyio.open_file(r_fd, encoding=server.encoding) as stream:
+                    line = await stream.read()
+                    if line:
+                        await err_read_stream_writer.send(line)
+
+        report_exception = False
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(read_stderr)
+            try:
+                async with stdio_client(server=server, errlog=w_fd) as (read_stream, write_stream):
+                    os.close(w_fd)
+                    yield read_stream, write_stream
+            except *McpError:
+                report_exception = True
+            finally:
+                async with err_read_stream:
+                    stderr = "".join([chunk async for chunk in err_read_stream]).strip()
+
+                if report_exception and stderr.strip():
+                    raise OSError(f'Error running MCP server: {stderr.strip()}')
 
     def __repr__(self) -> str:
         repr_args = [
