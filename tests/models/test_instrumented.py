@@ -87,6 +87,7 @@ class MyModel(Model):
             usage=RequestUsage(input_tokens=100, output_tokens=200),
             model_name='gpt-4o-2024-11-20',
             provider_details=dict(finish_reason='stop', foo='bar'),
+            provider_response_id='response_id',
         )
 
     @asynccontextmanager
@@ -184,6 +185,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                     'logfire.msg': 'chat gpt-4o',
                     'logfire.span_type': 'span',
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                    'gen_ai.response.id': 'response_id',
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
                     'operation.cost': 0.00225,
@@ -720,6 +722,7 @@ Fix the errors and try again.\
                             'properties': {'events': {'type': 'array'}, 'model_request_parameters': {'type': 'object'}},
                         },
                         'operation.cost': 0.00225,
+                        'gen_ai.response.id': 'response_id',
                     },
                 },
             ]
@@ -821,6 +824,7 @@ Fix the errors and try again.\
                             },
                         },
                         'operation.cost': 0.00225,
+                        'gen_ai.response.id': 'response_id',
                     },
                 },
             ]
@@ -1340,6 +1344,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'gen_ai.usage.input_tokens': 100,
                     'gen_ai.usage.output_tokens': 200,
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
+                    'gen_ai.response.id': 'response_id',
                 },
             }
         ]

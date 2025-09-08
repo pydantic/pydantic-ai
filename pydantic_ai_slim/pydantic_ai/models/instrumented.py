@@ -421,9 +421,12 @@ class InstrumentedModel(WrapperModel):
 
                     self.instrumentation_settings.handle_messages(messages, response, system, span)
 
-                    cost_attributes = {}
+                    attributes_to_set = {
+                        **response.usage.opentelemetry_attributes(),
+                        'gen_ai.response.model': response_model,
+                    }
                     try:
-                        cost_attributes = {'operation.cost': float(response.cost().total_price)}
+                        attributes_to_set['operation.cost'] = float(response.cost().total_price)
                     except LookupError:
                         # The cost of this provider/model is unknown, which is common.
                         pass
@@ -431,14 +434,9 @@ class InstrumentedModel(WrapperModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
-
-                    span.set_attributes(
-                        {
-                            **response.usage.opentelemetry_attributes(),
-                            'gen_ai.response.model': response_model,
-                            **cost_attributes,
-                        }
-                    )
+                    if response.provider_response_id is not None:
+                        attributes_to_set['gen_ai.response.id'] = response.provider_response_id
+                    span.set_attributes(attributes_to_set)
                     span.update_name(f'{operation} {request_model}')
 
                 yield finish
