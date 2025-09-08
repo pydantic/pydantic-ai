@@ -57,8 +57,14 @@ The original agent, model, and MCP server can still be used as normal outside th
 
 Here is a simple but complete example of wrapping an agent for durable execution. All it requires is to install Pydantic AI with the DBOS [open-source library](https://github.com/dbos-inc/dbos-transact-py):
 
-```sh
+```bash
 pip/uv-add pydantic-ai[dbos]
+```
+
+Or if you're using the slim package, you can install it with the `dbos` optional group:
+
+```bash
+pip/uv-add pydantic-ai-slim[dbos]
 ```
 
 ```python {title="dbos_agent.py" test="skip"}
@@ -105,7 +111,13 @@ When using DBOS with Pydantic AI agents, there are a few important consideration
 
 ### Agent and Toolset Requirements
 
-Each agent instance must have a unique `name` so DBOS can correctly resume workflows after a failure or restart. Tools and event stream handlers that perform I/O or external interactions should be annotated as DBOS steps.
+Each agent instance must have a unique `name` so DBOS can correctly resume workflows after a failure or restart.
+
+Tools and event stream handlers are not automatically wrapped by DBOS. You can decide how to integrate them:
+
+* Decorate with `@DBOS.step` if the function involves non-determinism or I/O.
+* Skip the decorator if durability isn't needed, so you avoid the extra DB checkpoint write.
+* If the function needs to enqueue tasks or invoke other DBOS workflows, run it inside the agent's main workflow (not as a step).
 
 Other than that, any agent and toolset will just work!
 
