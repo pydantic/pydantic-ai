@@ -19,6 +19,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.gateway import GatewayProvider
     from pydantic_ai.providers.github import GitHubProvider
     from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
     from pydantic_ai.providers.google_vertex import GoogleVertexProvider  # type: ignore[reportDeprecated]

@@ -53,11 +53,7 @@ class Provider(ABC, Generic[InterfaceClient]):
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901
     """Infers the provider class from the provider name."""
-    if provider == 'gateway':
-        from .gateway import GatewayProvider
-
-        return GatewayProvider
-    elif provider == 'openai':
+    if provider == 'openai':
         from .openai import OpenAIProvider
 
         return OpenAIProvider

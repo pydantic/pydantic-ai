@@ -11,10 +11,37 @@ from ..conftest import TestEnv
 # TODO(Marcelo): We need to add Vertex AI to the test cases.
 
 TEST_CASES = [
+    pytest.param(
+        'PYDANTIC_AI_GATEWAY_API_KEY',
+        'gateway:openai/gpt-5',
+        'gpt-5',
+        'openai',
+        'openai',
+        'OpenAIChatModel',
+        id='gateway:openai/gpt-5',
+    ),
+    pytest.param(
+        'PYDANTIC_AI_GATEWAY_API_KEY',
+        'gateway:groq/llama-3.3-70b-versatile',
+        'llama-3.3-70b-versatile',
+        'groq',
+        'groq',
+        'GroqModel',
+        id='gateway:groq/llama-3.3-70b-versatile',
+    ),
+    pytest.param(
+        'PYDANTIC_AI_GATEWAY_API_KEY',
+        'gateway:google-vertex/gemini-1.5-flash',
+        'gemini-1.5-flash',
+        'google-vertex',
+        'google',
+        'GoogleModel',
+        id='gateway:google-vertex/gemini-1.5-flash',
+    ),
     ('OPENAI_API_KEY', 'openai:gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
     ('OPENAI_API_KEY', 'gpt-3.5-turbo', 'gpt-3.5-turbo', 'openai', 'openai', 'OpenAIChatModel'),
     ('OPENAI_API_KEY', 'o1', 'o1', 'openai', 'openai', 'OpenAIChatModel'),
-    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'azure', 'OpenAIChatModel'),
+    ('AZURE_OPENAI_API_KEY', 'azure:gpt-3.5-turbo', 'gpt-3.5-turbo', 'azure', 'openai', 'OpenAIChatModel'),
     ('GEMINI_API_KEY', 'google-gla:gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
     ('GEMINI_API_KEY', 'gemini-1.5-flash', 'gemini-1.5-flash', 'google-gla', 'google', 'GoogleModel'),
     (
@@ -70,7 +97,7 @@ TEST_CASES = [
         'github:xai/grok-3-mini',
         'xai/grok-3-mini',
         'github',
-        'github',
+        'openai',
         'OpenAIChatModel',
     ),
     (
@@ -78,7 +105,7 @@ TEST_CASES = [
         'moonshotai:kimi-k2-0711-preview',
         'kimi-k2-0711-preview',
         'moonshotai',
-        'moonshotai',
+        'openai',
         'OpenAIChatModel',
     ),
     (
@@ -86,15 +113,7 @@ TEST_CASES = [
         'grok:grok-3',
         'grok-3',
         'grok',
-        'grok',
-        'OpenAIChatModel',
-    ),
-    (
-        'GROK_API_KEY',
-        'grok-4',  # Note that the provider and model name are both "grok", so the plain string grok with no prefix works because its also the provider name
-        'grok-4',
-        'grok',
-        'grok',
+        'openai',
         'OpenAIChatModel',
     ),
     (
@@ -122,14 +141,11 @@ def test_infer_model(
 ):
     env.set(mock_api_key, 'via-env-var')
 
-    try:
-        model_module = import_module(f'pydantic_ai.models.{module_name}')
-        expected_model = getattr(model_module, model_class_name)
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore', DeprecationWarning)
-            m = infer_model(model_name)
-    except ImportError:
-        pytest.skip(f'{model_name} dependencies not installed')
+    model_module = import_module(f'pydantic_ai.models.{module_name}')
+    expected_model = getattr(model_module, model_class_name)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', DeprecationWarning)
+        m = infer_model(model_name)
 
     assert isinstance(m, expected_model)
     assert m.model_name == expected_model_name
