@@ -420,10 +420,17 @@ class InstrumentedModel(WrapperModel):
                         return
 
                     self.instrumentation_settings.handle_messages(messages, response, system, span)
+
+                    cost_attributes = {}
                     try:
                         cost_attributes = {'operation.cost': float(response.cost().total_price)}
                     except LookupError:
-                        cost_attributes = {}
+                        pass
+                    except Exception as e:
+                        warnings.warn(
+                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
+                        )
+
                     span.set_attributes(
                         {
                             **response.usage.opentelemetry_attributes(),
@@ -478,3 +485,7 @@ class InstrumentedModel(WrapperModel):
                 return str(value)
             except Exception as e:
                 return f'Unable to serialize: {e}'
+
+
+class CostCalculationFailedWarning(Warning):
+    """Warning raised when cost calculation fails."""
