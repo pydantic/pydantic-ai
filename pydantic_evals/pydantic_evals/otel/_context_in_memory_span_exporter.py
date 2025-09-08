@@ -18,7 +18,7 @@ try:
     )
 
     _LOGFIRE_IS_INSTALLED = True
-except ImportError:  # pragma: no cover
+except ImportError:  # pragma: lax no cover
     _LOGFIRE_IS_INSTALLED = False  # pyright: ignore[reportConstantRedefinition]
 
     # Ensure that we can do an isinstance check without erroring
