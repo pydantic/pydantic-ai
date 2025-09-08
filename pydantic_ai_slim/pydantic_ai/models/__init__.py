@@ -557,7 +557,7 @@ class StreamedResponse(ABC):
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
 
     provider_response_id: str | None = field(default=None, init=False)
-    provider_details: dict[str, Any] = field(default_factory=dict, init=False)
+    provider_details: dict[str, Any] | None = field(default=None, init=False)
     finish_reason: FinishReason | None = field(default=None, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)

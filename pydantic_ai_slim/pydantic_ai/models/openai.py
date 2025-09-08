@@ -105,6 +105,25 @@ allows this model to be used more easily with other model types (ie, Ollama, Dee
 """
 
 
+_CHAT_FINISH_REASON_MAP: dict[
+    Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason
+] = {
+    'stop': 'stop',
+    'length': 'length',
+    'tool_calls': 'tool_call',
+    'content_filter': 'content_filter',
+    'function_call': 'tool_call',
+}
+
+_RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason] = {
+    'max_output_tokens': 'length',
+    'content_filter': 'content_filter',
+    'completed': 'stop',
+    'cancelled': 'error',
+    'failed': 'error',
+}
+
+
 class OpenAIChatModelSettings(ModelSettings, total=False):
     """Settings used for an OpenAI model request."""
 
@@ -728,25 +747,6 @@ class OpenAIChatModel(Model):
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
 
 
-_CHAT_FINISH_REASON_MAP: dict[
-    Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason
-] = {
-    'stop': 'stop',
-    'length': 'length',
-    'tool_calls': 'tool_call',
-    'content_filter': 'content_filter',
-    'function_call': 'tool_call',
-}
-
-_RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason] = {
-    'max_output_tokens': 'length',
-    'content_filter': 'content_filter',
-    'completed': 'stop',
-    'cancelled': 'error',
-    'failed': 'error',
-}
-
-
 @deprecated(
     '`OpenAIModel` was renamed to `OpenAIChatModel` to clearly distinguish it from `OpenAIResponsesModel` which '
     "uses OpenAI's newer Responses API. Use that unless you're using an OpenAI Chat Completions-compatible API, or "
@@ -1208,7 +1208,6 @@ class OpenAIStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
-            # Capture the response ID from the chunk
             if chunk.id and self.provider_response_id is None:
                 self.provider_response_id = chunk.id
 
@@ -1222,7 +1221,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 continue
 
             if raw_finish_reason := choice.finish_reason:
-                self.provider_details['finish_reason'] = raw_finish_reason
+                self.provider_details = {'finish_reason': raw_finish_reason}
                 self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Handle the text part of the response
@@ -1289,7 +1288,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
                     )
                     if raw_finish_reason:
-                        self.provider_details['finish_reason'] = raw_finish_reason
+                        self.provider_details = {'finish_reason': raw_finish_reason}
                         self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):

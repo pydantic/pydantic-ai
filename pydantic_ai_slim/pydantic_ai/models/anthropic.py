@@ -668,7 +668,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event)
                 if raw_finish_reason := event.delta.stop_reason:
-                    self.provider_details['finish_reason'] = raw_finish_reason
+                    self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch

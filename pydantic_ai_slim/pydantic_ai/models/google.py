@@ -576,9 +576,8 @@ class GeminiStreamedResponse(StreamedResponse):
             if chunk.response_id:
                 self.provider_response_id = chunk.response_id
 
-            # Capture mapped finish_reason if provided by the candidate
             if raw_finish_reason := candidate.finish_reason:
-                self.provider_details['finish_reason'] = raw_finish_reason.value
+                self.provider_details = {'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             if candidate.content is None or candidate.content.parts is None:
