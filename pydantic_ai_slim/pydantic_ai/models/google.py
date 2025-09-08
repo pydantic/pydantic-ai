@@ -129,6 +129,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     See <https://ai.google.dev/api/generate-content#MediaResolution> for more information.
     """
 
+    google_cached_content: str
+    """The name of the cached content to use for the model.
+
+    See <https://ai.google.dev/gemini-api/docs/caching> for more information.
+    """
+
 
 @dataclass(init=False)
 class GoogleModel(Model):
@@ -377,6 +383,7 @@ class GoogleModel(Model):
             thinking_config=model_settings.get('google_thinking_config'),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
+            cached_content=model_settings.get('google_cached_content'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,

@@ -229,7 +229,7 @@ def test_docs_examples(  # noqa: C901
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
     elif opt_test.startswith('ci_only') and os.environ.get('GITHUB_ACTIONS', '').lower() != 'true':
-        pytest.skip(opt_test[7:].lstrip(' -') or 'running code skipped in local tests')  # pragma: no cover
+        pytest.skip(opt_test[7:].lstrip(' -') or 'running code skipped in local tests')  # pragma: lax no cover
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
 

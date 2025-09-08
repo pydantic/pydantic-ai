@@ -517,7 +517,7 @@ class MCPServerStdio(MCPServer):
             f'args={self.args!r}',
         ]
         if self.id:
-            repr_args.append(f'id={self.id!r}')  # pragma: no cover
+            repr_args.append(f'id={self.id!r}')
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
 
