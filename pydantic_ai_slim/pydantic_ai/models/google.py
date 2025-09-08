@@ -130,7 +130,7 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_cached_content: str
-    """The cached content to use for the model.
+    """The name of the cached content to use for the model.
 
     See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
