@@ -634,6 +634,11 @@ async def test_stream_structured(allow_model_requests: None):
             content_block=BetaTextBlock(type='text', text='FINAL_PAYLOAD'),
         ),
         BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=0, output_tokens=0),
+        ),
         BetaRawMessageStopEvent(type='message_stop'),
     ]
 
@@ -672,6 +677,20 @@ async def test_stream_structured(allow_model_requests: None):
             )
         )
         assert tool_called
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                assert response == snapshot(
+                    ModelResponse(
+                        parts=[TextPart(content='FINAL_PAYLOAD')],
+                        usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
+                        model_name='claude-3-5-haiku-latest',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'finish_reason': 'end_turn'},
+                        provider_response_id='msg_123',
+                        finish_reason='stop',
+                    )
+                )
 
 
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):

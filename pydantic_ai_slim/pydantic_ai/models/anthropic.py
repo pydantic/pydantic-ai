@@ -21,13 +21,13 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
-    OtelFinishReason,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -43,24 +43,14 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
-
-def _map_anthropic_finish_reason(raw: str | None) -> OtelFinishReason | None:
-    """Map Anthropic stop_reason to OTEL finish reasons.
-
-    Known Anthropic values include: 'end_turn', 'max_tokens', 'stop_sequence', 'tool_use',
-    as well as 'content_filtered' or 'safety' when content is filtered.
-    """
-    if raw is None:
-        return None
-    if raw in ('end_turn', 'stop_sequence'):
-        return 'stop'
-    if raw == 'max_tokens':
-        return 'length'
-    if raw in ('content_filtered', 'safety'):
-        return 'content_filter'
-    if raw == 'tool_use':
-        return 'other'
-    return None
+_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+    'end_turn': 'stop',
+    'max_tokens': 'length',
+    'stop_sequence': 'stop',
+    'tool_use': 'tool_call',
+    'pause_turn': 'stop',
+    'refusal': 'content_filter',
+}
 
 
 try:
@@ -91,6 +81,7 @@ try:
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
+        BetaStopReason,
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextDelta,
@@ -347,10 +338,11 @@ class AnthropicModel(Model):
                     )
                 )
 
-        # Map finish_reason from Anthropic stop_reason
-        raw_finish: str | None = response.stop_reason
-        mapped_finish: OtelFinishReason | None = _map_anthropic_finish_reason(raw_finish)
-        provider_details: dict[str, Any] | None = {'finish_reason': raw_finish} if raw_finish is not None else None
+        finish_reason: FinishReason | None = None
+        provider_details: dict[str, Any] | None = None
+        if raw_finish_reason := response.stop_reason:
+            provider_details = {'finish_reason': raw_finish_reason}
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
             parts=items,
@@ -358,7 +350,7 @@ class AnthropicModel(Model):
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
-            finish_reason=mapped_finish,
+            finish_reason=finish_reason,
             provider_details=provider_details,
         )
 
@@ -611,13 +603,7 @@ class AnthropicStreamedResponse(StreamedResponse):
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
                 self._usage = _map_usage(event)
-                # Capture provider response id from start event
-                try:
-                    if self.provider_response_id is None:
-                        self.provider_response_id = getattr(event.message, 'id', None)
-                except Exception:
-                    pass
-                pass
+                self.provider_response_id = event.message.id
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
@@ -681,15 +667,11 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event)
+                if raw_finish_reason := event.delta.stop_reason:
+                    self.provider_details['finish_reason'] = raw_finish_reason
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
-                # Capture mapped finish reason on message stop
-                try:
-                    raw_reason = getattr(getattr(event, 'message', None), 'stop_reason', None)
-                    if self.finish_reason is None and raw_reason is not None:
-                        self.finish_reason = _map_anthropic_finish_reason(raw_reason)
-                except Exception:
-                    pass
                 current_block = None
 
     @property

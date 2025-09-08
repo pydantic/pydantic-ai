@@ -52,9 +52,9 @@ ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
 DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
-# OpenTelemetry GenAI finish reasons used for gen_ai.response.finish_reasons
+# OpenTelemetry GenAI finish reasons used for `gen_ai.response.finish_reasons`
 # See mappings in provider implementations (e.g., OpenAI/Google) for how vendor reasons map here.
-OtelFinishReason: TypeAlias = Literal[
+FinishReason: TypeAlias = Literal[
     'stop',
     'length',
     'content_filter',
@@ -1042,11 +1042,8 @@ class ModelResponse:
     ] = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
 
-    finish_reason: OtelFinishReason | None = None
-    """Reason the model finished generating the response, normalized to OTEL values.
-
-    Allowed values: 'stop', 'length', 'content_filter', 'tool_call', 'error'.
-    Used to populate gen_ai.response.finish_reasons in OpenTelemetry.
+    finish_reason: FinishReason | None = None
+    """Reason the model finished generating the response, normalized to OpenTelemetry values.
     """
 
     @deprecated('`price` is deprecated, use `cost` instead')

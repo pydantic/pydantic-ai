@@ -229,6 +229,24 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                assert response == snapshot(
+                    ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris.\n')],
+                        usage=RequestUsage(
+                            input_tokens=13,
+                            output_tokens=8,
+                            details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                        ),
+                        model_name='gemini-2.0-flash-exp',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id='w1peaMz6INOvnvgPgYfPiQY',
+                        finish_reason='stop',
+                    )
+                )
     assert data == snapshot('The capital of France is Paris.\n')
 
 
