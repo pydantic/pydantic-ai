@@ -30,7 +30,7 @@ making it ideal for queries that require up-to-date data.
 | Anthropic | ✅ | Full feature support |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | Google | ✅ | No parameter support. Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| OpenAI chat completions | ❌ | Not supported |
+| OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
