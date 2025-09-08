@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import re
 from collections.abc import Callable
@@ -29,7 +30,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
+from pydantic_ai.tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    FunctionTextFormat,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from pydantic_ai.toolsets.external import ExternalToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.prefixed import PrefixedToolset
@@ -144,6 +152,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -176,6 +185,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -216,6 +226,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -256,6 +267,7 @@ def test_google_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -294,6 +306,7 @@ def test_sphinx_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -338,6 +351,7 @@ def test_numpy_style_with_returns():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -370,6 +384,7 @@ def test_only_returns_type():
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -393,6 +408,7 @@ def test_docstring_unknown():
             'parameters_json_schema': {'additionalProperties': {'type': 'integer'}, 'properties': {}, 'type': 'object'},
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -434,6 +450,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -468,6 +485,7 @@ def test_takes_just_model():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -511,6 +529,7 @@ def test_takes_model_and_int():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -874,6 +893,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'outer_typed_dict_key': None,
             'parameters_json_schema': {'additionalProperties': False, 'properties': {}, 'type': 'object'},
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -944,6 +964,7 @@ def test_json_schema_required_parameters():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
             },
             {
@@ -957,6 +978,7 @@ def test_json_schema_required_parameters():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
             },
         ]
@@ -1043,6 +1065,7 @@ def test_schema_generator():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
             },
             {
@@ -1054,6 +1077,7 @@ def test_schema_generator():
                     'type': 'object',
                 },
                 'strict': None,
+                'text_format': None,
                 'kind': 'function',
             },
         ]
@@ -1089,6 +1113,7 @@ def test_tool_parameters_with_attribute_docstrings():
             },
             'outer_typed_dict_key': None,
             'strict': None,
+            'text_format': None,
             'kind': 'function',
         }
     )
@@ -1628,6 +1653,125 @@ def test_parallel_tool_return_with_deferred():
         ]
     )
     assert result.output == snapshot('Done!')
+
+
+def test_function_text_format_regex_valid():
+    format = FunctionTextFormat(syntax='regex', grammar=r'\d+')
+    assert format.syntax == 'regex'
+    assert format.grammar == r'\d+'
+
+
+def test_function_text_format_regex_invalid():
+    with pytest.raises(ValueError, match='Regex is invalid'):
+        FunctionTextFormat(syntax='regex', grammar='[')
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
+def test_function_text_format_lark_valid():
+    format = FunctionTextFormat(syntax='lark', grammar='start: "hello"')
+    assert format.syntax == 'lark'
+    assert format.grammar == 'start: "hello"'
+
+
+@pytest.mark.skipif(not importlib.util.find_spec('lark'), reason='lark not installed')
+def test_function_text_format_lark_invalid():
+    with pytest.raises(ValueError, match='Lark grammar is invalid'):
+        FunctionTextFormat(syntax='lark', grammar='invalid grammar [')
+
+
+def test_tool_definition_single_string_argument():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}},
+        'required': ['text'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name == 'text'
+    assert tool_def.only_takes_string_argument
+
+
+def test_tool_definition_multiple_arguments():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}, 'count': {'type': 'integer'}},
+        'required': ['text', 'count'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_non_string_argument():
+    schema = {
+        'type': 'object',
+        'properties': {'count': {'type': 'integer'}},
+        'required': ['count'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_no_required_fields():
+    required: list[str] = []
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}},
+        'required': required,
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_no_properties():
+    required: list[str] = []
+    properties: dict[str, dict[str, str]] = {}
+    schema = {'type': 'object', 'properties': properties, 'required': required, 'additionalProperties': False}
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_tool_definition_mismatched_properties_required():
+    schema = {
+        'type': 'object',
+        'properties': {'text': {'type': 'string'}, 'extra': {'type': 'string'}},
+        'required': ['text'],
+        'additionalProperties': False,
+    }
+    tool_def = ToolDefinition(name='test', parameters_json_schema=schema)
+    assert tool_def.single_string_argument_name is None
+    assert not tool_def.only_takes_string_argument
+
+
+def test_agent_tool_with_text_format():
+    agent = Agent(TestModel())
+
+    @agent.tool_plain(text_format='text')
+    def analyze_text(text: str) -> str:
+        return f'Analyzed: {text}'  # pragma: no cover
+
+    tool_def = agent._function_toolset.tools['analyze_text'].tool_def
+    assert tool_def.text_format == 'text'
+    assert tool_def.only_takes_string_argument
+
+
+def test_agent_tool_with_cfg_format():
+    agent = Agent(TestModel())
+
+    cfg = FunctionTextFormat(syntax='regex', grammar=r'\d+')
+
+    @agent.tool_plain(text_format=cfg)
+    def parse_numbers(numbers: str) -> str:
+        return f'Parsed: {numbers}'  # pragma: no cover
+
+    tool_def = agent._function_toolset.tools['parse_numbers'].tool_def
+    assert tool_def.text_format == cfg
 
 
 def test_deferred_tool_call_approved_fails():
