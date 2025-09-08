@@ -32,6 +32,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "License :: OSI Approved :: MIT License",
@@ -88,7 +89,7 @@ dev = [
     "devtools>=0.12.2",
     "coverage[toml]>=7.10.3",
     "dirty-equals>=0.9.0",
-    "duckduckgo-search>=7.0.0",
+    "ddgs>=9.5.3",
     "inline-snapshot>=0.19.3",
     "pytest>=8.3.3",
     "pytest-examples>=0.0.18",
@@ -99,10 +100,10 @@ dev = [
     "boto3-stubs[bedrock-runtime]",
     "strict-no-cover @ git+https://github.com/pydantic/strict-no-cover.git@7fc59da2c4dff919db2095a0f0e47101b657131d",
     "pytest-xdist>=3.6.1",
-    # Needed for PyCharm users
-    "pip>=25.2",
     "genai-prices>=0.0.22",
     "mcp-run-python>=0.0.20",
+    # Needed for PyCharm users
+    "pip>=25.2",
 ]
 lint = ["mypy>=1.11.2", "pyright>=1.1.390", "ruff>=0.6.9"]
 docs = [
@@ -111,8 +112,9 @@ docs = [
     "mkdocs>=1.6.1",
     "mkdocs-glightbox>=0.4.0",
     "mkdocs-llmstxt>=0.2.0",
-    'mkdocs-redirects>=1.2.2',
-    "mkdocs-material[imaging]>=9.5.45",
+    "mkdocs-redirects>=1.2.2",
+    "mkdocs-material[imaging]>=9.6.19",
+    "pillow>=11.3.0",
     "mkdocstrings-python>=1.12.2",
     "griffe-warnings-deprecated>=1.1.0",
 ]
