@@ -425,6 +425,7 @@ class InstrumentedModel(WrapperModel):
                     try:
                         cost_attributes = {'operation.cost': float(response.cost().total_price)}
                     except LookupError:
+                        # The cost of this provider/model is unknown, which is common.
                         pass
                     except Exception as e:
                         warnings.warn(
