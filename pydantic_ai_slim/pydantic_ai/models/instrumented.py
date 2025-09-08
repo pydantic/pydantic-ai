@@ -420,16 +420,20 @@ class InstrumentedModel(WrapperModel):
                         return
 
                     self.instrumentation_settings.handle_messages(messages, response, system, span)
-                    try:
-                        cost_attributes = {'operation.cost': float(response.cost().total_price)}
-                    except LookupError:
-                        cost_attributes = {}
 
                     attributes_to_set = {
                         **response.usage.opentelemetry_attributes(),
                         'gen_ai.response.model': response_model,
-                        **cost_attributes,
                     }
+                    try:
+                        attributes_to_set['operation.cost'] = float(response.cost().total_price)
+                    except LookupError:
+                        # The cost of this provider/model is unknown, which is common.
+                        pass
+                    except Exception as e:
+                        warnings.warn(
+                            f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
+                        )
                     if response.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                     span.set_attributes(attributes_to_set)
@@ -480,3 +484,7 @@ class InstrumentedModel(WrapperModel):
                 return str(value)
             except Exception as e:
                 return f'Unable to serialize: {e}'
+
+
+class CostCalculationFailedWarning(Warning):
+    """Warning raised when cost calculation fails."""
