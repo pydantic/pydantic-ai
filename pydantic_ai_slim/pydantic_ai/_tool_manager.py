@@ -134,10 +134,43 @@ class ToolManager(Generic[AgentDepsT]):
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
+            outer_key = getattr(tool.tool_def, 'outer_typed_dict_key', None)
+
             if isinstance(call.args, str):
-                args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
+                # Some providers/models (e.g., Bedrock) may return nested args as stringified JSON.
+                # For output tools that wrap the actual payload under an outer key (e.g., 'response'),
+                # try to parse the top-level JSON and then JSON-decode the nested value if it's a string.
+                if outer_key:
+                    try:
+                        loaded = json.loads(call.args or '{}')
+                    except Exception:
+                        # Fall back to standard JSON validation; pydantic will raise as needed.
+                        args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
+                    else:
+                        if isinstance(loaded, dict) and outer_key in loaded and isinstance(loaded[outer_key], str):
+                            try:
+                                loaded[outer_key] = json.loads(loaded[outer_key])
+                            except Exception:
+                                # Leave as-is; validator will surface a useful error.
+                                pass
+                        # Validate using the preprocessed python object to allow nested value fixes.
+                        args_dict = validator.validate_python(loaded or {}, allow_partial=pyd_allow_partial)
+                else:
+                    args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
             else:
-                args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
+                args_obj = call.args or {}
+                # If the tool is an output wrapper with an outer key and that value is a stringified JSON,
+                # attempt to decode it before validation.
+                if outer_key and isinstance(args_obj, dict):
+                    v = args_obj.get(outer_key)
+                    if isinstance(v, str):
+                        try:
+                            args_obj = dict(args_obj)
+                            args_obj[outer_key] = json.loads(v)
+                        except Exception:
+                            # If decoding fails, proceed and let validation handle it.
+                            pass
+                args_dict = validator.validate_python(args_obj, allow_partial=pyd_allow_partial)
 
             if usage_limits is not None and count_tool_usage:
                 usage_limits.check_before_tool_call(self.ctx.usage)
