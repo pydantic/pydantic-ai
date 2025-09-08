@@ -26,18 +26,15 @@ class GatewayProvider(Provider[InterfaceClient]):
     """Provider to access the Pydantic AI Gateway."""
 
     @property
-    def name(self) -> str:
-        # TODO(Marcelo): This is actually NEVER used, because the `provider` is never `GatewayProvider`, it's always
-        # the actual provider class: `OpenAIProvider`, `GroqProvider` and `GoogleProvider`. Maybe it's fine?
-        return 'gateway'
+    def name(self) -> str: ...  # pragma: no cover
 
     @property
-    def base_url(self) -> str: ...
+    def base_url(self) -> str: ...  # pragma: no cover
 
     @property
-    def client(self) -> InterfaceClient: ...
+    def client(self) -> InterfaceClient: ...  # pragma: no cover
 
-    def model_profile(self, model_name: str) -> ModelProfile | None: ...
+    def model_profile(self, model_name: str) -> ModelProfile | None: ...  # pragma: no cover
 
     @overload
     def __new__(
@@ -89,7 +86,7 @@ class GatewayProvider(Provider[InterfaceClient]):
         if not api_key:
             raise UserError(
                 'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `GatewayProvider(api_key=...)`'
-                'to use the Pydantic AI Gateway provider.'
+                ' to use the Pydantic AI Gateway provider.'
             )
 
         base_url = base_url or 'http://localhost:8787/'
