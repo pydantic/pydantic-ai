@@ -24,7 +24,7 @@ authors = [
 license = "MIT"
 readme = "README.md"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
@@ -52,7 +52,6 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-ai-slim=={{ version }}",
     "anyio>=0",
-    "eval-type-backport>=0; python_version < '3.11'",
     "pyyaml>=6.0.2",
 ]
 
