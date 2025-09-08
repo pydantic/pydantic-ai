@@ -108,11 +108,10 @@ class GatewayProvider(Provider[InterfaceClient]):
 
             return GoogleProvider(
                 client=GoogleClient(
-                    location=location,
-                    project=project,
+                    api_key=api_key,
                     http_options={
                         'base_url': urljoin(base_url, 'google'),
-                        'headers': {'User-Agent': get_user_agent(), 'Authorization': f'Bearer {api_key}'},
+                        'headers': {'User-Agent': get_user_agent()},
                         'async_client_args': {
                             'transport': httpx.AsyncHTTPTransport(),
                             'event_hooks': {'request': [_request_hook]},
@@ -120,7 +119,7 @@ class GatewayProvider(Provider[InterfaceClient]):
                     },
                 )
             )
-        else:
+        else:  # pragma: no cover
             raise UserError(f'Unknown provider: {provider}')
 
 

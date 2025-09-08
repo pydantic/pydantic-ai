@@ -1,10 +1,13 @@
+import os
 import re
 from typing import Any, Literal
 
 import httpx
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai import UserError
+from pydantic_ai import Agent, UserError
+from pydantic_ai.models.openai import OpenAIChatModel
 
 from ..conftest import TestEnv, try_import
 
@@ -16,6 +19,7 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
     pytest.mark.anyio,
+    pytest.mark.vcr,
 ]
 
 
@@ -33,6 +37,7 @@ def test_init_with_base_url(
 
 
 def test_init_gateway_without_api_key_raises_error(env: TestEnv):
+    env.remove('PYDANTIC_AI_GATEWAY_API_KEY')
     with pytest.raises(
         UserError,
         match=re.escape(
@@ -46,3 +51,27 @@ async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
         provider = GatewayProvider(provider='openai', http_client=http_client, api_key='foobar')
         assert provider.client._client == http_client  # type: ignore
+
+
+@pytest.fixture
+def gateway_api_key():
+    return os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', 'test-api-key')
+
+
+@pytest.fixture(scope='module')
+def vcr_config():
+    return {
+        'ignore_localhost': False,
+        # Note: additional header filtering is done inside the serializer
+        'filter_headers': ['authorization', 'x-api-key'],
+        'decode_compressed_response': True,
+    }
+
+
+async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
+    provider = GatewayProvider(provider='openai', api_key=gateway_api_key, base_url='http://localhost:8787')
+    model = OpenAIChatModel('gpt-5', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('Paris.')
