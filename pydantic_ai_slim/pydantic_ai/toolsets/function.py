@@ -163,7 +163,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether to the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
@@ -227,7 +227,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            sequential: Whether to the function requires a sequential/serial execution environment. Defaults to False.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
