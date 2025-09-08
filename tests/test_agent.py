@@ -4293,6 +4293,65 @@ def test_parallel_mcp_calls():
     assert result.output == snapshot('finished')
 
 
+def test_sequential_calls():
+    """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
+
+    async def call_tools_sequential(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='increment_integer_holder'),
+                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+            ]
+        )
+
+    sequential_toolset = FunctionToolset()
+
+    integer_holder: int = 1
+
+    @sequential_toolset.tool(sequential=False)
+    def call_first():
+        nonlocal integer_holder
+        assert integer_holder == 1
+
+    @sequential_toolset.tool(sequential=True)
+    def increment_integer_holder():
+        nonlocal integer_holder
+        integer_holder = 2
+
+    @sequential_toolset.tool()
+    def requires_approval():
+        from pydantic_ai.exceptions import ApprovalRequired
+
+        raise ApprovalRequired()
+
+    @sequential_toolset.tool(sequential=False)
+    def call_second():
+        nonlocal integer_holder
+        assert integer_holder == 2
+
+    agent = Agent(
+        FunctionModel(call_tools_sequential), toolsets=[sequential_toolset], output_type=[str, DeferredToolRequests]
+    )
+    result = agent.run_sync()
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+    )
+    assert integer_holder == 2
+
+
 def test_set_mcp_sampling_model():
     try:
         from pydantic_ai.mcp import MCPServerStdio
