@@ -89,6 +89,6 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-## Mistral / Cohere
+## Mistral / Cohere / Outlines
 
-Neither Mistral nor Cohere generate thinking parts.
+Neither Mistral, nor Cohere, nor Outlines generate thinking parts.

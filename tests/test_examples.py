@@ -120,6 +120,15 @@ def test_docs_examples(  # noqa: C901
     tmp_path_cwd: Path,
     vertex_provider_auth: None,
 ):
+    # Skip Outlines examples if loading the transformers model fails
+    if 'from transformers import' in example.source and 'from pydantic_ai.models.outlines import' in example.source:
+        try:
+            from transformers import AutoModelForCausalLM
+
+            AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini', local_files_only=True)  # type: ignore[no-untyped-call]
+        except Exception:
+            pytest.skip('Outlines transformers model not available, skipping the Outlines examples')
+
     mocker.patch('pydantic_ai.agent.models.infer_model', side_effect=mock_infer_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
