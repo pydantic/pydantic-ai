@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic
+from typing import Any, Generic, cast
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
@@ -134,7 +134,7 @@ class ToolManager(Generic[AgentDepsT]):
 
             pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
             validator = tool.args_validator
-            outer_key = getattr(tool.tool_def, 'outer_typed_dict_key', None)
+            outer_key: str | None = getattr(tool.tool_def, 'outer_typed_dict_key', None)
 
             if isinstance(call.args, str):
                 # Some providers/models (e.g., Bedrock) may return nested args as stringified JSON.
@@ -142,31 +142,40 @@ class ToolManager(Generic[AgentDepsT]):
                 # try to parse the top-level JSON and then JSON-decode the nested value if it's a string.
                 if outer_key:
                     try:
-                        loaded = json.loads(call.args or '{}')
+                        loaded_any = json.loads(call.args or '{}')
                     except Exception:
                         # Fall back to standard JSON validation; pydantic will raise as needed.
                         args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
                     else:
-                        if isinstance(loaded, dict) and outer_key in loaded and isinstance(loaded[outer_key], str):
-                            try:
-                                loaded[outer_key] = json.loads(loaded[outer_key])
-                            except Exception:
-                                # Leave as-is; validator will surface a useful error.
-                                pass
-                        # Validate using the preprocessed python object to allow nested value fixes.
-                        args_dict = validator.validate_python(loaded or {}, allow_partial=pyd_allow_partial)
+                        if isinstance(loaded_any, dict):
+                            loaded_dict = cast(dict[str, Any], loaded_any)
+                            if outer_key in loaded_dict:
+                                val: Any | None = loaded_dict.get(outer_key)
+                                if isinstance(val, str):
+                                    try:
+                                        val_str: str = val
+                                        loaded_dict[outer_key] = json.loads(val_str)
+                                    except Exception:
+                                        # Leave as-is; validator will surface a useful error.
+                                        pass
+                            # Validate using the preprocessed python object to allow nested value fixes.
+                            args_dict = validator.validate_python(loaded_dict, allow_partial=pyd_allow_partial)
+                        else:
+                            # Fallback to standard JSON validation if the top-level isn't an object
+                            args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
                 else:
                     args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
             else:
-                args_obj = call.args or {}
+                args_obj: dict[str, Any] = call.args if call.args is not None else {}
                 # If the tool is an output wrapper with an outer key and that value is a stringified JSON,
                 # attempt to decode it before validation.
                 if outer_key and isinstance(args_obj, dict):
                     v = args_obj.get(outer_key)
                     if isinstance(v, str):
                         try:
+                            v_str: str = v
                             args_obj = dict(args_obj)
-                            args_obj[outer_key] = json.loads(v)
+                            args_obj[outer_key] = json.loads(v_str)
                         except Exception:
                             # If decoding fails, proceed and let validation handle it.
                             pass
