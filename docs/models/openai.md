@@ -174,7 +174,7 @@ You can read more about this function calling style in the [OpenAI documentation
 
 #### Context Free Grammar
 
-Invoking tools using freeform function calling can result in errors when the tool expectations are not met. For example, a tool that queries an SQL database can only accept valid SQL. The freeform function calling of GPT-5 supports generation of valid SQL for this situation by constraining the generated text using a context free grammar.
+A tool that queries an SQL database can only accept valid SQL. The freeform function calling of GPT-5 supports generation of valid SQL for this situation by constraining the generated text using a context free grammar.
 
 A context‑free grammar is a collection of production rules that define which strings belong to a language. Each rule rewrites a non‑terminal symbol into a sequence of terminals (literal tokens) and/or other non‑terminals, independent of surrounding context—hence context‑free. CFGs can capture the syntax of most programming languages and, in OpenAI custom tools, serve as contracts that force the model to emit only strings that the grammar accepts.
 
