@@ -178,6 +178,8 @@ A tool that queries an SQL database can only accept valid SQL. The freeform func
 
 A context‑free grammar is a collection of production rules that define which strings belong to a language. Each rule rewrites a non‑terminal symbol into a sequence of terminals (literal tokens) and/or other non‑terminals, independent of surrounding context—hence context‑free. CFGs can capture the syntax of most programming languages and, in OpenAI custom tools, serve as contracts that force the model to emit only strings that the grammar accepts.
 
+##### Regular Expression
+
 The grammar can be written as either a regular expression:
 
 
@@ -197,6 +199,8 @@ def timestamp_accepting_tool(timestamp: str): ...
 
 1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately gpt-5-nano often struggles with these calls.
 2. If the tool or model cannot be used with freeform function calling then it will be invoked in the normal way, which may lead to invalid input.
+
+##### LARK
 
 Or as a [LARK](https://lark-parser.readthedocs.io/en/latest/how_to_use.html) grammar:
 
