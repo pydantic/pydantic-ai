@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field, replace
-from typing import Any, Generic, cast
+from typing import Any, Generic
 
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
@@ -132,8 +132,12 @@ class ToolManager(Generic[AgentDepsT]):
                 retry=self.ctx.retries.get(name, 0),
             )
 
-            # Validate tool args with provider-specific normalization if needed
-            args_dict = self._validate_tool_args(tool, call, allow_partial)
+            pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
+            validator = tool.args_validator
+            if isinstance(call.args, str):
+                args_dict = validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
+            else:
+                args_dict = validator.validate_python(call.args or {}, allow_partial=pyd_allow_partial)
 
             if usage_limits is not None and count_tool_usage:
                 usage_limits.check_before_tool_call(self.ctx.usage)
@@ -228,54 +232,3 @@ class ToolManager(Generic[AgentDepsT]):
                 )
 
         return tool_result
-
-    def _validate_tool_args(
-        self, tool: ToolsetTool[AgentDepsT], call: ToolCallPart, allow_partial: bool
-    ) -> dict[str, Any]:
-        """Validate and, if necessary, normalize tool arguments before validation.
-
-        Handles providers that return nested payloads as stringified JSON for output tools
-        (e.g., Bedrock returning list/object under 'response' as a string).
-        """
-        pyd_allow_partial = 'trailing-strings' if allow_partial else 'off'
-        validator = tool.args_validator
-        outer_key: str | None = getattr(tool.tool_def, 'outer_typed_dict_key', None)
-
-        if isinstance(call.args, str):
-            if outer_key:
-                try:
-                    loaded_any = json.loads(call.args or '{}')
-                except Exception:
-                    return validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
-                else:
-                    if isinstance(loaded_any, dict):
-                        loaded_dict = cast(dict[str, Any], loaded_any)
-                        if outer_key in loaded_dict:  # pragma: no branch
-                            val: Any | None = loaded_dict.get(outer_key)
-                            if isinstance(val, str):
-                                try:  # pragma: no cover - defensive decoding path
-                                    val_str: str = val  # pragma: no cover - defensive decoding path
-                                    loaded_dict[outer_key] = json.loads(
-                                        val_str
-                                    )  # pragma: no cover - defensive decoding path
-                                except Exception:  # pragma: no cover - defensive decoding path
-                                    pass
-                        return validator.validate_python(loaded_dict, allow_partial=pyd_allow_partial)
-                    else:
-                        return validator.validate_json(
-                            call.args or '{}', allow_partial=pyd_allow_partial
-                        )  # pragma: no cover
-            else:
-                return validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
-        else:
-            args_obj: dict[str, Any] = call.args if call.args is not None else {}
-            if outer_key and isinstance(args_obj, dict):
-                v = args_obj.get(outer_key)
-                if isinstance(v, str):
-                    try:  # pragma: no cover - defensive decoding path
-                        v_str: str = v  # pragma: no cover - defensive decoding path
-                        args_obj = dict(args_obj)  # pragma: no cover - defensive decoding path
-                        args_obj[outer_key] = json.loads(v_str)  # pragma: no cover - defensive decoding path
-                    except Exception:  # pragma: no cover - defensive decoding path
-                        pass
-            return validator.validate_python(args_obj, allow_partial=pyd_allow_partial)

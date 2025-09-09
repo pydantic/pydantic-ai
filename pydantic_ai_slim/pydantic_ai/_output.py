@@ -29,7 +29,7 @@ from .output import (
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
-from .toolsets.abstract import AbstractToolset, ToolsetTool
+from .toolsets.abstract import AbstractToolset, SchemaValidatorProt, ToolsetTool
 
 if TYPE_CHECKING:
     from .profiles import ModelProfile
@@ -625,10 +625,11 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             json_schema['description'] = self._function_schema.description
         else:
             type_adapter: TypeAdapter[Any]
-            schema_validator: SchemaValidator
+            # Use the protocol so we only cast once at assignment
+            schema_validator: SchemaValidatorProt
             if _utils.is_model_like(output):
                 type_adapter = TypeAdapter(output)
-                schema_validator = cast(SchemaValidator, type_adapter.validator)
+                schema_validator = type_adapter.validator  # pyright: ignore[reportAssignmentType]
             else:
                 self.outer_typed_dict_key = 'response'
                 # Strict schema for JSON schema generation
@@ -639,16 +640,17 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 type_adapter = TypeAdapter(response_data_typed_dict)
 
                 # More lenient validator: allow either the native type or a JSON string containing it
-                # i.e., response: OutputDataT | Json[OutputDataT]
-                response_validation_typed_dict = TypedDict(  # noqa: UP013
+                # i.e., response: OutputDataT | Json[OutputDataT] for some models that respond well to
+                # instructions. in this case BedrockConverseModel - 'us.meta.llama3-2-11b-instruct-v1:0'model
+                response_data_typed_dict = TypedDict(  # noqa: UP013 # pyright: ignore[reportGeneralTypeIssues]
                     'response_validation_typed_dict',
                     {'response': cast(type[OutputDataT], output) | Json[cast(type[OutputDataT], output)]},  # pyright: ignore[reportInvalidTypeForm]
                 )
-                validation_type_adapter: TypeAdapter[Any] = TypeAdapter(response_validation_typed_dict)
-                schema_validator = cast(SchemaValidator, validation_type_adapter.validator)
+                # Inline the adapter since we only need its validator here
+                schema_validator = TypeAdapter(response_data_typed_dict).validator  # pyright: ignore[reportAssignmentType]
 
             # Really a PluggableSchemaValidator, but it's API-compatible
-            self.validator = schema_validator
+            self.validator = cast(SchemaValidator, schema_validator)
             json_schema = _utils.check_object_json_schema(
                 type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
             )
