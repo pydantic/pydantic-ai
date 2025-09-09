@@ -255,12 +255,16 @@ class ToolManager(Generic[AgentDepsT]):
                             if isinstance(val, str):
                                 try:  # pragma: no cover - defensive decoding path
                                     val_str: str = val  # pragma: no cover - defensive decoding path
-                                    loaded_dict[outer_key] = json.loads(val_str)  # pragma: no cover - defensive decoding path
+                                    loaded_dict[outer_key] = json.loads(
+                                        val_str
+                                    )  # pragma: no cover - defensive decoding path
                                 except Exception:  # pragma: no cover - defensive decoding path
                                     pass
                         return validator.validate_python(loaded_dict, allow_partial=pyd_allow_partial)
                     else:
-                        return validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)  # pragma: no cover
+                        return validator.validate_json(
+                            call.args or '{}', allow_partial=pyd_allow_partial
+                        )  # pragma: no cover
             else:
                 return validator.validate_json(call.args or '{}', allow_partial=pyd_allow_partial)
         else:
