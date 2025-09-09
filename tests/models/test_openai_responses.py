@@ -1206,7 +1206,7 @@ def test_openai_responses_model_freeform_function_unsupported_model_error():
     # GPT-4 doesn't support freeform function calling
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
 
-    with pytest.raises(UserError, match='uses free-form function calling but gpt-4o does not support'):
+    with pytest.raises(UserError, match='uses freeform function calling but gpt-4o does not support'):
         model._map_tool_definition(freeform_tool)  # type: ignore[reportPrivateUsage]
 
 

@@ -110,7 +110,7 @@ class ToolOutput(Generic[OutputDataT]):
     strict: bool | None
     """Whether to use strict mode for the tool."""
     text_format: Literal['text'] | FunctionTextFormat | None = None
-    """Whether to invoke the function with free-form function calling for tool calls."""
+    """Whether to invoke the function with freeform function calling for tool calls."""
 
     def __init__(
         self,

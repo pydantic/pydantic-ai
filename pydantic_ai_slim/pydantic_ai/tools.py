@@ -220,9 +220,9 @@ A = TypeVar('A')
 
 @dataclass
 class FunctionTextFormat:
-    """Used to invoke the function with free-form function calling for tool calls.
+    """Used to invoke the function with freeform function calling for tool calls.
 
-    This class encapsulates the settings related to free-form function calling
+    This class encapsulates the settings related to freeform function calling
     as well as constraining the function call argument to a specific grammar.
     The function must take a single string argument.
 
@@ -232,7 +232,7 @@ class FunctionTextFormat:
     """
 
     syntax: Literal['lark', 'regex']
-    """The syntax type for the grammar to constrain the free-form function call.
+    """The syntax type for the grammar to constrain the freeform function call.
 
     For 'lark' the grammar attribute contains the lark grammar that the text must
     conform to.
@@ -240,7 +240,7 @@ class FunctionTextFormat:
     conform to.
     """
     grammar: str
-    """The grammar to constrain the free-form function call.
+    """The grammar to constrain the freeform function call.
 
     When the syntax is 'lark' this attribute contains the lark grammar that the text must
     conform to.
@@ -382,7 +382,7 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
-            text_format: Used to invoke the function using free-form function calling (only affects OpenAI).
+            text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -526,7 +526,7 @@ class ToolDefinition:
     """
 
     text_format: Literal['text'] | FunctionTextFormat | None = None
-    """Whether to invoke the function with free-form function calling for tool calls.
+    """Whether to invoke the function with freeform function calling for tool calls.
 
     Setting this to a format while using a supported model prevents parallel tool calling
     in exchange for passing raw text payloads to your custom tool without wrapping the data in JSON.
@@ -557,7 +557,7 @@ class ToolDefinition:
     @property
     def single_string_argument_name(self) -> str | None:
         # returns the name of the single argument that is a string
-        # used for free-form function calling
+        # used for freeform function calling
         # will return None if there is more or less than one argument,
         # or if the argument is not a string
         schema = self.parameters_json_schema
