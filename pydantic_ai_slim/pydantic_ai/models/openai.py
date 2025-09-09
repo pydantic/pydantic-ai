@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import Any, Literal, cast, overload
 
 from openai.types.chat.chat_completion_named_tool_choice_param import Function
+from openai.types.responses.tool_choice_allowed_param import ToolChoiceAllowedParam
+from openai.types.responses.tool_choice_function_param import ToolChoiceFunctionParam
 from pydantic import ValidationError
 from typing_extensions import assert_never, deprecated
 
@@ -77,6 +79,7 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.tool_choice_options import ToolChoiceOptions
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -908,10 +911,29 @@ class OpenAIResponsesModel(Model):
             + self._get_tools(model_request_parameters)
         )
 
-        if not tools:
-            tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif not model_request_parameters.allow_text_output:
+        tool_choice: ToolChoiceOptions | ToolChoiceAllowedParam | ToolChoiceFunctionParam | None
+        model_settings_tool_choice = model_settings.get('tool_choice', None)
+        if model_settings_tool_choice == 'none':
+            tool_choice = 'none'
+        elif not tools:
+            tool_choice = None
+        elif (
+            not model_request_parameters.allow_text_output
+            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
+            and not isinstance(model_settings_tool_choice, list)
+        ):
             tool_choice = 'required'
+        elif isinstance(model_settings_tool_choice, list):
+            if len(model_settings_tool_choice) == 1:
+                name = model_settings_tool_choice[0]
+                tool_choice = ToolChoiceFunctionParam(type='function', name=name)
+            else:
+                # https://github.com/openai/openai-python/issues/2537
+                tool_choice = ToolChoiceAllowedParam(
+                    type='allowed_tools',
+                    mode='required' if not model_request_parameters.allow_text_output else 'auto',
+                    tools=[{'type': 'function', 'name': name} for name in model_settings_tool_choice],
+                )
         else:
             tool_choice = 'auto'
 
