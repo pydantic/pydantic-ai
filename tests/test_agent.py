@@ -1557,7 +1557,7 @@ def test_native_output():
             text = '{"city": "Mexico City", "country": "Mexico"}'
         return ModelResponse(parts=[TextPart(content=text)])
 
-    m = FunctionModel(return_city_location, profile=ModelProfile(supports_json_schema_output=True))
+    m = FunctionModel(return_city_location)
 
     class CityLocation(BaseModel):
         city: str
