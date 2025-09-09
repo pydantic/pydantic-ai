@@ -204,7 +204,9 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -213,7 +215,9 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -302,7 +306,9 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -367,7 +373,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -391,7 +399,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -409,7 +419,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -776,7 +788,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -814,7 +828,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
+                finish_reason='stop',
             ),
         ]
     )
@@ -936,7 +952,9 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
+                finish_reason='stop',
             ),
         ]
     )
@@ -984,7 +1002,9 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1011,7 +1031,9 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1054,7 +1076,9 @@ I'll keep the format similar to my street-crossing response for consistency.\
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1483,7 +1507,9 @@ Several major events are happening today, including:
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01W2YfD2EF8BbAqLRr8ftH4W',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1539,7 +1565,9 @@ print(f"3 * 12390 = {result}")\
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01RJnbK7VMxvS2SyvtyJAQVU',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1589,7 +1617,9 @@ It's being celebrated as:
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1705,7 +1735,9 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1738,7 +1770,9 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1803,7 +1837,9 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1834,7 +1870,9 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1892,7 +1930,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'tool_use'},
                 provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1926,7 +1966,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1984,7 +2026,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
                 provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
+                finish_reason='stop',
             ),
         ]
     )

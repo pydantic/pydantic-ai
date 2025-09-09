@@ -495,24 +495,22 @@ class OpenAIChatModel(Model):
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
             items.append(ThinkingPart(content=reasoning_content))
 
-        vendor_details: dict[str, Any] | None = None
+        vendor_details: dict[str, Any] = {}
 
         # Add logprobs to vendor_details if available
         if choice.logprobs is not None and choice.logprobs.content:
             # Convert logprobs to a serializable format
-            vendor_details = {
-                'logprobs': [
-                    {
-                        'token': lp.token,
-                        'bytes': lp.bytes,
-                        'logprob': lp.logprob,
-                        'top_logprobs': [
-                            {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                        ],
-                    }
-                    for lp in choice.logprobs.content
-                ],
-            }
+            vendor_details['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
 
         if choice.message.content is not None:
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
@@ -529,10 +527,9 @@ class OpenAIChatModel(Model):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
 
-        vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
         if raw_finish_reason := choice.finish_reason:
-            vendor_details = {'finish_reason': raw_finish_reason}
+            vendor_details['finish_reason'] = raw_finish_reason
             finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
         return ModelResponse(
@@ -540,7 +537,7 @@ class OpenAIChatModel(Model):
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_details=vendor_details,
+            provider_details=vendor_details or None,
             provider_response_id=response.id,
             provider_name=self._provider.name,
             finish_reason=finish_reason,
