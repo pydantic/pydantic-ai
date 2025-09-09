@@ -642,12 +642,12 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
                 # More lenient validator: allow either the native type or a JSON string containing it
                 # i.e., response: OutputDataT | Json[OutputDataT] for some models that respond well to
                 # instructions. in this case BedrockConverseModel - 'us.meta.llama3-2-11b-instruct-v1:0'model
-                response_data_typed_dict = TypedDict(  # noqa: UP013 # pyright: ignore[reportGeneralTypeIssues]
+                response_validation_typed_dict = TypedDict(  # noqa: UP013
                     'response_validation_typed_dict',
                     {'response': cast(type[OutputDataT], output) | Json[cast(type[OutputDataT], output)]},  # pyright: ignore[reportInvalidTypeForm]
                 )
                 # Inline the adapter since we only need its validator here
-                schema_validator = TypeAdapter(response_data_typed_dict).validator  # pyright: ignore[reportAssignmentType]
+                schema_validator = TypeAdapter(response_validation_typed_dict).validator  # pyright: ignore[reportAssignmentType]
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, schema_validator)
