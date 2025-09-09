@@ -9,7 +9,7 @@ from urllib.parse import urljoin
 import httpx
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.models import get_user_agent
+from pydantic_ai.models import cached_async_http_client, get_user_agent
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers import InterfaceClient, Provider
 
@@ -90,7 +90,7 @@ class GatewayProvider(Provider[InterfaceClient]):
             )
 
         base_url = base_url or 'http://localhost:8787/'
-        http_client = http_client or httpx.AsyncClient()
+        http_client = http_client or cached_async_http_client(provider=f'gateway-{provider}')
         http_client.event_hooks = {'request': [_request_hook]}
 
         if provider in ('openai', 'openai-chat', 'openai-responses'):
