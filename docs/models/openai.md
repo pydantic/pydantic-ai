@@ -197,7 +197,7 @@ timestamp_grammar_definition = r'^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01]) (?
 def timestamp_accepting_tool(timestamp: str): ...
 ```
 
-1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately gpt-5-nano often struggles with these calls.
+1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately `gpt-5-nano` often struggles with these calls.
 2. If the tool or model cannot be used with freeform function calling then it will be invoked in the normal way, which may lead to invalid input.
 
 ##### LARK
@@ -230,7 +230,7 @@ MINUTE: /[0-5]\d/
 def i_like_iso_dates(date: str): ...
 ```
 
-1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately gpt-5-nano often struggles with these calls.
+1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling with context free grammar constraints. Unfortunately `gpt-5-nano` often struggles with these calls.
 2. If the tool or model cannot be used with freeform function calling then it will be invoked in the normal way, which may lead to invalid input.
 
 There is a limit to the grammar complexity that GPT-5 supports, as such it is important to test your grammar.

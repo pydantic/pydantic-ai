@@ -228,7 +228,7 @@ class FunctionTextFormat:
 
     Calling a function in this way prevents parallel tool calling.
 
-    Note: this is currently only supported by OpenAI gpt-5 models.
+    Note: this is currently only supported by OpenAI GPT-5 models.
     """
 
     syntax: Literal['lark', 'regex']
@@ -534,7 +534,7 @@ class ToolDefinition:
 
     When `None` (the default), the model invokes the tool in the normal way and parallel tool calls are possible.
 
-    Note: this is currently only supported by OpenAI gpt-5 models.
+    Note: this is currently only supported by OpenAI GPT-5 models.
     """
 
     kind: ToolKind = field(default='function')
