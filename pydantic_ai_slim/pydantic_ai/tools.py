@@ -253,6 +253,7 @@ class Tool(Generic[AgentDepsT]):
     docstring_format: DocstringFormat
     require_parameter_descriptions: bool
     strict: bool | None
+    sequential: bool
     requires_approval: bool
     function_schema: _function_schema.FunctionSchema
     """
@@ -274,6 +275,7 @@ class Tool(Generic[AgentDepsT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
@@ -327,6 +329,7 @@ class Tool(Generic[AgentDepsT]):
             schema_generator: The JSON schema generator class to use. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
@@ -347,6 +350,7 @@ class Tool(Generic[AgentDepsT]):
         self.docstring_format = docstring_format
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
+        self.sequential = sequential
         self.requires_approval = requires_approval
 
     @classmethod
@@ -357,6 +361,7 @@ class Tool(Generic[AgentDepsT]):
         description: str | None,
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
+        sequential: bool = False,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -370,6 +375,7 @@ class Tool(Generic[AgentDepsT]):
             json_schema: The schema for the function arguments
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
 
         Returns:
             A Pydantic tool that calls the function
@@ -389,6 +395,7 @@ class Tool(Generic[AgentDepsT]):
             name=name,
             description=description,
             function_schema=function_schema,
+            sequential=sequential,
         )
 
     @property
@@ -398,6 +405,7 @@ class Tool(Generic[AgentDepsT]):
             description=self.description,
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
+            sequential=self.sequential,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
@@ -465,6 +473,9 @@ class ToolDefinition:
 
     Note: this is currently only supported by OpenAI models.
     """
+
+    sequential: bool = False
+    """Whether this tool requires a sequential/serial execution environment."""
 
     kind: ToolKind = field(default='function')
     """The kind of tool:
