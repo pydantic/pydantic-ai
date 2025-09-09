@@ -1283,7 +1283,9 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id=IsStr(),
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1319,7 +1321,9 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1406,7 +1410,9 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 model_name=IsStr(),
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id=IsStr(),
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1442,7 +1448,9 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1499,7 +1507,9 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id=IsStr(),
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1532,7 +1542,9 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id=IsStr(),
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1559,7 +1571,9 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )

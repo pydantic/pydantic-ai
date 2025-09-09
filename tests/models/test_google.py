@@ -1153,6 +1153,7 @@ async def test_google_url_input(
                 provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
