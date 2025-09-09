@@ -398,7 +398,7 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
                     ModelResponse(
                         parts=[TextPart(content='The capital of France is Paris.')],
                         usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
-                        model_name='gpt-4o',
+                        model_name='gpt-4o-2024-08-06',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'finish_reason': 'completed'},

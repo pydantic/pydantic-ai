@@ -373,7 +373,7 @@ def chunk(delta: list[ChoiceDelta], finish_reason: FinishReason | None = None) -
             ChunkChoice(index=index, delta=delta, finish_reason=finish_reason) for index, delta in enumerate(delta)
         ],
         created=1704067200,  # 2024-01-01
-        model='gpt-4o',
+        model='gpt-4o-123',
         object='chat.completion.chunk',
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
@@ -418,7 +418,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                     ModelResponse(
                         parts=[TextPart(content='hello world.')],
                         usage=RequestUsage(input_tokens=6, output_tokens=3),
-                        model_name='gpt-4o',
+                        model_name='gpt-4o-123',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'finish_reason': 'stop'},
@@ -636,10 +636,10 @@ def none_delta_chunk(finish_reason: FinishReason | None = None) -> chat.ChatComp
     # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
     choice.delta = None  # pyright: ignore[reportAttributeAccessIssue]
     return chat.ChatCompletionChunk(
-        id='x',
+        id='123',
         choices=[choice],
         created=1704067200,  # 2024-01-01
-        model='gpt-4o',
+        model='gpt-4o-123',
         object='chat.completion.chunk',
         usage=CompletionUsage(completion_tokens=1, prompt_tokens=2, total_tokens=3),
     )
