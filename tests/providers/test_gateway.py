@@ -16,11 +16,10 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.gateway import GatewayProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed'),
-    pytest.mark.anyio,
-    pytest.mark.vcr,
-]
+if not imports_successful():
+    pytest.skip('OpenAI client not installed', allow_module_level=True)
+
+pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 
 @pytest.mark.parametrize(
