@@ -1020,7 +1020,7 @@ class OpenAIResponsesModel(Model):
         if f.text_format:
             if not model_profile.openai_supports_freeform_function_calling:
                 raise UserError(
-                    f'`{f.name}` is uses free-form function calling but {self._model_name} does not support free form function calling.'
+                    f'Tool {f.name!r} uses freeform function calling but {self._model_name!r} does not support freeform function calling.'
                 )
             if not f.only_takes_string_argument:
                 raise UserError(
