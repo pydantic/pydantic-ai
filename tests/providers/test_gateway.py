@@ -7,11 +7,11 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, UserError
-from pydantic_ai.models.openai import OpenAIChatModel
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.gateway import GatewayProvider
     from pydantic_ai.providers.openai import OpenAIProvider
