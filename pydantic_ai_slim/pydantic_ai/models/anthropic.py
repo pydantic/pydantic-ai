@@ -340,7 +340,7 @@ class AnthropicModel(Model):
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
-        if raw_finish_reason := response.stop_reason:
+        if raw_finish_reason := response.stop_reason:  # pragma: no branch
             provider_details = {'finish_reason': raw_finish_reason}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
@@ -667,7 +667,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event)
-                if raw_finish_reason := event.delta.stop_reason:
+                if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
                     self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 

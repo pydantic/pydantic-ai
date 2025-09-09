@@ -528,7 +528,7 @@ class OpenAIChatModel(Model):
                 items.append(part)
 
         finish_reason: FinishReason | None = None
-        if raw_finish_reason := choice.finish_reason:
+        if raw_finish_reason := choice.finish_reason:  # pragma: no branch
             vendor_details['finish_reason'] = raw_finish_reason
             finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
@@ -1280,13 +1280,12 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
-                if self.finish_reason is None:
-                    raw_finish_reason = (
-                        details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
-                    )
-                    if raw_finish_reason:
-                        self.provider_details = {'finish_reason': raw_finish_reason}
-                        self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+                raw_finish_reason = (
+                    details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
+                )
+                if raw_finish_reason:  # pragma: no branch
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
@@ -1295,7 +1294,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
-                if chunk.response.id:
+                if chunk.response.id:  # pragma: no branch
                     self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover

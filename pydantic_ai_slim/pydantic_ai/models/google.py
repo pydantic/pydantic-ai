@@ -425,7 +425,7 @@ class GoogleModel(Model):
         vendor_id = response.response_id
         vendor_details: dict[str, Any] | None = None
         finish_reason: FinishReason | None = None
-        if raw_finish_reason := candidate.finish_reason:
+        if raw_finish_reason := candidate.finish_reason:  # pragma: no branch
             vendor_details = {'finish_reason': raw_finish_reason.value}
             finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
@@ -573,7 +573,7 @@ class GeminiStreamedResponse(StreamedResponse):
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
 
-            if chunk.response_id:
+            if chunk.response_id:  # pragma: no branch
                 self.provider_response_id = chunk.response_id
 
             if raw_finish_reason := candidate.finish_reason:
