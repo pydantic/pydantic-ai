@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
@@ -625,18 +625,30 @@ class ObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
             json_schema['description'] = self._function_schema.description
         else:
             type_adapter: TypeAdapter[Any]
+            schema_validator: SchemaValidator
             if _utils.is_model_like(output):
                 type_adapter = TypeAdapter(output)
+                schema_validator = cast(SchemaValidator, type_adapter.validator)
             else:
                 self.outer_typed_dict_key = 'response'
+                # Strict schema for JSON schema generation
                 response_data_typed_dict = TypedDict(  # noqa: UP013
                     'response_data_typed_dict',
                     {'response': cast(type[OutputDataT], output)},  # pyright: ignore[reportInvalidTypeForm]
                 )
                 type_adapter = TypeAdapter(response_data_typed_dict)
 
+                # More lenient validator: allow either the native type or a JSON string containing it
+                # i.e., response: OutputDataT | Json[OutputDataT]
+                response_validation_typed_dict = TypedDict(  # noqa: UP013
+                    'response_validation_typed_dict',
+                    {'response': cast(type[OutputDataT], output) | Json[cast(type[OutputDataT], output)]},  # pyright: ignore[reportInvalidTypeForm]
+                )
+                validation_type_adapter: TypeAdapter[Any] = TypeAdapter(response_validation_typed_dict)
+                schema_validator = cast(SchemaValidator, validation_type_adapter.validator)
+
             # Really a PluggableSchemaValidator, but it's API-compatible
-            self.validator = cast(SchemaValidator, type_adapter.validator)
+            self.validator = schema_validator
             json_schema = _utils.check_object_json_schema(
                 type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
             )
