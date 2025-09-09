@@ -255,16 +255,13 @@ condition: column ("=" | ">" | "<") (NUMBER | STRING)
 %import common.WS
 %ignore WS
 ''' # (1)!
-def database_query(sql: str) -> str:
-    return sql  # (2)!
 
-output_tool = ToolOutput(database_query, text_format=FunctionTextFormat(syntax='lark', grammar=sql_grammar_definition))
+output_tool = ToolOutput(str, text_format=FunctionTextFormat(syntax='lark', grammar=sql_grammar_definition))
 model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model, output_type=output_tool)
 ```
 
 1. An inline SQL grammar definition would be quite extensive and so this simplified version has been written, you can find an example SQL grammar [in the openai example](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#33-example---sql-dialect--ms-sql-vs-postgresql). There are also example grammars in the [lark repo](https://github.com/lark-parser/lark/blob/master/examples/composition/json.lark). Remember that a simpler grammar that matches your DDL will be easier for GPT-5 to work with and will result in fewer semantically invalid results.
-2. Returning the input directly might seem odd, remember that it has been constrained to the provided grammar. This can be useful if you want GPT-5 to generate content according to a grammar that you then use extensively through your program.
 
 ##### Best Practices
 
