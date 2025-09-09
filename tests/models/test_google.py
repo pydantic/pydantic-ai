@@ -1193,6 +1193,7 @@ async def test_google_url_input_force_download(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 provider_name='google-vertex',
+                finish_reason='stop',
             ),
         ]
     )
