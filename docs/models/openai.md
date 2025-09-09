@@ -267,14 +267,14 @@ agent = Agent(model, output_type=output_tool)
 
 Lark grammars can be tricky to perfect. While simple grammars perform most reliably, complex grammars often require iteration on the grammar definition itself, the prompt, and the tool description to ensure that the model does not go out of distribution.
 
-* Keep terminals bounded – use /[^.\n]{0,10}*\./ rather than /.*\./. Limit matches both by content (negated character class) and by length ({M,N} quantifier).
-* Prefer explicit char‑classes over . wildcards.
-* Thread whitespace explicitly, e.g. using SP = " ", instead of a global %ignore.
+* Keep terminals bounded – use `/[^.\n]{0,10}*\./` rather than `/.*\./`. Limit matches both by content (negated character class) and by length (`{M,N}` quantifier).
+* Prefer explicit char‑classes over `.` wildcards.
+* Thread whitespace explicitly, e.g. using `SP = " "`, instead of a global %ignore.
 * Describe your tool: tell the model exactly what the CFG accepts and instruct it to reason heavily about compliance.
 
 Troubleshooting
 
-* API rejects the grammar because it is too complex ➜ Simplify rules and terminals, remove %ignore.*.
+* API rejects the grammar because it is too complex ➜ Simplify rules and terminals, remove `%ignore.*`.
 * Unexpected tokens ➜ Confirm terminals aren't overlapping; check greedy lexer.
 * When the model drifts "out‑of‑distribution" (shows up as the model producing excessively long or repetitive outputs, it is syntactically valid but is semantically wrong):
   - Tighten the grammar.
