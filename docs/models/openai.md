@@ -170,7 +170,7 @@ def freeform_tool(sql: str): ...
 1. The GPT-5 family (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) all support freeform function calling.
 2. If the tool or model cannot be used with freeform function calling then it will be invoked in the normal way.
 
-You can read more about this function calling style in the [openai documentation](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#2-freeform-function-calling).
+You can read more about this function calling style in the [OpenAI documentation](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools#2-freeform-function-calling).
 
 #### Context Free Grammar
 
