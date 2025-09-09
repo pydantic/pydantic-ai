@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from httpx import Timeout
 from typing_extensions import TypedDict
 
@@ -73,6 +75,11 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Groq
     * Mistral
+    """
+
+    tool_choice: Literal['none', 'required', 'auto'] | list[str] | None
+    """
+    TODO(moritz)
     """
 
     parallel_tool_calls: bool
