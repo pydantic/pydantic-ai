@@ -20,6 +20,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FileUrl,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -54,6 +55,7 @@ try:
         ContentUnionDict,
         CountTokensConfigDict,
         ExecutableCodeDict,
+        FinishReason as GoogleFinishReason,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -98,6 +100,22 @@ Since Gemini supports a variety of date-stamped models, we explicitly list the l
 allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
+
+_FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
+    GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
+    GoogleFinishReason.STOP: 'stop',
+    GoogleFinishReason.MAX_TOKENS: 'length',
+    GoogleFinishReason.SAFETY: 'content_filter',
+    GoogleFinishReason.RECITATION: 'content_filter',
+    GoogleFinishReason.LANGUAGE: 'error',
+    GoogleFinishReason.OTHER: None,
+    GoogleFinishReason.BLOCKLIST: 'content_filter',
+    GoogleFinishReason.PROHIBITED_CONTENT: 'content_filter',
+    GoogleFinishReason.SPII: 'content_filter',
+    GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
+    GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
+    GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
+}
 
 
 class GoogleModelSettings(ModelSettings, total=False):
@@ -403,11 +421,14 @@ class GoogleModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )  # pragma: no cover
         parts = candidate.content.parts or []
-        vendor_id = response.response_id or None
+
+        vendor_id = response.response_id
         vendor_details: dict[str, Any] | None = None
-        finish_reason = candidate.finish_reason
-        if finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': finish_reason.value}
+        finish_reason: FinishReason | None = None
+        if raw_finish_reason := candidate.finish_reason:  # pragma: no branch
+            vendor_details = {'finish_reason': raw_finish_reason.value}
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
             parts,
@@ -416,6 +437,7 @@ class GoogleModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            finish_reason=finish_reason,
         )
 
     async def _process_streamed_response(
@@ -550,6 +572,14 @@ class GeminiStreamedResponse(StreamedResponse):
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
+
+            if chunk.response_id:  # pragma: no branch
+                self.provider_response_id = chunk.response_id
+
+            if raw_finish_reason := candidate.finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason.value}
+                self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
             if candidate.content is None or candidate.content.parts is None:
                 if candidate.finish_reason == 'STOP':  # pragma: no cover
                     # Normal completion - skip this chunk
@@ -632,6 +662,7 @@ def _process_response_from_parts(
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
+    finish_reason: FinishReason | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -672,6 +703,7 @@ def _process_response_from_parts(
         provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
+        finish_reason=finish_reason,
     )
 
 

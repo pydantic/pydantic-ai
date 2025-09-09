@@ -3140,6 +3140,7 @@ def test_binary_content_serializable():
                 'provider_response_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
+                'finish_reason': None,
             },
         ]
     )
@@ -3195,6 +3196,7 @@ def test_image_url_serializable_missing_media_type():
                 'provider_details': None,
                 'provider_response_id': None,
                 'kind': 'response',
+                'finish_reason': None,
             },
         ]
     )
@@ -3257,6 +3259,7 @@ def test_image_url_serializable():
                 'provider_details': None,
                 'provider_response_id': None,
                 'kind': 'response',
+                'finish_reason': None,
             },
         ]
     )
@@ -3751,7 +3754,7 @@ def test_multimodal_tool_response():
                     UserPromptPart(
                         content=[
                             'Here are the analysis results:',
-                            ImageUrl(url='https://example.com/chart.jpg'),
+                            ImageUrl(url='https://example.com/chart.jpg', identifier='672a5c'),
                             'The chart shows positive trends.',
                         ],
                         timestamp=IsNow(tz=timezone.utc),

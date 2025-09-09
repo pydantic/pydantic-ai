@@ -24,6 +24,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -72,6 +73,7 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -101,6 +103,25 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
+
+
+_CHAT_FINISH_REASON_MAP: dict[
+    Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason
+] = {
+    'stop': 'stop',
+    'length': 'length',
+    'tool_calls': 'tool_call',
+    'content_filter': 'content_filter',
+    'function_call': 'tool_call',
+}
+
+_RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason] = {
+    'max_output_tokens': 'length',
+    'content_filter': 'content_filter',
+    'completed': 'stop',
+    'cancelled': 'error',
+    'failed': 'error',
+}
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -474,24 +495,22 @@ class OpenAIChatModel(Model):
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
             items.append(ThinkingPart(content=reasoning_content))
 
-        vendor_details: dict[str, Any] | None = None
+        vendor_details: dict[str, Any] = {}
 
         # Add logprobs to vendor_details if available
         if choice.logprobs is not None and choice.logprobs.content:
             # Convert logprobs to a serializable format
-            vendor_details = {
-                'logprobs': [
-                    {
-                        'token': lp.token,
-                        'bytes': lp.bytes,
-                        'logprob': lp.logprob,
-                        'top_logprobs': [
-                            {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                        ],
-                    }
-                    for lp in choice.logprobs.content
-                ],
-            }
+            vendor_details['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
 
         if choice.message.content is not None:
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
@@ -507,14 +526,21 @@ class OpenAIChatModel(Model):
                     assert_never(c)
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
+
+        finish_reason: FinishReason | None = None
+        if raw_finish_reason := choice.finish_reason:  # pragma: no branch
+            vendor_details['finish_reason'] = raw_finish_reason
+            finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_details=vendor_details,
+            provider_details=vendor_details or None,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
         )
 
     async def _process_streamed_response(
@@ -823,6 +849,14 @@ class OpenAIResponsesModel(Model):
                         items.append(TextPart(content.text))
             elif item.type == 'function_call':
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+
+        finish_reason: FinishReason | None = None
+        provider_details: dict[str, Any] | None = None
+        raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
+        if raw_finish_reason:
+            provider_details = {'finish_reason': raw_finish_reason}
+            finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
@@ -830,6 +864,8 @@ class OpenAIResponsesModel(Model):
             provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -1169,6 +1205,9 @@ class OpenAIStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
+            if chunk.id and self.provider_response_id is None:
+                self.provider_response_id = chunk.id
+
             try:
                 choice = chunk.choices[0]
             except IndexError:
@@ -1177,6 +1216,10 @@ class OpenAIStreamedResponse(StreamedResponse):
             # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
+
+            if raw_finish_reason := choice.finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason}
+                self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Handle the text part of the response
             content = choice.delta.content
@@ -1237,6 +1280,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
+                raw_finish_reason = (
+                    details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
+                )
+                if raw_finish_reason:  # pragma: no branch
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
 
@@ -1244,7 +1294,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
-                pass  # there's nothing we need to do here
+                if chunk.response.id:  # pragma: no branch
+                    self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)

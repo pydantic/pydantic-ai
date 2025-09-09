@@ -649,7 +649,8 @@ async def test_image_url_input(allow_model_requests: None, huggingface_api_key: 
                         content=[
                             'hello',
                             ImageUrl(
-                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'
+                                url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg',
+                                identifier='bd38f5',
                             ),
                         ],
                         timestamp=IsNow(tz=timezone.utc),

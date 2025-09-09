@@ -807,7 +807,6 @@ Fix the errors and try again.\
                                     },
                                     {'type': 'text', 'content': 'text2'},
                                 ],
-                                'finish_reason': 'stop',
                             }
                         ],
                         'gen_ai.response.model': 'gpt-4o-2024-11-20',
@@ -1330,7 +1329,6 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                                 {'type': 'tool_call', 'id': 'tool_call_2', 'name': 'tool2', 'arguments': {'args2': 3}},
                                 {'type': 'text', 'content': 'text2'},
                             ],
-                            'finish_reason': 'stop',
                         }
                     ],
                     'logfire.json_schema': {

@@ -221,7 +221,10 @@ class InstrumentationSettings:
                         _otel_messages.ChatMessage(role='system' if is_system else 'user', parts=message_parts)
                     )
             elif isinstance(message, ModelResponse):  # pragma: no branch
-                result.append(_otel_messages.ChatMessage(role='assistant', parts=message.otel_message_parts(self)))
+                otel_message = _otel_messages.OutputMessage(role='assistant', parts=message.otel_message_parts(self))
+                if message.finish_reason is not None:
+                    otel_message['finish_reason'] = message.finish_reason
+                result.append(otel_message)
         return result
 
     def handle_messages(self, input_messages: list[ModelMessage], response: ModelResponse, system: str, span: Span):
@@ -246,12 +249,10 @@ class InstrumentationSettings:
         else:
             output_messages = self.messages_to_otel_messages([response])
             assert len(output_messages) == 1
-            output_message = cast(_otel_messages.OutputMessage, output_messages[0])
-            if response.provider_details and 'finish_reason' in response.provider_details:
-                output_message['finish_reason'] = response.provider_details['finish_reason']
+            output_message = output_messages[0]
             instructions = InstrumentedModel._get_instructions(input_messages)  # pyright: ignore [reportPrivateUsage]
             system_instructions_attributes = self.system_instructions_attributes(instructions)
-            attributes = {
+            attributes: dict[str, AttributeValue] = {
                 'gen_ai.input.messages': json.dumps(self.messages_to_otel_messages(input_messages)),
                 'gen_ai.output.messages': json.dumps([output_message]),
                 **system_instructions_attributes,
@@ -436,6 +437,8 @@ class InstrumentedModel(WrapperModel):
                         )
                     if response.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = response.provider_response_id
+                    if response.finish_reason is not None:
+                        attributes_to_set['gen_ai.response.finish_reasons'] = [response.finish_reason]
                     span.set_attributes(attributes_to_set)
                     span.update_name(f'{operation} {request_model}')
 

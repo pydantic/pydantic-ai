@@ -115,6 +115,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -183,6 +184,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -209,6 +211,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -229,6 +232,24 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
     agent = Agent(model=model, system_prompt='You are a helpful chatbot.', model_settings={'temperature': 0.0})
     async with agent.run_stream('What is the capital of France?') as result:
         data = await result.get_output()
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                assert response == snapshot(
+                    ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris.\n')],
+                        usage=RequestUsage(
+                            input_tokens=13,
+                            output_tokens=8,
+                            details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
+                        ),
+                        model_name='gemini-2.0-flash-exp',
+                        timestamp=IsDatetime(),
+                        provider_name='google-gla',
+                        provider_details={'finish_reason': 'STOP'},
+                        provider_response_id='w1peaMz6INOvnvgPgYfPiQY',
+                        finish_reason='stop',
+                    )
+                )
     assert data == snapshot('The capital of France is Paris.\n')
 
 
@@ -285,6 +306,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -310,6 +332,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -585,6 +608,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -706,6 +730,7 @@ print(f'{day_of_week=}')
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -766,6 +791,7 @@ print(f'{day_of_week=}')
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
@@ -816,6 +842,7 @@ print(f'{day_of_week=}')
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -971,6 +998,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1125,6 +1153,7 @@ async def test_google_url_input(
                 provider_name='google-vertex',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1164,6 +1193,7 @@ async def test_google_url_input_force_download(
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
                 provider_name='google-vertex',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1213,6 +1243,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1240,6 +1271,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1302,6 +1334,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1329,6 +1362,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1381,6 +1415,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1402,6 +1437,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1472,6 +1508,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1527,6 +1564,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1571,6 +1609,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1621,6 +1660,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1649,6 +1689,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1703,6 +1744,7 @@ Don't include any text or Markdown fencing before or after.\
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )

@@ -52,6 +52,15 @@ ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
 DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
+FinishReason: TypeAlias = Literal[
+    'stop',
+    'length',
+    'content_filter',
+    'tool_call',
+    'error',
+]
+"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
 
 @dataclass(repr=False)
 class SystemPromptPart:
@@ -1031,6 +1040,9 @@ class ModelResponse:
         pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id')),
     ] = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
+
+    finish_reason: FinishReason | None = None
+    """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
     @deprecated('`price` is deprecated, use `cost` instead')
     def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
