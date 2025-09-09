@@ -108,12 +108,13 @@ class GatewayProvider(Provider[InterfaceClient]):
 
             return GoogleProvider(
                 client=GoogleClient(
-                    api_key=api_key,
+                    vertexai=True,
                     http_options={
                         'base_url': urljoin(base_url, 'google'),
                         'headers': {'User-Agent': get_user_agent()},
                         'async_client_args': {
                             'transport': httpx.AsyncHTTPTransport(),
+                            'authorization': f'Bearer {api_key}',
                             'event_hooks': {'request': [_request_hook]},
                         },
                     },

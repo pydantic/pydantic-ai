@@ -20,9 +20,8 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 
 
-pytestmark = [
-    pytest.mark.skipif(not imports_successful(), reason='model packages were not installed'),
-]
+if not imports_successful():
+    pytest.skip('model packages were not installed', allow_module_level=True)
 
 
 # TODO(Marcelo): We need to add Vertex AI to the test cases.
@@ -80,7 +79,11 @@ TEST_CASES = [
         OpenAIChatModel,
     ),
     pytest.param(
-        {'AZURE_OPENAI_API_KEY': 'azure-openai-api-key', 'AZURE_OPENAI_ENDPOINT': 'azure-openai-endpoint'},
+        {
+            'AZURE_OPENAI_API_KEY': 'azure-openai-api-key',
+            'AZURE_OPENAI_ENDPOINT': 'azure-openai-endpoint',
+            'OPENAI_API_VERSION': '2024-12-01-preview',
+        },
         'azure:gpt-3.5-turbo',
         'gpt-3.5-turbo',
         'azure',
