@@ -75,6 +75,31 @@ def test_result_tuple():
     assert result.output == ('foo', 'bar')
 
 
+def test_result_list_of_models_with_stringified_response():
+    class Name(BaseModel):
+        name: str
+
+    def return_list(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        # Simulate providers that return the nested payload as a JSON string under "response"
+        args_json = json.dumps(
+            {
+                'response': json.dumps(
+                    [
+                        {'name': 'John Doe'},
+                        {'name': 'Jane Smith'},
+                    ]
+                )
+            }
+        )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_list), output_type=list[Name])
+
+    result = agent.run_sync('Hello')
+    assert [n.name for n in result.output] == ['John Doe', 'Jane Smith']
+
+
 class Foo(BaseModel):
     a: int
     b: str
