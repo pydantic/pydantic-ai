@@ -453,7 +453,7 @@ class GoogleModel(Model):
 
         return GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,

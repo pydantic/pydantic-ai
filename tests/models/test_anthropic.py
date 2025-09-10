@@ -584,7 +584,7 @@ async def test_stream_structured(allow_model_requests: None):
             type='message_start',
             message=BetaMessage(
                 id='msg_123',
-                model='claude-3-5-haiku-latest',
+                model='claude-3-5-haiku-123',
                 role='assistant',
                 type='message',
                 content=[],
@@ -631,7 +631,7 @@ async def test_stream_structured(allow_model_requests: None):
             type='message_start',
             message=BetaMessage(
                 id='msg_123',
-                model='claude-3-5-haiku-latest',
+                model='claude-3-5-haiku-123',
                 role='assistant',
                 type='message',
                 content=[],
@@ -695,7 +695,7 @@ async def test_stream_structured(allow_model_requests: None):
                     ModelResponse(
                         parts=[TextPart(content='FINAL_PAYLOAD')],
                         usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
-                        model_name='claude-3-5-haiku-latest',
+                        model_name='claude-3-5-haiku-123',
                         timestamp=IsDatetime(),
                         provider_name='anthropic',
                         provider_details={'finish_reason': 'end_turn'},
