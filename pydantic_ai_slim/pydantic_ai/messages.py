@@ -529,7 +529,78 @@ class BinaryContent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
+@dataclass(init=False, repr=False)
+class MagicDocumentUrl(DocumentUrl):
+    """A provider-agnostic document URL that may be transformed per adapter.
+
+    For OpenAI, text/plain documents may be converted to a plain text
+    `UserContent`.
+    """
+
+    filename: str | None = None
+    """Optional filename hint to use when converting to text."""
+
+    is_magic: Literal[True] = True
+    """Marker for serialization/filtering to indicate this is a magic part."""
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        force_download: bool = False,
+        vendor_metadata: dict[str, Any] | None = None,
+        media_type: str | None = None,
+        filename: str | None = None,
+        identifier: str | None = None,
+        _media_type: str | None = None,
+    ) -> None:
+        super().__init__(
+            url=url,
+            force_download=force_download,
+            vendor_metadata=vendor_metadata,
+            media_type=media_type or _media_type,
+            identifier=identifier,
+        )
+        # Keep kind as 'document-url' for downstream OTEL/type expectations
+        self.filename = filename
+
+
+@dataclass(init=False, repr=False)
+class MagicBinaryContent(BinaryContent):
+    """A provider-agnostic binary content that may be transformed per adapter.
+
+    For OpenAI, text/plain content may be converted to a plain text
+    `UserContent`.
+    """
+
+    filename: str | None = None
+    """Optional filename hint to use when converting to text."""
+
+    is_magic: Literal[True] = True
+    """Marker for serialization/filtering to indicate this is a magic part."""
+
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: AudioMediaType | ImageMediaType | DocumentMediaType | str,
+        filename: str | None = None,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            data=data,
+            media_type=media_type,
+            identifier=identifier,
+            vendor_metadata=vendor_metadata,
+        )
+        # Keep kind as 'binary' for downstream OTEL/type expectations
+        self.filename = filename
+
+
+MultiModalContent = (
+    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | MagicDocumentUrl | MagicBinaryContent
+)
 UserContent: TypeAlias = str | MultiModalContent
 
 
