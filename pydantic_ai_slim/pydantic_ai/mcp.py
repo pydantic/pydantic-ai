@@ -903,7 +903,18 @@ class MCPServerConfig(BaseModel):
 
 
 def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
-    """Load MCP servers from a configuration file."""
+    """Load MCP servers from a configuration file.
+
+    Args:
+        config_path: The path to the configuration file.
+
+    Returns:
+        A list of MCP servers.
+
+    Raises:
+        FileNotFoundError: If the configuration file does not exist.
+        ValidationError: If the configuration file does not match the schema.
+    """
     config_path = Path(config_path)
 
     if not config_path.exists():
