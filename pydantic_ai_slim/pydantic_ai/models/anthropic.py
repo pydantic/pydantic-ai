@@ -320,7 +320,7 @@ class AnthropicModel(Model):
                         tool_call_id=item.id,
                     )
                 )
-            elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
+            elif isinstance(item, BetaRedactedThinkingBlock):
                 items.append(
                     ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
                 )

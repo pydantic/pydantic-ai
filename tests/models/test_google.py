@@ -982,7 +982,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
 
     # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
     @agent.tool_plain
-    def dummy() -> None: ...
+    def dummy() -> None: ...  # pragma: no cover
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
@@ -1065,7 +1065,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
 
     # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
     @agent.tool_plain
-    def dummy() -> None: ...
+    def dummy() -> None: ...  # pragma: no cover
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='How do I cross the street?') as agent_run:

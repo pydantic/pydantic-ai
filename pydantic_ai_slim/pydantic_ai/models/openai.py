@@ -498,13 +498,11 @@ class OpenAIChatModel(Model):
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
             items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
 
-        # The `reasoning` field is only present in OpenRouter and gpt-oss responses.
-        # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
-        # https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(choice.message, 'reasoning', None):
-            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
-
-        # NOTE: We don't currently handle OpenRouter `reasoning_details`: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+        # NOTE: We don't currently handle OpenRouter/gpt-oss `reasoning`:
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
         # If you need this, please file an issue.
 
         vendor_details: dict[str, Any] = {}
@@ -617,8 +615,6 @@ class OpenAIChatModel(Model):
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: OpenRouter/gpt-oss `reasoning` field should be sent back per https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api,
-                        # but we currently just send it in `<think>` tags as this field is non-standard and not available on the SDK types.
                         # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
                         # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
                         # If you need this changed, please file an issue.
@@ -1275,17 +1271,6 @@ class OpenAIStreamedResponse(StreamedResponse):
                     vendor_part_id='reasoning_content',
                     id='reasoning_content',
                     content=reasoning_content,
-                    provider_name=self.provider_name,
-                )
-
-            # The `reasoning` field is only present in OpenRouter and gpt-oss responses.
-            # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
-            # https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-            if reasoning := getattr(choice.delta, 'reasoning', None):
-                yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning',
-                    id='reasoning',
-                    content=reasoning,
                     provider_name=self.provider_name,
                 )
 

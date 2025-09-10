@@ -765,7 +765,7 @@ def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str 
                 text = text or '' + chunk.text
             elif isinstance(chunk, MistralThinkChunk):
                 for thought in chunk.thinking:
-                    if thought.type == 'text':
+                    if thought.type == 'text':  # pragma: no branch
                         thinking.append(thought.text)
             else:
                 assert False, (  # pragma: no cover
