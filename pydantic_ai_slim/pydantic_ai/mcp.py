@@ -43,7 +43,7 @@ except ImportError as _import_error:
 # after mcp imports so any import error maps to this file, not _mcp.py
 from . import _mcp, _utils, exceptions, messages, models
 
-__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP'
+__all__ = 'MCPServer', 'MCPServerStdio', 'MCPServerHTTP', 'MCPServerSSE', 'MCPServerStreamableHTTP', 'load_mcp_servers'
 
 TOOL_SCHEMA_VALIDATOR = pydantic_core.SchemaValidator(
     schema=pydantic_core.core_schema.dict_schema(
@@ -538,6 +538,16 @@ class MCPServerStdio(MCPServer):
             repr_args.append(f'id={self.id!r}')
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
+    def __eq__(self, value: object, /) -> bool:
+        if not isinstance(value, MCPServerStdio):
+            return False  # pragma: no cover
+        return (
+            self.command == value.command
+            and self.args == value.args
+            and self.env == value.env
+            and self.cwd == value.cwd
+        )
+
 
 class _MCPServerHTTP(MCPServer):
     url: str
@@ -762,6 +772,11 @@ class MCPServerSSE(_MCPServerHTTP):
     def _transport_client(self):
         return sse_client  # pragma: no cover
 
+    def __eq__(self, value: object, /) -> bool:
+        if not isinstance(value, MCPServerSSE):
+            return False  # pragma: no cover
+        return self.url == value.url
+
 
 @deprecated('The `MCPServerHTTP` class is deprecated, use `MCPServerSSE` instead.')
 class MCPServerHTTP(MCPServerSSE):
@@ -826,6 +841,11 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     def _transport_client(self):
         return streamablehttp_client  # pragma: no cover
 
+    def __eq__(self, value: object, /) -> bool:
+        if not isinstance(value, MCPServerStreamableHTTP):
+            return False  # pragma: no cover
+        return self.url == value.url
+
 
 ToolResult = (
     str
@@ -866,6 +886,8 @@ def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:
 
 
 class MCPServerConfig(BaseModel):
+    """Configuration for MCP servers."""
+
     mcp_servers: Annotated[
         dict[
             str,
@@ -881,6 +903,7 @@ class MCPServerConfig(BaseModel):
 
 
 def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
+    """Load MCP servers from a configuration file."""
     config_path = Path(config_path)
 
     if not config_path.exists():
