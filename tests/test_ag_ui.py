@@ -892,6 +892,8 @@ async def test_thinking() -> None:
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_END'},
             {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
@@ -899,6 +901,7 @@ async def test_thinking() -> None:
                 'delta': "Let's do some thinking",
             },
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'THINKING_START'},
             {'type': 'THINKING_TEXT_MESSAGE_START'},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking '},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'about the weather'},
@@ -909,6 +912,7 @@ async def test_thinking() -> None:
             {'type': 'THINKING_TEXT_MESSAGE_START'},
             {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking about the universe'},
             {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
             {
                 'type': 'RUN_FINISHED',
                 'threadId': thread_id,
