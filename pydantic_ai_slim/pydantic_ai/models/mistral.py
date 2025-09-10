@@ -354,7 +354,7 @@ class MistralModel(Model):
         for thought in thinking:
             parts.append(ThinkingPart(content=thought))
         if text:
-            parts.extend(text)
+            parts.append(TextPart(content=text))
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
