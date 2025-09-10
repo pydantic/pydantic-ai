@@ -596,6 +596,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     signature = base64.b64encode(part.thought_signature).decode('utf-8')
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
+                        content='',  # A thought signature may occur without a preceding thinking part, so we add an empty delta so that a new part can be created
                         signature=signature,
                         provider_name='google',
                     )
@@ -655,11 +656,12 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
             part['text'] = item.content
         elif isinstance(item, ThinkingPart):
             if item.provider_name == 'google' and item.signature:
-                # The thought signature is included on the _next_ part, not the thought part itself
+                # The thought signature is to be included on the _next_ part, not the thought part itself
                 thought_signature = base64.b64decode(item.signature)
 
-            part['text'] = item.content
-            part['thought'] = True
+            if item.content:
+                part['text'] = item.content
+                part['thought'] = True
         elif isinstance(item, BuiltinToolCallPart):
             if item.provider_name == 'google':
                 if item.tool_name == 'code_execution':  # pragma: no branch
@@ -690,7 +692,9 @@ def _process_response_from_parts(
     for part in parts:
         if part.thought_signature:
             signature = base64.b64encode(part.thought_signature).decode('utf-8')
-            assert isinstance(item, ThinkingPart), 'Thought signature must follow a thinking part'
+            if not isinstance(item, ThinkingPart):
+                item = ThinkingPart(content='')
+                items.append(item)
             item.signature = signature
             item.provider_name = 'google'
 
