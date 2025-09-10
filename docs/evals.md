@@ -77,12 +77,12 @@ Dataset (1) ──────────── (Many) Case
 
     A useful metaphor (although not perfect) is to think of evals like a **Unit Testing** framework:
 
-    - **Cases + evaluators** are your individual unit tests - each one
+    - **Cases + Evaluators** are your individual unit tests - each one
     defines a specific scenario you want to test, complete with inputs
     and expected outcomes. Just like a unit test, a case asks: _"Given
     this input, does my system produce the right output?"_
 
-   -  **Datasets** are like test suites - they are the scaffolding that holds your unit
+    -  **Datasets** are like test suites - they are the scaffolding that holds your unit
     tests together. They group related cases and define shared
     evaluation criteria that should apply across all tests in the suite.
 
