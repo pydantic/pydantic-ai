@@ -24,7 +24,6 @@ __all__ = (
     'UsageLimitExceeded',
     'ModelHTTPError',
     'FallbackExceptionGroup',
-    'WebSearchNotSupportedError',
 )
 
 
@@ -169,7 +168,3 @@ class ToolRetryError(Exception):
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
         super().__init__()
-
-
-class WebSearchNotSupportedError(AgentRunError):
-    """Error raised when WebSearchTool is used with an unsupported model."""

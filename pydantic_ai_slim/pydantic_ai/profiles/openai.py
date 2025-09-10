@@ -38,7 +38,7 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
-    openai_supports_web_search: bool = False
+    openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
 
     def __post_init__(self):  # pragma: no cover
@@ -83,7 +83,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_object_output=True,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
-        openai_supports_web_search=supports_web_search,
+        openai_chat_supports_web_search=supports_web_search,
     )
 
 

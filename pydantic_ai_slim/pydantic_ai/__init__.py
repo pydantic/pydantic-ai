@@ -20,7 +20,6 @@ from .exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
-    WebSearchNotSupportedError,
 )
 from .format_prompt import format_as_xml
 from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
@@ -49,7 +48,6 @@ __all__ = (
     'UnexpectedModelBehavior',
     'UsageLimitExceeded',
     'UserError',
-    'WebSearchNotSupportedError',
     # messages
     'ImageUrl',
     'AudioUrl',
