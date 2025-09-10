@@ -31,7 +31,6 @@ with try_import() as imports_successful:
     # Import the content mapping functions for testing
     from pydantic_ai.toolsets.fastmcp import (
         FastMCPToolset,
-        ToolErrorBehavior,
     )
 
 
@@ -122,11 +121,6 @@ def run_context() -> RunContext[None]:
     )
 
 
-def get_client_from_toolset(toolset: FastMCPToolset[None]) -> Client[FastMCPTransport]:
-    """Get the client from the toolset."""
-    return toolset._fastmcp_client  # pyright: ignore[reportPrivateUsage]
-
-
 class TestFastMCPToolsetInitialization:
     """Test FastMCP Toolset initialization and basic functionality."""
 
@@ -137,12 +131,19 @@ class TestFastMCPToolsetInitialization:
         # Test that the client is accessible via the property
         assert toolset.id is None
 
+    async def test_init_with_id(self, fastmcp_client: Client[FastMCPTransport]):
+        """Test initialization with an id."""
+        toolset = FastMCPToolset(fastmcp_client, id='test_id')
+
+        # Test that the client is accessible via the property
+        assert toolset.id == 'test_id'
+
     async def test_init_with_custom_retries_and_error_behavior(self, fastmcp_client: Client[FastMCPTransport]):
         """Test initialization with custom retries and error behavior."""
-        toolset = FastMCPToolset(fastmcp_client, tool_retries=5, tool_error_behavior=ToolErrorBehavior.MODEL_RETRY)
+        toolset = FastMCPToolset(fastmcp_client, max_retries=5, tool_error_behavior='model_retry')
 
         # Test that the toolset was created successfully
-        assert get_client_from_toolset(toolset) is fastmcp_client
+        assert toolset.fastmcp_client is fastmcp_client
 
     async def test_id_property(self, fastmcp_client: Client[FastMCPTransport]):
         """Test that the id property returns None."""
@@ -400,7 +401,7 @@ class TestFastMCPToolsetToolCalling:
         run_context: RunContext[None],
     ):
         """Test tool call with error behavior set to model retry."""
-        toolset = FastMCPToolset(fastmcp_client, tool_error_behavior=ToolErrorBehavior.MODEL_RETRY)
+        toolset = FastMCPToolset(fastmcp_client, tool_error_behavior='model_retry')
 
         async with toolset:
             tools = await toolset.get_tools(run_context)
@@ -432,7 +433,7 @@ class TestFastMCPToolsetFactoryMethods:
         toolset = FastMCPToolset.from_mcp_server(name='test_server', mcp_server=mcp_server_config)
         assert isinstance(toolset, FastMCPToolset)
 
-        client = get_client_from_toolset(toolset)
+        client = toolset.fastmcp_client
         assert isinstance(client.transport, MCPConfigTransport)
 
     async def test_from_mcp_config_dict(self, run_context: RunContext[None]):
@@ -441,7 +442,7 @@ class TestFastMCPToolsetFactoryMethods:
         config_dict = {'mcpServers': {'test_server': {'command': 'python', 'args': ['-c', 'print("test")']}}}
 
         toolset = FastMCPToolset.from_mcp_config(mcp_config=config_dict)
-        client = get_client_from_toolset(toolset)
+        client = toolset.fastmcp_client
         assert isinstance(client.transport, MCPConfigTransport)
 
     async def test_from_mcp_config_mcp_config(self, run_context: RunContext[None]):
@@ -452,5 +453,5 @@ class TestFastMCPToolsetFactoryMethods:
         )
 
         toolset = FastMCPToolset.from_mcp_config(mcp_config=config)
-        client = get_client_from_toolset(toolset)
+        client = toolset.fastmcp_client
         assert isinstance(client.transport, MCPConfigTransport)

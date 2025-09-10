@@ -3,8 +3,7 @@ from __future__ import annotations
 import base64
 from asyncio import Lock
 from contextlib import AsyncExitStack
-from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import Self
 
@@ -44,59 +43,59 @@ if TYPE_CHECKING:
 
 FastMCPToolResult = messages.BinaryContent | dict[str, Any] | str | None
 
-FastMCPToolResults = list[FastMCPToolResult] | FastMCPToolResult
-
-
-class ToolErrorBehavior(str, Enum):
-    """The behavior to take when a tool error occurs."""
-
-    MODEL_RETRY = 'model-retry'
-    """Raise a `ModelRetry` containing the tool error message."""
-
-    ERROR = 'raise'
-    """Raise the tool error as an exception."""
+ToolErrorBehavior = Literal['model_retry', 'error']
 
 
 class FastMCPToolset(AbstractToolset[AgentDepsT]):
     """A toolset that uses a FastMCP client as the underlying toolset."""
 
-    _fastmcp_client: Client[Any]
-    _tool_error_behavior: ToolErrorBehavior
+    tool_error_behavior: Literal['model_retry', 'error']
+    fastmcp_client: Client[Any]
 
-    _tool_retries: int
+    max_retries: int
+
+    _id: str | None
 
     _enter_lock: Lock
     _running_count: int
     _exit_stack: AsyncExitStack | None
 
     def __init__(
-        self, fastmcp_client: Client[Any], tool_retries: int = 2, tool_error_behavior: ToolErrorBehavior | None = None
+        self,
+        fastmcp_client: Client[Any],
+        *,
+        max_retries: int = 2,
+        tool_error_behavior: ToolErrorBehavior | None = None,
+        id: str | None = None,
     ):
         """Build a new FastMCPToolset.
 
         Args:
             fastmcp_client: The FastMCP client to use.
-            tool_retries: The number of times to retry a tool call.
+            max_retries: The maximum number of retries for each tool during a run.
             tool_error_behavior: The behavior to take when a tool error occurs.
+            id: An optional unique ID for the toolset. A toolset needs to have an ID in order to be used in a durable execution environment like Temporal,
+                in which case the ID will be used to identify the toolset's activities within the workflow.
         """
-        self._tool_retries = tool_retries
-        self._fastmcp_client = fastmcp_client
+        self.max_retries = max_retries
+        self.fastmcp_client = fastmcp_client
         self._enter_lock = Lock()
         self._running_count = 0
+        self._id = id
 
-        self._tool_error_behavior = tool_error_behavior or ToolErrorBehavior.ERROR
+        self.tool_error_behavior = tool_error_behavior or 'error'
 
         super().__init__()
 
     @property
     def id(self) -> str | None:
-        return None
+        return self._id
 
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
-            if self._running_count == 0 and self._fastmcp_client:
+            if self._running_count == 0 and self.fastmcp_client:
                 self._exit_stack = AsyncExitStack()
-                await self._exit_stack.enter_async_context(self._fastmcp_client)
+                await self._exit_stack.enter_async_context(self.fastmcp_client)
 
             self._running_count += 1
 
@@ -113,10 +112,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         async with self:
-            mcp_tools: list[MCPTool] = await self._fastmcp_client.list_tools()
+            mcp_tools: list[MCPTool] = await self.fastmcp_client.list_tools()
 
             return {
-                tool.name: convert_mcp_tool_to_toolset_tool(toolset=self, mcp_tool=tool, retries=self._tool_retries)
+                tool.name: _convert_mcp_tool_to_toolset_tool(toolset=self, mcp_tool=tool, retries=self.max_retries)
                 for tool in mcp_tools
             }
 
@@ -125,10 +124,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         async with self:
             try:
-                call_tool_result: CallToolResult = await self._fastmcp_client.call_tool(name=name, arguments=tool_args)
+                call_tool_result: CallToolResult = await self.fastmcp_client.call_tool(name=name, arguments=tool_args)
             except ToolError as e:
-                if self._tool_error_behavior == ToolErrorBehavior.MODEL_RETRY:
-                    raise ModelRetry(message=str(object=e)) from e
+                if self.tool_error_behavior == 'model_retry':
+                    raise ModelRetry(message=str(e)) from e
                 else:
                     raise e
 
@@ -144,7 +143,11 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
 
     @classmethod
     def from_fastmcp_server(
-        cls, fastmcp_server: FastMCP[Any], tool_error_behavior: ToolErrorBehavior | None = None
+        cls,
+        fastmcp_server: FastMCP[Any],
+        *,
+        tool_error_behavior: ToolErrorBehavior | None = None,
+        tool_retries: int = 2,
     ) -> Self:
         """Build a FastMCPToolset from a FastMCP server.
 
@@ -164,14 +167,16 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         """
         transport = FastMCPTransport(fastmcp_server)
         fastmcp_client: Client[FastMCPTransport] = Client[FastMCPTransport](transport=transport)
-        return cls(fastmcp_client=fastmcp_client, tool_retries=2, tool_error_behavior=tool_error_behavior)
+        return cls(fastmcp_client=fastmcp_client, max_retries=tool_retries, tool_error_behavior=tool_error_behavior)
 
     @classmethod
     def from_mcp_server(
         cls,
         name: str,
         mcp_server: MCPServerTypes | dict[str, Any],
+        *,
         tool_error_behavior: ToolErrorBehavior | None = None,
+        tool_retries: int = 2,
     ) -> Self:
         """Build a FastMCPToolset from an individual MCP server configuration.
 
@@ -189,11 +194,17 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         """
         mcp_config: MCPConfig = MCPConfig.from_dict(config={name: mcp_server})
 
-        return cls.from_mcp_config(mcp_config=mcp_config, tool_error_behavior=tool_error_behavior)
+        return cls.from_mcp_config(
+            mcp_config=mcp_config, tool_error_behavior=tool_error_behavior, max_retries=tool_retries
+        )
 
     @classmethod
     def from_mcp_config(
-        cls, mcp_config: MCPConfig | dict[str, Any], tool_error_behavior: ToolErrorBehavior | None = None
+        cls,
+        mcp_config: MCPConfig | dict[str, Any],
+        *,
+        tool_error_behavior: ToolErrorBehavior | None = None,
+        max_retries: int = 2,
     ) -> Self:
         """Build a FastMCPToolset from an MCP json-derived / dictionary configuration object.
 
@@ -219,10 +230,10 @@ class FastMCPToolset(AbstractToolset[AgentDepsT]):
         """
         transport: MCPConfigTransport = MCPConfigTransport(config=mcp_config)
         fastmcp_client: Client[MCPConfigTransport] = Client[MCPConfigTransport](transport=transport)
-        return cls(fastmcp_client=fastmcp_client, tool_retries=2, tool_error_behavior=tool_error_behavior)
+        return cls(fastmcp_client=fastmcp_client, max_retries=max_retries, tool_error_behavior=tool_error_behavior)
 
 
-def convert_mcp_tool_to_toolset_tool(
+def _convert_mcp_tool_to_toolset_tool(
     toolset: FastMCPToolset[AgentDepsT],
     mcp_tool: MCPTool,
     retries: int,
@@ -254,10 +265,7 @@ def _map_fastmcp_tool_result(part: ContentBlock) -> FastMCPToolResult:
     if isinstance(part, TextContent):
         return part.text
 
-    if isinstance(part, ImageContent):
-        return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
-
-    if isinstance(part, AudioContent):
+    if isinstance(part, ImageContent | AudioContent):
         return messages.BinaryContent(data=base64.b64decode(part.data), media_type=part.mimeType)
 
     msg = f'Unsupported/Unknown content block type: {type(part)}'  # pragma: no cover
