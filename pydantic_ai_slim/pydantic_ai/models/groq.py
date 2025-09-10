@@ -313,12 +313,12 @@ class GroqModel(Model):
                 tool_call_id = generate_tool_call_id()
                 items.append(
                     BuiltinToolCallPart(
-                        tool_name=tool.type, args=tool.arguments, provider_name='groq', tool_call_id=tool_call_id
+                        tool_name=tool.type, args=tool.arguments, provider_name=self.system, tool_call_id=tool_call_id
                     )
                 )
                 items.append(
                     BuiltinToolReturnPart(
-                        provider_name='groq', tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id
+                        provider_name=self.system, tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id
                     )
                 )
         if choice.message.reasoning is not None:

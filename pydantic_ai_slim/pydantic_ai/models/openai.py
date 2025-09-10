@@ -496,13 +496,13 @@ class OpenAIChatModel(Model):
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
-            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name='openai'))
+            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
 
         # The `reasoning` field is only present in OpenRouter and gpt-oss responses.
         # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
         if reasoning := getattr(choice.message, 'reasoning', None):
-            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name='openai'))
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
 
         # TODO: Handle OpenRouter reasoning_details: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
 
@@ -525,7 +525,7 @@ class OpenAIChatModel(Model):
 
         if choice.message.content is not None:
             items.extend(
-                (replace(part, id='content', provider_name='openai') if isinstance(part, ThinkingPart) else part)
+                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
                 for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
             )
         if choice.message.tool_calls is not None:
@@ -616,7 +616,7 @@ class OpenAIChatModel(Model):
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        if item.provider_name == 'openai':
+                        if item.provider_name == self.system:
                             # TODO: Consider handling this based on model profile, rather than the ID that's set when it was read.
                             # Since it's possible that we received data from one OpenAI-compatible API, and are sending it to another, that doesn't support the same field.
                             if item.id == 'reasoning':
@@ -879,7 +879,7 @@ class OpenAIResponsesModel(Model):
                             content=summary.text,
                             id=item.id,
                             signature=signature,
-                            provider_name='openai' if signature else None,
+                            provider_name=self.system if signature else None,
                         )
                     )
                     signature = None
@@ -1134,7 +1134,7 @@ class OpenAIResponsesModel(Model):
                         reasoning_item = responses.ResponseReasoningItemParam(
                             id=item.id or _utils.generate_tool_call_id(),
                             summary=[Summary(text=item.content, type='summary_text')],
-                            encrypted_content=item.signature if item.provider_name == 'openai' else None,
+                            encrypted_content=item.signature if item.provider_name == self.system else None,
                             type='reasoning',
                         )
                         openai_messages.append(reasoning_item)
@@ -1272,7 +1272,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 if maybe_event is not None:  # pragma: no branch
                     if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
                         maybe_event.part.id = 'content'
-                        maybe_event.part.provider_name = 'openai'
+                        maybe_event.part.provider_name = self.provider_name
                     yield maybe_event
 
             # The `reasoning_content` field is only present in DeepSeek models.
@@ -1282,7 +1282,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     vendor_part_id='reasoning_content',
                     id='reasoning_content',
                     content=reasoning_content,
-                    provider_name='openai',
+                    provider_name=self.provider_name,
                 )
 
             # The `reasoning` field is only present in OpenRouter and gpt-oss responses.
@@ -1293,7 +1293,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     vendor_part_id='reasoning',
                     id='reasoning',
                     content=reasoning,
-                    provider_name='openai',
+                    provider_name=self.provider_name,
                 )
 
             # TODO: Handle OpenRouter reasoning_details: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
@@ -1406,7 +1406,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=f'{chunk.item.id}-0',
                         id=chunk.item.id,
                         signature=signature,
-                        provider_name='openai' if signature else None,
+                        provider_name=self.provider_name if signature else None,
                     )
                 pass
 

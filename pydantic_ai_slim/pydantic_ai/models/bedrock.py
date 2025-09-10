@@ -297,7 +297,7 @@ class BedrockConverseModel(Model):
                                 id='redacted_content',
                                 content='',
                                 signature=redacted_content.decode('utf-8'),
-                                provider_name='bedrock',
+                                provider_name=self.system,
                             )
                         )
                     elif reasoning_text := reasoning_content.get('reasoningText'):  # pragma: no branch
@@ -306,7 +306,7 @@ class BedrockConverseModel(Model):
                             ThinkingPart(
                                 content=reasoning_text['text'],
                                 signature=signature,
-                                provider_name='bedrock' if signature else None,
+                                provider_name=self.system if signature else None,
                             )
                         )
                 if text := item.get('text'):
@@ -505,7 +505,7 @@ class BedrockConverseModel(Model):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
                         if BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts:
-                            if item.provider_name == 'bedrock' and item.signature:
+                            if item.provider_name == self.system and item.signature:
                                 if item.id == 'redacted_content':
                                     reasoning_content: ReasoningContentBlockOutputTypeDef = {
                                         'redactedContent': item.signature.encode('utf-8'),
@@ -686,7 +686,7 @@ class BedrockStreamedResponse(StreamedResponse):
                                 id='redacted_content',
                                 content='',
                                 signature=redacted_content.decode('utf-8'),
-                                provider_name='bedrock',
+                                provider_name=self.provider_name,
                             )
                         else:
                             signature = delta['reasoningContent'].get('signature')
@@ -694,7 +694,7 @@ class BedrockStreamedResponse(StreamedResponse):
                                 vendor_part_id=index,
                                 content=delta['reasoningContent'].get('text'),
                                 signature=signature,
-                                provider_name='bedrock' if signature else None,
+                                provider_name=self.provider_name if signature else None,
                             )
                     if 'text' in delta:
                         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])

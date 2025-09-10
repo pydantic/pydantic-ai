@@ -44,7 +44,7 @@ async def test_deepseek_model_thinking_part(allow_model_requests: None, deepseek
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='openai'),
+                    ThinkingPart(content=IsStr(), id='reasoning_content', provider_name='deepseek'),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
@@ -79,19 +79,19 @@ async def test_deepseek_model_thinking_stream(allow_model_requests: None, deepse
                     async for event in request_stream:
                         event_parts.append(event)
 
-    assert event_parts == snapshot(
-        IsListOrTuple(
-            positions={
-                0: PartStartEvent(
-                    index=0, part=ThinkingPart(content='H', id='reasoning_content', provider_name='openai')
-                ),
-                1: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='mm', provider_name='openai')),
-                2: PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',', provider_name='openai')),
-                198: PartStartEvent(index=1, part=TextPart(content='Hello')),
-                199: FinalResultEvent(tool_name=None, tool_call_id=None),
-                200: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' there')),
-                201: PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='!')),
-            },
-            length=211,
-        )
+    assert event_parts == IsListOrTuple(
+        positions={
+            0: snapshot(
+                PartStartEvent(
+                    index=0, part=ThinkingPart(content='H', id='reasoning_content', provider_name='deepseek')
+                )
+            ),
+            1: snapshot(PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='mm', provider_name='deepseek'))),
+            2: snapshot(PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=',', provider_name='deepseek'))),
+            198: snapshot(PartStartEvent(index=1, part=TextPart(content='Hello'))),
+            199: snapshot(FinalResultEvent(tool_name=None, tool_call_id=None)),
+            200: snapshot(PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' there'))),
+            201: snapshot(PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='!'))),
+        },
+        length=211,
     )

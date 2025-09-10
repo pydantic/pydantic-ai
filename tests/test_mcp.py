@@ -783,12 +783,12 @@ async def test_tool_returning_audio_resource_link(
                         ThinkingPart(
                             content='',
                             signature=IsStr(),
-                            provider_name='google',
+                            provider_name='google-gla',
                         ),
                         ToolCallPart(
                             tool_name='get_audio_resource_link',
                             args={},
-                            tool_call_id='pyd_ai_396803870f644840b6ed84639451855c',
+                            tool_call_id=IsStr(),
                         ),
                     ],
                     usage=RequestUsage(
@@ -806,7 +806,7 @@ async def test_tool_returning_audio_resource_link(
                         ToolReturnPart(
                             tool_name='get_audio_resource_link',
                             content='See file 2d36ae',
-                            tool_call_id='pyd_ai_396803870f644840b6ed84639451855c',
+                            tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         ),
                         UserPromptPart(

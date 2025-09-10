@@ -503,7 +503,7 @@ class GoogleModel(Model):
                     message_parts = [{'text': ''}]
                 contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
-                contents.append(_content_model_response(m))
+                contents.append(_content_model_response(m, self.system))
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages):
@@ -598,7 +598,7 @@ class GeminiStreamedResponse(StreamedResponse):
                         vendor_part_id='thinking',
                         content='',  # A thought signature may occur without a preceding thinking part, so we add an empty delta so that a new part can be created
                         signature=signature,
-                        provider_name='google',
+                        provider_name=self.provider_name,
                     )
 
                 if part.text is not None:
@@ -640,7 +640,7 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse) -> ContentDict:
+def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict:
     parts: list[PartDict] = []
     thought_signature: bytes | None = None
     for item in m.parts:
@@ -655,7 +655,7 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
         elif isinstance(item, TextPart):
             part['text'] = item.content
         elif isinstance(item, ThinkingPart):
-            if item.provider_name == 'google' and item.signature:
+            if item.provider_name == provider_name and item.signature:
                 # The thought signature is to be included on the _next_ part, not the thought part itself
                 thought_signature = base64.b64decode(item.signature)
 
@@ -663,11 +663,11 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
                 part['text'] = item.content
                 part['thought'] = True
         elif isinstance(item, BuiltinToolCallPart):
-            if item.provider_name == 'google':
+            if item.provider_name == provider_name:
                 if item.tool_name == 'code_execution':  # pragma: no branch
                     part['executable_code'] = cast(ExecutableCodeDict, item.args)
         elif isinstance(item, BuiltinToolReturnPart):
-            if item.provider_name == 'google':
+            if item.provider_name == provider_name:
                 if item.tool_name == 'code_execution':  # pragma: no branch
                     part['code_execution_result'] = item.content
         else:
@@ -696,15 +696,15 @@ def _process_response_from_parts(
                 item = ThinkingPart(content='')
                 items.append(item)
             item.signature = signature
-            item.provider_name = 'google'
+            item.provider_name = provider_name
 
         if part.executable_code is not None:
             item = BuiltinToolCallPart(
-                provider_name='google', args=part.executable_code.model_dump(), tool_name='code_execution'
+                provider_name=provider_name, args=part.executable_code.model_dump(), tool_name='code_execution'
             )
         elif part.code_execution_result is not None:
             item = BuiltinToolReturnPart(
-                provider_name='google',
+                provider_name=provider_name,
                 tool_name='code_execution',
                 content=part.code_execution_result,
                 tool_call_id='not_provided',

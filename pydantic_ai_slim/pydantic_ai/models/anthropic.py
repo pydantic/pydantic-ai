@@ -305,7 +305,7 @@ class AnthropicModel(Model):
             elif isinstance(item, BetaWebSearchToolResultBlock | BetaCodeExecutionToolResultBlock):
                 items.append(
                     BuiltinToolReturnPart(
-                        provider_name='anthropic',
+                        provider_name=self.system,
                         tool_name=item.type,
                         content=item.content,
                         tool_call_id=item.tool_use_id,
@@ -314,7 +314,7 @@ class AnthropicModel(Model):
             elif isinstance(item, BetaServerToolUseBlock):
                 items.append(
                     BuiltinToolCallPart(
-                        provider_name='anthropic',
+                        provider_name=self.system,
                         tool_name=item.name,
                         args=cast(dict[str, Any], item.input),
                         tool_call_id=item.id,
@@ -322,10 +322,10 @@ class AnthropicModel(Model):
                 )
             elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
                 items.append(
-                    ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name='anthropic')
+                    ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
                 )
             elif isinstance(item, BetaThinkingBlock):
-                items.append(ThinkingPart(content=item.thinking, signature=item.signature, provider_name='anthropic'))
+                items.append(ThinkingPart(content=item.thinking, signature=item.signature, provider_name=self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -459,7 +459,7 @@ class AnthropicModel(Model):
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
                         if (
-                            response_part.provider_name == 'anthropic' and response_part.signature is not None
+                            response_part.provider_name == self.system and response_part.signature is not None
                         ):  # pragma: no branch
                             if response_part.id == 'redacted_thinking':
                                 assistant_content_params.append(
@@ -484,7 +484,7 @@ class AnthropicModel(Model):
                                 )
                             )
                     elif isinstance(response_part, BuiltinToolCallPart):
-                        if response_part.provider_name == 'anthropic':
+                        if response_part.provider_name == self.system:
                             server_tool_use_block_param = BetaServerToolUseBlockParam(
                                 id=_guard_tool_call_id(t=response_part),
                                 type='server_tool_use',
@@ -493,7 +493,7 @@ class AnthropicModel(Model):
                             )
                             assistant_content_params.append(server_tool_use_block_param)
                     elif isinstance(response_part, BuiltinToolReturnPart):
-                        if response_part.provider_name == 'anthropic':
+                        if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
                             if response_part.tool_name == 'web_search_tool_result':
                                 server_tool_result_block_param = BetaWebSearchToolResultBlockParam(
@@ -635,7 +635,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id='thinking',
                         content=current_block.thinking,
                         signature=current_block.signature,
-                        provider_name='anthropic',
+                        provider_name=self.provider_name,
                     )
                 elif isinstance(current_block, BetaRedactedThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
@@ -643,7 +643,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                         id='redacted_thinking',
                         content='',
                         signature=current_block.data,
-                        provider_name='anthropic',
+                        provider_name=self.provider_name,
                     )
                 elif isinstance(current_block, BetaToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -668,13 +668,13 @@ class AnthropicStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
                         content=event.delta.thinking,
-                        provider_name='anthropic',
+                        provider_name=self.provider_name,
                     )
                 elif isinstance(event.delta, BetaSignatureDelta):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
                         signature=event.delta.signature,
-                        provider_name='anthropic',
+                        provider_name=self.provider_name,
                     )
                 elif (
                     current_block

@@ -1247,10 +1247,10 @@ class ThinkingPartDelta:
         elif isinstance(part, ThinkingPartDelta):
             if self.content_delta is None and self.signature_delta is None:
                 raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
+            if self.content_delta is not None:
+                part = replace(part, content_delta=(part.content_delta or '') + self.content_delta)
             if self.signature_delta is not None:
                 part = replace(part, signature_delta=self.signature_delta)
-            if self.content_delta is not None:
-                part = replace(part, content_delta=self.content_delta)
             if self.provider_name is not None:
                 part = replace(part, provider_name=self.provider_name)
             return part
