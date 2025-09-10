@@ -2087,15 +2087,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         content=IsStr(),
                         id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
                         signature=IsStr(),
+                        provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
-                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
@@ -2124,15 +2119,10 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         content=IsStr(),
                         id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
                         signature=IsStr(),
+                        provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
-                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
@@ -2161,6 +2151,81 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_response_id='9abe8b736bff46af8e979b52334a57cd',
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mistral_api_key: str):
+    model = MistralModel('magistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(model)
+
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+Okay, the user is asking a very basic question about how to cross the street. This seems like a straightforward query, but I need to make sure I provide clear and safe instructions. Crossing the street safely involves a few key steps that are generally taught to children and are important for everyone to follow.
+
+First, I recall that the basic steps involve looking both ways for oncoming traffic, using designated crosswalks if available, and following traffic signals if there are any. But I should break it down into clear, actionable steps.
+
+1. **Find a Safe Place to Cross**: Ideally, you should cross at a designated crosswalk or intersection. These are typically marked with white lines on the road and may have traffic signals or signs.
+
+2. **Look Both Ways**: Before stepping off the curb, look left, right, and then left again to check for oncoming traffic. This is because in many places, traffic comes from the left first (depending on the country's driving side).
+
+3. **Wait for a Safe Gap**: Make sure there is enough time to cross the street before any vehicles approach. If there's a traffic light, wait for the pedestrian signal to indicate it's safe to cross.
+
+4. **Cross with Caution**: Walk briskly across the street while keeping an eye out for any unexpected vehicles. Avoid running unless absolutely necessary.
+
+5. **Continue Looking**: Even while crossing, continue to look for vehicles to ensure your safety.
+
+6. **Follow Traffic Signals**: If there are traffic lights or pedestrian signals, obey them. Only cross when the signal indicates it's safe to do so.
+
+Additionally, it's important to make eye contact with drivers if possible, to ensure they see you before you cross. Avoid distractions like using your phone while crossing the street.
+
+But wait, does the user need any specific context? For example, are they in a country where cars drive on the left or the right? That might affect the direction they should look first. However, since the user hasn't specified a location, I'll provide a general answer that should work in most places.
+
+Also, if the user is asking this question, they might be very young or unfamiliar with urban environments, so I should keep the instructions simple and clear.
+
+Here's a concise response based on this thinking:\
+"""
+                    ),
+                    TextPart(
+                        content="""\
+To cross the street safely, follow these steps:
+
+1. Find a designated crosswalk or intersection if possible.
+2. Look left, right, and then left again to check for oncoming traffic.
+3. Wait for a safe gap in traffic or for the pedestrian signal to indicate it's safe to cross.
+4. Cross the street briskly while continuing to look for vehicles.
+5. Follow any traffic signals and always be cautious of your surroundings.
+
+If you're in a country where cars drive on the left (like the UK or Japan), remember to look right first instead of left. Always prioritize your safety and make sure drivers see you before crossing.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=602),
+                model_name='magistral-medium-latest',
+                timestamp=IsDatetime(),
+                provider_name='mistral',
             ),
         ]
     )

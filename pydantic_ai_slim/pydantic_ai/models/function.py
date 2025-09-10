@@ -291,6 +291,7 @@ class FunctionStreamedResponse(StreamedResponse):
                             vendor_part_id=dtc_index,
                             content=delta.content,
                             signature=delta.signature,
+                            provider_name='function' if delta.signature else None,
                         )
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:

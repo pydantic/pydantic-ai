@@ -4,7 +4,7 @@ import base64
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
@@ -31,6 +31,7 @@ from ..messages import (
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -492,9 +493,16 @@ class OpenAIChatModel(Model):
 
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
-        # The `reasoning_content` is only present in DeepSeek models.
+        # The `reasoning_content` field is only present in DeepSeek models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
-            items.append(ThinkingPart(content=reasoning_content))
+            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name='openai'))
+
+        # The `reasoning` field is only present in OpenRouter and gpt-oss responses.
+        # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(choice.message, 'reasoning', None):
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name='openai'))
 
         # TODO: Handle OpenRouter reasoning_details: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
 
@@ -516,7 +524,10 @@ class OpenAIChatModel(Model):
             ]
 
         if choice.message.content is not None:
-            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
+            items.extend(
+                (replace(part, id='content', provider_name='openai') if isinstance(part, ThinkingPart) else part)
+                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
+            )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
@@ -586,7 +597,7 @@ class OpenAIChatModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIModel`. If it should be, please file an issue.'
                 )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -600,8 +611,22 @@ class OpenAIChatModel(Model):
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        # TODO: Send back in <think> tags (Ollama etc), `reasoning` field (DeepSeek), or `reasoning_content` field (OpenRouter)?
-                        pass
+                        if item.provider_name == 'openai':
+                            # TODO: Consider handling this based on model profile, rather than the ID that's set when it was read.
+                            # Since it's possible that we received data from one OpenAI-compatible API, and are sending it to another, that doesn't support the same field.
+                            if item.id == 'reasoning':
+                                # TODO: OpenRouter/gpt-oss `reasoning` field should be sent back per https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+                                continue
+                            elif item.id == 'reasoning_details':
+                                # TODO: OpenRouter `reasoning_details` field should be sent back per https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+                                continue
+                            elif item.id == 'reasoning_content':
+                                # TODO: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model
+                                continue
+
+                        start_tag, end_tag = self.profile.thinking_tags
+                        texts.append('\n'.join([start_tag, item.content, end_tag]))
+
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
@@ -844,7 +869,14 @@ class OpenAIResponsesModel(Model):
                 for summary in item.summary:
                     # We use the same id for all summaries so that we can merge them on the round trip.
                     # We only need to store the signature once.
-                    items.append(ThinkingPart(content=summary.text, id=item.id, signature=signature))
+                    items.append(
+                        ThinkingPart(
+                            content=summary.text,
+                            id=item.id,
+                            signature=signature,
+                            provider_name='openai' if signature else None,
+                        )
+                    )
                     signature = None
                 # TODO: Handle gpt-oss reasoning_text: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
             elif isinstance(item, responses.ResponseOutputMessage):
@@ -1097,8 +1129,7 @@ class OpenAIResponsesModel(Model):
                         reasoning_item = responses.ResponseReasoningItemParam(
                             id=item.id or _utils.generate_tool_call_id(),
                             summary=[Summary(text=item.content, type='summary_text')],
-                            # TODO: Store `provider_name` on ThinkingPart, only send back `encrypted_content` if it matches?
-                            encrypted_content=item.signature,
+                            encrypted_content=item.signature if item.provider_name == 'openai' else None,
                             type='reasoning',
                         )
                         openai_messages.append(reasoning_item)
@@ -1234,13 +1265,33 @@ class OpenAIStreamedResponse(StreamedResponse):
                     ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
+                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
+                        maybe_event.part.id = 'content'
+                        maybe_event.part.provider_name = 'openai'
                     yield maybe_event
 
-            # Handle reasoning part of the response, present in DeepSeek models
+            # The `reasoning_content` field is only present in DeepSeek models.
+            # https://api-docs.deepseek.com/guides/reasoning_model
             if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning_content', content=reasoning_content
+                    vendor_part_id='reasoning_content',
+                    id='reasoning_content',
+                    content=reasoning_content,
+                    provider_name='openai',
                 )
+
+            # The `reasoning` field is only present in OpenRouter and gpt-oss responses.
+            # https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+            # https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+            if reasoning := getattr(choice.delta, 'reasoning', None):
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning',
+                    id='reasoning',
+                    content=reasoning,
+                    provider_name='openai',
+                )
+
+            # TODO: Handle OpenRouter reasoning_details: https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
 
             for dtc in choice.delta.tool_calls or []:
                 maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -1345,13 +1396,17 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 if isinstance(chunk.item, responses.ResponseReasoningItem):
                     # Add the signature to the part corresponding to the first summary item
+                    signature = chunk.item.encrypted_content
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id=f'{chunk.item.id}-0',
-                        signature=chunk.item.encrypted_content,
+                        id=chunk.item.id,
+                        signature=signature,
+                        provider_name='openai' if signature else None,
                     )
                 pass
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
+                # TODO: Handle gpt-oss reasoning_text: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
                 yield self._parts_manager.handle_thinking_delta(
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.part.text,

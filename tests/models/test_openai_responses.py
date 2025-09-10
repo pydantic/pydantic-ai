@@ -1193,6 +1193,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         content=IsStr(),
                         id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c',
                         signature=IsStr(),
+                        provider_name='openai',
                     ),
                     ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
                     ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
@@ -1223,6 +1224,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         content=IsStr(),
                         id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c',
                         signature=IsStr(),
+                        provider_name='openai',
                     ),
                     ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
                     ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
@@ -1251,6 +1253,7 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                         content=IsStr(),
                         id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c',
                         signature=IsStr(),
+                        provider_name='openai',
                     ),
                     ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
                     ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
@@ -1279,7 +1282,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
+                    async for _ in request_stream:
                         pass
 
     assert agent_run.result is not None
@@ -1299,21 +1302,19 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                         content=IsStr(),
                         id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b',
                         signature=IsStr(),
+                        provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b',
-                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1733, details={'reasoning_tokens': 1280}),
                 model_name='o3-mini',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68bb4cbe885481a3a55b6a2e6d6aa5120b681c5350c0b73b',
+                finish_reason='stop',
             ),
         ]
     )

@@ -607,8 +607,9 @@ class MistralStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            text, _ = _map_content(content)
-            # TODO: Handle thinking deltas
+            text, thinking = _map_content(content)
+            for thought in thinking:
+                self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=thought)
             if text:
                 # Attempt to produce an output tool call from the received text
                 output_tools = {c.name: c for c in self.model_request_parameters.output_tools}

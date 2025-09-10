@@ -986,6 +986,7 @@ The basic steps for crossing a street safely include:
 I'll provide this information in a clear, helpful way, emphasizing safety without being condescending.\
 """,
                         signature='ErUBCkYIBhgCIkB9AyHADyBknnHL4dh+Yj3rg3javltU/bz1MLHKCQTEVZwvjis+DKTOFSYqZU0F2xasSofECVAmYmgtRf87AL52EgyXRs8lh+1HtZ0V+wAaDBo0eAabII+t1pdHzyIweFpD2l4j1eeUwN8UQOW+bxcN3mwu144OdOoUxmEKeOcU97wv+VF2pCsm07qcvucSKh1P/rZzWuYm7vxdnD4EVFHdBeewghoO0Ngc1MTNsxgC',
+                        provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
@@ -1060,6 +1061,7 @@ For crossing a river, I should include:
 I'll keep the format similar to my street-crossing response for consistency.\
 """,
                         signature='ErUBCkYIBhgCIkDvSvKCs5ePyYmR6zFw5i+jF7KEmortSIleqDa4gfa3pbuBclQt0TPdacouhdXFHdVSqR4qOAAAOpN7RQEUz2o6Egy9MPee6H8U4SW/G2QaDP/9ysoEvk+yNyVYZSIw+/+5wuRyc3oajwV3w0EdL9CIAXXd5thQH7DwAe3HTFvoJuF4oZ4fU+Kh6LRqxnEaKh3SSRqAH4UH/sD86duzg0jox4J/NH4C9iILVesEERgC',
+                        provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
@@ -1099,7 +1101,7 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=ThinkingPart(content='', signature='')),
+            PartStartEvent(index=0, part=ThinkingPart(content='', signature='', provider_name='anthropic')),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
             PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
@@ -1115,41 +1117,62 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
 .)
 2. Look\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='right-left in countries')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' where cars drive on the right;')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)')),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' both ways (left-', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='right-left in countries', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' where cars drive on the right;', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' right-left-right where', provider_name='anthropic')
+            ),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta=' they drive on the left)', provider_name='anthropic')
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
 
 3. Wait for\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' traffic to stop or for a clear', provider_name='anthropic'),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
  gap in traffic
 4\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='. Make eye contact with drivers if', provider_name='anthropic'),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
                     content_delta="""\
  possible
 5. Cross at\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
@@ -1158,7 +1181,8 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  a steady pace without running
 6. Continue\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
@@ -1167,10 +1191,14 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                     content_delta="""\
  watching for traffic while crossing
 7\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where')),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta='. Use pedestrian signals where', provider_name='anthropic'),
+            ),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
@@ -1178,20 +1206,31 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
  available
 
 I'll also mention\
-"""
+""",
+                    provider_name='anthropic',
                 ),
             ),
             PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' some additional safety tips and considerations for')
+                index=0,
+                delta=ThinkingPartDelta(
+                    content_delta=' some additional safety tips and considerations for', provider_name='anthropic'
+                ),
             ),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta=' different situations (busy streets, streets')
-            ),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).')),
             PartDeltaEvent(
                 index=0,
                 delta=ThinkingPartDelta(
-                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC'
+                    content_delta=' different situations (busy streets, streets', provider_name='anthropic'
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(content_delta=' with traffic signals, etc.).', provider_name='anthropic'),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=ThinkingPartDelta(
+                    signature_delta='ErUBCkYIBhgCIkA/Y+JwNMtmQyHcoo4/v2dpY6ruQifcu3pAzHbzIwpIrjIyaWaYdJOp9/0vUmBPj+LmqgiDSTktRcn0U75AlpXOEgwzVmYdHgDaZfeyBGcaDFSIZCHzzrZQkolJKCIwhMETosYLx+Dw/vKa83hht943z9R3/ViOqokT25JmMfaGOntuo+33Zxqf5rqUbkQ3Kh34rIqqnKaFSVr7Nn85z8OFN3Cwzz+HmXl2FgCXOxgC',
+                    provider_name='anthropic',
                 ),
             ),
             PartStartEvent(index=1, part=IsInstance(TextPart)),

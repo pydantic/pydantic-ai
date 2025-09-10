@@ -376,8 +376,8 @@ class GroqModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        # Groq does not yet support sending back reasoning
-                        pass
+                        start_tag, end_tag = self.profile.thinking_tags
+                        texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from groq
                         pass

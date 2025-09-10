@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import io
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -78,6 +77,7 @@ try:
         BetaRawMessageStopEvent,
         BetaRawMessageStreamEvent,
         BetaRedactedThinkingBlock,
+        BetaRedactedThinkingBlockParam,
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
@@ -321,14 +321,11 @@ class AnthropicModel(Model):
                     )
                 )
             elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
-                # TODO: Handle redacted thinking
-                warnings.warn(
-                    'Pydantic AI currently does not handle redacted thinking blocks. '
-                    'If you have a suggestion on how we should handle them, please open an issue.',
-                    UserWarning,
+                items.append(
+                    ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name='anthropic')
                 )
             elif isinstance(item, BetaThinkingBlock):
-                items.append(ThinkingPart(content=item.thinking, signature=item.signature))
+                items.append(ThinkingPart(content=item.thinking, signature=item.signature, provider_name='anthropic'))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -446,6 +443,7 @@ class AnthropicModel(Model):
                     | BetaWebSearchToolResultBlockParam
                     | BetaCodeExecutionToolResultBlockParam
                     | BetaThinkingBlockParam
+                    | BetaRedactedThinkingBlockParam
                 ] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
@@ -460,13 +458,29 @@ class AnthropicModel(Model):
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
-                        if response_part.signature is not None:  # pragma: no branch
+                        if (
+                            response_part.provider_name == 'anthropic' and response_part.signature is not None
+                        ):  # pragma: no branch
+                            if response_part.id == 'redacted_thinking':
+                                assistant_content_params.append(
+                                    BetaRedactedThinkingBlockParam(
+                                        data=response_part.signature,
+                                        type='redacted_thinking',
+                                    )
+                                )
+                            else:
+                                assistant_content_params.append(
+                                    BetaThinkingBlockParam(
+                                        thinking=response_part.content,
+                                        signature=response_part.signature,
+                                        type='thinking',
+                                    )
+                                )
+                        elif response_part.content:
+                            start_tag, end_tag = self.profile.thinking_tags
                             assistant_content_params.append(
-                                BetaThinkingBlockParam(
-                                    # TODO: Store `provider_name` on ThinkingPart, only send back `signature` if it matches?
-                                    thinking=response_part.content,
-                                    signature=response_part.signature,
-                                    type='thinking',
+                                BetaTextBlockParam(
+                                    text='\n'.join([start_tag, response_part.content, end_tag]), type='text'
                                 )
                             )
                     elif isinstance(response_part, BuiltinToolCallPart):
@@ -621,6 +635,15 @@ class AnthropicStreamedResponse(StreamedResponse):
                         vendor_part_id='thinking',
                         content=current_block.thinking,
                         signature=current_block.signature,
+                        provider_name='anthropic',
+                    )
+                elif isinstance(current_block, BetaRedactedThinkingBlock):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='redacted_thinking',
+                        id='redacted_thinking',
+                        content='',
+                        signature=current_block.data,
+                        provider_name='anthropic',
                     )
                 elif isinstance(current_block, BetaToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -643,11 +666,15 @@ class AnthropicStreamedResponse(StreamedResponse):
                         yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking', content=event.delta.thinking
+                        vendor_part_id='thinking',
+                        content=event.delta.thinking,
+                        provider_name='anthropic',
                     )
                 elif isinstance(event.delta, BetaSignatureDelta):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking', signature=event.delta.signature
+                        vendor_part_id='thinking',
+                        signature=event.delta.signature,
+                        provider_name='anthropic',
                     )
                 elif (
                     current_block

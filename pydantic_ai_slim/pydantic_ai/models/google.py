@@ -594,7 +594,13 @@ class GeminiStreamedResponse(StreamedResponse):
             for part in parts:
                 if part.text is not None:
                     if part.thought:
-                        yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
+                        signature = part.thought_signature.decode('utf-8') if part.thought_signature else None
+                        yield self._parts_manager.handle_thinking_delta(
+                            vendor_part_id='thinking',
+                            content=part.text,
+                            signature=signature,
+                            provider_name='google' if signature else None,
+                        )
                     else:
                         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                         if maybe_event is not None:  # pragma: no branch
@@ -644,7 +650,9 @@ def _content_model_response(m: ModelResponse) -> ContentDict:
                 {
                     'text': item.content,
                     'thought': True,
-                    'thought_signature': item.signature.encode('utf-8') if item.signature else None,
+                    'thought_signature': item.signature.encode('utf-8')
+                    if item.provider_name == 'google' and item.signature
+                    else None,
                 }
             )
         elif isinstance(item, BuiltinToolCallPart):
@@ -689,7 +697,13 @@ def _process_response_from_parts(
         elif part.text is not None:
             if part.thought:
                 signature = part.thought_signature.decode('utf-8') if part.thought_signature else None
-                items.append(ThinkingPart(content=part.text, signature=signature))
+                items.append(
+                    ThinkingPart(
+                        content=part.text,
+                        signature=signature,
+                        provider_name='google' if signature else None,
+                    )
+                )
             else:
                 items.append(TextPart(content=part.text))
         elif part.function_call:

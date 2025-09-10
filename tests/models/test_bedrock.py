@@ -651,6 +651,7 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                     ThinkingPart(
                         content=IsStr(),
                         signature='ErcBCkgIAhABGAIiQMuiyDObz/Z/ryneAVaQDk4iH6JqSNKJmJTwpQ1RqPz07UFTEffhkJW76u0WVKZaYykZAHmZl/IbQOPDLGU0nhQSDDuHLg82YIApYmWyfhoMe8vxT1/WGTJwyCeOIjC5OfF0+c6JOAvXvv9ElFXHo3yS3am1V0KpTiFj4YCy/bqfxv1wFGBw0KOMsTgq7ugqHeuOpzNM91a/RgtYHUdrcAKm9iCRu24jIOCjr5+h',
+                        provider_name='bedrock',
                     ),
                     IsInstance(TextPart),
                 ],
@@ -764,7 +765,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='ly and ask')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' how I can help')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' them today.')),
-            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr())),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='bedrock')),
             PartStartEvent(index=1, part=TextPart(content='Hello! It')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="'s nice")),
@@ -789,6 +790,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                     ThinkingPart(
                         content='The user has greeted me with a simple "Hello". I should respond in a friendly and welcoming manner. This is a straightforward greeting, so I\'ll respond warmly and ask how I can help them today.',
                         signature=IsStr(),
+                        provider_name='bedrock',
                     ),
                     TextPart(content="Hello! It's nice to meet you. How can I help you today?"),
                 ],
