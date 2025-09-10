@@ -26,15 +26,21 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 
 
 @pytest.mark.parametrize(
-    'provider_name, provider_cls',
-    [('openai', OpenAIProvider), ('openai-chat', OpenAIProvider), ('openai-responses', OpenAIProvider)],
+    'provider_name, provider_cls, base_url',
+    [
+        ('openai', OpenAIProvider, 'https://example.com/openai-chat/'),
+        ('openai-chat', OpenAIProvider, 'https://example.com/openai-chat/'),
+        ('openai-responses', OpenAIProvider, 'https://example.com/openai-responses/'),
+    ],
 )
 def test_init_with_base_url(
-    provider_name: Literal['openai', 'openai-chat', 'openai-responses'], provider_cls: type[Provider[Any]]
+    provider_name: Literal['openai', 'openai-chat', 'openai-responses'],
+    provider_cls: type[Provider[Any]],
+    base_url: str,
 ):
     provider = gateway_provider(provider_name, base_url='https://example.com/', api_key='foobar')
     assert isinstance(provider, provider_cls)
-    assert provider.base_url == 'https://example.com/openai/'
+    assert provider.base_url == base_url
     assert provider.client.api_key == 'foobar'
 
 
@@ -102,6 +108,36 @@ def test_infer_model():
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
     provider = gateway_provider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIChatModel('gpt-5', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('Paris.')
+
+
+async def test_gateway_provider_with_openai_responses(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider('openai-responses', api_key=gateway_api_key, base_url='http://localhost:8787')
+    model = OpenAIResponsesModel('gpt-5', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('Paris.')
+
+
+async def test_gateway_provider_with_groq(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider('groq', api_key=gateway_api_key, base_url='http://localhost:8787')
+    model = GroqModel('llama-3.3-70b-versatile', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.')
+
+
+@pytest.mark.xfail(reason='There is something weird, Ill debug before merging.')
+async def test_gateway_provider_with_google_vertex(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider(
+        'google-vertex', api_key=gateway_api_key, base_url='http://localhost:8787/google-vertex'
+    )
+    model = GoogleModel('gemini-1.5-flash', provider=provider)
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')

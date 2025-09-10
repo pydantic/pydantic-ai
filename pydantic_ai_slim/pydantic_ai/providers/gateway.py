@@ -74,14 +74,18 @@ def gateway_provider(
             ' to use the Pydantic AI Gateway provider.'
         )
 
-    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'http://localhost:8787/')
+    base_url = base_url or os.getenv('PYDANTIC_AI_GATEWAY_BASE_URL', 'http://localhost:8787')
     http_client = http_client or cached_async_http_client(provider=f'gateway-{upstream_provider}')
     http_client.event_hooks = {'request': [_request_hook]}
 
-    if upstream_provider in ('openai', 'openai-chat', 'openai-responses'):
+    if upstream_provider in ('openai', 'openai-chat'):
         from .openai import OpenAIProvider
 
-        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai'), http_client=http_client)
+        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai-chat'), http_client=http_client)
+    elif upstream_provider == 'openai-responses':
+        from .openai import OpenAIProvider
+
+        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai-responses'), http_client=http_client)
     elif upstream_provider == 'groq':
         from .groq import GroqProvider
 
@@ -94,13 +98,13 @@ def gateway_provider(
         return GoogleProvider(
             client=GoogleClient(
                 vertexai=True,
+                api_key='unset',
                 http_options={
-                    'base_url': urljoin(base_url, 'google'),
-                    'headers': {'User-Agent': get_user_agent()},
+                    'base_url': base_url,
+                    'headers': {'User-Agent': get_user_agent(), 'Authorization': api_key},
                     # TODO(Marcelo): Until https://github.com/googleapis/python-genai/issues/1357 is solved.
                     'async_client_args': {
                         'transport': httpx.AsyncHTTPTransport(),
-                        'authorization': f'Bearer {api_key}',
                         'event_hooks': {'request': [_request_hook]},
                     },
                 },

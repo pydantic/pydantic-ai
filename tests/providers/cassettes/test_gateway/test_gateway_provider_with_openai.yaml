@@ -20,7 +20,7 @@ interactions:
         role: user
       model: gpt-5
       stream: false
-    uri: http://localhost:8787/openai/chat/completions
+    uri: http://localhost:8787/openai-chat/chat/completions
   response:
     headers:
       access-control-expose-headers:
@@ -28,19 +28,19 @@ interactions:
       alt-svc:
       - h3=":443"; ma=86400
       content-length:
-      - '614'
+      - '615'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '2744'
+      - '2282'
       openai-project:
       - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       pydantic-ai-gateway-price-estimate:
-      - 0.0001USD
+      - 0.0008USD
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       transfer-encoding:
@@ -54,26 +54,26 @@ interactions:
           content: Paris.
           refusal: null
           role: assistant
-      created: 1757338914
-      id: chatcmpl-CDWPyq85qLCzqyBfC0T8ppg0T42qw
+      created: 1757509365
+      id: chatcmpl-CEElBMU17om8DwxI0UZqQ5g1TC9G2
       model: gpt-5-2025-08-07
       object: chat.completion
       service_tier: default
       system_fingerprint: null
       usage:
-        completion_tokens: 11
+        completion_tokens: 75
         completion_tokens_details:
           accepted_prediction_tokens: 0
           audio_tokens: 0
-          reasoning_tokens: 0
+          reasoning_tokens: 64
           rejected_prediction_tokens: 0
         prompt_tokens: 13
         prompt_tokens_details:
           audio_tokens: 0
           cached_tokens: 0
         pydantic_ai_gateway:
-          cost_estimate: 0.00012625
-        total_tokens: 24
+          cost_estimate: 0.00076625
+        total_tokens: 88
     status:
       code: 200
       message: OK
