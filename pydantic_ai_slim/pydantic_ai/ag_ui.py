@@ -68,9 +68,8 @@ try:
         TextMessageContentEvent,
         TextMessageEndEvent,
         TextMessageStartEvent,
-        # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
-        # ThinkingEndEvent,
-        # ThinkingStartEvent,
+        ThinkingEndEvent,
+        ThinkingStartEvent,
         ThinkingTextMessageContentEvent,
         ThinkingTextMessageEndEvent,
         ThinkingTextMessageStartEvent,
@@ -396,10 +395,9 @@ async def _agent_stream(run: AgentRun[AgentDepsT, Any]) -> AsyncIterator[BaseEve
                     yield stream_ctx.part_end
                     stream_ctx.part_end = None
                 if stream_ctx.thinking:
-                    # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
-                    # yield ThinkingEndEvent(
-                    #     type=EventType.THINKING_END,
-                    # )
+                    yield ThinkingEndEvent(
+                        type=EventType.THINKING_END,
+                    )
                     stream_ctx.thinking = False
         elif isinstance(node, CallToolsNode):
             async with node.stream(run.ctx) as handle_stream:
@@ -431,10 +429,9 @@ async def _handle_model_request_event(  # noqa: C901
         part = agent_event.part
         if isinstance(part, ThinkingPart):  # pragma: no branch
             if not stream_ctx.thinking:
-                # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
-                # yield ThinkingStartEvent(
-                #     type=EventType.THINKING_START,
-                # )
+                yield ThinkingStartEvent(
+                    type=EventType.THINKING_START,
+                )
                 stream_ctx.thinking = True
 
             if part.content:
@@ -450,10 +447,9 @@ async def _handle_model_request_event(  # noqa: C901
                 )
         else:
             if stream_ctx.thinking:
-                # TODO: Enable once https://github.com/ag-ui-protocol/ag-ui/issues/289 is resolved.
-                # yield ThinkingEndEvent(
-                #     type=EventType.THINKING_END,
-                # )
+                yield ThinkingEndEvent(
+                    type=EventType.THINKING_END,
+                )
                 stream_ctx.thinking = False
 
             if isinstance(part, TextPart):
