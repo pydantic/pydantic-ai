@@ -1,9 +1,19 @@
 interactions:
 - request:
     headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '2820'
       content-type:
       - application/json
-    method: post
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
     parsed_body:
       contents:
       - parts:
@@ -77,6 +87,7 @@ interactions:
           parameters:
             properties:
               value:
+                default: false
                 type: BOOLEAN
             type: OBJECT
         - description: ''
@@ -109,17 +120,26 @@ interactions:
             required:
             - foo
             type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+        - description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            properties:
+              question:
+                type: STRING
+            required:
+            - question
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '1956'
+      - '1507'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=3710
+      - gfet4t7; dur=2384
       transfer-encoding:
       - chunked
       vary:
@@ -130,47 +150,56 @@ interactions:
       candidates:
       - content:
           parts:
-          - text: The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.
-            thoughtSignature: CroGAVSoXO6j4xLFiplrUxAhD6k0wVQlsvqVKDHcFbqBjdLkdJd+h5gAQaxSeziYR8v0x/jTR6ehSM7/NtsWEdpyGPGk49DlofKiIv6sskq8Tk2ga5OzBupXR2ScaDV4SHUncCpVc3KkyaZtoDtpifYYDwBqaDQDLD6jjB5iGJ3ztgrlyE+P9Vc6u4EEyHy8Z+qLrNERWqYecFM4a3dnoSr+utk7fF78eZbWTC54hxG3mar7j41LHiHm4aDAMCXKRk5lBSW5yIahPI+VbyyQRsYBTeqifzhGelln5HV1+/ax2+m1LDYTHfq1bQXvAt3gv6z/wMlBmNgTDeU3X8HvzYoyYmHYP2uJpuUnuZTftDiIeC2o95aXqwsswyuh6etluzR7uWf2G1RaiVaXcCtTRUkDvYlaHppcGy9nsE+88nY4TatIPMfRohsrdupDtVhdhba6Bg+puJaFEIzl6kjbSDj9EWGZEFNEIA+9Wh6u4cSWS5G1kr1H238PQL7QuqATsccz6LWWCSMYwjAMXDvEmaLj88QmBCvwtVCvR9xTlq15TgUgGD5fMheWs0mvXcbs2ZiwsfU8WHmRbrNtzmOP7Johz4BOoIuxOkuJ4ssnnpelp4Q0VG57ZZCZjkVDtnBqGuC3Y8UIwDGlYAooZcul0Jv1Nkv0jBEu6Uvv9Wlgq4RmlixR2m/9GcOevDcbFaNM8Cqw4T4YoytHyQPvlEv6zgz/LEhW1ttav7PLVJsLKkSJRbkFsjiI3SQll7d3HloJ5cyto6tHqnA+AK0KmIhGngBMfHI+jgDpo+XMb8jE7fImycyheml7TTzZSaxC6zCuJ2Eqc2XjNEjqZLvCTNiNSt1oSleDYdotjOSEPz3pqLw3JIGw/6sirVjJZ1lvzwOrU18hTwu0GaIxH6/tnFAbV+ZRR5WOm4eMnMydVqBHTC9erUnSPumjtCjaoxo/VqcVGK4aNPg3CVQnukujel4UP+TMOVEuwBGrkbyrZJdb3FRGgTK0J5vDaTrukJkLhjFnizm3W4JTECD51xKvjBpgT0YLBOsCu+ZWoKuIoFlLsKW6FU8MGOQts9euqcgmEPJW0OqujMTo9JshAKMWlQ==
           - functionCall:
               args: {}
               name: get_audio_resource_link
+            thoughtSignature: Cu0EAdHtim/iEdfaraHKrHSS/TNJ8ls71bg4FpUo64uz80/J/vr7RPZxxpyX5sJEg95p8cQ+5YU2KFwfHFeLA7MXkbZyyVTNst8crFcLOaEHY/SfUAQWdaxGsLucv73i6n31NRSRBlOejyKdXzyC0pai39ugvt+BUmwE6/xWGb6jF9OkGRKiN7SqsB0rnJhilJXS7FjtpS+Xx0mQGETPWRtUmrUFoqNYylOVecuyb2bGGm8CaJVhYXfJltuMQmX2XkU5ZA85MbV/TcuVJc7tMK6zMRdYZiQ8hyeMKzvCsLMmzqRqS5kcNF/auBa4GskaHHWBENlCkNIHJ6GpT4EgP4Vel3xnq6A+TroS9qyIdbfDD1qEiX9/ndyvhB9IlBviU5oB5JhtvagPyTmZc9H9BefJi4UJXqsChzvWp6MkyYQ+go4PiOL2CfU3ebNfxbdoLSLvwmhKOZQEPSzTVIar5mlozL8pIuhYaDJajvxualF+8qBk1GkaKvHNhB4jwiMPyEJfThflpVGqgC3GPCXOH5XULiMRfDXZg0e76UffPVq33R0KSuW/GDF2X3T2ddJuI1Z1KtqH4/vJODwxrjUKMbdMb4HU1kn+QOWai6RONdYqdnSEauUle4NJvfSisKhRntixXKJQ+ms2/kwjMdzXB3GhJVlkB9q8K2PNO9ClAy/jHR01ThBgsbLOnJfZ5sdxXrE6n/+a4+LwzfczfOJrRXlzbSXYuPPq4riuXIymaVgBNCeGMYIt5maF0tzT4mez05GyeV1bBhmDJFWBmm2h0+AwbcCAr0dqnEF4rFF91PGAdTC/TH2tghT9JTq3TpLL
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: KHKBaP7DCv2dz7IPq97f6A8
+      modelVersion: gemini-2.5-pro
+      responseId: Pe_BaJGqOKSdz7IP0NqogA8
       usageMetadata:
-        candidatesTokenCount: 41
-        promptTokenCount: 561
+        candidatesTokenCount: 14
+        promptTokenCount: 605
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 561
-        thoughtsTokenCount: 195
-        totalTokenCount: 797
+          tokenCount: 605
+        thoughtsTokenCount: 154
+        totalTokenCount: 773
     status:
       code: 200
       message: OK
 - request:
     headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '75906'
       content-type:
       - application/json
-    method: post
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
     parsed_body:
       contents:
       - parts:
         - text: What's the content of the audio resource via get_audio_resource_link?
         role: user
       - parts:
-        - text: The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.
         - functionCall:
             args: {}
-            id: pyd_ai_acb3c2780e3642e9b8bca61de5a63eed
+            id: pyd_ai_396803870f644840b6ed84639451855c
             name: get_audio_resource_link
+          thoughtSignature: Cu0EAdHtim_iEdfaraHKrHSS_TNJ8ls71bg4FpUo64uz80_J_vr7RPZxxpyX5sJEg95p8cQ-5YU2KFwfHFeLA7MXkbZyyVTNst8crFcLOaEHY_SfUAQWdaxGsLucv73i6n31NRSRBlOejyKdXzyC0pai39ugvt-BUmwE6_xWGb6jF9OkGRKiN7SqsB0rnJhilJXS7FjtpS-Xx0mQGETPWRtUmrUFoqNYylOVecuyb2bGGm8CaJVhYXfJltuMQmX2XkU5ZA85MbV_TcuVJc7tMK6zMRdYZiQ8hyeMKzvCsLMmzqRqS5kcNF_auBa4GskaHHWBENlCkNIHJ6GpT4EgP4Vel3xnq6A-TroS9qyIdbfDD1qEiX9_ndyvhB9IlBviU5oB5JhtvagPyTmZc9H9BefJi4UJXqsChzvWp6MkyYQ-go4PiOL2CfU3ebNfxbdoLSLvwmhKOZQEPSzTVIar5mlozL8pIuhYaDJajvxualF-8qBk1GkaKvHNhB4jwiMPyEJfThflpVGqgC3GPCXOH5XULiMRfDXZg0e76UffPVq33R0KSuW_GDF2X3T2ddJuI1Z1KtqH4_vJODwxrjUKMbdMb4HU1kn-QOWai6RONdYqdnSEauUle4NJvfSisKhRntixXKJQ-ms2_kwjMdzXB3GhJVlkB9q8K2PNO9ClAy_jHR01ThBgsbLOnJfZ5sdxXrE6n_-a4-LwzfczfOJrRXlzbSXYuPPq4riuXIymaVgBNCeGMYIt5maF0tzT4mez05GyeV1bBhmDJFWBmm2h0-AwbcCAr0dqnEF4rFF91PGAdTC_TH2tghT9JTq3TpLL
         role: model
       - parts:
         - functionResponse:
-            id: pyd_ai_acb3c2780e3642e9b8bca61de5a63eed
+            id: pyd_ai_396803870f644840b6ed84639451855c
             name: get_audio_resource_link
             response:
               return_value: See file 2d36ae
@@ -247,6 +276,7 @@ interactions:
           parameters:
             properties:
               value:
+                default: false
                 type: BOOLEAN
             type: OBJECT
         - description: ''
@@ -279,17 +309,26 @@ interactions:
             required:
             - foo
             type: OBJECT
-    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro-preview-03-25:generateContent
+        - description: Use elicitation callback to ask the user a question.
+          name: use_elicitation
+          parameters:
+            properties:
+              question:
+                type: STRING
+            required:
+            - question
+            type: OBJECT
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
   response:
     headers:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '596'
+      - '589'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=2162
+      - gfet4t7; dur=2033
       transfer-encoding:
       - chunked
       vary:
@@ -304,17 +343,17 @@ interactions:
           role: model
         finishReason: STOP
         index: 0
-      modelVersion: models/gemini-2.5-pro
-      responseId: KnKBaNORHOHOz7IPy77GuQE
+      modelVersion: gemini-2.5-pro
+      responseId: QO_BaLC6AozQz7IPh5Kj4Q4
       usageMetadata:
         candidatesTokenCount: 5
-        promptTokenCount: 784
+        promptTokenCount: 801
         promptTokensDetails:
         - modality: TEXT
-          tokenCount: 640
+          tokenCount: 657
         - modality: AUDIO
           tokenCount: 144
-        totalTokenCount: 789
+        totalTokenCount: 806
     status:
       code: 200
       message: OK

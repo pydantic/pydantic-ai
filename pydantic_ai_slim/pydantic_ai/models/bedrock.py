@@ -66,7 +66,6 @@ if TYPE_CHECKING:
         PerformanceConfigurationTypeDef,
         PromptVariableValuesTypeDef,
         ReasoningContentBlockOutputTypeDef,
-        ReasoningTextBlockTypeDef,
         SystemContentBlockTypeDef,
         ToolChoiceTypeDef,
         ToolConfigurationTypeDef,
@@ -292,13 +291,24 @@ class BedrockConverseModel(Model):
         if message := response['output'].get('message'):  # pragma: no branch
             for item in message['content']:
                 if reasoning_content := item.get('reasoningContent'):
-                    reasoning_text = reasoning_content.get('reasoningText')
-                    if reasoning_text:  # pragma: no branch
-                        thinking_part = ThinkingPart(
-                            content=reasoning_text['text'],
-                            signature=reasoning_text.get('signature'),
+                    if redacted_content := reasoning_content.get('redactedContent'):
+                        items.append(
+                            ThinkingPart(
+                                id='redacted_content',
+                                content='',
+                                signature=redacted_content.decode('utf-8'),
+                                provider_name=self.system,
+                            )
                         )
-                        items.append(thinking_part)
+                    elif reasoning_text := reasoning_content.get('reasoningText'):  # pragma: no branch
+                        signature = reasoning_text.get('signature')
+                        items.append(
+                            ThinkingPart(
+                                content=reasoning_text['text'],
+                                signature=signature,
+                                provider_name=self.system if signature else None,
+                            )
+                        )
                 if text := item.get('text'):
                     items.append(TextPart(content=text))
                 elif tool_use := item.get('toolUse'):
@@ -494,19 +504,26 @@ class BedrockConverseModel(Model):
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        if BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts:
-                            reasoning_text: ReasoningTextBlockTypeDef = {
-                                'text': item.content,
-                            }
-                            if item.signature:
-                                reasoning_text['signature'] = item.signature
-                            reasoning_content: ReasoningContentBlockOutputTypeDef = {
-                                'reasoningText': reasoning_text,
-                            }
+                        if (
+                            item.provider_name == self.system
+                            and item.signature
+                            and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
+                        ):
+                            if item.id == 'redacted_content':
+                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                    'redactedContent': item.signature.encode('utf-8'),
+                                }
+                            else:
+                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                    'reasoningText': {
+                                        'text': item.content,
+                                        'signature': item.signature,
+                                    }
+                                }
                             content.append({'reasoningContent': reasoning_content})
                         else:
-                            # NOTE: We don't pass the thinking part to Bedrock for models other than Claude since it raises an error.
-                            pass
+                            start_tag, end_tag = self.profile.thinking_tags
+                            content.append({'text': '\n'.join([start_tag, item.content, end_tag])})
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         pass
                     else:
@@ -660,11 +677,22 @@ class BedrockStreamedResponse(StreamedResponse):
                     index = content_block_delta['contentBlockIndex']
                     delta = content_block_delta['delta']
                     if 'reasoningContent' in delta:
-                        yield self._parts_manager.handle_thinking_delta(
-                            vendor_part_id=index,
-                            content=delta['reasoningContent'].get('text'),
-                            signature=delta['reasoningContent'].get('signature'),
-                        )
+                        if redacted_content := delta['reasoningContent'].get('redactedContent'):
+                            yield self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=index,
+                                id='redacted_content',
+                                content='',
+                                signature=redacted_content.decode('utf-8'),
+                                provider_name=self.provider_name,
+                            )
+                        else:
+                            signature = delta['reasoningContent'].get('signature')
+                            yield self._parts_manager.handle_thinking_delta(
+                                vendor_part_id=index,
+                                content=delta['reasoningContent'].get('text'),
+                                signature=signature,
+                                provider_name=self.provider_name if signature else None,
+                            )
                     if 'text' in delta:
                         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=index, content=delta['text'])
                         if maybe_event is not None:  # pragma: no branch
