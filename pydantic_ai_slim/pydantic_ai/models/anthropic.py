@@ -476,7 +476,7 @@ class AnthropicModel(Model):
                                         type='thinking',
                                     )
                                 )
-                        elif response_part.content:
+                        elif response_part.content:  # pragma: no branch
                             start_tag, end_tag = self.profile.thinking_tags
                             assistant_content_params.append(
                                 BetaTextBlockParam(
@@ -626,20 +626,20 @@ class AnthropicStreamedResponse(StreamedResponse):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
                     maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content=current_block.text
+                        vendor_part_id=event.index, content=current_block.text
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(current_block, BetaThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking',
+                        vendor_part_id=event.index,
                         content=current_block.thinking,
                         signature=current_block.signature,
                         provider_name=self.provider_name,
                     )
                 elif isinstance(current_block, BetaRedactedThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='redacted_thinking',
+                        vendor_part_id=event.index,
                         id='redacted_thinking',
                         content='',
                         signature=current_block.data,
@@ -660,19 +660,19 @@ class AnthropicStreamedResponse(StreamedResponse):
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
                     maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content=event.delta.text
+                        vendor_part_id=event.index, content=event.delta.text
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking',
+                        vendor_part_id=event.index,
                         content=event.delta.thinking,
                         provider_name=self.provider_name,
                     )
                 elif isinstance(event.delta, BetaSignatureDelta):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking',
+                        vendor_part_id=event.index,
                         signature=event.delta.signature,
                         provider_name=self.provider_name,
                     )

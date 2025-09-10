@@ -613,9 +613,9 @@ async def test_bedrock_multiple_documents_in_history(
     )
 
 
-async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_provider: BedrockProvider):
-    deepseek_model = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
-    agent = Agent(deepseek_model)
+async def test_bedrock_model_thinking_part_deepseek(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel('us.deepseek.r1-v1:0', provider=bedrock_provider)
+    agent = Agent(m)
 
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
@@ -623,7 +623,7 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=12, output_tokens=1133),
+                usage=RequestUsage(input_tokens=12, output_tokens=693),
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
@@ -633,15 +633,70 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
         ]
     )
 
-    anthropic_model = BedrockConverseModel('us.anthropic.claude-sonnet-4-20250514-v1:0', provider=bedrock_provider)
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
-        model=anthropic_model,
-        model_settings=BedrockModelSettings(
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr()), ThinkingPart(content=IsStr())],
+                usage=RequestUsage(input_tokens=33, output_tokens=907),
+                model_name='us.deepseek.r1-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_anthropic(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
             bedrock_additional_model_requests_fields={
                 'thinking': {'type': 'enabled', 'budget_tokens': 1024},
             }
         ),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=42, output_tokens=313),
+                model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
         message_history=result.all_messages(),
     )
     assert result.new_messages() == snapshot(
@@ -663,13 +718,202 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                     ),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=1320, output_tokens=609),
+                usage=RequestUsage(input_tokens=334, output_tokens=432),
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
                 provider_details={'finish_reason': 'end_turn'},
                 finish_reason='stop',
             ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted(allow_model_requests: None, bedrock_provider: BedrockProvider):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    result = await agent.run(
+        'ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=176),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'What was that?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What was that?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=182, output_tokens=258),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_bedrock_model_thinking_part_redacted_stream(
+    allow_model_requests: None, bedrock_provider: BedrockProvider
+):
+    m = BedrockConverseModel(
+        'us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+        provider=bedrock_provider,
+        settings=BedrockModelSettings(
+            bedrock_additional_model_requests_fields={
+                'thinking': {'type': 'enabled', 'budget_tokens': 1024},
+            }
+        ),
+    )
+    agent = Agent(m)
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_content',
+                        signature=IsStr(),
+                        provider_name='bedrock',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=92, output_tokens=253),
+                model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
+                timestamp=IsDatetime(),
+                provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature=IsStr(),
+                    provider_name='bedrock',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_content',
+                    signature=IsStr(),
+                    provider_name='bedrock',
+                ),
+            ),
+            PartStartEvent(index=2, part=TextPart(content="I notice you've sent what appears to be some")),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of command or trigger string, but I don')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="'t respond to special codes or")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=" triggers. That string doesn't have")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' any special meaning to me.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+If you have a question you\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta="'d like to discuss or need assistance with something")
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=", I'd be happy to help in")),
+            PartDeltaEvent(
+                index=2, delta=TextPartDelta(content_delta=' a straightforward conversation. What would you like to')
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' talk about today?')),
         ]
     )
 

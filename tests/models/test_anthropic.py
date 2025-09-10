@@ -1068,6 +1068,210 @@ I'll keep the format similar to my street-crossing response for consistency.\
     )
 
 
+async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-7-sonnet-20250219', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run(
+        'ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=92,
+                    output_tokens=196,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 92,
+                        'output_tokens': 196,
+                    },
+                ),
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01TbZ1ZKNMPq28AgBLyLX3c4',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'What was that?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What was that?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=168,
+                    output_tokens=232,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 168,
+                        'output_tokens': 232,
+                    },
+                ),
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_012oSSVsQdwoGH6b2fryM4fF',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_anthropic_model_thinking_part_redacted_stream(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel('claude-3-7-sonnet-20250219', provider=AnthropicProvider(api_key=anthropic_api_key))
+    settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
+    agent = Agent(m, model_settings=settings)
+
+    event_parts: list[Any] = []
+    async with agent.iter(
+        user_prompt='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB'
+    ) as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=92,
+                    output_tokens=189,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 92,
+                        'output_tokens': 189,
+                    },
+                ),
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_018XZkwvj9asBiffg3fXt88s',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature=IsStr(),
+                    provider_name='anthropic',
+                ),
+            ),
+            PartStartEvent(
+                index=1,
+                part=ThinkingPart(
+                    content='',
+                    id='redacted_thinking',
+                    signature=IsStr(),
+                    provider_name='anthropic',
+                ),
+            ),
+            PartStartEvent(index=2, part=TextPart(content="I notice that you've sent what")),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' appears to be some')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' kind of test string')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=" or command. I don't have")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' any special "magic string"')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' triggers or backdoor commands')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' that would expose internal systems or')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' change my behavior.')),
+            PartDeltaEvent(
+                index=2,
+                delta=TextPartDelta(
+                    content_delta="""\
+
+
+I'm Claude\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=', an AI assistant create')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='d by Anthropic to')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' be helpful, harmless')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=', and honest. How')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' can I assist you today with')),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' a legitimate task or question?')),
+        ]
+    )
+
+
 async def test_anthropic_model_thinking_part_from_other_model(
     allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
 ):
@@ -1182,7 +1386,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
 
 
 async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, anthropic_api_key: str):
-    m = AnthropicModel('claude-3-7-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     agent = Agent(m, model_settings=settings)
 
@@ -2376,23 +2580,141 @@ async def test_anthropic_web_search_tool_stream(allow_model_requests: None, anth
                     async for event in request_stream:
                         event_parts.append(event)
 
-    assert event_parts.pop(0) == snapshot(
-        PartStartEvent(index=0, part=TextPart(content='Let me search for more specific breaking'))
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='Let me search for more specific breaking')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' news stories to get clearer headlines.')),
+            PartStartEvent(index=1, part=TextPart(content='Base')),
+            PartDeltaEvent(
+                index=1, delta=TextPartDelta(content_delta='d on the search results, I can identify the top')
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' 3 major news stories from aroun')),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+d the world today (August 14, 2025):
+
+## Top\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=TextPartDelta(
+                    content_delta="""\
+ 3 World News Stories Today
+
+**\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='1. Trump-Putin Summit and Ukraine Crisis')),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta='**\n')),
+            PartStartEvent(
+                index=2,
+                part=TextPart(
+                    content='European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine'
+                ),
+            ),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="'s Volodymyr Zel")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="enskyy and NATO's chief ahea")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta="d of Friday's U.S.-")),
+            PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='Russia summit')),
+            PartStartEvent(index=3, part=TextPart(content='. ')),
+            PartStartEvent(index=4, part=TextPart(content='The White House lowered its expectations surrounding')),
+            PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' the Trump-Putin summit on Friday')),
+            PartStartEvent(index=5, part=TextPart(content='. ')),
+            PartStartEvent(
+                index=6, part=TextPart(content='In a surprise move just days before the Trump-Putin summit')
+            ),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=', the White House swapped out pro')),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta="-EU PM Tusk for Poland's new president –")),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=" a political ally who once opposed Ukraine's")),
+            PartDeltaEvent(index=6, delta=TextPartDelta(content_delta=' NATO and EU bids')),
+            PartStartEvent(
+                index=7,
+                part=TextPart(
+                    content="""\
+.
+
+**2. Trump's Federal Takeover of Washington D\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='.C.**')),
+            PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='\n')),
+            PartStartEvent(
+                index=8,
+                part=TextPart(
+                    content="Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's tak"
+                ),
+            ),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta="eover of the city's police entered its thir")),
+            PartDeltaEvent(index=8, delta=TextPartDelta(content_delta='d night')),
+            PartStartEvent(index=9, part=TextPart(content='. ')),
+            PartStartEvent(
+                index=10,
+                part=TextPart(
+                    content="National Guard troops arrived in Washington, D.C., following President Trump's deployment an"
+                ),
+            ),
+            PartDeltaEvent(
+                index=10, delta=TextPartDelta(content_delta='d federalization of local police to crack down on crime')
+            ),
+            PartDeltaEvent(index=10, delta=TextPartDelta(content_delta=" in the nation's capital")),
+            PartStartEvent(index=11, part=TextPart(content='. ')),
+            PartStartEvent(
+                index=12, part=TextPart(content='Over 100 arrests made as National Guard rolls into DC under')
+            ),
+            PartDeltaEvent(index=12, delta=TextPartDelta(content_delta=" Trump's federal takeover")),
+            PartStartEvent(
+                index=13,
+                part=TextPart(
+                    content="""\
+.
+
+**3. Air\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta=' Canada Flight Disruption')),
+            PartDeltaEvent(index=13, delta=TextPartDelta(content_delta='**\n')),
+            PartStartEvent(
+                index=14,
+                part=TextPart(
+                    content='Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend'
+                ),
+            ),
+            PartStartEvent(index=15, part=TextPart(content='. ')),
+            PartStartEvent(
+                index=16,
+                part=TextPart(
+                    content='Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations'
+                ),
+            ),
+            PartDeltaEvent(
+                index=16,
+                delta=TextPartDelta(
+                    content_delta=" with a complete cessation of flights for the country's largest airline by"
+                ),
+            ),
+            PartDeltaEvent(
+                index=16, delta=TextPartDelta(content_delta=' Saturday as it faces a potential work stoppage by')
+            ),
+            PartDeltaEvent(index=16, delta=TextPartDelta(content_delta=' its flight attendants')),
+            PartStartEvent(
+                index=17,
+                part=TextPart(
+                    content="""\
+.
+
+These stories represent major international diplomatic developments, significant domestic policy\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta=' changes in the US, and major transportation')),
+            PartDeltaEvent(index=17, delta=TextPartDelta(content_delta=' disruptions affecting North America.')),
+        ]
     )
-    assert event_parts.pop(0) == snapshot(FinalResultEvent(tool_name=None, tool_call_id=None))
-    assert ''.join(event.delta.content_delta for event in event_parts) == snapshot("""\
- news stories to get clearer headlines.Based on the search results, I can identify the top 3 major news stories from around the world today (August 14, 2025):
-
-## Top 3 World News Stories Today
-
-**1. Trump-Putin Summit and Ukraine Crisis**
-European leaders held a high-stakes meeting Wednesday with President Trump, Vice President Vance, Ukraine's Volodymyr Zelenskyy and NATO's chief ahead of Friday's U.S.-Russia summit. The White House lowered its expectations surrounding the Trump-Putin summit on Friday. In a surprise move just days before the Trump-Putin summit, the White House swapped out pro-EU PM Tusk for Poland's new president – a political ally who once opposed Ukraine's NATO and EU bids.
-
-**2. Trump's Federal Takeover of Washington D.C.**
-Federal law enforcement's presence in Washington, DC, continued to be felt Wednesday as President Donald Trump's takeover of the city's police entered its third night. National Guard troops arrived in Washington, D.C., following President Trump's deployment and federalization of local police to crack down on crime in the nation's capital. Over 100 arrests made as National Guard rolls into DC under Trump's federal takeover.
-
-**3. Air Canada Flight Disruption**
-Air Canada plans to lock out its flight attendants and cancel all flights starting this weekend. Air Canada says it will begin cancelling flights starting Thursday to allow an orderly shutdown of operations with a complete cessation of flights for the country's largest airline by Saturday as it faces a potential work stoppage by its flight attendants.
-
-These stories represent major international diplomatic developments, significant domestic policy changes in the US, and major transportation disruptions affecting North America.\
-""")
