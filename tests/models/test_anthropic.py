@@ -2,12 +2,12 @@ from __future__ import annotations as _annotations
 
 import json
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
 from decimal import Decimal
 from functools import cached_property
-from typing import Any, Callable, TypeVar, Union, cast
+from typing import Any, TypeVar, cast
 
 import httpx
 import pytest
@@ -81,9 +81,8 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-    # note: we use Union here so that casting works with Python 3.9
-    MockAnthropicMessage = Union[BetaMessage, Exception]
-    MockRawMessageStreamEvent = Union[BetaRawMessageStreamEvent, Exception]
+    MockAnthropicMessage = BetaMessage | Exception
+    MockRawMessageStreamEvent = BetaRawMessageStreamEvent | Exception
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
@@ -205,7 +204,9 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
-                provider_request_id='123',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -214,7 +215,9 @@ async def test_sync_request_text_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
-                provider_request_id='123',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -253,7 +256,7 @@ async def test_async_request_prompt_caching(allow_model_requests: None):
     )
     last_message = result.all_messages()[-1]
     assert isinstance(last_message, ModelResponse)
-    assert last_message.price().total_price == snapshot(Decimal('0.00003488'))
+    assert last_message.cost().total_price == snapshot(Decimal('0.00002688'))
 
 
 async def test_async_request_text_response(allow_model_requests: None):
@@ -303,7 +306,9 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
-                provider_request_id='123',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -368,7 +373,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
-                provider_request_id='123',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -392,7 +399,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
-                provider_request_id='123',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -410,7 +419,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='claude-3-5-haiku-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='anthropic',
-                provider_request_id='123',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -573,7 +584,7 @@ async def test_stream_structured(allow_model_requests: None):
             type='message_start',
             message=BetaMessage(
                 id='msg_123',
-                model='claude-3-5-haiku-latest',
+                model='claude-3-5-haiku-123',
                 role='assistant',
                 type='message',
                 content=[],
@@ -609,7 +620,7 @@ async def test_stream_structured(allow_model_requests: None):
         BetaRawMessageDeltaEvent(
             type='message_delta',
             delta=Delta(stop_reason='end_turn'),
-            usage=BetaMessageDeltaUsage(output_tokens=5),
+            usage=BetaMessageDeltaUsage(input_tokens=20, output_tokens=5),
         ),
         # Mark message as complete
         BetaRawMessageStopEvent(type='message_stop'),
@@ -620,7 +631,7 @@ async def test_stream_structured(allow_model_requests: None):
             type='message_start',
             message=BetaMessage(
                 id='msg_123',
-                model='claude-3-5-haiku-latest',
+                model='claude-3-5-haiku-123',
                 role='assistant',
                 type='message',
                 content=[],
@@ -635,6 +646,11 @@ async def test_stream_structured(allow_model_requests: None):
             content_block=BetaTextBlock(type='text', text='FINAL_PAYLOAD'),
         ),
         BetaRawContentBlockStopEvent(type='content_block_stop', index=0),
+        BetaRawMessageDeltaEvent(
+            type='message_delta',
+            delta=Delta(stop_reason='end_turn'),
+            usage=BetaMessageDeltaUsage(input_tokens=0, output_tokens=0),
+        ),
         BetaRawMessageStopEvent(type='message_stop'),
     ]
 
@@ -652,7 +668,7 @@ async def test_stream_structured(allow_model_requests: None):
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        chunks = [c async for c in result.stream(debounce_by=None)]
+        chunks = [c async for c in result.stream_output(debounce_by=None)]
 
         # The tool output doesn't echo any content to the stream, so we only get the final payload once when
         # the block starts and once when it ends.
@@ -668,10 +684,25 @@ async def test_stream_structured(allow_model_requests: None):
                 requests=2,
                 input_tokens=20,
                 output_tokens=5,
+                tool_calls=1,
                 details={'input_tokens': 20, 'output_tokens': 5},
             )
         )
         assert tool_called
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                assert response == snapshot(
+                    ModelResponse(
+                        parts=[TextPart(content='FINAL_PAYLOAD')],
+                        usage=RequestUsage(details={'input_tokens': 0, 'output_tokens': 0}),
+                        model_name='claude-3-5-haiku-123',
+                        timestamp=IsDatetime(),
+                        provider_name='anthropic',
+                        provider_details={'finish_reason': 'end_turn'},
+                        provider_response_id='msg_123',
+                        finish_reason='stop',
+                    )
+                )
 
 
 async def test_image_url_input(allow_model_requests: None, anthropic_api_key: str):
@@ -757,7 +788,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01Kwjzggomz7bv9og51qGFuH',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01Kwjzggomz7bv9og51qGFuH',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -795,7 +828,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_015btMBYLTuDnMP7zAeuHQGi',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_015btMBYLTuDnMP7zAeuHQGi',
+                finish_reason='stop',
             ),
         ]
     )
@@ -917,7 +952,9 @@ async def test_anthropic_model_instructions(allow_model_requests: None, anthropi
                 model_name='claude-3-opus-20240229',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01Fg1JVgvCYUHWsxrj9GkpEv',
+                finish_reason='stop',
             ),
         ]
     )
@@ -965,7 +1002,9 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01BnZvs3naGorn93wjjCDwbd',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01BnZvs3naGorn93wjjCDwbd',
+                finish_reason='stop',
             ),
         ]
     )
@@ -992,7 +1031,9 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id=IsStr(),
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1035,7 +1076,9 @@ I'll keep the format similar to my street-crossing response for consistency.\
                 model_name='claude-3-7-sonnet-20250219',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id=IsStr(),
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1292,12 +1335,11 @@ def anth_msg(usage: BetaUsage) -> BetaMessage:
             snapshot(RequestUsage(output_tokens=5, details={'output_tokens': 5})),
             id='RawMessageDeltaEvent',
         ),
-        pytest.param(
-            lambda: BetaRawMessageStopEvent(type='message_stop'), snapshot(RequestUsage()), id='RawMessageStopEvent'
-        ),
     ],
 )
-def test_usage(message_callback: Callable[[], BetaMessage | BetaRawMessageStreamEvent], usage: RunUsage):
+def test_usage(
+    message_callback: Callable[[], BetaMessage | BetaRawMessageStartEvent | BetaRawMessageDeltaEvent], usage: RunUsage
+):
     assert _map_usage(message_callback()) == usage
 
 
@@ -1465,7 +1507,9 @@ Several major events are happening today, including:
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01W2YfD2EF8BbAqLRr8ftH4W',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01W2YfD2EF8BbAqLRr8ftH4W',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1521,7 +1565,9 @@ print(f"3 * 12390 = {result}")\
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01RJnbK7VMxvS2SyvtyJAQVU',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01RJnbK7VMxvS2SyvtyJAQVU',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1571,7 +1617,9 @@ It's being celebrated as:
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_request_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_689dc4abe31c81968ed493d15d8810fe0afe80ec3d42722e',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1687,7 +1735,9 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_012TXW181edhmR5JCsQRsBKx',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_012TXW181edhmR5JCsQRsBKx',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1720,7 +1770,9 @@ async def test_anthropic_tool_output(allow_model_requests: None, anthropic_api_k
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01K4Fzcf1bhiyLzHpwLdrefj',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1785,7 +1837,9 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_01MsqUB7ZyhjGkvepS1tCXp3',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1816,7 +1870,9 @@ async def test_anthropic_text_output_function(allow_model_requests: None, anthro
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_0142umg4diSckrDtV9vAmmPL',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_0142umg4diSckrDtV9vAmmPL',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1874,7 +1930,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_018YiNXULHGpoKoHkTt6GivG',
+                provider_details={'finish_reason': 'tool_use'},
+                provider_response_id='msg_018YiNXULHGpoKoHkTt6GivG',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1908,7 +1966,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01WiRVmLhCrJbJZRqmAWKv3X',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1966,7 +2026,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='claude-3-5-sonnet-20241022',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
-                provider_request_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01N2PwwVQo2aBtt6UFhMDtEX',
+                finish_reason='stop',
             ),
         ]
     )

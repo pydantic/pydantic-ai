@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Literal, Union, cast
+from typing import Literal, cast
 
 from typing_extensions import assert_never
 
@@ -14,6 +14,7 @@ from .._utils import generate_tool_call_id as _generate_tool_call_id, guard_tool
 from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -36,6 +37,7 @@ try:
     from cohere import (
         AssistantChatMessageV2,
         AsyncClientV2,
+        ChatFinishReason,
         ChatMessageV2,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentItem,
@@ -72,13 +74,21 @@ LatestCohereModelNames = Literal[
 ]
 """Latest Cohere models."""
 
-CohereModelName = Union[str, LatestCohereModelNames]
+CohereModelName = str | LatestCohereModelNames
 """Possible Cohere model names.
 
 Since Cohere supports a variety of date-stamped models, we explicitly list the latest models but
 allow any name in the type hints.
 See [Cohere's docs](https://docs.cohere.com/v2/docs/models) for a list of all available models.
 """
+
+_FINISH_REASON_MAP: dict[ChatFinishReason, FinishReason] = {
+    'COMPLETE': 'stop',
+    'STOP_SEQUENCE': 'stop',
+    'MAX_TOKENS': 'length',
+    'TOOL_CALL': 'tool_call',
+    'ERROR': 'error',
+}
 
 
 class CohereModelSettings(ModelSettings, total=False):
@@ -205,8 +215,18 @@ class CohereModel(Model):
                         tool_call_id=c.id or _generate_tool_call_id(),
                     )
                 )
+
+        raw_finish_reason = response.finish_reason
+        provider_details = {'finish_reason': raw_finish_reason}
+        finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
-            parts=parts, usage=_map_usage(response), model_name=self._model_name, provider_name=self._provider.name
+            parts=parts,
+            usage=_map_usage(response),
+            model_name=self._model_name,
+            provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
@@ -228,7 +248,7 @@ class CohereModel(Model):
                         pass
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
-                    elif isinstance(item, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from cohere
                         pass
                     else:

@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal, Union, cast
+from typing import Any, Literal, cast
 
 import pydantic_core
 from httpx import Timeout
@@ -21,6 +21,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -67,6 +68,7 @@ try:
     from mistralai.models import (
         ChatCompletionResponse as MistralChatCompletionResponse,
         CompletionEvent as MistralCompletionEvent,
+        FinishReason as MistralFinishReason,
         Messages as MistralMessages,
         SDKError,
         Tool as MistralTool,
@@ -79,7 +81,7 @@ try:
     from mistralai.models.usermessage import UserMessage as MistralUserMessage
     from mistralai.types.basemodel import Unset as MistralUnset
     from mistralai.utils.eventstreaming import EventStreamAsync as MistralEventStreamAsync
-except ImportError as e:  # pragma: no cover
+except ImportError as e:
     raise ImportError(
         'Please install `mistral` to use the Mistral model, '
         'you can use the `mistral` optional group — `pip install "pydantic-ai-slim[mistral]"`'
@@ -90,13 +92,21 @@ LatestMistralModelNames = Literal[
 ]
 """Latest  Mistral models."""
 
-MistralModelName = Union[str, LatestMistralModelNames]
+MistralModelName = str | LatestMistralModelNames
 """Possible Mistral model names.
 
 Since Mistral supports a variety of date-stamped models, we explicitly list the most popular models but
 allow any name in the type hints.
 Since [the Mistral docs](https://docs.mistral.ai/getting-started/models/models_overview/) for a full list.
 """
+
+_FINISH_REASON_MAP: dict[MistralFinishReason, FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'model_length': 'length',
+    'error': 'error',
+    'tool_calls': 'tool_call',
+}
 
 
 class MistralModelSettings(ModelSettings, total=False):
@@ -117,7 +127,7 @@ class MistralModel(Model):
     """
 
     client: Mistral = field(repr=False)
-    json_mode_schema_prompt: str = """Answer in JSON Object, respect the format:\n```\n{schema}\n```\n"""
+    json_mode_schema_prompt: str
 
     _model_name: MistralModelName = field(repr=False)
     _provider: Provider[Mistral] = field(repr=False)
@@ -347,13 +357,19 @@ class MistralModel(Model):
                 tool = self._map_mistral_to_pydantic_tool_call(tool_call=tool_call)
                 parts.append(tool)
 
+        raw_finish_reason = choice.finish_reason
+        provider_details = {'finish_reason': raw_finish_reason}
+        finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
-            parts,
+            parts=parts,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_request_id=response.id,
+            provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -377,7 +393,7 @@ class MistralModel(Model):
         return MistralStreamedResponse(
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
-            _model_name=self._model_name,
+            _model_name=first_chunk.data.model,
             _timestamp=timestamp,
             _provider_name=self._provider.name,
         )
@@ -515,7 +531,7 @@ class MistralModel(Model):
                         pass
                     elif isinstance(part, ToolCallPart):
                         tool_calls.append(self._map_tool_call(part))
-                    elif isinstance(part, (BuiltinToolCallPart, BuiltinToolReturnPart)):  # pragma: no cover
+                    elif isinstance(part, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from mistral
                         pass
                     else:
@@ -576,7 +592,7 @@ class MistralModel(Model):
         return MistralUserMessage(content=content)
 
 
-MistralToolCallId = Union[str, None]
+MistralToolCallId = str | None
 
 
 @dataclass
@@ -595,10 +611,17 @@ class MistralStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk.data)
 
+            if chunk.data.id:  # pragma: no branch
+                self.provider_response_id = chunk.data.id
+
             try:
                 choice = chunk.data.choices[0]
             except IndexError:
                 continue
+
+            if raw_finish_reason := choice.finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason}
+                self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Handle the text part of the response
             content = choice.delta.content

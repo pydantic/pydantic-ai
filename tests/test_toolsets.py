@@ -130,6 +130,29 @@ async def test_function_toolset():
     assert await bar_toolset.handle_call(ToolCallPart(tool_name='bar_add', args={'a': 1, 'b': 2})) == 3
 
 
+async def test_function_toolset_with_defaults():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape('Missing parameter descriptions for'),
+    ):
+
+        @defaults_toolset.tool
+        def add(a: int, b: int) -> int:
+            """Add two numbers"""
+            return a + b  # pragma: no cover
+
+
+async def test_function_toolset_with_defaults_overridden():
+    defaults_toolset = FunctionToolset[None](require_parameter_descriptions=True)
+
+    @defaults_toolset.tool(require_parameter_descriptions=False)
+    def subtract(a: int, b: int) -> int:
+        """Subtract two numbers"""
+        return a - b  # pragma: no cover
+
+
 async def test_prepared_toolset_user_error_add_new_tools():
     """Test that PreparedToolset raises UserError when prepare function tries to add new tools."""
     context = build_run_context(None)
@@ -651,6 +674,30 @@ async def test_tool_manager_multiple_failed_tools():
     assert new_tool_manager.ctx is not None
     assert new_tool_manager.ctx.retries == {'tool_a': 1, 'tool_b': 1}
     assert new_tool_manager.failed_tools == set()  # reset for new run step
+
+
+async def test_tool_manager_sequential_tool_call():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool(sequential=True)
+    def tool_a(x: int) -> int: ...  # pragma: no cover
+
+    @toolset.tool(sequential=False)
+    def tool_b(x: int) -> int: ...  # pragma: no cover
+
+    tool_manager = ToolManager[None](toolset)
+
+    prepared_tool_manager = await tool_manager.for_run_step(build_run_context(None))
+
+    assert prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_a', args={'x': 1})])
+    assert not prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_b', args={'x': 1})])
+
+    assert prepared_tool_manager.should_call_sequentially(
+        [ToolCallPart(tool_name='tool_a', args={'x': 1}), ToolCallPart(tool_name='tool_b', args={'x': 1})]
+    )
+    assert prepared_tool_manager.should_call_sequentially(
+        [ToolCallPart(tool_name='tool_b', args={'x': 1}), ToolCallPart(tool_name='tool_a', args={'x': 1})]
+    )
 
 
 async def test_visit_and_replace():

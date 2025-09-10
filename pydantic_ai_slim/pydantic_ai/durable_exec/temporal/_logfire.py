@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from logfire import Logfire
 from opentelemetry.trace import get_tracer
@@ -25,10 +25,13 @@ class LogfirePlugin(ClientPlugin):
         self.setup_logfire = setup_logfire
         self.metrics = metrics
 
+    def init_client_plugin(self, next: ClientPlugin) -> None:
+        self.next_client_plugin = next
+
     def configure_client(self, config: ClientConfig) -> ClientConfig:
         interceptors = config.get('interceptors', [])
         config['interceptors'] = [*interceptors, TracingInterceptor(get_tracer('temporalio'))]
-        return super().configure_client(config)
+        return self.next_client_plugin.configure_client(config)
 
     async def connect_service_client(self, config: ConnectConfig) -> ServiceClient:
         logfire = self.setup_logfire()
@@ -45,4 +48,4 @@ class LogfirePlugin(ClientPlugin):
                     telemetry=TelemetryConfig(metrics=OpenTelemetryConfig(url=metrics_url, headers=headers))
                 )
 
-        return await super().connect_service_client(config)
+        return await self.next_client_plugin.connect_service_client(config)

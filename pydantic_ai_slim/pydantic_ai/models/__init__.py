@@ -7,16 +7,17 @@ specific LLM being used.
 from __future__ import annotations as _annotations
 
 import base64
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from functools import cache, cached_property
-from typing import Any, Generic, TypeVar, overload
+from typing import Any, Generic, Literal, TypeVar, overload
 
 import httpx
-from typing_extensions import Literal, TypeAliasType, TypedDict
+from typing_extensions import TypeAliasType, TypedDict
 
 from .. import _utils
 from .._output import OutputObjectDefinition
@@ -27,6 +28,7 @@ from ..exceptions import UserError
 from ..messages import (
     FileUrl,
     FinalResultEvent,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -366,7 +368,7 @@ KnownModelName = TypeAliasType(
 """
 
 
-@dataclass(repr=False)
+@dataclass(repr=False, kw_only=True)
 class ModelRequestParameters:
     """Configuration for an agent's request to a model, specifically related to tools and output handling."""
 
@@ -551,7 +553,12 @@ class StreamedResponse(ABC):
     """Streamed response from an LLM when calling a tool."""
 
     model_request_parameters: ModelRequestParameters
+
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
+
+    provider_response_id: str | None = field(default=None, init=False)
+    provider_details: dict[str, Any] | None = field(default=None, init=False)
+    finish_reason: FinishReason | None = field(default=None, init=False)
 
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
@@ -607,6 +614,9 @@ class StreamedResponse(ABC):
             timestamp=self.timestamp,
             usage=self.usage(),
             provider_name=self.provider_name,
+            provider_response_id=self.provider_response_id,
+            provider_details=self.provider_details,
+            finish_reason=self.finish_reason,
         )
 
     def usage(self) -> RequestUsage:
@@ -684,19 +694,29 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
     try:
         provider, model_name = model.split(':', maxsplit=1)
     except ValueError:
+        provider = None
         model_name = model
-        # TODO(Marcelo): We should deprecate this way.
         if model_name.startswith(('gpt', 'o1', 'o3')):
             provider = 'openai'
         elif model_name.startswith('claude'):
             provider = 'anthropic'
         elif model_name.startswith('gemini'):
             provider = 'google-gla'
+
+        if provider is not None:
+            warnings.warn(
+                f"Specifying a model name without a provider prefix is deprecated. Instead of {model_name!r}, use '{provider}:{model_name}'.",
+                DeprecationWarning,
+            )
         else:
             raise UserError(f'Unknown model: {model}')
 
-    if provider == 'vertexai':
-        provider = 'google-vertex'  # pragma: no cover
+    if provider == 'vertexai':  # pragma: no cover
+        warnings.warn(
+            "The 'vertexai' provider name is deprecated. Use 'google-vertex' instead.",
+            DeprecationWarning,
+        )
+        provider = 'google-vertex'
 
     if provider == 'cohere':
         from .cohere import CohereModel
@@ -716,6 +736,7 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         'openrouter',
         'together',
         'vercel',
+        'litellm',
     ):
         from .openai import OpenAIChatModel
 
@@ -909,5 +930,5 @@ def _get_final_result_event(e: ModelResponseStreamEvent, params: ModelRequestPar
         elif isinstance(new_part, ToolCallPart) and (tool_def := params.tool_defs.get(new_part.tool_name)):
             if tool_def.kind == 'output':
                 return FinalResultEvent(tool_name=new_part.tool_name, tool_call_id=new_part.tool_call_id)
-            elif tool_def.kind == 'deferred':
+            elif tool_def.defer:
                 return FinalResultEvent(tool_name=None, tool_call_id=None)

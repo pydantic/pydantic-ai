@@ -13,6 +13,8 @@ The module includes:
 
 from __future__ import annotations
 
+from types import TracebackType
+
 from httpx import (
     AsyncBaseTransport,
     AsyncHTTPTransport,
@@ -24,17 +26,17 @@ from httpx import (
 )
 
 try:
-    from tenacity import AsyncRetrying, RetryCallState, RetryError, Retrying, retry, wait_exponential
+    from tenacity import RetryCallState, RetryError, retry, wait_exponential
 except ImportError as _import_error:
     raise ImportError(
         'Please install `tenacity` to use the retries utilities, '
         'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
     ) from _import_error
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Callable, NoReturn, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import TypedDict
 
@@ -134,8 +136,9 @@ class TenacityTransport(BaseTransport):
 
     Example:
         ```python
-        from httpx import Client, HTTPTransport, HTTPStatusError
-        from tenacity import stop_after_attempt, retry_if_exception_type
+        from httpx import Client, HTTPStatusError, HTTPTransport
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
         from pydantic_ai.retries import RetryConfig, TenacityTransport, wait_retry_after
 
         transport = TenacityTransport(
@@ -157,18 +160,7 @@ class TenacityTransport(BaseTransport):
         config: RetryConfig,
         wrapped: BaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
-        **kwargs: NoReturn,
     ):
-        # TODO: Remove the following checks (and **kwargs) during v1 release
-        if 'controller' in kwargs:  # pragma: no cover
-            raise TypeError('The `controller` argument has been renamed to `config`, and now requires a `RetryConfig`.')
-        if kwargs:  # pragma: no cover
-            raise TypeError(f'Unexpected keyword arguments: {", ".join(kwargs)}')
-        if isinstance(config, Retrying):  # pragma: no cover
-            raise ValueError(
-                'Passing a Retrying instance is no longer supported; the `config` argument must be a `pydantic_ai.retries.RetryConfig`.'
-            )
-
         self.config = config
         self.wrapped = wrapped or HTTPTransport()
         self.validate_response = validate_response
@@ -195,10 +187,29 @@ class TenacityTransport(BaseTransport):
             response.request = req
 
             if self.validate_response:
-                self.validate_response(response)
+                try:
+                    self.validate_response(response)
+                except Exception:
+                    response.close()
+                    raise
             return response
 
         return handle_request(request)
+
+    def __enter__(self) -> TenacityTransport:
+        self.wrapped.__enter__()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        self.wrapped.__exit__(exc_type, exc_value, traceback)
+
+    def close(self) -> None:
+        self.wrapped.close()  # pragma: no cover
 
 
 class AsyncTenacityTransport(AsyncBaseTransport):
@@ -224,7 +235,8 @@ class AsyncTenacityTransport(AsyncBaseTransport):
     Example:
         ```python
         from httpx import AsyncClient, HTTPStatusError
-        from tenacity import stop_after_attempt, retry_if_exception_type
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
         from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
         transport = AsyncTenacityTransport(
@@ -245,18 +257,7 @@ class AsyncTenacityTransport(AsyncBaseTransport):
         config: RetryConfig,
         wrapped: AsyncBaseTransport | None = None,
         validate_response: Callable[[Response], Any] | None = None,
-        **kwargs: NoReturn,
     ):
-        # TODO: Remove the following checks (and **kwargs) during v1 release
-        if 'controller' in kwargs:  # pragma: no cover
-            raise TypeError('The `controller` argument has been renamed to `config`, and now requires a `RetryConfig`.')
-        if kwargs:  # pragma: no cover
-            raise TypeError(f'Unexpected keyword arguments: {", ".join(kwargs)}')
-        if isinstance(config, AsyncRetrying):  # pragma: no cover
-            raise ValueError(
-                'Passing an AsyncRetrying instance is no longer supported; the `config` argument must be a `pydantic_ai.retries.RetryConfig`.'
-            )
-
         self.config = config
         self.wrapped = wrapped or AsyncHTTPTransport()
         self.validate_response = validate_response
@@ -283,10 +284,29 @@ class AsyncTenacityTransport(AsyncBaseTransport):
             response.request = req
 
             if self.validate_response:
-                self.validate_response(response)
+                try:
+                    self.validate_response(response)
+                except Exception:
+                    await response.aclose()
+                    raise
             return response
 
         return await handle_async_request(request)
+
+    async def __aenter__(self) -> AsyncTenacityTransport:
+        await self.wrapped.__aenter__()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None = None,
+        exc_value: BaseException | None = None,
+        traceback: TracebackType | None = None,
+    ) -> None:
+        await self.wrapped.__aexit__(exc_type, exc_value, traceback)
+
+    async def aclose(self) -> None:
+        await self.wrapped.aclose()
 
 
 def wait_retry_after(
@@ -314,7 +334,8 @@ def wait_retry_after(
     Example:
         ```python
         from httpx import AsyncClient, HTTPStatusError
-        from tenacity import stop_after_attempt, retry_if_exception_type
+        from tenacity import retry_if_exception_type, stop_after_attempt
+
         from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
 
         transport = AsyncTenacityTransport(

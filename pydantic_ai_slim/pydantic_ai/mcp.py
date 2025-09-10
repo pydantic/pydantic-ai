@@ -5,12 +5,12 @@ import functools
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any
 
 import anyio
 import httpx
@@ -22,6 +22,7 @@ from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
 
+from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
 try:
@@ -302,6 +303,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         return self
 
     async def __aexit__(self, *args: Any) -> bool | None:
+        if self._running_count == 0:
+            raise ValueError('MCPServer.__aexit__ called more times than __aenter__')
         async with self._enter_lock:
             self._running_count -= 1
             if self._running_count == 0 and self._exit_stack is not None:
@@ -329,11 +332,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         if stop_sequences := params.stopSequences:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
-        model_response = await self.sampling_model.request(
-            pai_messages,
-            model_settings,
-            models.ModelRequestParameters(),
-        )
+        model_response = await model_request(self.sampling_model, pai_messages, model_settings=model_settings)
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),
@@ -403,16 +402,7 @@ class MCPServerStdio(MCPServer):
     from pydantic_ai.mcp import MCPServerStdio
 
     server = MCPServerStdio(  # (1)!
-        'deno',
-        args=[
-            'run',
-            '-N',
-            '-R=node_modules',
-            '-W=node_modules',
-            '--node-modules-dir=auto',
-            'jsr:@pydantic/mcp-run-python',
-            'stdio',
-        ]
+        'uv', args=['run', 'mcp-run-python', 'stdio'], timeout=10
     )
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
@@ -421,7 +411,7 @@ class MCPServerStdio(MCPServer):
             ...
     ```
 
-    1. See [MCP Run Python](../mcp/run-python.md) for more information.
+    1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
     2. This will start the server as a subprocess and connect to it.
     """
 
@@ -457,6 +447,7 @@ class MCPServerStdio(MCPServer):
         self,
         command: str,
         args: Sequence[str],
+        *,
         env: dict[str, str] | None = None,
         cwd: str | Path | None = None,
         tool_prefix: str | None = None,
@@ -469,7 +460,6 @@ class MCPServerStdio(MCPServer):
         sampling_model: models.Model | None = None,
         max_retries: int = 1,
         elicitation_callback: ElicitationFnT | None = None,
-        *,
         id: str | None = None,
     ):
         """Build a new MCP server.
@@ -545,7 +535,7 @@ class MCPServerStdio(MCPServer):
             f'args={self.args!r}',
         ]
         if self.id:
-            repr_args.append(f'id={self.id!r}')  # pragma: no cover
+            repr_args.append(f'id={self.id!r}')
         return f'{self.__class__.__name__}({", ".join(repr_args)})'
 
 
@@ -599,8 +589,8 @@ class _MCPServerHTTP(MCPServer):
 
     def __init__(
         self,
-        *,
         url: str,
+        *,
         headers: dict[str, str] | None = None,
         http_client: httpx.AsyncClient | None = None,
         id: str | None = None,
@@ -750,16 +740,15 @@ class MCPServerSSE(_MCPServerHTTP):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerSSE
 
-    server = MCPServerSSE('http://localhost:3001/sse')  # (1)!
+    server = MCPServerSSE('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
-        async with agent:  # (2)!
+        async with agent:  # (1)!
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
-    2. This will connect to a server running on `localhost:3001`.
+    1. This will connect to a server running on `localhost:3001`.
     """
 
     @classmethod
@@ -790,7 +779,7 @@ class MCPServerHTTP(MCPServerSSE):
     from pydantic_ai import Agent
     from pydantic_ai.mcp import MCPServerHTTP
 
-    server = MCPServerHTTP('http://localhost:3001/sse')  # (1)!
+    server = MCPServerHTTP('http://localhost:3001/sse')
     agent = Agent('openai:gpt-4o', toolsets=[server])
 
     async def main():
@@ -798,8 +787,7 @@ class MCPServerHTTP(MCPServerSSE):
             ...
     ```
 
-    1. E.g. you might be connecting to a server run with [`mcp-run-python`](../mcp/run-python.md).
-    2. This will connect to a server running on `localhost:3001`.
+    1. This will connect to a server running on `localhost:3001`.
     """
 
 
