@@ -6,6 +6,7 @@ from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.server.session import ServerSession
 from mcp.types import (
     BlobResourceContents,
+    CallToolResult,
     EmbeddedResource,
     ResourceLink,
     SamplingMessage,
@@ -215,6 +216,26 @@ async def use_elicitation(ctx: Context[ServerSession, None], question: str) -> s
         return f'User responded: {result.data.response}'
     else:
         return f'User {result.action}ed the elicitation'
+
+
+@mcp.tool()
+async def get_structured() -> CallToolResult:
+    """Return only structured content to exercise client preference."""
+    return CallToolResult(
+        content=[],
+        isError=False,
+        structuredContent={'alpha': 1, 'bravo': [1, 2, 3]},
+    )
+
+
+@mcp.tool()
+async def get_structured_and_content() -> CallToolResult:
+    """Return both structuredContent and content; client should prefer structured."""
+    return CallToolResult(
+        content=[TextContent(type='text', text='this is plain text')],
+        isError=False,
+        structuredContent={'preferred': True, 'value': {'x': 10}},
+    )
 
 
 @mcp._mcp_server.set_logging_level()  # pyright: ignore[reportPrivateUsage]

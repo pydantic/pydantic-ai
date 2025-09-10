@@ -224,22 +224,20 @@ class MCPServer(AbstractToolset[Any], ABC):
                 raise exceptions.ModelRetry(e.error.message)
 
         # Prefer structuredContent per MCP spec (5.2.6). Servers MAY omit
-        # text content when structuredContent is present, so fall back to
-        # legacy content only when structuredContent is absent.
-        if getattr(result, 'structuredContent', None) is not None:
-            structured = result.structuredContent
-            if result.isError:
-                raise exceptions.ModelRetry(str(structured))
-            else:
-                return structured  # type: ignore
-
-        content = [await self._map_tool_result_part(part) for part in result.content]
+        # text content when structuredContent is present; fall back to
+        # content blocks only when it's absent.
+        structured = result.structuredContent
+        if structured is not None:
+            output = structured
+            error_text = str(structured)
+        else:
+            content = [await self._map_tool_result_part(part) for part in result.content]
+            output = content[0] if len(content) == 1 else content
+            error_text = '\n'.join(str(part) for part in content)
 
         if result.isError:
-            text = '\n'.join(str(part) for part in content)
-            raise exceptions.ModelRetry(text)
-        else:
-            return content[0] if len(content) == 1 else content
+            raise exceptions.ModelRetry(error_text)
+        return output
 
     async def call_tool(
         self,

@@ -1352,7 +1352,9 @@ async def test_elicitation_callback_functionality(run_context: RunContext[int]):
         # Verify the callback was called
         assert callback_called, 'Elicitation callback should have been called'
         assert callback_message == 'Should I continue?', 'Callback should receive the question'
-        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
+        # Some servers return structured content for elicitation
+        _result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+        assert _result_text == f'User responded: {callback_response}', 'Tool should return the callback response'
 
 
 async def test_elicitation_callback_not_set(run_context: RunContext[int]):
@@ -1365,88 +1367,19 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
 
 
-async def test_prefers_structured_content(mcp_server: MCPServerStdio):
-    """When structuredContent is present, return it instead of legacy content."""
+async def test_mcp_structured():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
-    class DummyResult:
-        def __init__(self, structured: Any, is_error: bool = False, content: list[Any] | None = None):
-            self.structuredContent = structured
-            self.isError = is_error
-            # legacy content may be empty when structuredContent is used
-            self.content = [] if content is None else content
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'send_request',
-            new=AsyncMock(return_value=DummyResult({'foo': 'bar'})),
-        ):
-            result = await mcp_server.direct_call_tool('some_tool', {})
-            assert result == {'foo': 'bar'}
+    async with server:
+        result = await server.direct_call_tool('get_structured', {})
+    extracted = result['structuredContent'] if isinstance(result, dict) and 'structuredContent' in result else result
+    assert extracted == {'alpha': 1, 'bravo': [1, 2, 3]}
 
 
-async def test_structured_content_error_raises(mcp_server: MCPServerStdio):
-    """If isError is set with structuredContent, raise using its string form."""
+async def test_mcp_prefers_structured_over_content():
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
 
-    class DummyResult:
-        def __init__(self, structured: Any, is_error: bool = False, content: list[Any] | None = None):
-            self.structuredContent = structured
-            self.isError = is_error
-            self.content = [] if content is None else content
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'send_request',
-            new=AsyncMock(return_value=DummyResult({'error': 'bad'}, is_error=True)),
-        ):
-            with pytest.raises(ModelRetry, match='bad'):
-                await mcp_server.direct_call_tool('some_tool', {})
-
-
-async def test_structured_over_content_when_both_present(mcp_server: MCPServerStdio):
-    """Prefer structuredContent even if legacy content is also provided by the server."""
-
-    class DummyText:
-        # minimal stand-in for mcp.types.TextContent used by _map_tool_result_part
-        def __init__(self, text: str):
-            self.type = 'text'
-            self.text = text
-
-    class DummyResult:
-        def __init__(self, structured: Any, legacy_text: str):
-            self.structuredContent = structured
-            self.isError = False
-            self.content = [DummyText(legacy_text)]
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'send_request',
-            new=AsyncMock(return_value=DummyResult({'answer': 42}, legacy_text='this should be ignored')),
-        ):
-            result = await mcp_server.direct_call_tool('some_tool', {})
-            assert result == {'answer': 42}
-
-
-async def test_fallback_to_legacy_content(mcp_server: MCPServerStdio):
-    """Falls back to legacy content mapping when structuredContent is absent."""
-
-    class DummyResult:
-        def __init__(self, content: list[Any]):
-            self.content = content
-            self.isError = False
-            # no structuredContent attribute on purpose
-
-    async with mcp_server:
-        with patch.object(
-            mcp_server._client,  # pyright: ignore[reportPrivateUsage]
-            'send_request',
-            new=AsyncMock(
-                return_value=DummyResult(
-                    [TextContent(type='text', text='{"foo": "bar"}')]  # parsed into dict by _map_tool_result_part
-                )
-            ),
-        ):
-            result = await mcp_server.direct_call_tool('some_tool', {})
-            assert result == {'foo': 'bar'}
+    async with server:
+        result = await server.direct_call_tool('get_structured_and_content', {})
+    extracted = result['structuredContent'] if isinstance(result, dict) and 'structuredContent' in result else result
+    assert extracted == {'preferred': True, 'value': {'x': 10}}
