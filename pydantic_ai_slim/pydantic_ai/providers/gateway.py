@@ -81,11 +81,11 @@ def gateway_provider(
     if upstream_provider in ('openai', 'openai-chat'):
         from .openai import OpenAIProvider
 
-        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai-chat'), http_client=http_client)
+        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai'), http_client=http_client)
     elif upstream_provider == 'openai-responses':
         from .openai import OpenAIProvider
 
-        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai-responses'), http_client=http_client)
+        return OpenAIProvider(api_key=api_key, base_url=urljoin(base_url, 'openai'), http_client=http_client)
     elif upstream_provider == 'groq':
         from .groq import GroqProvider
 
