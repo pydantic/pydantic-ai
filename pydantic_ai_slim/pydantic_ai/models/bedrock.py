@@ -625,7 +625,7 @@ class BedrockStreamedResponse(StreamedResponse):
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
         """
-        if self._provider_response_id is not None:
+        if self._provider_response_id is not None:  # pragma: no cover
             self.provider_response_id = self._provider_response_id
 
         chunk: ConverseStreamOutputTypeDef

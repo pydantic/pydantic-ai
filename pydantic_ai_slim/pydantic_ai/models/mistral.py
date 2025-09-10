@@ -611,7 +611,7 @@ class MistralStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk.data)
 
-            if chunk.data.id:
+            if chunk.data.id:  # pragma: no branch
                 self.provider_response_id = chunk.data.id
 
             try:
