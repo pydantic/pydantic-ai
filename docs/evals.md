@@ -814,20 +814,6 @@ Using OpenTelemetry in this way also means that all data used to evaluate the ta
 the traces produced by production runs of the code, making it straightforward to perform the same evaluations on
 production data.
 
-## Advanced Features
-
-### Test Data Generation
-
-Generate synthetic test datasets using [`generate_dataset`][pydantic_evals.generation.generate_dataset] for rapid evaluation setup. See [Generating Test Datasets](https://docs.pydantic.dev/pydantic-ai/evals/#generating-test-datasets).
-
-### Concurrency Control
-
-Control evaluation performance with configurable concurrency limits for rate limiting and resource management. See [Parallel Evaluation](https://docs.pydantic.dev/pydantic-ai/evals/#parallel-evaluation).
-
-### OpenTelemetry Integration
-
-Access detailed execution traces through the [`span_tree`][pydantic_evals.otel.span_tree.SpanTree] for advanced analysis of code paths and performance. See [OpenTelemetry Integration](https://docs.pydantic.dev/pydantic-ai/evals/#opentelemetry-integration).
-
 ## API Reference
 
 For comprehensive coverage of all classes, methods, and configuration options, see the detailed [API Reference documentation](https://ai.pydantic.dev/api/pydantic_evals/).
