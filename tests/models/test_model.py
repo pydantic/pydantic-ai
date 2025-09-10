@@ -21,7 +21,7 @@ with try_import() as imports_successful:
 
 
 if not imports_successful():
-    pytest.skip('model packages were not installed', allow_module_level=True)
+    pytest.skip('model packages were not installed', allow_module_level=True)  # pragma: lax no cover
 
 
 # TODO(Marcelo): We need to add Vertex AI to the test cases.

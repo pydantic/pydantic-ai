@@ -115,8 +115,8 @@ class GroqProvider(Provider[AsyncGroq]):
             assert base_url is None, 'Cannot provide both `groq_client` and `base_url`'
             self._client = groq_client
         else:
-            api_key = api_key or os.environ.get('GROQ_API_KEY')
-            base_url = base_url or os.environ.get('GROQ_BASE_URL', 'https://api.groq.com')
+            api_key = api_key or os.getenv('GROQ_API_KEY')
+            base_url = base_url or os.getenv('GROQ_BASE_URL', 'https://api.groq.com')
 
             if not api_key:
                 raise UserError(
