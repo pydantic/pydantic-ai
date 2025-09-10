@@ -1332,7 +1332,7 @@ async def test_callback_with_error() -> None:
     captured_results: list[AgentRunResult[Any]] = []
 
     def error_callback(run_result: AgentRunResult[Any]) -> None:
-        captured_results.append(run_result)
+        captured_results.append(run_result)  # pragma: no cover
 
     agent = Agent(TestModel())
     # Empty messages should cause an error
