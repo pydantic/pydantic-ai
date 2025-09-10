@@ -223,6 +223,16 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
+        # Prefer structuredContent per MCP spec (5.2.6). Servers MAY omit
+        # text content when structuredContent is present, so fall back to
+        # legacy content only when structuredContent is absent.
+        if getattr(result, 'structuredContent', None) is not None:
+            structured = result.structuredContent
+            if result.isError:
+                raise exceptions.ModelRetry(str(structured))
+            else:
+                return structured  # type: ignore
+
         content = [await self._map_tool_result_part(part) for part in result.content]
 
         if result.isError:
