@@ -100,7 +100,7 @@ def gateway_provider(
                 vertexai=True,
                 api_key='unset',
                 http_options={
-                    'base_url': base_url,
+                    'base_url': f'{base_url}/google-vertex',
                     'headers': {'User-Agent': get_user_agent(), 'Authorization': api_key},
                     # TODO(Marcelo): Until https://github.com/googleapis/python-genai/issues/1357 is solved.
                     'async_client_args': {
