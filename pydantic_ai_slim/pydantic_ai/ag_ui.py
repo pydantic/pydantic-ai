@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import Field, dataclass, replace
 from http import HTTPStatus
 from typing import (
@@ -17,14 +17,16 @@ from typing import (
     Final,
     Generic,
     Protocol,
+    TypeAlias,
     TypeVar,
     runtime_checkable,
 )
 
 from pydantic import BaseModel, ValidationError
 
+from . import _utils
 from ._agent_graph import CallToolsNode, ModelRequestNode
-from .agent import AbstractAgent, AgentRun
+from .agent import AbstractAgent, AgentRun, AgentRunResult
 from .exceptions import UserError
 from .messages import (
     FunctionToolResultEvent,
@@ -107,12 +109,16 @@ __all__ = [
     'StateDeps',
     'StateHandler',
     'AGUIApp',
+    'OnCompleteFunc',
     'handle_ag_ui_request',
     'run_ag_ui',
 ]
 
 SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
 """Content type header value for Server-Sent Events (SSE)."""
+
+OnCompleteFunc: TypeAlias = Callable[[AgentRunResult[Any]], None] | Callable[[AgentRunResult[Any]], Awaitable[None]]
+"""Callback function type that receives the `AgentRunResult` of the completed run. Can be sync or async."""
 
 
 class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
@@ -220,6 +226,7 @@ async def handle_ag_ui_request(
     usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    on_complete: OnCompleteFunc | None = None,
 ) -> Response:
     """Handle an AG-UI request by running the agent and returning a streaming response.
 
@@ -236,6 +243,8 @@ async def handle_ag_ui_request(
         usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
         infer_name: Whether to try to infer the agent name from the call frame if it's not set.
         toolsets: Optional additional toolsets for this run.
+        on_complete: Optional callback function called when the agent run completes successfully.
+            The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
     Returns:
         A streaming Starlette response with AG-UI protocol events.
@@ -263,6 +272,7 @@ async def handle_ag_ui_request(
             usage=usage,
             infer_name=infer_name,
             toolsets=toolsets,
+            on_complete=on_complete,
         ),
         media_type=accept,
     )
@@ -281,6 +291,7 @@ async def run_ag_ui(
     usage: RunUsage | None = None,
     infer_name: bool = True,
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+    on_complete: OnCompleteFunc | None = None,
 ) -> AsyncIterator[str]:
     """Run the agent with the AG-UI run input and stream AG-UI protocol events.
 
@@ -298,6 +309,8 @@ async def run_ag_ui(
         usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
         infer_name: Whether to try to infer the agent name from the call frame if it's not set.
         toolsets: Optional additional toolsets for this run.
+        on_complete: Optional callback function called when the agent run completes successfully.
+            The callback receives the completed [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] and can access `all_messages()` and other result data.
 
     Yields:
         Streaming event chunks encoded as strings according to the accept header value.
@@ -356,6 +369,12 @@ async def run_ag_ui(
         ) as run:
             async for event in _agent_stream(run):
                 yield encoder.encode(event)
+
+        if on_complete is not None and run.result is not None:
+            if _utils.is_async_callable(on_complete):
+                await on_complete(run.result)
+            else:
+                await _utils.run_in_executor(on_complete, run.result)
     except _RunError as e:
         yield encoder.encode(
             RunErrorEvent(message=e.message, code=e.code),
