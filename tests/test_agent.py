@@ -5,7 +5,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Union
+from typing import Any, Literal, Union
 
 import httpx
 import pytest
@@ -4327,7 +4327,8 @@ def test_parallel_mcp_calls():
     assert result.output == snapshot('finished')
 
 
-def test_sequential_calls():
+@pytest.mark.parametrize('mode', ['argument', 'contextmanager'])
+def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
 
     async def call_tools_sequential(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -4355,23 +4356,23 @@ def test_sequential_calls():
 
     integer_holder: int = 1
 
-    @sequential_toolset.tool(sequential=False)
+    @sequential_toolset.tool
     def call_first():
         nonlocal integer_holder
         assert integer_holder == 1
 
-    @sequential_toolset.tool(sequential=True)
+    @sequential_toolset.tool(sequential=mode == 'argument')
     def increment_integer_holder():
         nonlocal integer_holder
         integer_holder = 2
 
-    @sequential_toolset.tool()
+    @sequential_toolset.tool
     def requires_approval():
         from pydantic_ai.exceptions import ApprovalRequired
 
         raise ApprovalRequired()
 
-    @sequential_toolset.tool(sequential=False)
+    @sequential_toolset.tool
     def call_second():
         nonlocal integer_holder
         assert integer_holder == 2
@@ -4379,7 +4380,13 @@ def test_sequential_calls():
     agent = Agent(
         FunctionModel(call_tools_sequential), toolsets=[sequential_toolset], output_type=[str, DeferredToolRequests]
     )
-    result = agent.run_sync()
+
+    if mode == 'contextmanager':
+        with agent.sequential_tool_calls():
+            result = agent.run_sync()
+    else:
+        result = agent.run_sync()
+
     assert result.output == snapshot(
         DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
     )

@@ -21,7 +21,6 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -29,6 +28,7 @@ from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
+    AgentDepsT,
     DeferredToolResults,
     RunContext,
     Tool,
