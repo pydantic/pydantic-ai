@@ -220,7 +220,9 @@ async def test_multiple_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -229,7 +231,9 @@ async def test_multiple_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -272,7 +276,9 @@ async def test_three_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello again', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -281,7 +287,9 @@ async def test_three_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='final message', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -290,7 +298,9 @@ async def test_three_completions(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -407,7 +417,9 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -468,7 +480,9 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -528,7 +542,9 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1091,7 +1107,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1115,7 +1133,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1133,7 +1153,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1236,7 +1258,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1260,7 +1284,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1284,7 +1310,9 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1381,9 +1409,12 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                     )
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
-                model_name='mistral-large-latest',
+                model_name='gpt-4',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'tool_calls'},
+                provider_response_id='x',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1398,9 +1429,12 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
-                model_name='mistral-large-latest',
+                model_name='gpt-4',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'tool_calls'},
+                provider_response_id='x',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1484,9 +1518,12 @@ async def test_stream_tool_call(allow_model_requests: None):
                     )
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
-                model_name='mistral-large-latest',
+                model_name='gpt-4',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'tool_calls'},
+                provider_response_id='x',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1501,9 +1538,12 @@ async def test_stream_tool_call(allow_model_requests: None):
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
-                model_name='mistral-large-latest',
+                model_name='gpt-4',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='x',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1590,9 +1630,12 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                     )
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
-                model_name='mistral-large-latest',
+                model_name='gpt-4',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'tool_calls'},
+                provider_response_id='x',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1613,9 +1656,12 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
                     )
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
-                model_name='mistral-large-latest',
+                model_name='gpt-4',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'tool_calls'},
+                provider_response_id='x',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1630,9 +1676,12 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
             ModelResponse(
                 parts=[TextPart(content='final response')],
                 usage=RequestUsage(input_tokens=4, output_tokens=4),
-                model_name='mistral-large-latest',
+                model_name='gpt-4',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='x',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1808,7 +1857,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='fce6d16a4e5940edb24ae16dd0369947',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1837,7 +1888,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='26e7de193646460e8904f8e604a60dc1',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1877,7 +1930,9 @@ async def test_image_url_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1914,7 +1969,9 @@ async def test_image_as_binary_content_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1954,7 +2011,9 @@ async def test_pdf_url_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1988,7 +2047,9 @@ async def test_pdf_as_binary_content_input(allow_model_requests: None):
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -2065,7 +2126,9 @@ async def test_mistral_model_instructions(allow_model_requests: None, mistral_ap
                 model_name='mistral-large-123',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -2172,7 +2235,9 @@ These suggestions are meant to help you think through pedestrian safety. Differe
                 model_name='mistral-large-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='a088e80a476e44edaaa959a1ff08f358',
+                finish_reason='stop',
             ),
         ]
     )

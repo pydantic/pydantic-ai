@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     from botocore.client import BaseClient
     from botocore.eventstream import EventStream
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
+    from mypy_boto3_bedrock_runtime.literals import StopReasonType
     from mypy_boto3_bedrock_runtime.type_defs import (
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -55,6 +57,7 @@ if TYPE_CHECKING:
         ConverseResponseTypeDef,
         ConverseStreamMetadataEventTypeDef,
         ConverseStreamOutputTypeDef,
+        ConverseStreamResponseTypeDef,
         DocumentBlockTypeDef,
         GuardrailConfigurationTypeDef,
         ImageBlockTypeDef,
@@ -134,6 +137,15 @@ See [the Bedrock docs](https://docs.aws.amazon.com/bedrock/latest/userguide/mode
 
 P = ParamSpec('P')
 T = typing.TypeVar('T')
+
+_FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
+    'content_filtered': 'content_filter',
+    'end_turn': 'stop',
+    'guardrail_intervened': 'content_filter',
+    'max_tokens': 'length',
+    'stop_sequence': 'stop',
+    'tool_use': 'tool_call',
+}
 
 
 class BedrockModelSettings(ModelSettings, total=False):
@@ -270,8 +282,9 @@ class BedrockConverseModel(Model):
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
-            _event_stream=response,
+            _event_stream=response['stream'],
             _provider_name=self._provider.name,
+            _provider_response_id=response.get('ResponseMetadata', {}).get('RequestId', None),
         )
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
@@ -301,12 +314,18 @@ class BedrockConverseModel(Model):
             output_tokens=response['usage']['outputTokens'],
         )
         response_id = response.get('ResponseMetadata', {}).get('RequestId', None)
+        raw_finish_reason = response['stopReason']
+        provider_details = {'finish_reason': raw_finish_reason}
+        finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
             parts=items,
             usage=u,
             model_name=self.model_name,
             provider_response_id=response_id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     @overload
@@ -316,7 +335,7 @@ class BedrockConverseModel(Model):
         stream: Literal[True],
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> EventStream[ConverseStreamOutputTypeDef]:
+    ) -> ConverseStreamResponseTypeDef:
         pass
 
     @overload
@@ -335,7 +354,7 @@ class BedrockConverseModel(Model):
         stream: bool,
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
-    ) -> ConverseResponseTypeDef | EventStream[ConverseStreamOutputTypeDef]:
+    ) -> ConverseResponseTypeDef | ConverseStreamResponseTypeDef:
         system_prompt, bedrock_messages = await self._map_messages(messages)
         inference_config = self._map_inference_config(model_settings)
 
@@ -372,7 +391,6 @@ class BedrockConverseModel(Model):
 
         if stream:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse_stream, **params))
-            model_response = model_response['stream']
         else:
             model_response = await anyio.to_thread.run_sync(functools.partial(self.client.converse, **params))
         return model_response
@@ -599,25 +617,30 @@ class BedrockStreamedResponse(StreamedResponse):
     _event_stream: EventStream[ConverseStreamOutputTypeDef]
     _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc)
+    _provider_response_id: str | None = None
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         """Return an async iterator of [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s.
 
         This method should be implemented by subclasses to translate the vendor-specific stream of events into
         pydantic_ai-format events.
         """
+        if self._provider_response_id is not None:  # pragma: no cover
+            self.provider_response_id = self._provider_response_id
+
         chunk: ConverseStreamOutputTypeDef
         tool_id: str | None = None
         async for chunk in _AsyncIteratorWrapper(self._event_stream):
             match chunk:
                 case {'messageStart': _}:
                     continue
-                case {'messageStop': _}:
-                    continue
+                case {'messageStop': message_stop}:
+                    raw_finish_reason = message_stop['stopReason']
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
                 case {'metadata': metadata}:
                     if 'usage' in metadata:  # pragma: no branch
                         self._usage += self._map_usage(metadata)
-                    continue
                 case {'contentBlockStart': content_block_start}:
                     index = content_block_start['contentBlockIndex']
                     start = content_block_start['start']
