@@ -1009,7 +1009,7 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
                 parts=[
                     UserPromptPart(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
-                        timestamp=datetime.datetime(2025, 9, 10, 21, 4, 47, 652638, tzinfo=datetime.timezone.utc),
+                        timestamp=IsDatetime(),
                     )
                 ]
             ),
