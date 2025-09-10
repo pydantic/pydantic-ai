@@ -568,6 +568,12 @@ class OpenAIChatModel(Model):
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
+                if not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search:
+                    raise UserError(
+                        f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
+                        f'Please use `OpenAIResponsesModel` instead.'
+                    )
+
                 if tool.user_location:
                     return WebSearchOptions(
                         search_context_size=tool.search_context_size,
@@ -579,7 +585,7 @@ class OpenAIChatModel(Model):
                 return WebSearchOptions(search_context_size=tool.search_context_size)
             else:
                 raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `OpenAIModel`. If it should be, please file an issue.'
+                    f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
