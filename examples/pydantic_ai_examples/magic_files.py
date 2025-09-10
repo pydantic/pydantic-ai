@@ -32,7 +32,11 @@ def run_with_openai() -> None:
     )
 
     # Binary text (bytes) → becomes inline text with a file delimiter on OpenAI
-    txt_bytes = MagicBinaryContent(data=b'Hello from bytes', media_type='text/plain', filename='hello.txt')
+    txt_bytes = MagicBinaryContent(
+        data=b'Hello from bytes',
+        media_type='text/plain',
+        filename='hello.txt',
+    )
 
     # PDF by URL → remains a file part (base64 + strict MIME) on OpenAI
     pdf_url = MagicDocumentUrl(
@@ -85,5 +89,3 @@ if __name__ == '__main__':
         run_with_anthropic()
     except Exception as e:  # pragma: no cover - example only
         print('[Anthropic] Example skipped:', e)
-
-
