@@ -46,7 +46,13 @@ class ThinkingPart(TypedDict):
     content: NotRequired[str]
 
 
-MessagePart: TypeAlias = 'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | BinaryDataPart | ThinkingPart'
+class CachePointPart(TypedDict):
+    type: Literal['cache-point']
+
+
+MessagePart: TypeAlias = (
+    'TextPart | ToolCallPart | ToolCallResponsePart | MediaUrlPart | BinaryDataPart | ThinkingPart | CachePointPart'
+)
 
 
 Role = Literal['system', 'user', 'assistant']
