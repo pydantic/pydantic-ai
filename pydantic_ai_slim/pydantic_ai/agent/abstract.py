@@ -21,6 +21,7 @@ from .. import (
     result,
     usage as _usage,
 )
+from .._tool_manager import ToolManager
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
 from ..run import AgentRun, AgentRunResult
@@ -713,6 +714,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         if item is self:
                             self.name = name
                             return
+
+    @staticmethod
+    @contextmanager
+    def sequential_tool_calls() -> Iterator[None]:
+        """Run tool calls sequentially during the context."""
+        with ToolManager.sequential_tool_calls():
+            yield
 
     @staticmethod
     def is_model_request_node(

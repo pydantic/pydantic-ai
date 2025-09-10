@@ -5,7 +5,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
@@ -362,13 +362,13 @@ class AnthropicModel(Model):
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
-        # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
-        timestamp = datetime.now(tz=timezone.utc)
+        assert isinstance(first_chunk, BetaRawMessageStartEvent)
+
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.message.model,
             _response=peekable_response,
-            _timestamp=timestamp,
+            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
         )
 
