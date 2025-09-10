@@ -2013,25 +2013,8 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
         model=OpenAIChatModel('o3-mini', provider=provider),
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1900, details={'reasoning_tokens': 1536}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_680797310bbc8191971fff5a405113940ed3ec3064b5efac',
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(

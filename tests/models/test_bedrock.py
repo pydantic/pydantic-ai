@@ -642,18 +642,8 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
         ),
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[IsInstance(TextPart), IsInstance(ThinkingPart)],
-                usage=RequestUsage(input_tokens=12, output_tokens=882),
-                model_name='us.deepseek.r1-v1:0',
-                timestamp=IsDatetime(),
-                provider_name='bedrock',
-                provider_details={'finish_reason': 'end_turn'},
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(

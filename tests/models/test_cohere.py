@@ -468,24 +468,8 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
         model=co_model,
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2241, details={'reasoning_tokens': 1856}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(

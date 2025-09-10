@@ -1014,28 +1014,8 @@ I'll provide this information in a clear, helpful way, emphasizing safety withou
         'Considering the way to cross the street, analogously, how do I cross the river?',
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
-                usage=RequestUsage(
-                    input_tokens=42,
-                    output_tokens=363,
-                    details={
-                        'cache_creation_input_tokens': 0,
-                        'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 363,
-                    },
-                ),
-                model_name='claude-3-7-sonnet-20250219',
-                timestamp=IsDatetime(),
-                provider_name='anthropic',
-                provider_details={'finish_reason': 'end_turn'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -1098,6 +1078,37 @@ async def test_anthropic_model_thinking_part_stream(allow_model_requests: None, 
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
                         event_parts.append(event)
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(output_tokens=419, details={'output_tokens': 419}),
+                model_name='claude-3-7-sonnet-20250219',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01PiJ6i3vjEZjHxojahi2YNc',
+                finish_reason='stop',
+            ),
+        ]
+    )
 
     assert event_parts == snapshot(
         [

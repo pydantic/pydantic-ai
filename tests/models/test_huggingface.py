@@ -1003,26 +1003,13 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
         ),
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=15, output_tokens=1090),
-                model_name='Qwen/Qwen3-235B-A22B',
-                timestamp=IsDatetime(),
-                provider_name='huggingface',
-                provider_details={'finish_reason': 'stop'},
-                provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
                         content='Considering the way to cross the street, analogously, how do I cross the river?',
-                        timestamp=IsDatetime(),
+                        timestamp=datetime.datetime(2025, 9, 10, 21, 4, 47, 652638, tzinfo=datetime.timezone.utc),
                     )
                 ]
             ),

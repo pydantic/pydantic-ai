@@ -2173,29 +2173,8 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
         model=mistral_model,
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
-                        signature=IsStr(),
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
-                    TextPart(content=IsStr()),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(

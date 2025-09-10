@@ -1215,30 +1215,8 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
         'Considering the way to cross the street, analogously, how do I cross the river?',
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c',
-                        signature=IsStr(),
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1828, details={'reasoning_tokens': 1472}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb4c1e21c88195992250ee4e6c3e5506370ebbaae73d2c',
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -1309,7 +1287,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1733, details={'reasoning_tokens': 1280}),
-                model_name='o3-mini',
+                model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},

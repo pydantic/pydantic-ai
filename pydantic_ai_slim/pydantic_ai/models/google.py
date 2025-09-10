@@ -568,7 +568,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk)
 
@@ -592,15 +592,17 @@ class GeminiStreamedResponse(StreamedResponse):
                     raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
             parts = candidate.content.parts or []
             for part in parts:
+                if part.thought_signature:
+                    signature = base64.b64encode(part.thought_signature).decode('utf-8')
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking',
+                        signature=signature,
+                        provider_name='google',
+                    )
+
                 if part.text is not None:
                     if part.thought:
-                        signature = part.thought_signature.decode('utf-8') if part.thought_signature else None
-                        yield self._parts_manager.handle_thinking_delta(
-                            vendor_part_id='thinking',
-                            content=part.text,
-                            signature=signature,
-                            provider_name='google' if signature else None,
-                        )
+                        yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
                     else:
                         maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=part.text)
                         if maybe_event is not None:  # pragma: no branch
@@ -639,32 +641,38 @@ class GeminiStreamedResponse(StreamedResponse):
 
 def _content_model_response(m: ModelResponse) -> ContentDict:
     parts: list[PartDict] = []
+    thought_signature: bytes | None = None
     for item in m.parts:
+        part: PartDict = {}
+        if thought_signature:
+            part['thought_signature'] = thought_signature
+            thought_signature = None
+
         if isinstance(item, ToolCallPart):
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
-            parts.append({'function_call': function_call})
+            part['function_call'] = function_call
         elif isinstance(item, TextPart):
-            parts.append({'text': item.content})
+            part['text'] = item.content
         elif isinstance(item, ThinkingPart):
-            parts.append(
-                {
-                    'text': item.content,
-                    'thought': True,
-                    'thought_signature': item.signature.encode('utf-8')
-                    if item.provider_name == 'google' and item.signature
-                    else None,
-                }
-            )
+            if item.provider_name == 'google' and item.signature:
+                # The thought signature is included on the _next_ part, not the thought part itself
+                thought_signature = base64.b64decode(item.signature)
+
+            part['text'] = item.content
+            part['thought'] = True
         elif isinstance(item, BuiltinToolCallPart):
             if item.provider_name == 'google':
                 if item.tool_name == 'code_execution':  # pragma: no branch
-                    parts.append({'executable_code': cast(ExecutableCodeDict, item.args)})
+                    part['executable_code'] = cast(ExecutableCodeDict, item.args)
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == 'google':
                 if item.tool_name == 'code_execution':  # pragma: no branch
-                    parts.append({'code_execution_result': item.content})
+                    part['code_execution_result'] = item.content
         else:
             assert_never(item)
+
+        if part:
+            parts.append(part)
     return ContentDict(role='model', parts=parts)
 
 
@@ -678,44 +686,41 @@ def _process_response_from_parts(
     finish_reason: FinishReason | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
+    item: ModelResponsePart | None = None
     for part in parts:
+        if part.thought_signature:
+            signature = base64.b64encode(part.thought_signature).decode('utf-8')
+            assert isinstance(item, ThinkingPart), 'Thought signature must follow a thinking part'
+            item.signature = signature
+            item.provider_name = 'google'
+
         if part.executable_code is not None:
-            items.append(
-                BuiltinToolCallPart(
-                    provider_name='google', args=part.executable_code.model_dump(), tool_name='code_execution'
-                )
+            item = BuiltinToolCallPart(
+                provider_name='google', args=part.executable_code.model_dump(), tool_name='code_execution'
             )
         elif part.code_execution_result is not None:
-            items.append(
-                BuiltinToolReturnPart(
-                    provider_name='google',
-                    tool_name='code_execution',
-                    content=part.code_execution_result,
-                    tool_call_id='not_provided',
-                )
+            item = BuiltinToolReturnPart(
+                provider_name='google',
+                tool_name='code_execution',
+                content=part.code_execution_result,
+                tool_call_id='not_provided',
             )
         elif part.text is not None:
             if part.thought:
-                signature = part.thought_signature.decode('utf-8') if part.thought_signature else None
-                items.append(
-                    ThinkingPart(
-                        content=part.text,
-                        signature=signature,
-                        provider_name='google' if signature else None,
-                    )
-                )
+                item = ThinkingPart(content=part.text)
             else:
-                items.append(TextPart(content=part.text))
+                item = TextPart(content=part.text)
         elif part.function_call:
             assert part.function_call.name is not None
-            tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
+            item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
             if part.function_call.id is not None:
-                tool_call_part.tool_call_id = part.function_call.id  # pragma: no cover
-            items.append(tool_call_part)
-        elif part.function_response:  # pragma: no cover
+                item.tool_call_id = part.function_call.id  # pragma: no cover
+        else:  # pragma: no cover
             raise UnexpectedModelBehavior(
-                f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
+                f'Unsupported response from Gemini, expected all parts to be function calls, text, or thoughts, got: {part!r}'
             )
+
+        items.append(item)
     return ModelResponse(
         parts=items,
         model_name=model_name,
