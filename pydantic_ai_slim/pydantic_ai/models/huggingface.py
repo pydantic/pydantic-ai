@@ -20,6 +20,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -58,6 +59,7 @@ try:
         ChatCompletionOutput,
         ChatCompletionOutputMessage,
         ChatCompletionStreamOutput,
+        TextGenerationOutputFinishReason,
     )
     from huggingface_hub.errors import HfHubHTTPError
 
@@ -93,6 +95,12 @@ HuggingFaceModelName = str | LatestHuggingFaceModelNames
 
 You can browse available models [here](https://huggingface.co/models?pipeline_tag=text-generation&inference_provider=all&sort=trending).
 """
+
+_FINISH_REASON_MAP: dict[TextGenerationOutputFinishReason, FinishReason] = {
+    'length': 'length',
+    'eos_token': 'stop',
+    'stop_sequence': 'stop',
+}
 
 
 class HuggingFaceModelSettings(ModelSettings, total=False):
@@ -266,6 +274,11 @@ class HuggingFaceModel(Model):
         if tool_calls is not None:
             for c in tool_calls:
                 items.append(ToolCallPart(c.function.name, c.function.arguments, tool_call_id=c.id))
+
+        raw_finish_reason = choice.finish_reason
+        provider_details = {'finish_reason': raw_finish_reason}
+        finish_reason = _FINISH_REASON_MAP.get(cast(TextGenerationOutputFinishReason, raw_finish_reason), None)
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
@@ -273,6 +286,8 @@ class HuggingFaceModel(Model):
             timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -288,7 +303,7 @@ class HuggingFaceModel(Model):
 
         return HuggingFaceStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.model,
             _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=datetime.fromtimestamp(first_chunk.created, tz=timezone.utc),
@@ -445,10 +460,19 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
+            if chunk.id:  # pragma: no branch
+                self.provider_response_id = chunk.id
+
             try:
                 choice = chunk.choices[0]
             except IndexError:
                 continue
+
+            if raw_finish_reason := choice.finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason}
+                self.finish_reason = _FINISH_REASON_MAP.get(
+                    cast(TextGenerationOutputFinishReason, raw_finish_reason), None
+                )
 
             # Handle the text part of the response
             content = choice.delta.content

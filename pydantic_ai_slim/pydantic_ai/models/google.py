@@ -20,6 +20,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FileUrl,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -54,6 +55,7 @@ try:
         ContentUnionDict,
         CountTokensConfigDict,
         ExecutableCodeDict,
+        FinishReason as GoogleFinishReason,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -99,6 +101,22 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
+_FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
+    GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
+    GoogleFinishReason.STOP: 'stop',
+    GoogleFinishReason.MAX_TOKENS: 'length',
+    GoogleFinishReason.SAFETY: 'content_filter',
+    GoogleFinishReason.RECITATION: 'content_filter',
+    GoogleFinishReason.LANGUAGE: 'error',
+    GoogleFinishReason.OTHER: None,
+    GoogleFinishReason.BLOCKLIST: 'content_filter',
+    GoogleFinishReason.PROHIBITED_CONTENT: 'content_filter',
+    GoogleFinishReason.SPII: 'content_filter',
+    GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
+    GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
+    GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
+}
+
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
@@ -127,6 +145,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     """The video resolution to use for the model.
 
     See <https://ai.google.dev/api/generate-content#MediaResolution> for more information.
+    """
+
+    google_cached_content: str
+    """The name of the cached content to use for the model.
+
+    See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
 
 
@@ -230,6 +254,7 @@ class GoogleModel(Model):
                     stop_sequences=generation_config.get('stop_sequences'),
                     presence_penalty=generation_config.get('presence_penalty'),
                     frequency_penalty=generation_config.get('frequency_penalty'),
+                    seed=generation_config.get('seed'),
                     thinking_config=generation_config.get('thinking_config'),
                     media_resolution=generation_config.get('media_resolution'),
                     response_mime_type=generation_config.get('response_mime_type'),
@@ -373,10 +398,12 @@ class GoogleModel(Model):
             stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
+            seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=model_settings.get('google_thinking_config'),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
+            cached_content=model_settings.get('google_cached_content'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,
@@ -396,11 +423,14 @@ class GoogleModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )  # pragma: no cover
         parts = candidate.content.parts or []
-        vendor_id = response.response_id or None
+
+        vendor_id = response.response_id
         vendor_details: dict[str, Any] | None = None
-        finish_reason = candidate.finish_reason
-        if finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': finish_reason.value}
+        finish_reason: FinishReason | None = None
+        if raw_finish_reason := candidate.finish_reason:  # pragma: no branch
+            vendor_details = {'finish_reason': raw_finish_reason.value}
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
             parts,
@@ -409,6 +439,7 @@ class GoogleModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            finish_reason=finish_reason,
         )
 
     async def _process_streamed_response(
@@ -422,7 +453,7 @@ class GoogleModel(Model):
 
         return GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
@@ -543,6 +574,14 @@ class GeminiStreamedResponse(StreamedResponse):
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
+
+            if chunk.response_id:  # pragma: no branch
+                self.provider_response_id = chunk.response_id
+
+            if raw_finish_reason := candidate.finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason.value}
+                self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
             if candidate.content is None or candidate.content.parts is None:
                 if candidate.finish_reason == 'STOP':  # pragma: no cover
                     # Normal completion - skip this chunk
@@ -625,6 +664,7 @@ def _process_response_from_parts(
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
+    finish_reason: FinishReason | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
     for part in parts:
@@ -665,6 +705,7 @@ def _process_response_from_parts(
         provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
+        finish_reason=finish_reason,
     )
 
 

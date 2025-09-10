@@ -2,6 +2,8 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import inspect
+from asyncio import Task
 from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
@@ -740,7 +742,6 @@ async def process_function_tools(  # noqa: C901
     deferred_tool_results: dict[str, DeferredToolResult] = {}
     if build_run_context(ctx).tool_call_approved and ctx.deps.tool_call_results is not None:
         deferred_tool_results = ctx.deps.tool_call_results
-
         # Deferred tool calls are "run" as well, by reading their value from the tool call results
         calls_to_run.extend(tool_calls_by_kind['external'])
         calls_to_run.extend(tool_calls_by_kind['unapproved'])
@@ -819,7 +820,6 @@ async def _call_tools(
     for call in tool_calls:
         yield _messages.FunctionToolCallEvent(call)
 
-    # Run all tool tasks in parallel
     with tracer.start_as_current_span(
         'running tools',
         attributes={
@@ -827,39 +827,58 @@ async def _call_tools(
             'logfire.msg': f'running {len(tool_calls)} tool{"" if len(tool_calls) == 1 else "s"}',
         },
     ):
-        tasks = [
-            asyncio.create_task(
-                _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
-                name=call.tool_name,
-            )
-            for call in tool_calls
-        ]
 
-        pending = tasks
-        while pending:
-            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                index = tasks.index(task)
-                try:
-                    tool_part, tool_user_part = task.result()
-                except exceptions.CallDeferred:
-                    deferred_calls_by_index[index] = 'external'
-                except exceptions.ApprovalRequired:
-                    deferred_calls_by_index[index] = 'unapproved'
-                else:
-                    yield _messages.FunctionToolResultEvent(tool_part)
+        async def handle_call_or_result(
+            coro_or_task: Awaitable[
+                tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]
+            ]
+            | Task[tuple[_messages.ToolReturnPart | _messages.RetryPromptPart, _messages.UserPromptPart | None]],
+            index: int,
+        ) -> _messages.HandleResponseEvent | None:
+            try:
+                tool_part, tool_user_part = (
+                    (await coro_or_task) if inspect.isawaitable(coro_or_task) else coro_or_task.result()
+                )
+            except exceptions.CallDeferred:
+                deferred_calls_by_index[index] = 'external'
+            except exceptions.ApprovalRequired:
+                deferred_calls_by_index[index] = 'unapproved'
+            else:
+                tool_parts_by_index[index] = tool_part
+                if tool_user_part:
+                    user_parts_by_index[index] = tool_user_part
 
-                    tool_parts_by_index[index] = tool_part
-                    if tool_user_part:
-                        user_parts_by_index[index] = tool_user_part
+                return _messages.FunctionToolResultEvent(tool_part)
+
+        if tool_manager.should_call_sequentially(tool_calls):
+            for index, call in enumerate(tool_calls):
+                if event := await handle_call_or_result(
+                    _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
+                    index,
+                ):
+                    yield event
+
+        else:
+            tasks = [
+                asyncio.create_task(
+                    _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
+                    name=call.tool_name,
+                )
+                for call in tool_calls
+            ]
+
+            pending = tasks
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    index = tasks.index(task)
+                    if event := await handle_call_or_result(coro_or_task=task, index=index):
+                        yield event
 
     # We append the results at the end, rather than as they are received, to retain a consistent ordering
     # This is mostly just to simplify testing
-    for k in sorted(tool_parts_by_index):
-        output_parts.append(tool_parts_by_index[k])
-
-    for k in sorted(user_parts_by_index):
-        output_parts.append(user_parts_by_index[k])
+    output_parts.extend([tool_parts_by_index[k] for k in sorted(tool_parts_by_index)])
+    output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
 
     for k in sorted(deferred_calls_by_index):
         output_deferred_calls[deferred_calls_by_index[k]].append(tool_calls[k])

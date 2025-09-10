@@ -1491,7 +1491,9 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1518,7 +1520,9 @@ Always be cautious—even if you have the right-of-way—and understand that it'
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_680393ff82488191a7d0850bf0dd99a004f0817ea037a07b',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[

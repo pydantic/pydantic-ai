@@ -119,6 +119,8 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -126,6 +128,8 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -195,6 +199,8 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -282,6 +288,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -305,6 +313,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -321,6 +331,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -402,6 +414,8 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -443,7 +457,9 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+                finish_reason='stop',
             ),
         ]
     )
@@ -468,7 +484,9 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -486,6 +504,8 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )

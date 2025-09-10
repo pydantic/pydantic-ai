@@ -5,7 +5,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
@@ -21,6 +21,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -41,6 +42,16 @@ from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
+
+_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+    'end_turn': 'stop',
+    'max_tokens': 'length',
+    'stop_sequence': 'stop',
+    'tool_use': 'tool_call',
+    'pause_turn': 'stop',
+    'refusal': 'content_filter',
+}
+
 
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
@@ -70,6 +81,7 @@ try:
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
+        BetaStopReason,
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextDelta,
@@ -326,12 +338,20 @@ class AnthropicModel(Model):
                     )
                 )
 
+        finish_reason: FinishReason | None = None
+        provider_details: dict[str, Any] | None = None
+        if raw_finish_reason := response.stop_reason:  # pragma: no branch
+            provider_details = {'finish_reason': raw_finish_reason}
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -342,13 +362,13 @@ class AnthropicModel(Model):
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
-        # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
-        timestamp = datetime.now(tz=timezone.utc)
+        assert isinstance(first_chunk, BetaRawMessageStartEvent)
+
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.message.model,
             _response=peekable_response,
-            _timestamp=timestamp,
+            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
         )
 
@@ -583,6 +603,7 @@ class AnthropicStreamedResponse(StreamedResponse):
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
                 self._usage = _map_usage(event)
+                self.provider_response_id = event.message.id
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
@@ -646,6 +667,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event)
+                if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
                 current_block = None
