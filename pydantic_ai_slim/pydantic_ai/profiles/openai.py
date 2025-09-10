@@ -38,6 +38,9 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    openai_chat_supports_web_search: bool = False
+    """Whether the model supports web search in Chat Completions API."""
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
@@ -50,6 +53,9 @@ class OpenAIModelProfile(ModelProfile):
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     is_reasoning_model = model_name.startswith('o') or model_name.startswith('gpt-5')
+    # Check if the model supports web search (only specific search-preview models)
+    supports_web_search = '-search-preview' in model_name
+
     # Structured Outputs (output mode 'native') is only supported with the gpt-4o-mini, gpt-4o-mini-2024-07-18, and gpt-4o-2024-08-06 model snapshots and later.
     # We leave it in here for all models because the `default_structured_output_mode` is `'tool'`, so `native` is only used
     # when the user specifically uses the `NativeOutput` marker, so an error from the API is acceptable.
@@ -77,6 +83,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_object_output=True,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
+        openai_chat_supports_web_search=supports_web_search,
     )
 
 

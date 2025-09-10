@@ -23,6 +23,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -99,6 +100,14 @@ but allow any name in the type hints.
 
 See <https://console.groq.com/docs/models> for an up to date date list of models and more details.
 """
+
+_FINISH_REASON_MAP: dict[Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason] = {
+    'stop': 'stop',
+    'length': 'length',
+    'tool_calls': 'tool_call',
+    'content_filter': 'content_filter',
+    'function_call': 'tool_call',
+}
 
 
 class GroqModelSettings(ModelSettings, total=False):
@@ -186,7 +195,13 @@ class GroqModel(Model):
                         tool_name=error.error.failed_generation.name,
                         args=error.error.failed_generation.arguments,
                     )
-                    return ModelResponse(parts=[tool_call_part])
+                    return ModelResponse(
+                        parts=[tool_call_part],
+                        model_name=e.model_name,
+                        timestamp=_utils.now_utc(),
+                        provider_name=self._provider.name,
+                        finish_reason='error',
+                    )
                 except ValidationError:
                     pass
             raise
@@ -315,6 +330,10 @@ class GroqModel(Model):
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 items.append(ToolCallPart(tool_name=c.function.name, args=c.function.arguments, tool_call_id=c.id))
+
+        raw_finish_reason = choice.finish_reason
+        provider_details = {'finish_reason': raw_finish_reason}
+        finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
@@ -322,6 +341,8 @@ class GroqModel(Model):
             timestamp=timestamp,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -338,7 +359,7 @@ class GroqModel(Model):
         return GroqStreamedResponse(
             model_request_parameters=model_request_parameters,
             _response=peekable_response,
-            _model_name=self._model_name,
+            _model_name=first_chunk.model,
             _model_profile=self.profile,
             _timestamp=number_to_datetime(first_chunk.created),
             _provider_name=self._provider.name,
@@ -497,10 +518,17 @@ class GroqStreamedResponse(StreamedResponse):
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
+                if chunk.id:  # pragma: no branch
+                    self.provider_response_id = chunk.id
+
                 try:
                     choice = chunk.choices[0]
                 except IndexError:
                     continue
+
+                if raw_finish_reason := choice.finish_reason:
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
                 # Handle the text part of the response
                 content = choice.delta.content

@@ -83,6 +83,8 @@ async def test_bedrock_model(allow_model_requests: None, bedrock_provider: Bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -142,6 +144,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -168,6 +172,8 @@ async def test_bedrock_model_structured_output(allow_model_requests: None, bedro
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -269,6 +275,8 @@ async def test_bedrock_model_retry(allow_model_requests: None, bedrock_provider:
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'tool_use'},
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -294,6 +302,8 @@ I'm sorry, but the tool I have does not support retrieving the capital of France
                 model_name='us.amazon.nova-micro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -562,6 +572,8 @@ async def test_bedrock_model_instructions(allow_model_requests: None, bedrock_pr
                 model_name='us.amazon.nova-pro-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -613,6 +625,8 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -637,6 +651,8 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 model_name='us.deepseek.r1-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -658,6 +674,8 @@ async def test_bedrock_model_thinking_part(allow_model_requests: None, bedrock_p
                 model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -796,6 +814,8 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
                 model_name='us.anthropic.claude-sonnet-4-20250514-v1:0',
                 timestamp=IsDatetime(),
                 provider_name='bedrock',
+                provider_details={'finish_reason': 'end_turn'},
+                finish_reason='stop',
             ),
         ]
     )
