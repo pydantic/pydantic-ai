@@ -61,7 +61,9 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, _metadata_as_usage  # type: ignore
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
@@ -1052,6 +1054,112 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
                 provider_response_id='zObBaKreOqSIqtsP7uur4A0',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_google_model_thinking_part_from_other_model(
+    allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-5', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
+    @agent.tool_plain
+    def dummy() -> None: ...  # pragma: no cover
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c1fb6b6a248196a6216e80fc2ace380c14a8a9087e8689',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=GoogleModel(
+            'gemini-2.5-pro',
+            provider=google_provider,
+            settings=GoogleModelSettings(google_thinking_config={'include_thoughts': True}),
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1106, output_tokens=1867, details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106}
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='mPvBaJmNOMywqtsPsb_l2A4',
                 finish_reason='stop',
             ),
         ]

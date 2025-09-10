@@ -504,23 +504,20 @@ class BedrockConverseModel(Model):
                     if isinstance(item, TextPart):
                         content.append({'text': item.content})
                     elif isinstance(item, ThinkingPart):
-                        if BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts:
-                            if item.provider_name == self.system and item.signature:
-                                if item.id == 'redacted_content':
-                                    reasoning_content: ReasoningContentBlockOutputTypeDef = {
-                                        'redactedContent': item.signature.encode('utf-8'),
-                                    }
-                                else:
-                                    reasoning_content: ReasoningContentBlockOutputTypeDef = {
-                                        'reasoningText': {
-                                            'text': item.content,
-                                            'signature': item.signature,
-                                        }
-                                    }
+                        if (
+                            item.provider_name == self.system
+                            and item.signature
+                            and BedrockModelProfile.from_profile(self.profile).bedrock_send_back_thinking_parts
+                        ):
+                            if item.id == 'redacted_content':
+                                reasoning_content: ReasoningContentBlockOutputTypeDef = {
+                                    'redactedContent': item.signature.encode('utf-8'),
+                                }
                             else:
                                 reasoning_content: ReasoningContentBlockOutputTypeDef = {
                                     'reasoningText': {
                                         'text': item.content,
+                                        'signature': item.signature,
                                     }
                                 }
                             content.append({'reasoningContent': reasoning_content})
