@@ -168,3 +168,12 @@ class ToolRetryError(Exception):
     def __init__(self, tool_retry: RetryPromptPart):
         self.tool_retry = tool_retry
         super().__init__()
+
+def iter_exc(exc):
+    """Iterate over all non-ExceptionGroup parts of an ExceptionGroup"""
+
+    if isinstance(exc, ExceptionGroup):
+        for e in exc.exceptions:
+            yield from iter_exc(e)
+    else:
+        yield exc
