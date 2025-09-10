@@ -143,6 +143,8 @@ As of 7:48 AM on Wednesday, April 2, 2025, in Tokyo, Japan, the weather is cloud
 
 You can learn more about the differences between the Responses API and Chat Completions API in the [OpenAI API docs](https://platform.openai.com/docs/guides/responses-vs-chat-completions).
 
+#### Referencing earlier responses
+
 The Responses API also supports referencing earlier model responses in a new request. This is available through the `openai_previous_response_id` field in
 [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings].
 
@@ -164,8 +166,32 @@ print(result.output)
 
 By passing the `provider_response_id` from an earlier run, you can allow the model to build on its own prior reasoning without needing to resend the full message history.
 
-If message history is provided and all responses come from the same OpenAI model,
-Pydantic AI will automatically only send the the latest request and the `previous_response_id` from the latest response to the API for efficiency.
+Alternatively, `openai_previous_response_id` field also supports `auto` mode. When enabled, Pydantic AI automatically selects the latest request and the most recent `provider_response_id` from message history to send to OpenAI API, leveraging server-side history instead, for improved efficiency. If `openai_previous_response_id` is not set, full history is sent.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+
+model = OpenAIResponsesModel('gpt-4o')
+agent = Agent(model=model)
+
+result1 = agent.run_sync('Tell me a joke.')
+print(result1.output)
+#> Did you hear about the toothpaste scandal? They called it Colgate.
+
+# When set to 'auto', only the latest request and the most recent provider_response_id
+# from history is sent to OpenAI API.
+model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
+result2 = agent.run_sync(
+    'Explain?',
+    message_history=result1.new_messages(),
+    model_settings=model_settings
+)
+print(result2.output)
+#> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
+```
+It is recommended to use `auto` mode only when the history comes from a single, uninterrupted run,
+with all responses coming from the same OpenAI model (e.g like internal tool calls), as the server-side history will override any locally modified history.
 
 ## OpenAI-compatible Models
 

@@ -222,8 +222,11 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `medium`, and `high`.
     """
 
-    openai_previous_response_id: str
+    openai_previous_response_id: Literal['auto'] | str
     """The identifier of the most recent response to include in the API request.
+
+    When set to `auto`, the request automatically uses the most recent
+    `provider_response_id` along with the latest request from the message history.
 
     This enables the model to reference previous reasoning traces.
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
@@ -984,11 +987,14 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
-
+        print(messages)
+        print('-------')
         previous_response_id = model_settings.get('openai_previous_response_id')
-        if not previous_response_id:
+        if previous_response_id == 'auto':
             messages, previous_response_id = self._get_response_id_and_trim(messages)
-
+        print(messages)
+        print(previous_response_id)
+        print('==========')
         instructions, openai_messages = await self._map_messages(messages, model_settings)
         reasoning = self._get_reasoning(model_settings)
 
