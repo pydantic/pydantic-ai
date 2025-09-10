@@ -3,7 +3,7 @@
 _Evals_ is shorthand for both AI system _Evaluation_ as a broad topic and for specific _Evaluation Metrics_ or _Evaluators_ as individual tests. Ironically, the overloading of this term makes it difficult to evaluate what people are even talking about when they say "Evals" (without further context).
 
 !!! danger "Warning"
-    Unlike unit tests, evals are an emerging art/science; anyone who claims to know for sure exactly how your evals should be defined can safely be ignored.
+    Unlike unit tests, evals are an emerging art/science; anyone who claims to know exactly how your evals should be defined can safely be ignored.
 
 ## Pydantic Evals Package
 
@@ -15,7 +15,6 @@ We've designed Pydantic Evals to be useful while not being too opinionated since
 
 !!! note "In Beta"
     Pydantic Evals support was [introduced](https://github.com/pydantic/pydantic-ai/pull/935) in v0.0.47 and is currently in beta. The API is subject to change and the documentation is incomplete.
-
 
 ## Code-First Evaluation
 
@@ -59,9 +58,9 @@ Dataset (1) ──────────── (Many) Case
 
 1. **Dataset → Cases**: One Dataset contains many Cases (composition)
 2. **Dataset → Experiments**: One Dataset can be used in many Experiments
-over time (aggregation)
+   over time (aggregation)
 3. **Experiment → Case results**: One Experiment generates results by
-executing each Case
+   executing each Case
 4. **Experiment → Task**: One Experiment evaluates one defined Task
 5. **Experiment → Evaluators**: One Experiment uses multiple Evaluators (dataset-level + case-specific)
 6. **Case results → Evaluators**: Individual Case results are scored by both dataset-level evaluators and case-specific evaluators (if they exist)
@@ -74,6 +73,28 @@ executing each Case
 4. **Evaluation**: Evaluators score the Task outputs for each Case
 5. **Results**: Experiment collects all Case results and returns a summary report
 
+!!! note "A metaphor"
+    A useful metaphor (although not perfect) is to think of evals like a **Unit Testing** framework:
+
+    **Cases + evaluators** are your individual unit tests - each one
+    defines a specific scenario you want to test, complete with inputs
+    and expected outcomes. Just like a unit test, a case asks: _"Given
+    this input, does my system produce the right output?"_
+
+    **Datasets** are like test suites - they are the scaffolding that holds your unit
+    tests together. They group related cases and define shared
+    evaluation criteria that should apply across all tests in the suite.
+
+    **Experiments** are like running your entire test suite and getting a
+    coverage report. When you execute `dataset.evaluate_sync(my_ai_function)`,
+    you're running all your cases against your AI system and
+    collecting the results - just like running `pytest` and getting a
+    summary of passes, failures, and performance metrics.
+
+    The key difference from traditional unit testing is that AI systems are
+    probabilistic. If you're type checking you'll still get a simple pass/fail,
+    but scores for text outputs are likely qualitative and/or categorical,
+    and more open to interpretation. Keep in mind that unlike unit test coverage reports, we are looking at  model behavior over the probabilistic space of user inputs, **not** coverage of source code.
 
 ## Datasets and Cases
 
@@ -140,9 +161,11 @@ dataset.add_evaluator(MyEvaluator())
 
 _(This example is complete, it can be run "as is")_
 
-## Evaluation Process
+## Run your Experiment
 
-The evaluation process involves running a task against all cases in a dataset:
+<!-- TODO: check this renaming makes sense? Do we need to add something about naming experiments with commit message in the config? IDK if this is anticipating a change that hasn't arrived in the library yet? -->
+
+This involves running a task against all cases in a dataset:
 
 Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.Dataset]:
 
@@ -791,16 +814,7 @@ Using OpenTelemetry in this way also means that all data used to evaluate the ta
 the traces produced by production runs of the code, making it straightforward to perform the same evaluations on
 production data.
 
-
 ## Advanced Features
-
-### LLM-Based Evaluation
-
-Pydantic Evals includes [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] for sophisticated evaluation using language models. See the [LLM Judge example](https://docs.pydantic.dev/pydantic-ai/evals/#evaluation-with-llmjudge) for detailed usage.
-
-### Dataset Management
-
-Datasets can be saved to and loaded from YAML or JSON files with automatic schema generation for better editor support. See [Saving and Loading Datasets](https://docs.pydantic.dev/pydantic-ai/evals/#saving-and-loading-datasets).
 
 ### Test Data Generation
 
@@ -814,31 +828,15 @@ Control evaluation performance with configurable concurrency limits for rate lim
 
 Access detailed execution traces through the [`span_tree`][pydantic_evals.otel.span_tree.SpanTree] for advanced analysis of code paths and performance. See [OpenTelemetry Integration](https://docs.pydantic.dev/pydantic-ai/evals/#opentelemetry-integration).
 
-
 ## API Reference
 
-For comprehensive coverage of all classes, methods, and configuration options, see the detailed [API Reference documentation](https://docs.pydantic.dev/pydantic-ai/api/evals/).
-
-Key reference sections include:
-
-- **[Dataset API][pydantic_evals.Dataset]** - Complete dataset configuration and methods
-- **[Case API][pydantic_evals.Case]** - Test case definition and options
-- **[Evaluators][pydantic_evals.evaluators]** - Built-in and custom evaluator implementation
-- **[Generation][pydantic_evals.generation]** - Synthetic dataset creation tools
-- **[Reporting][pydantic_evals.reporting]** - Result analysis and output formatting
-
-https://ai.pydantic.dev/api/pydantic_evals/dataset/
-https://ai.pydantic.dev/api/pydantic_evals/evaluators/
-https://ai.pydantic.dev/api/pydantic_evals/reporting/
-https://ai.pydantic.dev/api/pydantic_evals/otel/
-https://ai.pydantic.dev/api/pydantic_evals/generation/
+For comprehensive coverage of all classes, methods, and configuration options, see the detailed [API Reference documentation](https://ai.pydantic.dev/api/pydantic_evals/).
 
 ## Next Steps
 
+<!-- TODO - this would be the perfect place for a full tutorial or case study  -->
 1. **Start with simple evaluations** using basic evaluators like [`IsInstance`][pydantic_evals.evaluators.IsInstance] and [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected]
 2. **Integrate with Logfire** to visualize results and enable team collaboration
 3. **Build comprehensive test suites** with diverse cases covering edge cases and performance requirements
 4. **Implement custom evaluators** for domain-specific quality metrics
 5. **Automate evaluation runs** as part of your development and deployment pipeline
-
-For detailed examples and advanced usage patterns, explore the complete [Pydantic Evals documentation](https://docs.pydantic.dev/pydantic-ai/evals/) and [API reference](https://docs.pydantic.dev/pydantic-ai/api/evals/).
