@@ -13,7 +13,6 @@ from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
 from .._run_context import RunContext
-from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..exceptions import UserError
 from ..messages import (
@@ -355,7 +354,7 @@ class MistralModel(Model):
         for thought in thinking:
             parts.append(ThinkingPart(content=thought))
         if text:
-            parts.extend(split_content_into_text_and_thinking(text, self.profile.thinking_tags))
+            parts.extend(text)
 
         if isinstance(tool_calls, list):
             for tool_call in tool_calls:
@@ -749,7 +748,7 @@ def _map_usage(response: MistralChatCompletionResponse | MistralCompletionChunk)
             output_tokens=response.usage.completion_tokens or 0,
         )
     else:
-        return RequestUsage()  # pragma: no cover
+        return RequestUsage()
 
 
 def _map_content(content: MistralOptionalNullable[MistralContent]) -> tuple[str | None, list[str]]:
