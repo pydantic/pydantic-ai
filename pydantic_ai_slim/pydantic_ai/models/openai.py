@@ -560,7 +560,7 @@ class OpenAIChatModel(Model):
                 return WebSearchOptions(search_context_size=tool.search_context_size)
             else:
                 raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `OpenAIModel`. If it should be, please file an issue.'
+                    f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
