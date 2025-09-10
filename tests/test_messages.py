@@ -338,10 +338,10 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert result.signature_delta == 'new_sig'
 
     # Test applying delta with content_delta
-    content_delta = ThinkingPartDelta(content_delta='new_content')
+    content_delta = ThinkingPartDelta(content_delta=' new_content')
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
-    assert result.content_delta == 'new_content'
+    assert result.content_delta == 'original new_content'
 
 
 def test_pre_usage_refactor_messages_deserializable():
