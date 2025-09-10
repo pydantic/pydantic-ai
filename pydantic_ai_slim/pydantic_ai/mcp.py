@@ -254,6 +254,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                     name=name,
                     description=mcp_tool.description,
                     parameters_json_schema=mcp_tool.inputSchema,
+                    metadata=mcp_tool.meta,
                 ),
             )
             for mcp_tool in await self.list_tools()
