@@ -5,15 +5,18 @@ from typing import Any, Literal
 import httpx
 import pytest
 from inline_snapshot import snapshot
+from inline_snapshot.extra import raises
 
 from pydantic_ai import Agent, UserError
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.groq import GroqModel
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers import Provider
-    from pydantic_ai.providers.gateway import GatewayProvider
+    from pydantic_ai.providers.gateway import gateway_provider, infer_model
     from pydantic_ai.providers.openai import OpenAIProvider
 
 if not imports_successful():
@@ -29,7 +32,7 @@ pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
 def test_init_with_base_url(
     provider_name: Literal['openai', 'openai-chat', 'openai-responses'], provider_cls: type[Provider[Any]]
 ):
-    provider = GatewayProvider(provider_name, base_url='https://example.com/', api_key='foobar')
+    provider = gateway_provider(provider_name, base_url='https://example.com/', api_key='foobar')
     assert isinstance(provider, provider_cls)
     assert provider.base_url == 'https://example.com/openai/'
     assert provider.client.api_key == 'foobar'
@@ -40,15 +43,15 @@ def test_init_gateway_without_api_key_raises_error(env: TestEnv):
     with pytest.raises(
         UserError,
         match=re.escape(
-            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `GatewayProvider(api_key=...)` to use the Pydantic AI Gateway provider.'
+            'Set the `PYDANTIC_AI_GATEWAY_API_KEY` environment variable or pass it via `gateway_provider(api_key=...)` to use the Pydantic AI Gateway provider.'
         ),
     ):
-        GatewayProvider('openai')
+        gateway_provider('openai')
 
 
 async def test_init_with_http_client():
     async with httpx.AsyncClient() as http_client:
-        provider = GatewayProvider('openai', http_client=http_client, api_key='foobar')
+        provider = gateway_provider('openai', http_client=http_client, api_key='foobar')
         assert provider.client._client == http_client  # type: ignore
 
 
@@ -67,8 +70,37 @@ def vcr_config():
     }
 
 
+def test_infer_model():
+    model = infer_model('openai/gpt-5')
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == 'gpt-5'
+
+    model = infer_model('openai-chat/gpt-5')
+    assert isinstance(model, OpenAIChatModel)
+    assert model.model_name == 'gpt-5'
+
+    model = infer_model('openai-responses/gpt-5')
+    assert isinstance(model, OpenAIResponsesModel)
+    assert model.model_name == 'gpt-5'
+
+    model = infer_model('groq/llama-3.3-70b-versatile')
+    assert isinstance(model, GroqModel)
+    assert model.model_name == 'llama-3.3-70b-versatile'
+
+    model = infer_model('google-vertex/gemini-1.5-flash')
+    assert isinstance(model, GoogleModel)
+    assert model.model_name == 'gemini-1.5-flash'
+    assert model.system == 'google-vertex'
+
+    with raises(snapshot('UserError: The model name "gemini-1.5-flash" is not in the format "provider/model_name".')):
+        infer_model('gemini-1.5-flash')
+
+    with raises(snapshot('UserError: Unknown upstream provider: gemini-1.5-flash')):
+        infer_model('gemini-1.5-flash/gemini-1.5-flash')
+
+
 async def test_gateway_provider_with_openai(allow_model_requests: None, gateway_api_key: str):
-    provider = GatewayProvider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
+    provider = gateway_provider('openai', api_key=gateway_api_key, base_url='http://localhost:8787')
     model = OpenAIChatModel('gpt-5', provider=provider)
     agent = Agent(model)
 

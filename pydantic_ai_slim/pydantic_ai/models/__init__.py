@@ -711,24 +711,9 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         provider = 'google-vertex'
 
     if provider == 'gateway':
-        from ..providers.gateway import GatewayProvider
+        from ..providers.gateway import infer_model as infer_model_from_gateway
 
-        # TODO(Marcelo): We need to try..except ValueError.
-        upstream_provider, model_name = model_name.split('/', 1)
-        if upstream_provider in ('openai', 'openai-chat'):
-            from .openai import OpenAIChatModel, OpenAIResponsesModel
-
-            return OpenAIChatModel(model_name, provider=GatewayProvider('openai'))
-        elif upstream_provider == 'groq':
-            from .groq import GroqModel
-
-            return GroqModel(model_name, provider=GatewayProvider('groq'))
-        elif upstream_provider == 'google-vertex':
-            from .google import GoogleModel
-
-            return GoogleModel(model_name, provider=GatewayProvider('google-vertex'))
-        else:
-            raise UserError(f'Unknown model: {model}')  # pragma: no cover
+        return infer_model_from_gateway(model_name)
     elif provider == 'cohere':
         from .cohere import CohereModel
 
