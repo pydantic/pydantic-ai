@@ -24,6 +24,8 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    MagicBinaryContent,
+    MagicDocumentUrl,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -735,6 +737,58 @@ class OpenAIChatModel(Model):
             for item in part.content:
                 if isinstance(item, str):
                     content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
+                elif isinstance(item, MagicDocumentUrl):
+                    # For OpenAI: convert text/plain to inline text; otherwise treat like DocumentUrl
+                    if item.media_type == 'text/plain':
+                        downloaded = await download_item(item, data_format='text', type_format='extension')
+                        filename = item.filename or f'file.{downloaded["data_type"] or "txt"}'
+                        inline = (
+                            f'-----BEGIN FILE filename="{filename}" type="text/plain"-----\n'
+                            f'{downloaded["data"]}\n'
+                            f'-----END FILE-----'
+                        )
+                        content.append(ChatCompletionContentPartTextParam(text=inline, type='text'))
+                    else:
+                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                        file = File(
+                            file=FileFile(
+                                file_data=downloaded_item['data'],
+                                filename=f'filename.{downloaded_item["data_type"]}',
+                            ),
+                            type='file',
+                        )
+                        content.append(file)
+                elif isinstance(item, MagicBinaryContent):
+                    if item.media_type == 'text/plain':
+                        text = item.data.decode('utf-8')
+                        filename = item.filename or 'file.txt'
+                        inline = (
+                            f'-----BEGIN FILE filename="{filename}" type="text/plain"-----\n'
+                            f'{text}\n'
+                            f'-----END FILE-----'
+                        )
+                        content.append(ChatCompletionContentPartTextParam(text=inline, type='text'))
+                    else:
+                        base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                        if item.is_image:
+                            image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                            content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+                        elif item.is_audio:
+                            assert item.format in ('wav', 'mp3')
+                            audio = InputAudio(data=base64_encoded, format=item.format)
+                            content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
+                        elif item.is_document:
+                            content.append(
+                                File(
+                                    file=FileFile(
+                                        file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                                        filename=f'filename.{item.format}',
+                                    ),
+                                    type='file',
+                                )
+                            )
+                        else:  # pragma: no cover
+                            raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
                     image_url = ImageURL(url=item.url)
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
