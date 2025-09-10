@@ -822,7 +822,7 @@ For comprehensive coverage of all classes, methods, and configuration options, s
 ## Next Steps
 
 <!-- TODO - this would be the perfect place for a full tutorial or case study  -->
-1. **Start with simple evaluations** using basic evaluators like [`IsInstance`](pydantic_evals.evaluators.IsInstance) and [`EqualsExpected`](pydantic_evals.evaluators.EqualsExpected)
+1. **Start with simple evaluations** using basic evaluators like [`IsInstance`](https://ai.pydantic.dev/api/pydantic_evals/evaluators/#pydantic_evals.evaluators.IsInstance) and [`EqualsExpected`](https://ai.pydantic.dev/api/pydantic_evals/evaluators/#pydantic_evals.evaluators.EqualsExpected)
 2. **Integrate with Logfire** to visualize results and enable team collaboration
 3. **Build comprehensive test suites** with diverse cases covering edge cases and performance requirements
 4. **Implement custom evaluators** for domain-specific quality metrics
