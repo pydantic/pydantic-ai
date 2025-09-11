@@ -154,6 +154,10 @@ def infer_model(model_name: str) -> Model:
         from pydantic_ai.models.groq import GroqModel
 
         return GroqModel(model_name, provider=gateway_provider('groq'))
+    elif upstream_provider == 'anthropic':
+        from pydantic_ai.models.anthropic import AnthropicModel
+
+        return AnthropicModel(model_name, provider=gateway_provider('anthropic'))
     elif upstream_provider == 'google-vertex':
         from pydantic_ai.models.google import GoogleModel
 
