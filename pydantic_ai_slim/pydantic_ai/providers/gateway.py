@@ -106,7 +106,6 @@ def gateway_provider(
 
         return AnthropicProvider(
             anthropic_client=AsyncAnthropic(
-                api_key=api_key,
                 base_url=urljoin(base_url, 'anthropic'),
                 http_client=http_client,
                 default_headers={'Authorization': api_key},
