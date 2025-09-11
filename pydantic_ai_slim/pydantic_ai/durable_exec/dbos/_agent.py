@@ -659,7 +659,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                                 timestamp=datetime.datetime(...),
                             )
                         ]
-                    )
+                    ),
                     response_prefix=None,
                 ),
                 CallToolsNode(
