@@ -77,16 +77,12 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     # See https://github.com/pydantic/pydantic-ai/issues/974 for more details.
     openai_system_prompt_role = 'user' if model_name.startswith('o1-mini') else None
 
-    # Enable response prefix for DeepSeek and OpenRouter models
-    supports_response_prefix = 'deepseek' in model_name.lower() or 'openrouter' in model_name.lower()
-
     return OpenAIModelProfile(
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
-        supports_response_prefix=supports_response_prefix,
         openai_chat_supports_web_search=supports_web_search,
     )
 

@@ -525,13 +525,9 @@ class OpenAIChatModel(Model):
             ]
 
         if choice.message.content is not None:
-            content = choice.message.content
-            # Prepend response prefix if provided
-            if model_request_parameters.response_prefix:
-                content = model_request_parameters.response_prefix + content
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(content, self.profile.thinking_tags)
+                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
             )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
@@ -1243,7 +1239,12 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        first_text_delta = True
+        # Handle response prefix by emitting it as the first text event
+        if response_prefix := self.model_request_parameters.response_prefix:
+            maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=response_prefix)
+            if maybe_event is not None:
+                yield maybe_event
+
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
@@ -1266,10 +1267,6 @@ class OpenAIStreamedResponse(StreamedResponse):
             # Handle the text part of the response
             content = choice.delta.content
             if content is not None:
-                # Prepend response prefix to the first text delta if provided
-                if first_text_delta and self.model_request_parameters.response_prefix:
-                    content = self.model_request_parameters.response_prefix + content
-                    first_text_delta = False
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,

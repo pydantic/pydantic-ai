@@ -70,7 +70,9 @@ class OpenRouterProvider(Provider[AsyncOpenAI]):
 
         # As OpenRouterProvider is always used with OpenAIChatModel, which used to unconditionally use OpenAIJsonSchemaTransformer,
         # we need to maintain that behavior unless json_schema_transformer is set explicitly
-        return OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer).update(profile)
+        return OpenAIModelProfile(
+            json_schema_transformer=OpenAIJsonSchemaTransformer, supports_response_prefix=True
+        ).update(profile)
 
     @overload
     def __init__(self) -> None: ...

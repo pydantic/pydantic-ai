@@ -626,7 +626,12 @@ class AnthropicStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
-        first_text_delta = True
+
+        # Handle response prefix by emitting it as the first text event
+        if response_prefix := self.model_request_parameters.response_prefix:
+            maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=response_prefix)
+            if maybe_event is not None:
+                yield maybe_event
 
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
@@ -670,12 +675,9 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
-                    content = event.delta.text
-                    # Prepend response prefix to the first text delta if provided
-                    if first_text_delta and self.model_request_parameters.response_prefix:
-                        content = self.model_request_parameters.response_prefix + content
-                        first_text_delta = False
-                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=event.index, content=content)
+                    maybe_event = self._parts_manager.handle_text_delta(
+                        vendor_part_id=event.index, content=event.delta.text
+                    )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
