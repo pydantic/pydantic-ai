@@ -243,7 +243,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             return mapped[0] if len(mapped) == 1 else mapped
         if structured is not None:
             return structured  # pragma: no cover (server typically supplies legacy content too)
-        return []  # pragma: no cover
+        return []
 
     async def call_tool(
         self,
