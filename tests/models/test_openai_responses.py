@@ -1237,21 +1237,6 @@ async def test_openai_previous_response_id_auto_mode(allow_model_requests: None,
 async def test_openai_previous_response_id_mixed_model_history(allow_model_requests: None, openai_api_key: str):
     """Test if invalid previous response id is ignored when history contains non-OpenAI responses"""
     history = [
-        # ModelRequest(
-        #     parts=[
-        #         UserPromptPart(
-        #             content='The first secret key is sesame',
-        #         ),
-        #     ],
-        # ),
-        # ModelResponse(
-        #     parts=[
-        #         TextPart(content='Open sesame! What would you like to unlock?'),
-        #     ],
-        #     model_name='gpt-5',
-        #     provider_name='openai',
-        #     provider_response_id='resp_68b9bd97025c8195b443af591ca2345c08cb6072affe6099',
-        # ),
         ModelRequest(
             parts=[
                 UserPromptPart(
