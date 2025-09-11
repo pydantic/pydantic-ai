@@ -41,6 +41,9 @@ class OpenAIModelProfile(ModelProfile):
     openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
 
+    openai_supports_encrypted_reasoning_content: bool = False
+    """Whether the model supports including encrypted reasoning content in the response."""
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
@@ -84,6 +87,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
+        openai_supports_encrypted_reasoning_content=is_reasoning_model,
     )
 
 
