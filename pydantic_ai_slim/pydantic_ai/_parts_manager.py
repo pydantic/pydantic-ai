@@ -198,16 +198,16 @@ class ModelResponsePartsManager:
                 existing_thinking_part_and_index = existing_part, part_index
 
         if existing_thinking_part_and_index is None:
-            if content is not None:
+            if content is not None or signature is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
-                part = ThinkingPart(content=content, id=id, signature=signature, provider_name=provider_name)
+                part = ThinkingPart(content=content or '', id=id, signature=signature, provider_name=provider_name)
                 if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)
                 return PartStartEvent(index=new_part_index, part=part)
             else:
-                raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content')
+                raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content or signature')
         else:
             if content is not None or signature is not None:
                 # Update the existing ThinkingPart with the new content and/or signature delta

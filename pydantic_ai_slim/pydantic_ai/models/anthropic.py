@@ -641,7 +641,6 @@ class AnthropicStreamedResponse(StreamedResponse):
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id=event.index,
                         id='redacted_thinking',
-                        content='',
                         signature=current_block.data,
                         provider_name=self.provider_name,
                     )

@@ -980,9 +980,14 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        unsupported_model_settings = profile.openai_unsupported_model_settings
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
+
+        include: list[responses.ResponseIncludable] | None = None
+        if profile.openai_supports_encrypted_reasoning_content:
+            include = ['reasoning.encrypted_content']
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -1004,7 +1009,7 @@ class OpenAIResponsesModel(Model):
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
-                include=['reasoning.encrypted_content'],
+                include=include or NOT_GIVEN,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )

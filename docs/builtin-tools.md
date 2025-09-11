@@ -99,8 +99,8 @@ in a secure environment, making it perfect for computational tasks, data analysi
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | OpenAI | ✅ | |
-| Anthropic | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
-| Google | ✅ | |
+| Anthropic | ✅ | |
+| Google | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
 | Mistral | ❌ | |
