@@ -13,16 +13,21 @@ bump = true
 [project]
 name = "pydantic-ai-examples"
 dynamic = ["version", "dependencies"]
-description = "Examples of how to use PydanticAI and what it can do."
-authors = [{ name = "Samuel Colvin", email = "samuel@pydantic.dev" }]
+description = "Examples of how to use Pydantic AI and what it can do."
+authors = [
+    { name = "Samuel Colvin", email = "samuel@pydantic.dev" },
+    { name = "Marcelo Trylesinski", email = "marcelotryle@gmail.com" },
+    { name = "David Montague", email = "david@pydantic.dev" },
+    { name = "Alex Hall", email = "alex@pydantic.dev" },
+    { name = "Douwe Maan", email = "douwe@pydantic.dev" },
+]
 license = "MIT"
 readme = "README.md"
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -38,22 +43,25 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-slim[openai,vertexai,groq,anthropic]=={{ version }}",
+    "pydantic-ai-slim[openai,vertexai,groq,anthropic,ag-ui]=={{ version }}",
     "pydantic-evals=={{ version }}",
     "asyncpg>=0.30.0",
     "fastapi>=0.115.4",
-    "logfire[asyncpg,fastapi,sqlite3,httpx]>=2.6",
+    "logfire[asyncpg,fastapi,sqlite3,httpx]>=3.14.1",
     "python-multipart>=0.0.17",
     "rich>=13.9.2",
     "uvicorn>=0.32.0",
     "devtools>=0.12.2",
-    "gradio>=5.9.0; python_version>'3.9'",
-    "mcp[cli]>=1.4.1; python_version >= '3.10'",
+    "gradio>=5.9.0",
+    "mcp[cli]>=1.4.1",
     "modal>=1.0.4",
+    "duckdb>=1.3.2",
+    "datasets>=4.0.0",
+    "pandas>=2.2.3",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -5,19 +5,20 @@ from collections.abc import Sequence
 from dataclasses import field
 from typing import TYPE_CHECKING, Generic
 
+from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar
 
 from . import _utils, messages as _messages
 
 if TYPE_CHECKING:
     from .models import Model
-    from .result import Usage
+    from .result import RunUsage
 
 AgentDepsT = TypeVar('AgentDepsT', default=None, contravariant=True)
 """Type variable for agent dependencies."""
 
 
-@dataclasses.dataclass(repr=False)
+@dataclasses.dataclass(repr=False, kw_only=True)
 class RunContext(Generic[AgentDepsT]):
     """Information about the current call."""
 
@@ -25,12 +26,18 @@ class RunContext(Generic[AgentDepsT]):
     """Dependencies for the agent."""
     model: Model
     """The model used in this run."""
-    usage: Usage
+    usage: RunUsage
     """LLM usage associated with the run."""
-    prompt: str | Sequence[_messages.UserContent] | None
+    prompt: str | Sequence[_messages.UserContent] | None = None
     """The original user prompt passed to the run."""
     messages: list[_messages.ModelMessage] = field(default_factory=list)
     """Messages exchanged in the conversation so far."""
+    tracer: Tracer = field(default_factory=NoOpTracer)
+    """The tracer to use for tracing the run."""
+    trace_include_content: bool = False
+    """Whether to include the content of the messages in the trace."""
+    retries: dict[str, int] = field(default_factory=dict)
+    """Number of retries for each tool so far."""
     tool_call_id: str | None = None
     """The ID of the tool call."""
     tool_name: str | None = None
@@ -39,18 +46,7 @@ class RunContext(Generic[AgentDepsT]):
     """Number of retries so far."""
     run_step: int = 0
     """The current step in the run."""
-
-    def replace_with(
-        self,
-        retry: int | None = None,
-        tool_name: str | None | _utils.Unset = _utils.UNSET,
-    ) -> RunContext[AgentDepsT]:
-        # Create a new `RunContext` a new `retry` value and `tool_name`.
-        kwargs = {}
-        if retry is not None:
-            kwargs['retry'] = retry
-        if tool_name is not _utils.UNSET:  # pragma: no branch
-            kwargs['tool_name'] = tool_name
-        return dataclasses.replace(self, **kwargs)
+    tool_call_approved: bool = False
+    """Whether a tool call that required approval has now been approved."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr

@@ -1,9 +1,9 @@
 interactions:
   - request:
-      body: ""
+      body: ''
       headers:
         accept:
-          - "*/*"
+          - '*/*'
         accept-encoding:
           - gzip, deflate
         connection:
@@ -17,17 +17,17 @@ interactions:
         string: |
           # Getting Help
 
-          If you need help getting started with PydanticAI or with advanced usage, the following sources may be useful.
+          If you need help getting started with Pydantic AI or with advanced usage, the following sources may be useful.
 
           ## :simple-slack: Slack
 
-          Join the `#pydantic-ai` channel in the [Pydantic Slack][slack] to ask questions, get help, and chat about PydanticAI. There's also channels for Pydantic, Logfire, and FastUI.
+          Join the `#pydantic-ai` channel in the [Pydantic Slack][slack] to ask questions, get help, and chat about Pydantic AI. There's also channels for Pydantic, Logfire, and FastUI.
 
           If you're on a [Logfire][logfire] Pro plan, you can also get a dedicated private slack collab channel with us.
 
           ## :simple-github: GitHub Issues
 
-          The [PydanticAI GitHub Issues][github-issues] are a great place to ask questions and give us feedback.
+          The [Pydantic AI GitHub Issues][github-issues] are a great place to ask questions and give us feedback.
 
           [slack]: https://logfire.pydantic.dev/docs/join-slack/
           [github-issues]: https://github.com/pydantic/pydantic-ai/issues
@@ -36,13 +36,13 @@ interactions:
         accept-ranges:
           - bytes
         access-control-allow-origin:
-          - "*"
+          - '*'
         cache-control:
           - max-age=300
         connection:
           - keep-alive
         content-length:
-          - "737"
+          - '737'
         content-security-policy:
           - default-src 'none'; style-src 'unsafe-inline'; sandbox
         cross-origin-resource-policy:
@@ -52,7 +52,7 @@ interactions:
         expires:
           - Sun, 01 Jun 2025 23:17:48 GMT
         source-age:
-          - "0"
+          - '0'
         strict-transport-security:
           - max-age=31536000
         vary:

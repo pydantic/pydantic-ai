@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,7 @@ with try_import() as imports_successful:
         EvaluationReason,
         EvaluationResult,
         Evaluator,
+        EvaluatorFailure,
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
 
@@ -52,11 +54,11 @@ def test_evaluation_result():
     evaluator = DummyEvaluator()
 
     # Test basic result
-    result = EvaluationResult(name='test', value=True, reason='Success', source=evaluator)
+    result = EvaluationResult(name='test', value=True, reason='Success', source=evaluator.as_spec())
     assert result.name == 'test'
     assert result.value is True
     assert result.reason == 'Success'
-    assert result.source == evaluator
+    assert result.source == evaluator.as_spec()
 
     # Test downcast with matching type
     downcast = result.downcast(bool)
@@ -240,7 +242,7 @@ async def test_run_evaluator():
     # Test with simple boolean result
     evaluator = SimpleEvaluator()
     results = await run_evaluator(evaluator, ctx)
-    adapter = TypeAdapter(list[EvaluationResult])
+    adapter = TypeAdapter[Sequence[EvaluationResult] | EvaluatorFailure](Sequence[EvaluationResult] | EvaluatorFailure)
     assert adapter.dump_python(results) == snapshot(
         [
             {

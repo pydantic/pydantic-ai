@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Generic, Literal, Union
+from typing import Any, Generic, Literal
 
-from typing_extensions import TypeAliasType, TypeVar
+from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import core_schema
+from typing_extensions import TypeAliasType, TypeVar, deprecated
 
-from .tools import RunContext
+from . import _utils
+from .messages import ToolCallPart
+from .tools import DeferredToolRequests, RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -14,6 +19,7 @@ __all__ = (
     'NativeOutput',
     'PromptedOutput',
     'TextOutput',
+    'StructuredDict',
     # types
     'OutputDataT',
     'OutputMode',
@@ -36,7 +42,7 @@ StructuredOutputMode = Literal['tool', 'native', 'prompted']
 
 
 OutputTypeOrFunction = TypeAliasType(
-    'OutputTypeOrFunction', Union[type[T_co], Callable[..., Union[Awaitable[T_co], T_co]]], type_params=(T_co,)
+    'OutputTypeOrFunction', type[T_co] | Callable[..., Awaitable[T_co] | T_co], type_params=(T_co,)
 )
 """Definition of an output type or function.
 
@@ -48,10 +54,7 @@ See [output docs](../output.md) for more information.
 
 TextOutputFunc = TypeAliasType(
     'TextOutputFunc',
-    Union[
-        Callable[[RunContext, str], Union[Awaitable[T_co], T_co]],
-        Callable[[str], Union[Awaitable[T_co], T_co]],
-    ],
+    Callable[[RunContext, str], Awaitable[T_co] | T_co] | Callable[[str], Awaitable[T_co] | T_co],
     type_params=(T_co,),
 )
 """Definition of a function that will be called to process the model's plain text output. The function must take a single string argument.
@@ -129,10 +132,9 @@ class NativeOutput(Generic[OutputDataT]):
 
     Example:
     ```python {title="native_output.py" requires="tool_output.py"}
-    from tool_output import Fruit, Vehicle
-
     from pydantic_ai import Agent, NativeOutput
 
+    from tool_output import Fruit, Vehicle
 
     agent = Agent(
         'openai:gpt-4o',
@@ -178,9 +180,10 @@ class PromptedOutput(Generic[OutputDataT]):
     Example:
     ```python {title="prompted_output.py" requires="tool_output.py"}
     from pydantic import BaseModel
-    from tool_output import Vehicle
 
     from pydantic_ai import Agent, PromptedOutput
+
+    from tool_output import Vehicle
 
 
     class Device(BaseModel):
@@ -266,16 +269,73 @@ class TextOutput(Generic[OutputDataT]):
     """The function that will be called to process the model's plain text output. The function must take a single string argument."""
 
 
+def StructuredDict(
+    json_schema: JsonSchemaValue, name: str | None = None, description: str | None = None
+) -> type[JsonSchemaValue]:
+    """Returns a `dict[str, Any]` subclass with a JSON schema attached that will be used for structured output.
+
+    Args:
+        json_schema: A JSON schema of type `object` defining the structure of the dictionary content.
+        name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
+        description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
+
+    Example:
+    ```python {title="structured_dict.py"}
+    from pydantic_ai import Agent, StructuredDict
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string'},
+            'age': {'type': 'integer'}
+        },
+        'required': ['name', 'age']
+    }
+
+    agent = Agent('openai:gpt-4o', output_type=StructuredDict(schema))
+    result = agent.run_sync('Create a person')
+    print(result.output)
+    #> {'name': 'John Doe', 'age': 30}
+    ```
+    """
+    json_schema = _utils.check_object_json_schema(json_schema)
+
+    if name:
+        json_schema['title'] = name
+
+    if description:
+        json_schema['description'] = description
+
+    class _StructuredDict(JsonSchemaValue):
+        __is_model_like__ = True
+
+        @classmethod
+        def __get_pydantic_core_schema__(
+            cls, source_type: Any, handler: GetCoreSchemaHandler
+        ) -> core_schema.CoreSchema:
+            return core_schema.dict_schema(
+                keys_schema=core_schema.str_schema(),
+                values_schema=core_schema.any_schema(),
+            )
+
+        @classmethod
+        def __get_pydantic_json_schema__(
+            cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+        ) -> JsonSchemaValue:
+            return json_schema
+
+    return _StructuredDict
+
+
+_OutputSpecItem = TypeAliasType(
+    '_OutputSpecItem',
+    OutputTypeOrFunction[T_co] | ToolOutput[T_co] | NativeOutput[T_co] | PromptedOutput[T_co] | TextOutput[T_co],
+    type_params=(T_co,),
+)
+
 OutputSpec = TypeAliasType(
     'OutputSpec',
-    Union[
-        OutputTypeOrFunction[T_co],
-        ToolOutput[T_co],
-        NativeOutput[T_co],
-        PromptedOutput[T_co],
-        TextOutput[T_co],
-        Sequence[Union[OutputTypeOrFunction[T_co], ToolOutput[T_co], TextOutput[T_co]]],
-    ],
+    _OutputSpecItem[T_co] | Sequence['OutputSpec[T_co]'],
     type_params=(T_co,),
 )
 """Specification of the agent's output data.
@@ -290,3 +350,16 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+
+@deprecated('`DeferredToolCalls` is deprecated, use `DeferredToolRequests` instead')
+class DeferredToolCalls(DeferredToolRequests):  # pragma: no cover
+    @property
+    @deprecated('`DeferredToolCalls.tool_calls` is deprecated, use `DeferredToolRequests.calls` instead')
+    def tool_calls(self) -> list[ToolCallPart]:
+        return self.calls
+
+    @property
+    @deprecated('`DeferredToolCalls.tool_defs` is deprecated')
+    def tool_defs(self) -> dict[str, ToolDefinition]:
+        return {}

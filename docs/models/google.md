@@ -13,14 +13,6 @@ pip/uv-add "pydantic-ai-slim[google]"
 
 ---
 
-!!! warning "Explicit instantiation required"
-    You **cannot** currently use `Agent('google-gla:gemini-1.5-flash')` or `Agent('google-vertex:gemini-1.5-flash')` directly with `GoogleModel`. The model name inference will select [`GeminiModel`](../models/gemini.md) instead of `GoogleModel`.
-
-    To use `GoogleModel`, you **must** explicitly instantiate a [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] and pass it to
-    [`GoogleModel`][pydantic_ai.models.google.GoogleModel], then pass the model to [`Agent`][pydantic_ai.Agent].
-
----
-
 ## Configuration
 
 `GoogleModel` lets you use Google's Gemini models through their [Generative Language API](https://ai.google.dev/api/all-methods) (`generativelanguage.googleapis.com`) or [Vertex AI API](https://cloud.google.com/vertex-ai/generative-ai/docs/learn/models) (`*-aiplatform.googleapis.com`).
@@ -52,13 +44,24 @@ agent = Agent(model)
 
 If you are an enterprise user, you can use the `google-vertex` provider with `GoogleModel` to access Gemini via Vertex AI.
 
+This interface has a number of advantages over the Generative Language API:
+
+1. The VertexAI API comes with more enterprise readiness guarantees.
+2. You can [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput) with VertexAI to guarantee capacity.
+3. If you're running Pydantic AI inside GCP, you don't need to set up authentication, it should "just work".
+4. You can decide which region to use, which might be important from a regulatory perspective, and might improve latency.
+
+The big disadvantage is that for local development you may need to create and configure a "service account", which can be challenging to get right.
+
+Whichever way you authenticate, you'll need to have VertexAI enabled in your GCP account.
+
 To use Vertex AI, you may need to set up [application default credentials](https://cloud.google.com/docs/authentication/application-default-credentials) or use a service account. You can also specify the region.
 
 #### Application Default Credentials
 
 If you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you can use:
 
-```python
+```python {test="ci_only"}
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
@@ -84,7 +87,7 @@ credentials = service_account.Credentials.from_service_account_file(
     'path/to/service-account.json',
     scopes=['https://www.googleapis.com/auth/cloud-platform'],
 )
-provider = GoogleProvider(credentials=credentials)
+provider = GoogleProvider(credentials=credentials, project='your-project-id')
 model = GoogleModel('gemini-1.5-flash', provider=provider)
 agent = Agent(model)
 ...
@@ -112,14 +115,14 @@ You can supply a custom `GoogleProvider` instance using the `provider` argument 
 This is useful if you're using a custom-compatible endpoint with the Google Generative Language API.
 
 ```python
-from google import genai
+from google.genai import Client
 from google.genai.types import HttpOptions
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-client = genai.Client(
+client = Client(
     api_key='gemini-custom-api-key',
     http_options=HttpOptions(base_url='gemini-custom-base-url'),
 )

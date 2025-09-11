@@ -1,6 +1,6 @@
+# pyright: reportDeprecated=false
 import os
 from dataclasses import dataclass
-from typing import Union
 
 import pytest
 from inline_snapshot import Is, snapshot
@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models.gemini import GeminiModel, GeminiModelSettings
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 
 from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
@@ -32,6 +32,8 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-auth not installed'),
     pytest.mark.anyio,
+    pytest.mark.filterwarnings('ignore:Use `GoogleModel` instead.:DeprecationWarning'),
+    pytest.mark.filterwarnings('ignore:`GoogleVertexProvider` is deprecated.:DeprecationWarning'),
 ]
 
 
@@ -122,7 +124,7 @@ async def test_labels(allow_model_requests: None) -> None:  # pragma: lax no cov
 )
 @pytest.mark.vcr()
 async def test_url_input(
-    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl], expected_output: str, allow_model_requests: None
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl, expected_output: str, allow_model_requests: None
 ) -> None:  # pragma: lax no cover
     provider = GoogleVertexProvider(project_id='pydantic-ai', region='us-central1')
     m = GeminiModel('gemini-2.0-flash', provider=provider)
@@ -142,11 +144,11 @@ async def test_url_input(
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(expected_output))],
-                usage=IsInstance(Usage),
+                usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )
@@ -179,11 +181,11 @@ async def test_url_input_force_download(allow_model_requests: None) -> None:  # 
             ),
             ModelResponse(
                 parts=[TextPart(content=Is(output))],
-                usage=IsInstance(Usage),
+                usage=IsInstance(RequestUsage),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
-                vendor_details={'finish_reason': 'STOP'},
-                vendor_id=IsStr(),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
             ),
         ]
     )

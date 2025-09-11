@@ -1,0 +1,335 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '347'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in CDMX?
+        role: user
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather_in_city
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1086'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '327'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"CDMX"}'
+              name: get_weather_in_city
+            id: call_fFAB8MNL3tUdfNIIdsIJTo0H
+            type: function
+      created: 1756423190
+      id: chatcmpl-C9gCExiXILzHBQ4ZuERdiURkHUZZM
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_ea40d5097a
+      usage:
+        completion_tokens: 17
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 47
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 64
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '665'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=yUpeQm6kQWb.kRgbX0F391IMtd8nqGUrSigYrEakdXQ-1756423190-1.0.1.1-FPxZURmrG14EfyWc8ZgNIHTHoWxQ3IPV9X4uCZ2O_z1KiiSc66VTYHq86EbI5aUnd26QXGFdwTsriLpMHbGRxfqlOj.DSK3daVg9q_XBQDE;
+        _cfuvid=t8Kvct8UEUS4P6_7AIQ7_ayX0J6QaCWrtHqGpTB5uMo-1756423190751-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in CDMX?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"CDMX"}'
+            name: get_weather_in_city
+          id: call_fFAB8MNL3tUdfNIIdsIJTo0H
+          type: function
+      - content: |-
+          Did you mean Mexico City?
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: call_fFAB8MNL3tUdfNIIdsIJTo0H
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather_in_city
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '1094'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '352'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: tool_calls
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: null
+          refusal: null
+          role: assistant
+          tool_calls:
+          - function:
+              arguments: '{"city":"Mexico City"}'
+              name: get_weather_in_city
+            id: call_hLYHO5lK5lmiukTZv6VQzz3x
+            type: function
+      created: 1756423191
+      id: chatcmpl-C9gCF2OpzQojDQTsp31IsAagNqEC6
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_ea40d5097a
+      usage:
+        completion_tokens: 17
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 87
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 104
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '937'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=yUpeQm6kQWb.kRgbX0F391IMtd8nqGUrSigYrEakdXQ-1756423190-1.0.1.1-FPxZURmrG14EfyWc8ZgNIHTHoWxQ3IPV9X4uCZ2O_z1KiiSc66VTYHq86EbI5aUnd26QXGFdwTsriLpMHbGRxfqlOj.DSK3daVg9q_XBQDE;
+        _cfuvid=t8Kvct8UEUS4P6_7AIQ7_ayX0J6QaCWrtHqGpTB5uMo-1756423190751-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      messages:
+      - content: What is the weather in CDMX?
+        role: user
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"CDMX"}'
+            name: get_weather_in_city
+          id: call_fFAB8MNL3tUdfNIIdsIJTo0H
+          type: function
+      - content: |-
+          Did you mean Mexico City?
+
+          Fix the errors and try again.
+        role: tool
+        tool_call_id: call_fFAB8MNL3tUdfNIIdsIJTo0H
+      - content: null
+        role: assistant
+        tool_calls:
+        - function:
+            arguments: '{"city":"Mexico City"}'
+            name: get_weather_in_city
+          id: call_hLYHO5lK5lmiukTZv6VQzz3x
+          type: function
+      - content: sunny
+        role: tool
+        tool_call_id: call_hLYHO5lK5lmiukTZv6VQzz3x
+      model: gpt-4o
+      stream: false
+      tool_choice: auto
+      tools:
+      - function:
+          description: ''
+          name: get_weather_in_city
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          strict: true
+        type: function
+    uri: https://api.openai.com/v1/chat/completions
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '850'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '312'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        logprobs: null
+        message:
+          annotations: []
+          content: The weather in Mexico City is currently sunny.
+          refusal: null
+          role: assistant
+      created: 1756423192
+      id: chatcmpl-C9gCGg6DDdUlo7CuS04nK9k6dnkZG
+      model: gpt-4o-2024-08-06
+      object: chat.completion
+      service_tier: default
+      system_fingerprint: fp_ea40d5097a
+      usage:
+        completion_tokens: 10
+        completion_tokens_details:
+          accepted_prediction_tokens: 0
+          audio_tokens: 0
+          reasoning_tokens: 0
+          rejected_prediction_tokens: 0
+        prompt_tokens: 116
+        prompt_tokens_details:
+          audio_tokens: 0
+          cached_tokens: 0
+        total_tokens: 126
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,6 +1,6 @@
 # `pydantic_ai.models.test`
 
-Utility model for quickly testing apps built with PydanticAI.
+Utility model for quickly testing apps built with Pydantic AI.
 
 Here's a minimal example:
 

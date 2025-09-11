@@ -64,7 +64,7 @@ You need to have a Slack workspace and the necessary permissions to create apps.
 
 ## Usage
 
-1. Make sure you have the [dependencies installed](./index.md#usage).
+1. Make sure you have the [dependencies installed](./setup.md#usage).
 
 2. Authenticate with Modal:
 
@@ -107,7 +107,6 @@ Now when someone new (possibly you with a throwaway email) joins the Slack works
     ```
 
 !!! note "Deploying to production"
-
     If you'd like to deploy this app into your Modal workspace in a persistent fashion, you can use this command:
 
     ```bash

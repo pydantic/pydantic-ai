@@ -1,5 +1,3 @@
-from typing import Union
-
 import pytest
 
 from pydantic_ai.messages import AudioUrl, DocumentUrl, ImageUrl, VideoUrl
@@ -20,7 +18,7 @@ pytestmark = [pytest.mark.anyio]
     ),
 )
 async def test_download_item_raises_user_error_with_gs_uri(
-    url: Union[AudioUrl, DocumentUrl, ImageUrl, VideoUrl],
+    url: AudioUrl | DocumentUrl | ImageUrl | VideoUrl,
 ) -> None:
     with pytest.raises(UserError, match='Downloading from protocol "gs://" is not supported.'):
         _ = await download_item(url, data_format='bytes')
@@ -40,6 +38,16 @@ async def test_download_item_application_octet_stream() -> None:
         data_format='bytes',
     )
     assert downloaded_item['data_type'] == 'video/mp4'
+    assert downloaded_item['data'] == IsInstance(bytes)
+
+
+@pytest.mark.vcr()
+async def test_download_item_audio_mpeg() -> None:
+    downloaded_item = await download_item(
+        AudioUrl(url='https://smokeshow.helpmanual.io/4l1l1s0s6q4741012x1w/common_voice_en_537507.mp3'),
+        data_format='bytes',
+    )
+    assert downloaded_item['data_type'] == 'audio/mpeg'
     assert downloaded_item['data'] == IsInstance(bytes)
 
 

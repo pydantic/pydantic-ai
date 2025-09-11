@@ -1,11 +1,11 @@
 # Common Tools
 
-PydanticAI ships with native tools that can be used to enhance your agent's capabilities.
+Pydantic AI ships with native tools that can be used to enhance your agent's capabilities.
 
 ## DuckDuckGo Search Tool
 
 The DuckDuckGo search tool allows you to search the web for information. It is built on top of the
-[DuckDuckGo API](https://github.com/deedy5/duckduckgo_search).
+[DuckDuckGo API](https://github.com/deedy5/ddgs).
 
 ### Installation
 
@@ -106,7 +106,7 @@ Here's an example of how you can use the Tavily search tool with an agent:
 ```py {title="tavily_search.py" test="skip"}
 import os
 
-from pydantic_ai.agent import Agent
+from pydantic_ai import Agent
 from pydantic_ai.common_tools.tavily import tavily_search_tool
 
 api_key = os.getenv('TAVILY_API_KEY')

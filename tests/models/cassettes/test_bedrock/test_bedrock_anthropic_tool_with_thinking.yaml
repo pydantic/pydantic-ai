@@ -1,0 +1,116 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the largest city in the user country?"}]}], "system":
+      [], "inferenceConfig": {}, "toolConfig": {"tools": [{"toolSpec": {"name": "get_user_country", "inputSchema": {"json":
+      {"additionalProperties": false, "properties": {}, "type": "object"}}}}]}, "additionalModelRequestFields": {"thinking":
+      {"type": "enabled", "budget_tokens": 1024}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MmM5YzRmZDctMmNlZS00Yzk2LWIwZWMtZjMxN2NkZDEwYmM5
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '396'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-3-7-sonnet-20250219-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1085'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 3896
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                signature: ErcBCkgIBhABGAIiQDYN+P1S3ACL3r24cAMKCrRNiuPPxvmT2uzREPLRyKEUXagRbXn97QCke6L7OEZvlh7NdA/MQNTwMZV8TuB4qPASDLNxYxDx1S3luCIfARoMIwLZXwhsvjjTN72XIjAJrEl5ryAvv6C1+6YMCPC73ffE+kgwB96IcZaOuDFQtyaoWwcFcDPBguM6YNp5e3cqHbDQ3QF5dR4PP5q+3K23pual3pUdT/0e7khyIxXkGAI=
+                text: |-
+                  The user is asking for the largest city in their country. To answer this, I first need to determine what country the user is from. I can use the `get_user_country` function to retrieve this information.
+
+                  Once I have the user's country, I can then provide information about the largest city in that country.
+          - text: I'll need to check what country you're from to answer that question.
+          - toolUse:
+              input: {}
+              name: get_user_country
+              toolUseId: tooluse_W9DaUFg4Tj2cRPpndqxWSg
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 397
+        outputTokens: 130
+        totalTokens: 527
+    status:
+      code: 200
+      message: OK
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is the largest city in the user country?"}]}, {"role":
+      "assistant", "content": [{"reasoningContent": {"reasoningText": {"text": "The user is asking for the largest city in
+      their country. To answer this, I first need to determine what country the user is from. I can use the `get_user_country`
+      function to retrieve this information.\n\nOnce I have the user''s country, I can then provide information about the
+      largest city in that country.", "signature": "ErcBCkgIBhABGAIiQDYN+P1S3ACL3r24cAMKCrRNiuPPxvmT2uzREPLRyKEUXagRbXn97QCke6L7OEZvlh7NdA/MQNTwMZV8TuB4qPASDLNxYxDx1S3luCIfARoMIwLZXwhsvjjTN72XIjAJrEl5ryAvv6C1+6YMCPC73ffE+kgwB96IcZaOuDFQtyaoWwcFcDPBguM6YNp5e3cqHbDQ3QF5dR4PP5q+3K23pual3pUdT/0e7khyIxXkGAI="}}},
+      {"text": "I''ll need to check what country you''re from to answer that question."}, {"toolUse": {"toolUseId": "tooluse_W9DaUFg4Tj2cRPpndqxWSg",
+      "name": "get_user_country", "input": {}}}]}, {"role": "user", "content": [{"toolResult": {"toolUseId": "tooluse_W9DaUFg4Tj2cRPpndqxWSg",
+      "content": [{"text": "Mexico"}], "status": "success"}}]}], "system": [], "inferenceConfig": {}, "toolConfig": {"tools":
+      [{"toolSpec": {"name": "get_user_country", "inputSchema": {"json": {"additionalProperties": false, "properties": {},
+      "type": "object"}}}}]}, "additionalModelRequestFields": {"thinking": {"type": "enabled", "budget_tokens": 1024}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        ZWM5NzBkMzYtZTZhYi00MjdlLWFmMzItMTBhNTc2ZjBiMWNl
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '1399'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-3-7-sonnet-20250219-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '756'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 4529
+      output:
+        message:
+          content:
+          - text: |-
+              Based on your location in Mexico, the largest city is Mexico City (Ciudad de México). It's not only the capital but also the most populous city in Mexico with a metropolitan area population of over 21 million people, making it one of the largest urban agglomerations in the world.
+
+              Mexico City is an important cultural, financial, and political center for the country and has a rich history dating back to the Aztec empire when it was known as Tenochtitlán.
+          role: assistant
+      stopReason: end_turn
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 539
+        outputTokens: 106
+        totalTokens: 645
+    status:
+      code: 200
+      message: OK
+version: 1

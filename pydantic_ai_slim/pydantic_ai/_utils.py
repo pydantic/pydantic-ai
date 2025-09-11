@@ -6,24 +6,20 @@ import inspect
 import re
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
 from functools import partial
 from types import GenericAlias
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, Union, overload
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
 
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
-    TypeAlias,
-    TypeGuard,
     TypeIs,
-    get_args,
-    get_origin,
     is_typeddict,
 )
 from typing_inspection import typing_objects
@@ -60,7 +56,12 @@ def is_model_like(type_: Any) -> bool:
     return (
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
-        and (issubclass(type_, BaseModel) or is_dataclass(type_) or is_typeddict(type_))  # pyright: ignore[reportUnknownArgumentType]
+        and (
+            issubclass(type_, BaseModel)
+            or is_dataclass(type_)  # pyright: ignore[reportUnknownArgumentType]
+            or is_typeddict(type_)  # pyright: ignore[reportUnknownArgumentType]
+            or getattr(type_, '__is_model_like__', False)  # pyright: ignore[reportUnknownArgumentType]
+        )
     )
 
 
@@ -89,7 +90,7 @@ class Some(Generic[T]):
     value: T
 
 
-Option: TypeAlias = Union[Some[T], None]
+Option: TypeAlias = Some[T] | None
 """Analogous to Rust's `Option` type, usage: `Option[Thing]` is equivalent to `Some[Thing] | None`."""
 
 
@@ -220,7 +221,13 @@ def now_utc() -> datetime:
     return datetime.now(tz=timezone.utc)
 
 
-def guard_tool_call_id(t: _messages.ToolCallPart | _messages.ToolReturnPart | _messages.RetryPromptPart) -> str:
+def guard_tool_call_id(
+    t: _messages.ToolCallPart
+    | _messages.ToolReturnPart
+    | _messages.RetryPromptPart
+    | _messages.BuiltinToolCallPart
+    | _messages.BuiltinToolReturnPart,
+) -> str:
     """Type guard that either returns the tool call id or generates a new one if it's None."""
     return t.tool_call_id or generate_tool_call_id()
 
@@ -315,8 +322,11 @@ def dataclasses_no_defaults_repr(self: Any) -> str:
     return f'{self.__class__.__qualname__}({", ".join(kv_pairs)})'
 
 
+_datetime_ta = TypeAdapter(datetime)
+
+
 def number_to_datetime(x: int | float) -> datetime:
-    return TypeAdapter(datetime).validate_python(x)
+    return _datetime_ta.validate_python(x)
 
 
 AwaitableCallable = Callable[..., Awaitable[T]]
@@ -443,13 +453,22 @@ def strip_markdown_fences(text: str) -> str:
     return text
 
 
+def _unwrap_annotated(tp: Any) -> Any:
+    origin = get_origin(tp)
+    while typing_objects.is_annotated(origin):
+        tp = tp.__origin__
+        origin = get_origin(tp)
+    return tp
+
+
 def get_union_args(tp: Any) -> tuple[Any, ...]:
     """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
+    tp = _unwrap_annotated(tp)
     origin = get_origin(tp)
     if is_union_origin(origin):
-        return get_args(tp)
+        return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
     else:
         return ()

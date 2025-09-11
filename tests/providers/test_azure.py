@@ -18,7 +18,7 @@ from ..conftest import try_import
 with try_import() as imports_successful:
     from openai import AsyncAzureOpenAI
 
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.azure import AzureProvider
 
 
@@ -42,7 +42,7 @@ def test_azure_provider():
 
 
 def test_azure_provider_with_openai_model():
-    model = OpenAIModel(
+    model = OpenAIChatModel(
         model_name='gpt-4o',
         provider=AzureProvider(
             azure_endpoint='https://project-id.openai.azure.com/',
@@ -50,7 +50,7 @@ def test_azure_provider_with_openai_model():
             api_key='1234567890',
         ),
     )
-    assert isinstance(model, OpenAIModel)
+    assert isinstance(model, OpenAIChatModel)
     assert isinstance(model.client, AsyncAzureOpenAI)
 
 
@@ -65,15 +65,15 @@ def test_azure_provider_with_azure_openai_client():
 
 
 async def test_azure_provider_call(allow_model_requests: None):
-    api_key = os.environ.get('AZURE_OPENAI_API_KEY', '1234567890')
-    api_version = os.environ.get('AZURE_OPENAI_API_VERSION', '2024-12-01-preview')
+    api_key = os.getenv('AZURE_OPENAI_API_KEY', '1234567890')
+    api_version = os.getenv('AZURE_OPENAI_API_VERSION', '2024-12-01-preview')
 
     provider = AzureProvider(
         api_key=api_key,
         azure_endpoint='https://pydanticai7521574644.openai.azure.com/',
         api_version=api_version,
     )
-    model = OpenAIModel(model_name='gpt-4o', provider=provider)
+    model = OpenAIChatModel(model_name='gpt-4o', provider=provider)
     agent = Agent(model)
 
     result = await agent.run('What is the capital of France?')
