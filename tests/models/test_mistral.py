@@ -2146,81 +2146,35 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb645d50f48196a0c49fd603b87f4503498c8aa840cf12'),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1789, details={'reasoning_tokens': 1344}),
+                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
+                provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
                 finish_reason='stop',
             ),
         ]
     )
 
-    mistral_model = MistralModel('mistral-large-latest', provider=MistralProvider(api_key=mistral_api_key))
+    mistral_model = MistralModel('magistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
     result = await agent.run(
         'Considering the way to cross the street, analogously, how do I cross the river?',
         model=mistral_model,
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    ThinkingPart(content=IsStr(), id='rs_68079ad7f0588191af64f067e7314d840493b22e4095129c'),
-                    TextPart(
-                        content="""\
-I'm not a traffic safety expert, but here are some general guidelines that many people follow when crossing a street safely. Remember that local rules and conditions might vary, so always follow local traffic laws and pay close attention to your surroundings.
-
-1. Find a Designated Crossing Point
- • Look for crosswalks, pedestrian signals, or marked intersections. These areas are designed for safe crossing.
- • If no crosswalk is available, choose a spot where you have clear visibility of oncoming traffic in all directions.
-
-2. Stop at the Curb or Edge of the Road
- • Before stepping off the curb, pause to assess the situation.
- • Resist the urge to step into the street immediately—this helps you avoid unpredictable traffic behavior.
-
-3. Look and Listen
- • Look left, then right, and left again. In some places, you might need to check right a second time depending on the flow of traffic.
- • Pay attention to the sound of approaching vehicles or any signals that indicate vehicles may be turning into your path.
- • Remove or lower distractions like headphones so you can be fully aware of your environment.
-
-4. Follow Pedestrian Signals (if available)
- • If you're at an intersection with traffic signals, wait for the "Walk" signal.
- • Even when the signal is in your favor, ensure that any turning vehicles (cars or bikes) see you and are stopping.
-
-5. Make Eye Contact
- • If possible, make eye contact with drivers who might be turning. This can help ensure that they see you and are taking appropriate action.
-
-6. Cross Quickly and Carefully
- • Once you've determined that it's safe, proceed at a steady pace.
- • Continue to be alert while you cross, watching for any unexpected vehicle movements.
-
-7. Stay on the Sidewalk Once You've Crossed
- • After reaching the other side, stick to areas designated for pedestrians rather than walking immediately back into the roadway.
-
-These suggestions are meant to help you think through pedestrian safety. Different regions may have additional rules or different signals, so if you're unsure, it might help to check local guidelines or ask someone familiar with the area. Stay safe!\
-"""
-                    ),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1789, details={'reasoning_tokens': 1344}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68079acebbfc819189ec20e1e5bf525d0493b22e4095129c',
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -2230,13 +2184,94 @@ These suggestions are meant to help you think through pedestrian safety. Differe
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content=IsStr())],
-                usage=RequestUsage(input_tokens=1036, output_tokens=691),
-                model_name='mistral-large-latest',
+                parts=[
+                    ThinkingPart(content=IsStr()),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=664, output_tokens=747),
+                model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
                 provider_details={'finish_reason': 'stop'},
-                provider_response_id='a088e80a476e44edaaa959a1ff08f358',
+                provider_response_id='9abe8b736bff46af8e979b52334a57cd',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+@pytest.mark.vcr()
+async def test_mistral_model_thinking_part_iter(allow_model_requests: None, mistral_api_key: str):
+    model = MistralModel('magistral-medium-latest', provider=MistralProvider(api_key=mistral_api_key))
+    agent = Agent(model)
+
+    async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for _ in request_stream:
+                        pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content="""\
+Okay, the user is asking a very basic question about how to cross the street. This seems like a straightforward query, but I need to make sure I provide clear and safe instructions. Crossing the street safely involves a few key steps that are generally taught to children and are important for everyone to follow.
+
+First, I recall that the basic steps involve looking both ways for oncoming traffic, using designated crosswalks if available, and following traffic signals if there are any. But I should break it down into clear, actionable steps.
+
+1. **Find a Safe Place to Cross**: Ideally, you should cross at a designated crosswalk or intersection. These are typically marked with white lines on the road and may have traffic signals or signs.
+
+2. **Look Both Ways**: Before stepping off the curb, look left, right, and then left again to check for oncoming traffic. This is because in many places, traffic comes from the left first (depending on the country's driving side).
+
+3. **Wait for a Safe Gap**: Make sure there is enough time to cross the street before any vehicles approach. If there's a traffic light, wait for the pedestrian signal to indicate it's safe to cross.
+
+4. **Cross with Caution**: Walk briskly across the street while keeping an eye out for any unexpected vehicles. Avoid running unless absolutely necessary.
+
+5. **Continue Looking**: Even while crossing, continue to look for vehicles to ensure your safety.
+
+6. **Follow Traffic Signals**: If there are traffic lights or pedestrian signals, obey them. Only cross when the signal indicates it's safe to do so.
+
+Additionally, it's important to make eye contact with drivers if possible, to ensure they see you before you cross. Avoid distractions like using your phone while crossing the street.
+
+But wait, does the user need any specific context? For example, are they in a country where cars drive on the left or the right? That might affect the direction they should look first. However, since the user hasn't specified a location, I'll provide a general answer that should work in most places.
+
+Also, if the user is asking this question, they might be very young or unfamiliar with urban environments, so I should keep the instructions simple and clear.
+
+Here's a concise response based on this thinking:\
+"""
+                    ),
+                    TextPart(
+                        content="""\
+To cross the street safely, follow these steps:
+
+1. Find a designated crosswalk or intersection if possible.
+2. Look left, right, and then left again to check for oncoming traffic.
+3. Wait for a safe gap in traffic or for the pedestrian signal to indicate it's safe to cross.
+4. Cross the street briskly while continuing to look for vehicles.
+5. Follow any traffic signals and always be cautious of your surroundings.
+
+If you're in a country where cars drive on the left (like the UK or Japan), remember to look right first instead of left. Always prioritize your safety and make sure drivers see you before crossing.\
+"""
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=10, output_tokens=602),
+                model_name='magistral-medium-latest',
+                timestamp=IsDatetime(),
+                provider_name='mistral',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='9faf4309c1d743d189f16b29211d8b45',
                 finish_reason='stop',
             ),
         ]

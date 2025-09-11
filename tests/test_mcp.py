@@ -764,7 +764,7 @@ async def test_tool_returning_audio_resource(
 async def test_tool_returning_audio_resource_link(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    model = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
         result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
         assert result.output == snapshot('00:05')
@@ -780,19 +780,25 @@ async def test_tool_returning_audio_resource_link(
                 ),
                 ModelResponse(
                     parts=[
-                        TextPart(
-                            content='The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.'
+                        ThinkingPart(
+                            content='',
+                            signature=IsStr(),
+                            provider_name='google-gla',
                         ),
-                        ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='get_audio_resource_link',
+                            args={},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=561, output_tokens=236, details={'thoughts_tokens': 195, 'text_prompt_tokens': 561}
+                        input_tokens=605, output_tokens=168, details={'thoughts_tokens': 154, 'text_prompt_tokens': 605}
                     ),
-                    model_name='models/gemini-2.5-pro',
+                    model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
+                    provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
                     finish_reason='stop',
                 ),
                 ModelRequest(
@@ -803,22 +809,28 @@ async def test_tool_returning_audio_resource_link(
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=[
+                                'This is file 2d36ae:',
+                                audio_content,
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
                     ]
                 ),
                 ModelResponse(
                     parts=[TextPart(content='00:05')],
                     usage=RequestUsage(
-                        input_tokens=784,
+                        input_tokens=801,
                         output_tokens=5,
                         input_audio_tokens=144,
-                        details={'text_prompt_tokens': 640, 'audio_prompt_tokens': 144},
+                        details={'text_prompt_tokens': 657, 'audio_prompt_tokens': 144},
                     ),
-                    model_name='models/gemini-2.5-pro',
+                    model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
+                    provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
                     finish_reason='stop',
                 ),
             ]

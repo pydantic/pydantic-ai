@@ -873,9 +873,9 @@ async def test_thinking_part_in_history(allow_model_requests: None):
         ModelRequest(parts=[UserPromptPart(content='request')]),
         ModelResponse(
             parts=[
-                TextPart(content='thought 1'),
-                ThinkingPart(content='this should be ignored'),
-                TextPart(content='thought 2'),
+                TextPart(content='text 1'),
+                ThinkingPart(content='let me do some thinking'),
+                TextPart(content='text 2'),
             ],
             model_name='hf-model',
             timestamp=datetime.now(timezone.utc),
@@ -889,7 +889,18 @@ async def test_thinking_part_in_history(allow_model_requests: None):
     assert [{k: v for k, v in asdict(m).items() if v is not None} for m in sent_messages] == snapshot(
         [
             {'content': 'request', 'role': 'user'},
-            {'content': 'thought 1\n\nthought 2', 'role': 'assistant'},
+            {
+                'content': """\
+text 1
+
+<think>
+let me do some thinking
+</think>
+
+text 2\
+""",
+                'role': 'assistant',
+            },
             {'content': 'another request', 'role': 'user'},
         ]
     )
@@ -992,21 +1003,8 @@ async def test_hf_model_thinking_part(allow_model_requests: None, huggingface_ap
         ),
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=15, output_tokens=1090),
-                model_name='Qwen/Qwen3-235B-A22B',
-                timestamp=IsDatetime(),
-                provider_name='huggingface',
-                provider_details={'finish_reason': 'stop'},
-                provider_response_id='chatcmpl-957db61fe60d4440bcfe1f11f2c5b4b9',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(

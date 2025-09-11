@@ -68,7 +68,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             assert api_key is None, 'Cannot provide both `anthropic_client` and `api_key`'
             self._client = anthropic_client
         else:
-            api_key = api_key or os.environ.get('ANTHROPIC_API_KEY')
+            api_key = api_key or os.getenv('ANTHROPIC_API_KEY')
             if not api_key:
                 raise UserError(
                     'Set the `ANTHROPIC_API_KEY` environment variable or pass it via `AnthropicProvider(api_key=...)`'

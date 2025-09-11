@@ -331,10 +331,8 @@ class HuggingFaceModel(Model):
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # texts.append(f'<think>\n{item.content}\n</think>')
-                        pass
+                        start_tag, end_tag = self.profile.thinking_tags
+                        texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
                         # This is currently never returned from huggingface
                         pass
