@@ -486,7 +486,7 @@ async def test_multiple_parallel_tool_calls(allow_model_requests: None):
 
     # If we don't provide some value for the API key, the anthropic SDK will raise an error.
     # However, we do want to use the environment variable if present when rewriting VCR cassettes.
-    api_key = os.environ.get('ANTHROPIC_API_KEY', 'mock-value')
+    api_key = os.getenv('ANTHROPIC_API_KEY', 'mock-value')
     agent = Agent(
         AnthropicModel('claude-3-5-haiku-latest', provider=AnthropicProvider(api_key=api_key)),
         system_prompt=system_prompt,
