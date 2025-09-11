@@ -223,21 +223,27 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        # Prefer structuredContent per MCP spec (5.2.6). Servers MAY omit
-        # text content when structuredContent is present; fall back to
-        # content blocks only when it's absent.
+        # Prefer 'structuredContent' only when 'content' is empty.
+        # Ref: Tools / Structured Content — "SHOULD also return the serialized JSON in a TextContent block."
+        # https://modelcontextprotocol.io/specification/draft/server/tools
         structured = result.structuredContent
-        if structured is not None:
-            output = structured
-            error_text = str(structured)
-        else:
-            content = [await self._map_tool_result_part(part) for part in result.content]
-            output = content[0] if len(content) == 1 else content
-            error_text = '\n'.join(str(part) for part in content)
-
         if result.isError:
-            raise exceptions.ModelRetry(error_text)
-        return output
+            if result.content:
+                mapped = [await self._map_tool_result_part(part) for part in result.content]
+                text_parts = [p for p in mapped if isinstance(p, str)]
+                message = '\n'.join(text_parts) if text_parts else '\n'.join(str(p) for p in mapped)
+            elif structured is not None:
+                message = str(structured)
+            else:  # pragma: no cover
+                message = 'Error executing tool'
+            raise exceptions.ModelRetry(message)
+
+        if result.content:
+            mapped = [await self._map_tool_result_part(part) for part in result.content]
+            return mapped[0] if len(mapped) == 1 else mapped
+        if structured is not None:
+            return structured
+        return []  # pragma: no cover
 
     async def call_tool(
         self,

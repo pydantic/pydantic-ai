@@ -1367,19 +1367,22 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
 
 
-async def test_mcp_structured():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
-
-    async with server:
-        result = await server.direct_call_tool('get_structured', {})
-    extracted = result['structuredContent'] if isinstance(result, dict) and 'structuredContent' in result else result
-    assert extracted == {'alpha': 1, 'bravo': [1, 2, 3]}
+async def test_direct_call_returns_text_content(mcp_server: MCPServerStdio):
+    """Direct tool call returns legacy text content when tool returns str."""
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_weather_forecast', {'location': 'Paris'})
+    assert result == 'The weather in Paris is sunny and 26 degrees Celsius.'
 
 
-async def test_mcp_prefers_structured_over_content():
-    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+async def test_direct_call_returns_structured_dict(mcp_server: MCPServerStdio):
+    """Direct tool call returns structured dict when tool returns dict."""
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_dict', {})
+    assert result == {'foo': 'bar', 'baz': 123}
 
-    async with server:
-        result = await server.direct_call_tool('get_structured_and_content', {})
-    extracted = result['structuredContent'] if isinstance(result, dict) and 'structuredContent' in result else result
-    assert extracted == {'preferred': True, 'value': {'x': 10}}
+
+async def test_direct_call_error_uses_text_content(mcp_server: MCPServerStdio):
+    """On error, the raised message should prefer text content from server."""
+    async with mcp_server:
+        with pytest.raises(ModelRetry, match='This is an error'):
+            await mcp_server.direct_call_tool('get_error', {})
