@@ -1,0 +1,328 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '829'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Compose a 12-line poem where the first letters of the odd-numbered lines form the name “SAMIRA” and the first
+          letters of the even-numbered lines spell out “DAWOOD.” Additionally, the first letter of each word in every line
+          should create the capital of a country
+        role: user
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      model: gpt-5
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '14483'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '32933'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757605995
+      error: null
+      id: resp_68c2f06ae97c8197980bb8a4837e2e46016e6d37acd3117d
+      incomplete_details: null
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABowvCLN7S0x6x3UAgC58RKPu5V7ySQDy1A3899hN_N7bcM2zbKDF_zIh-sAzZdYjJi9p1j7Ai2g4HADZrEOwttVqNdC0xo-SmT34gv2gmTdN-3lDEZuxfoqcyMOSk2VL-r22UBTL2kz0BNlfqj70TXwOMlERaCp-jRCEbBjaVP52RHGuhh40tngqE09fRHBkLIlOPVjZ0sngDNtAgwbix1DRiTDPmwYNnuS3l4iz315FdX4j285xtP_E2_Cyc-hGjp-iukagq5FJC1-5AbO6f2zQCuVVSYJOLP2TKqUjOT09-y8QKlUsqkidM1Qok0xn8kZiI2jaP6_nVwhVnC-x4SDfttlr5oB3UYWAht61YXQheBVBhCAxJ1fYk1kiPxEh3bknoRqpF0uEcxT4NxE-I8jlPqaTI8vhZLYb7S2Gz96rga0R7BmjHf3poQ4EC24GfoZFuOatORjNdKHahjdITVDvajOkiZxbc0_crrQ3n8xoLPMmFeCD3oKlDaKESbeQPet6AQ_V_gjuSz5yNrcodh8hXSiI3snLQAfaYRIpDMljGob9ADEMAFpvKQ3BYff9dU3hjrk-ij_IRJh4XzH6tgUlbuq_w6a4VffHnEy3v0qYUtXoLgBUFzRTl5EW-Yp-5Sel_zoyn8Elsulnevev6PM6AWi6j_NC9oLZfpmbvEu5CrJBSBiuWRymWyEuKrG2HAUng0r878FG94L50BknkSvNK9U9okiftc6zDS3xxL26TDL8G4TRH2c3PWFSpjh5sNmXoQEW9HG9XlG7OsB4uPdGDlKeKCrZ6NBrGaqGGxId45HQTWG8q9eT3sGJtkrMIgkCm0lu1MhxdVD2Xy1Syk2zpKmv48ZqU4QUjiCltcIJAI3h0Slxm-sJG6xWkAKs0OQLpsnnQu-yNYfD6T6ctAOEV3EEy1rdzB9NSz77aM323fl3cv1uwUH-CLdr6Q-4gxD4_HYaSuiuyd_DAvsRrFQcMeISD5x1sGJZkcjD4LAaPNqnAfc4lobugwB_EsdmrhQcPXKu5bilCa_2OhSOyA2iah7T1HT2bwQ9W3xUDSgrA6hVdlqyDW5X_tol5IMfrldKZ_HJnGBSK1BBwySr4EeV0500Xzl8AOOE6p0ocZZcYX2-WUiOVKvDbHYCNCZwH85fDsxNeIEGM_rB_Yi51ZK16u5c7JsAD5qB51nkbZUxiTeQ8ZIZc8taa5FLDIXMkpyiBBwgYQ6_O5k8pmgoIObbVCUYxw-zVC7TR67f2Y7HZ2ZVIhUqxV9L3HsjBOUs8CzESvdKn0DXRm_Ut-Ap-lV0JOfe0f8lC8kPpxDIyIrHjgdlD9T04Z0WkroH9sNANrx9417B0u6Sd8NZLasMJA15hqR3kR19XSZ4_XltQxSvn6lQbJXrjiavhr4TOtmTSQbg8E1zn34P-zBxsQXtiV462uL_V3dWMYY4HcOJYPswIpMQLIl4ziHE4Q7OfJXEuUe15kWZgpBjKdzQ9RF4w8LM1YDLaoonFnuZsc0y3wOdIfYn261Pn5YQ2t8fPDsLrNvEFcUmTpx-qKPmmXQnCkMZA0TdKSvJQ8LK9BAB4DZHycSRDezWlteANKqDD6ADh-hw4YqFdcKtiQ3R-1_6UlvmurfATblITIFUn33m7Wuyu6uVr2jXpOTOyp_HlDPjJdoXJgJqxAgB7wlscZlWoFMhIOz2H32PSSvpSoU4pDY7hX3zloH3Z_g7HIYr0bTeYGIgm17dEWcFuuFrlZ0oBPbRfe8BtfLF5_HmlFuNPIkeTqBTCc6POaN5-cPh09woX_8l2HPDnFTXxEEwnqRTcbDL2NKs_-OnfztHoM__yfaqVfbIZHdkDJ7xVHOapcfs2VU3Fmk16DxtBXsV6Lz6Y6P9CmSPeDTCg3YBneSCAbPQK9TDMjHD7zUMvwLYar7VZ50epVy_vTOrVG4_4B_Rmk_5PU9_SMPS6HLr8SOZeI4QsfehMXPWPJJ8y7TJuKubtZLJm15Lx4fnUtDHmQ154ciRgb8Y5YG33OXjXJhrpMHuBJ703X_E9aaLShSqzvX2RzVUQN1lusP1jGL-P33nuKpZY8GLa3X7lpywwnf2ylTRvhCRJpSNw-OK89sFdA0ahz-e46cKLoQ6bbVoudMe0chlAXanyqCX6N6mhLm3kTVwNRzo6MKYAsN82vdc3_1E2Ui_W-SSROAwLWCa1_-xbBfdMzbFsdLJm9R3fPPU5v94k3P14-NdwYvEmfUbdNttH6MblOLqr-qdtZ1MjcpaVIDLd2hbzlxQMQ8J1rTxyLXiph6KVXS7AH8oQsZwBCSSxOf78k7RBjyXbgh3ZxXcrQ_miCpRPu4tdPtGI6B_uRBU0fLtmaDM9ugNctdgYuyFXYBK0a1SA7v3J-QeOvjNsM0NhV1uha_UnGvwKD7cyVd1yWnJ5Cu7vimeFnHiRscqb-tnfowUyLaR3gUN2qfL9vShyAujARWplIB3nIdoLOCMwwrbBi4EgntWBSj_4Pyc3h64lVUQ8prXOeCSZaPLcr9TL1_kawidWuN8apsFClZv91I60LA2eFp7Bonfr3sJpyCoS_b5o-cZGnTVm9S_mP827XgwoEl_buzVrOVIfBYCe34LfOnYBhy1C6ppeNOuP05sGanYERZ2-Lkm2DT3wKVt1Sx4KTJalqEAY6WnboSLP-CvgPbn3yAb-sx0vRGq6HJGgiZotMCfbaqu7OjpWPt4wnRC0k8mxzIm-ALGfvmlEVxcYG1PG36yP5DbqiOFhATA6cPEMXW5h0rM3c_IQPvqNKJUq0HfYHVefUVSkxFaMpAUMOMAarKO0_TeBkSgNVgno5jzj60Acf9AikZzmEzfYsCEMbitErsVX9RlmYw_x0BoyJNBtG_tzQWyvH5fjQtky9WXcDm_OXPRh7LGwKNg87p_J1WKvBvuNStH9SASPkTL9Ngqbaia8VyKFV4u1yobRw1CzodiNYLm4b96CnGLdh9C5kEE3S4LZfNuihcnk59buK7L3uy8W4J6ASXy3-y8wUQY-_oLv4Ld-2dYKEPMVquhicj-x_uVLcXaI07dEWBmruQNYbgxr5-HK8_AyH1YLvM1UsfJwd5NS5y6vrRa3B0l1B4RY_reUOFq1F3kbQ00pIdvKcuQ7u_y7T_b7neD7k3FrVwWZzWicia8uISZazP_MyKeMD-Bw69MAB06dSw-QAOyYiOPFo1F_QzYPuqdfU0SM59nYIe76_9wnXSly5-axLC0-EVBfiIbSxMiraljnP3EvcEHcKn6pOmBuASPxRjUtMbWQs-DlA-H-RZnThWljq3CgDlcGPx63U1eVW6L5fjmZhzwdXAxT2o8cP8VVSnYTB2lusV7NIY2Vu00aUfQViYgmBN5dsbaO4QQGXSP8ZJpenwob_2uraS9EH_Ft8RsDOjhXVp3dnopntuAaxQcQ9n2PmdRTZzUnnS6dIEb4K0i9hVo_ePxKxpXPKIU1Tg6GpbV9FlDis2FWiPMUfyyJZHIjjM3ygoiiVj7JVtZxxKWVy1nIJremofDnv_8NO2bUeurqYSG0tX6LYYUHBzovBwl6ZkUd0iIFb42aA7ObTpGIy_uM4vdCwu8KXLlV8-2xAI-91U6fcQ11VLLjqclhuotfE0Q0JBmj2Qzf2OpJxcoi-7objNvE4qhSx9FpSvGjq8SkujalSBluGCjstX3IuhJPBoA9K3UBhZfLN4jT34WfJdN2iIymBKm6q-ThSHOQl4XezzuG1yEvXFLgKL6i4oPDmGE5YonJhXImcpyNfuTcybMF78UoqkUgXD8dLEnZYYwazdTdHIajivncXgmb_84Rj4w8VL5HEUODJwDrmCW5U-wL1xIhq40NXz5sw4Q250KpEzEcjiyZMJVVUYkHCNZoNY8UQADLA9QKqn97iRPI_WdwsM06LfYmoWDrZF94QbE1XMQc5LIObu-jrQ3tx7sNbKB3T9WiXgU6btOWj0X4VzrvRpebGzUWa5mId7QOgJPTmwf6I5v8xYGshEihPX7T9bes_wMLKVxoImGkroND6Y0Cm31DDwO3Jrfd8S_uVn_Ps9Brcu7AQYa6TUc0GIOnIAdC1VAzaNO9wbbcihg5M7BOZ5orVdtDVMIRq-nx6KzRC-DUJ1x2M3KcJ2ugqMvvd2bHT8bfpSiV6o1i7wZSBqBSEcwfAI0bOmnsb-TLKkUG-q5JriOYIIXl0M0o2i4xD8Q_nSPoOr9De2KsXPQPvfziV15xMzWjZ4YaPYOoItivOR4FxchdOUg6gSoxPWnJ11_9Ug3XPT7F6mvMMSekufiRzEuLgnk4a40b7Ra-Vu43491ChjolU5WnTb1ezDLuh4srcjPlNsXg1F_9UJzYL77oM0ewQSzndB7ca_pS_mpPG7DvtoH2GCwHzZAwLWKl1wO2NQo3bHZcPhfa0ZFBTz-Ix5OOzZi0AuPtZT5adnicdfqJ3NOm2TWmKb3IBh6RB3_5wi3yzhaWMOcvcW34ITxBQRnq15dBC7R3bq6rabHS6rtk-8YJnlcViU8bEGBZ2E_oyJRRn6Qm3l3DEw5eXViCTN_cVrXlmwzgRn6hNDlVgkgMbPTjFAMlrM_Wra28wbqyp417BICv6r12oaqYkDnVjsPzVb3xrg0fUdKRRSYg8Chx2tNdPXZHFjnQOFx6I3N_QGTclzkkeZY2EblE8BhPS1BEkeseHOHV75N4bfMlWabpiHCVpoLeLeLeUARKg0qYp4o1nm8RZ1z7y85ulRDwePminL4WgjMZVBaeoGEsGV6W8-dbItmRSwl9GqwteyRms_z4GwIoZEOEKcWTcrodewklpR1TgN1UkWUoCIJlezlVRzaqqL6J8IuWiOG2cqS7ZWO6t6-MDPsHdbMNJc5oSgPRmaOv1SDbFAj-PACjfTJzE7VNOAZABtgnq5ZsTNRNiacn41zM3DNp1idzPDgKv2x0lV6Cvenxh-Jr-k5FNbWCjHfQ0fNkGtwtXS7mUlVa5BHXBQZHwXNfrXQvLw1eo3t5SPrwdns8WQJ6bjFlNkDK9fJoFuJFVak62LHtIx1jfa9_8SmZyttUWKQw5OjD8W3A24fSZb3stzQIskFhQxV31HGMAqE7gklN03xealJ4-lVLT7-ziNH-wWV8rvrYIm7a_PmLCr8vLxcDtCyJK9VMOaQy4HtDp0_z5iSkpO0MiqQGyaX1AB8TAVr_vNQK2fWTtya6_1rRggXEY8CZV9aNx_U49SdbR2HSn7oXayD1s7JfbVl4DgTo8EvMcvp18nhVRW-b5cjQr2SxJwB3thOcmv2fVjgKlB0NQYwwRd9AwxwtSOS424Igg4z-Wuy0DXaKm9GKKGQBdxu77ptZROORg46NyMd_P31vJr1NQeJ1S2OFXFhTWwdCF7AWGvmV25x7FE1B8DV94tbF3Fck77CbzGNbMQJ-ej_uN6cQveKhFGrlzvFpVVCQHsSpTM9K7Z7YNmA3efa5QzCbQFy4QzSRRa5_3dJMUcIMTCNNfixxUFr-kvNowMkMiCZ2-hELphTn8P-UfErECZsfUz72oWbWvfuo8KFGzYkFQh2r0p9SPuoI5HHfhPyrVPO07FhsEoGUfU0Z-XmlX4d1y-NcjU8ofLuuljt1MUvYvy_dnAB300N0ePfluQKNlQzQRxHZFNdj1QY-q9CvWo4_o86rr4IE6ALBs0g6WEozFNmFbY_kx94NbCrcV1twi57KlBlRxttTIgO5ugxUWM9FpNqjKGOK9yYP-9UqCCs78C6ownKRxlTzjRYQP-4HtLbqOVh967_kCP3D9r4GiBEZDKw81rZeuQM-vITE_nDpne0ssvW0a6RSenV2rQ1DZl9HeGwrv6XUD9zjuHVW6r7fN_CvSSjQYt4FmghDkgnFJngTUVjrpJ-ubwjsdTNwwHozbtatkxPWJNAaJO1FoeN3sBsQjS_9CBHljM8ctWIFv4ZdCjNuxvQLVOoClBydblt31d2VAxjpmL6-SJ756wt89rHcYPA8fdn7I1YEjcCoGA_gxn6JWVWMO0lX7mx4rz2ooIgCk8FdwG_emyRqnGTnxEXz2bSrHADQ-NldMmF4kMrNq2TNRgxA2zAS-hwbUnQQIw5Z_BInG_l4QqHZsxGN7BYanGxS34-aOgtAV1F2K5uLBnOw1S2KRYk4wAu14k6555zCFsGouz4JbG6Jfw1FgBhgSUSxixVp9yKPnxVgK_dxhqLO7W50DpBdRW4MVAm5kaZ9zEUoq3aEa6TzS-a3YDQBDSZ0E_n0zu7WzqYzA05RUB4halBa24aKOQaTBwLfro5hNr5v-djIE1eXZgIice6dONYQgE1S03xj5QG9Ub6MY2uAJW6_OPdo_GvRxvG4utVNrybylLUwOcOJiXz3lm_jNYNKI0N2mD5W3uPHXnMvcARuebr4BfLJzSccnPgEA8zLdxMIXzEtF6dVEmxWQtbpR_VetTEa9YMpuHG-4bKPU-aluUIeVUqsemj0X9l0Nk2PBIHoliz7eO1Y1xJVxAp6aKdWMbhOiIpMEE00VOLE6nz9xmlmWQbR9W686iY6KMIWZEurfj-amyWQMaxpAgsO2uLdd5ySEUBtPpDNBi6WyZZ2XRaAaAoZ8dn2TbJ6zcyqmiAAWVOuL3pkwfp7HFx0mc4f-g3X4fohKJNeZHpGkGGHooughqLGe4_TvdtioTaSN4rj0TG9JUxV-OI62CNEeQyKa2v7Fcmwb99hvxqJt9G-QswPyAB6V63Q6l7o2OIHpIg-XHxl-f4jsOjDvaPcN_yEYoWwlvi6-7qguovtSLV7Fc1mGXTO9gcTY93ZaGBQVzZ89wcsWXazXTk2AoMayw3Hl2Gyvj0Sl6ESUf48Tz2AK5RltgpjhQPyOoMi_cidBjvrWfBpCyd25kx4dnojq5lfL4tcqcLRHg9PEUmhDQdbuA1Iod_7AFZoKs-V0eF_-aLaTdjkPiCdcUggp6o4JZWLUkQ95v62HzGjn9VEnqJc0v1Jyx96cxwgk_BKuhEJczn0V15CNNGpNgqlwBSNX4su9fQ7qcueBCO2Bj2_e0MHpdg4X1cApZOZzfJDxAkuJpg5v1TUGPm4kcM5QEOjQb62qK4EycdTnRka0yk8eRC6bmenlJJhZKqq5B3Nuw005tW4bW5VNgEbX1JbhQlOa-jHDxPGn2VaQXak7LFiAg-hqJe0-A5skqcerB2YFaBpWELYp6NoUcIz_jabblMrLMNCTVlMbxd3DnfzWJ5WtzF1vEHOT9LReXZW0Vl8hQxFTWkfdIhqixARC66RUcVK0UoM1BJUZrYaaOryWt9nuZWob534I1gxznOy9HSqFMxvnldvNKIS-AOO_rrfVmTTwarVlJUf5BXtkb5fZvp0NfYyclRXoqBUi8QQVDapjlfj5jFle95aSNit8c81_umxCYNKRE7KAOczayyHML4CV0sD7k6d5NrT3g9usfkHlv7iC_NpnL7oiEwlyyDbSM686Xd2wr4HoBfczZ2kPcyE53RIN_XkU2oYbyVuozQb8IE2W40dzleTzM3jfZLkY4tauk6WbsSFWVI8h1teJ8Ysc6cdmBa8qN6uVkKZnyFGOhM_QTlQuUHviIbnwnW91WZLA4OpYfXoKVeOgmWZOyrTZ3_qzpKHjEG9qH4KCd2Snr7YdaKzyIXLeRQvU7tKm8aPeh2W19zO_qWXl1EVlBldHplUS8g2KFH-Uo7VPH4YiZJxSbLx3jd3Toxwn9DnUzNl4Icyzzyr13HZukzP56wJbsVKXoTHoKNoaqeN7VCxB3hMaeh_bRu60hARKLSJa8aZWusmnVItzkH5VSGL1uQq1nv4FFLJa7h_kAsrvAdl2-tQRJVQdWpohnHzTTzsKHExg-wsNssB4FJfb9TapdQOd4FJb8pNbU6yhS3cR8a9F5-qycYaqvYb5H5AB06Yb5QEzC-uJeefAoRydO47dCplgzM4vqwvtejyihct9gECfBG8brjninBlXMBJJ8zTcMahbqs8EWHkYsDGcBoeSjB8I0gujykR7L7xjAaNIXNedqwPNkXYs_uRbJ8UQvyQcZWDLpNvCPf82TgB5Da0QyLqt5DTqUVb147hattkcUPG4wTUpCt-s-D-EpUAqBw6ccXfNZ6_wdYitL6qPdo6U5lc87GnPtSo-Zrd6HGlTO2be5vu7TU69E-5FuNIgqMWnyBeQlgj_5p3bYvvKPVdOAjGLDZ3b6T6m_ILhwUrVgec0hkiYqYeVrOBF_KtAoVcmA1RsAVt2xoUbmX_juPMN73srP_F6z6fGSqIr2JLaAaLvPE_bgW1RpXnkiJ27uv5ScFeVGepElMuKcxP_pk10zilbNEwvVpmgJnfKhwd1fI49QVUBEpfjB90e3-YdzfKVBgY6rCZ2L8aFferi9cIhILJVw_eAnPi6sCHrJHh7DbKRmcdfMRsVN6MLnfw9t85hnSN0J11foKTeCV__40JtsLZ72kWiTxKH7dNv8OcAtAKzf_G9n_rYizOgUAGPawTjy2tfRRgD4r4ov__rX7CynjTZkP-LcTe5Vf98GikGWZzglUtigoIwLpaO8WjSXZQd-uBfgY2hBiLhY7XRWHi_GRxyVRC0TOINvtY_J2wvHPQw0Nn9tUigV2tR1HOeE1EvSjptCA9y1eekZ7ka4fdKWGvO34VQIUvRDuffaMEHByRKK3zdflFF5-sdQfVYZ6am8yC-OX6OYRIleHNzjs8GezxqmKxi3qTO5PF56cgQ5KFWVO8poV8LbAQ2qnIBAgF0XLApWyb31v2WreYqwLip97H_EZWSlVCn5KWNNPkdwfgBtv6SyydRx0Cc0mmeRCBIs5Kb2uWF1fjTAWFVmdTTR1ar73ilKa4fkaqBLdLB1FIZ0maa774ixZ09vKugHY9UYeuOxJ-SAkxFXl-2nl2aOuTWxD3X0kHYQoC0-QueJQkU5Jn6HCO7Zy2nFv_D5ZRq0EC3dtjdS8j7N7_Wfw6C-kf4jZJHl9e--7p2MEGwNFFDxCNueRjvi7MFaek80xZYWw_dIvkdOnWw1M8NDPVd3gH__yaXYjvPq_N6aZAIN5mLGqJ8hSQr_uOVcP59fwlFLE8ogb3Alk2WWtm-ssLOK3NFWybqugDpZTloiEE5uHmdX6psJqESYERgAFv_a_1O7rBuRm19dROMsOz2NhCz4xujDYXnjeBdLv8UA4Z3pmRec_0LqBXqt1TFmytjeXoV9pMR9shNjX7RCeqqPQoo9r59izIS79q5mpYhKybxVdOGNOUwa5dE7jNKi29pGVfFaOANQAnRTHvxYQE621uaGJGaUu1s2KYrvvUG6CXD4lmzMT3EnRLvZQbhQojjBR4_eHcyKnUhv2b-7EQIaBZS-tK_5lcyOInCfFtjkNe5SilAlXWqpLX_C3lcsDGOZBLQR5y-gNdXoe2vTL1qDZ_Ez1Qvq9Hp7lZ1ak6btrx2hmLrlFreMuyC0KxH6UuS_6wnhtKFK79fdOSS1fXwrW1rvkhZELfIthXGtVwyfk8-HxpMZLmG00lpKUvZCGQ916qqSPuJcBIGV0VmTX1vW5qjAHyTEEFEOfGzvBGuaaI8_Xv_n2tzsM6ZAP5qtj1oKK485ISQUrpMb6-sM6pRDuvyYY80tWZ9H239EKRNc2B4fN4vJ1vzxw68OMPAEMqf47Rh3xa-bSeHsrpo4B_uZqOEqoLDETTp2QJjOnQXHfl18rcwVLMBtTZ7yiQnAAo2lgHs_fuqAYupWb7E5JYD9wAeA9Gg3W2G8ZJVKHK4cTFrAnj1Uft1s_xEtgRx8V76Ay2TQkJiZ9-aknFNqhVdNqVWlTQm9vezByGNidX2E1FNZD9X79Q8oGOs5_Jldi1WQkut5iRBZnPz116XIBpRIUm17v_VYJy4szS7qdWgRJwhL_D8spCumPFdiCbl1rutMqOLGaSExCl44pn_tVVf3tVaEQ0ZlxnsP_qEezZPEZuEFtiSHmD1ZFY8IbbM4xMe1FoaqELzL_156SVYQ4pb-JNx9shgo7XT4RwmEbM-QigtYB7LEeQJHB_efmcjZU9yClIr5QOV8n5z1uqEmt1qxq_ko3BJpEo2Lq0l2l3OE_z-1KEJV9izfz6m2WZsBuqZbaPq6enpD2jZs4lW1w6F7vjTL3p4_g7Hk3pjztccld7pTbxMbiozZC22UN1-6el6HHcpTMz4nZl2doFc9iOFFTFQBOhoGDz3QCQMkqgDnu6LELJh25Blf5KoyjPoNmMqmS9e2z-z2wTVkZkdLitOXu8TlRIMgcEEqPn-q5Mt9Fuk4hnQY7sbIY-DTgLuM5ovmsqUxqTEuFCDER1jvBS9wg2CVniYidn-rGmmhuv33rUAt488hJhZtyTvPpEIUxCK-Tyjz3CFOEz2oCVpU93yYx9vkgfwmDkjD92CF7DOj6-KaUc559FhmbuNruaWq1zN9j8TqinOoIto9HPOHf6dpjP-ay_5n1gu53jCie66Mqm-q1hJ9yXXoWh0KeMJBj_ySJICNALHBGwK1HcTiLVMMF_Dzb7JcIajMF_SjrKdyO9HD_FbPGlHX-AioJJInWGJOw4QAww2SC-feBSxmA__zsVrLRo_P4ln8A32AOVqif-OvuzbrJ9rR7nGL0JRinXYy0Xo7Upu9aw2WGpkV5Sn8a3w2_MJYPRd-LmJQE3GUiZxXGrmxIpkIv6fyXstSVyV91uOtuBdpeikQr78D3eYw89bSYb1eDBBfxQyL_9U5S6cUjP9rXykoc4W6P5aV54fZfbwLNcUkN4Jvbb0UkLoNPOYcUI7N4e20PeT8FnKCDxZ8LhMLvtDX-6FocshR7vPfAOS1Hl_IdWoje1mSjYANA==
+        id: rs_68c2f06b87548197ac093b82cba2e950016e6d37acd3117d
+        summary:
+        - text: "**Planning updates for the poem**\n\nI need to use the planning tool, updating as we make progress. First,
+            I’ll draft a plan to construct a poem with 12 lines while meeting specific constraints. I'll ensure the line-initial
+            letters match the SAMIRA/DAWOOD pattern. \n\nFollowing that, I should use the update_plan tool twice: first for
+            the initial plan and then again upon completion to note that it’s done. I think I’ll need to blend these updates
+            with the poem outputs to maintain a clear flow!"
+          type: summary_text
+        - text: |-
+            **Updating the plan and progress**
+
+            I can make two tool calls before the final output: one for the initial plan and another to note that execution is completed. It makes sense to do these calls back-to-back in the commentary section. The first will be a succinct update of the plan steps, and then the second will detail the progress, such as whether I've selected capitals per line, constructed the lines, verified the acrostics, and delivered the poem. That should keep everything clear!
+          type: summary_text
+        type: reasoning
+      - arguments: '{"plan":"Plan:\n1) Map 12 lines to required initial letters: odd lines -> S A M I R A; even lines -> D
+          A W O O D.\n2) For each line, choose a world capital whose name begins with the required initial.\n3) Compose each
+          line so that the first letters of its words, in order, spell that chosen capital exactly.\n4) Keep imagery coherent
+          so the poem reads fluidly while meeting all acrostic constraints.\n5) Double-check both acrostics: (a) line-initial
+          letters form SAMIRA/DAWOOD; (b) per-line word-initials form the intended capitals.\n6) Deliver the 12-line poem."}'
+        call_id: call_QbeOap5DBC9PH8zkuG1J3fy3
+        id: fc_68c2f08b3a388197a78d6e71cad38079016e6d37acd3117d
+        name: update_plan
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: low
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 124
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 2084
+        output_tokens_details:
+          reasoning_tokens: 1920
+        total_tokens: 2208
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '13627'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=iCqRne9kyR0PMPNZoyqDn_m2ngQkH4xbcP3MTUR00OM-1757606027-1.0.1.1-pu79HOwukdyQAVqIHfqXjoVPBuQJzgRyQ8q46_Qe3Wa6NoZj10PYGBFokyvM7Rp16lCXe5NHqkJQBNkLpP6V9eQLO1LHKuxn88Ys4BWJQgw;
+        _cfuvid=u8PIrvroYExp9T0VHno5qv4q0PQq8DaVlLrVzqvcLJU-1757606027848-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Compose a 12-line poem where the first letters of the odd-numbered lines form the name “SAMIRA” and the first
+          letters of the even-numbered lines spell out “DAWOOD.” Additionally, the first letter of each word in every line
+          should create the capital of a country
+        role: user
+      - encrypted_content: gAAAAABowvCLN7S0x6x3UAgC58RKPu5V7ySQDy1A3899hN_N7bcM2zbKDF_zIh-sAzZdYjJi9p1j7Ai2g4HADZrEOwttVqNdC0xo-SmT34gv2gmTdN-3lDEZuxfoqcyMOSk2VL-r22UBTL2kz0BNlfqj70TXwOMlERaCp-jRCEbBjaVP52RHGuhh40tngqE09fRHBkLIlOPVjZ0sngDNtAgwbix1DRiTDPmwYNnuS3l4iz315FdX4j285xtP_E2_Cyc-hGjp-iukagq5FJC1-5AbO6f2zQCuVVSYJOLP2TKqUjOT09-y8QKlUsqkidM1Qok0xn8kZiI2jaP6_nVwhVnC-x4SDfttlr5oB3UYWAht61YXQheBVBhCAxJ1fYk1kiPxEh3bknoRqpF0uEcxT4NxE-I8jlPqaTI8vhZLYb7S2Gz96rga0R7BmjHf3poQ4EC24GfoZFuOatORjNdKHahjdITVDvajOkiZxbc0_crrQ3n8xoLPMmFeCD3oKlDaKESbeQPet6AQ_V_gjuSz5yNrcodh8hXSiI3snLQAfaYRIpDMljGob9ADEMAFpvKQ3BYff9dU3hjrk-ij_IRJh4XzH6tgUlbuq_w6a4VffHnEy3v0qYUtXoLgBUFzRTl5EW-Yp-5Sel_zoyn8Elsulnevev6PM6AWi6j_NC9oLZfpmbvEu5CrJBSBiuWRymWyEuKrG2HAUng0r878FG94L50BknkSvNK9U9okiftc6zDS3xxL26TDL8G4TRH2c3PWFSpjh5sNmXoQEW9HG9XlG7OsB4uPdGDlKeKCrZ6NBrGaqGGxId45HQTWG8q9eT3sGJtkrMIgkCm0lu1MhxdVD2Xy1Syk2zpKmv48ZqU4QUjiCltcIJAI3h0Slxm-sJG6xWkAKs0OQLpsnnQu-yNYfD6T6ctAOEV3EEy1rdzB9NSz77aM323fl3cv1uwUH-CLdr6Q-4gxD4_HYaSuiuyd_DAvsRrFQcMeISD5x1sGJZkcjD4LAaPNqnAfc4lobugwB_EsdmrhQcPXKu5bilCa_2OhSOyA2iah7T1HT2bwQ9W3xUDSgrA6hVdlqyDW5X_tol5IMfrldKZ_HJnGBSK1BBwySr4EeV0500Xzl8AOOE6p0ocZZcYX2-WUiOVKvDbHYCNCZwH85fDsxNeIEGM_rB_Yi51ZK16u5c7JsAD5qB51nkbZUxiTeQ8ZIZc8taa5FLDIXMkpyiBBwgYQ6_O5k8pmgoIObbVCUYxw-zVC7TR67f2Y7HZ2ZVIhUqxV9L3HsjBOUs8CzESvdKn0DXRm_Ut-Ap-lV0JOfe0f8lC8kPpxDIyIrHjgdlD9T04Z0WkroH9sNANrx9417B0u6Sd8NZLasMJA15hqR3kR19XSZ4_XltQxSvn6lQbJXrjiavhr4TOtmTSQbg8E1zn34P-zBxsQXtiV462uL_V3dWMYY4HcOJYPswIpMQLIl4ziHE4Q7OfJXEuUe15kWZgpBjKdzQ9RF4w8LM1YDLaoonFnuZsc0y3wOdIfYn261Pn5YQ2t8fPDsLrNvEFcUmTpx-qKPmmXQnCkMZA0TdKSvJQ8LK9BAB4DZHycSRDezWlteANKqDD6ADh-hw4YqFdcKtiQ3R-1_6UlvmurfATblITIFUn33m7Wuyu6uVr2jXpOTOyp_HlDPjJdoXJgJqxAgB7wlscZlWoFMhIOz2H32PSSvpSoU4pDY7hX3zloH3Z_g7HIYr0bTeYGIgm17dEWcFuuFrlZ0oBPbRfe8BtfLF5_HmlFuNPIkeTqBTCc6POaN5-cPh09woX_8l2HPDnFTXxEEwnqRTcbDL2NKs_-OnfztHoM__yfaqVfbIZHdkDJ7xVHOapcfs2VU3Fmk16DxtBXsV6Lz6Y6P9CmSPeDTCg3YBneSCAbPQK9TDMjHD7zUMvwLYar7VZ50epVy_vTOrVG4_4B_Rmk_5PU9_SMPS6HLr8SOZeI4QsfehMXPWPJJ8y7TJuKubtZLJm15Lx4fnUtDHmQ154ciRgb8Y5YG33OXjXJhrpMHuBJ703X_E9aaLShSqzvX2RzVUQN1lusP1jGL-P33nuKpZY8GLa3X7lpywwnf2ylTRvhCRJpSNw-OK89sFdA0ahz-e46cKLoQ6bbVoudMe0chlAXanyqCX6N6mhLm3kTVwNRzo6MKYAsN82vdc3_1E2Ui_W-SSROAwLWCa1_-xbBfdMzbFsdLJm9R3fPPU5v94k3P14-NdwYvEmfUbdNttH6MblOLqr-qdtZ1MjcpaVIDLd2hbzlxQMQ8J1rTxyLXiph6KVXS7AH8oQsZwBCSSxOf78k7RBjyXbgh3ZxXcrQ_miCpRPu4tdPtGI6B_uRBU0fLtmaDM9ugNctdgYuyFXYBK0a1SA7v3J-QeOvjNsM0NhV1uha_UnGvwKD7cyVd1yWnJ5Cu7vimeFnHiRscqb-tnfowUyLaR3gUN2qfL9vShyAujARWplIB3nIdoLOCMwwrbBi4EgntWBSj_4Pyc3h64lVUQ8prXOeCSZaPLcr9TL1_kawidWuN8apsFClZv91I60LA2eFp7Bonfr3sJpyCoS_b5o-cZGnTVm9S_mP827XgwoEl_buzVrOVIfBYCe34LfOnYBhy1C6ppeNOuP05sGanYERZ2-Lkm2DT3wKVt1Sx4KTJalqEAY6WnboSLP-CvgPbn3yAb-sx0vRGq6HJGgiZotMCfbaqu7OjpWPt4wnRC0k8mxzIm-ALGfvmlEVxcYG1PG36yP5DbqiOFhATA6cPEMXW5h0rM3c_IQPvqNKJUq0HfYHVefUVSkxFaMpAUMOMAarKO0_TeBkSgNVgno5jzj60Acf9AikZzmEzfYsCEMbitErsVX9RlmYw_x0BoyJNBtG_tzQWyvH5fjQtky9WXcDm_OXPRh7LGwKNg87p_J1WKvBvuNStH9SASPkTL9Ngqbaia8VyKFV4u1yobRw1CzodiNYLm4b96CnGLdh9C5kEE3S4LZfNuihcnk59buK7L3uy8W4J6ASXy3-y8wUQY-_oLv4Ld-2dYKEPMVquhicj-x_uVLcXaI07dEWBmruQNYbgxr5-HK8_AyH1YLvM1UsfJwd5NS5y6vrRa3B0l1B4RY_reUOFq1F3kbQ00pIdvKcuQ7u_y7T_b7neD7k3FrVwWZzWicia8uISZazP_MyKeMD-Bw69MAB06dSw-QAOyYiOPFo1F_QzYPuqdfU0SM59nYIe76_9wnXSly5-axLC0-EVBfiIbSxMiraljnP3EvcEHcKn6pOmBuASPxRjUtMbWQs-DlA-H-RZnThWljq3CgDlcGPx63U1eVW6L5fjmZhzwdXAxT2o8cP8VVSnYTB2lusV7NIY2Vu00aUfQViYgmBN5dsbaO4QQGXSP8ZJpenwob_2uraS9EH_Ft8RsDOjhXVp3dnopntuAaxQcQ9n2PmdRTZzUnnS6dIEb4K0i9hVo_ePxKxpXPKIU1Tg6GpbV9FlDis2FWiPMUfyyJZHIjjM3ygoiiVj7JVtZxxKWVy1nIJremofDnv_8NO2bUeurqYSG0tX6LYYUHBzovBwl6ZkUd0iIFb42aA7ObTpGIy_uM4vdCwu8KXLlV8-2xAI-91U6fcQ11VLLjqclhuotfE0Q0JBmj2Qzf2OpJxcoi-7objNvE4qhSx9FpSvGjq8SkujalSBluGCjstX3IuhJPBoA9K3UBhZfLN4jT34WfJdN2iIymBKm6q-ThSHOQl4XezzuG1yEvXFLgKL6i4oPDmGE5YonJhXImcpyNfuTcybMF78UoqkUgXD8dLEnZYYwazdTdHIajivncXgmb_84Rj4w8VL5HEUODJwDrmCW5U-wL1xIhq40NXz5sw4Q250KpEzEcjiyZMJVVUYkHCNZoNY8UQADLA9QKqn97iRPI_WdwsM06LfYmoWDrZF94QbE1XMQc5LIObu-jrQ3tx7sNbKB3T9WiXgU6btOWj0X4VzrvRpebGzUWa5mId7QOgJPTmwf6I5v8xYGshEihPX7T9bes_wMLKVxoImGkroND6Y0Cm31DDwO3Jrfd8S_uVn_Ps9Brcu7AQYa6TUc0GIOnIAdC1VAzaNO9wbbcihg5M7BOZ5orVdtDVMIRq-nx6KzRC-DUJ1x2M3KcJ2ugqMvvd2bHT8bfpSiV6o1i7wZSBqBSEcwfAI0bOmnsb-TLKkUG-q5JriOYIIXl0M0o2i4xD8Q_nSPoOr9De2KsXPQPvfziV15xMzWjZ4YaPYOoItivOR4FxchdOUg6gSoxPWnJ11_9Ug3XPT7F6mvMMSekufiRzEuLgnk4a40b7Ra-Vu43491ChjolU5WnTb1ezDLuh4srcjPlNsXg1F_9UJzYL77oM0ewQSzndB7ca_pS_mpPG7DvtoH2GCwHzZAwLWKl1wO2NQo3bHZcPhfa0ZFBTz-Ix5OOzZi0AuPtZT5adnicdfqJ3NOm2TWmKb3IBh6RB3_5wi3yzhaWMOcvcW34ITxBQRnq15dBC7R3bq6rabHS6rtk-8YJnlcViU8bEGBZ2E_oyJRRn6Qm3l3DEw5eXViCTN_cVrXlmwzgRn6hNDlVgkgMbPTjFAMlrM_Wra28wbqyp417BICv6r12oaqYkDnVjsPzVb3xrg0fUdKRRSYg8Chx2tNdPXZHFjnQOFx6I3N_QGTclzkkeZY2EblE8BhPS1BEkeseHOHV75N4bfMlWabpiHCVpoLeLeLeUARKg0qYp4o1nm8RZ1z7y85ulRDwePminL4WgjMZVBaeoGEsGV6W8-dbItmRSwl9GqwteyRms_z4GwIoZEOEKcWTcrodewklpR1TgN1UkWUoCIJlezlVRzaqqL6J8IuWiOG2cqS7ZWO6t6-MDPsHdbMNJc5oSgPRmaOv1SDbFAj-PACjfTJzE7VNOAZABtgnq5ZsTNRNiacn41zM3DNp1idzPDgKv2x0lV6Cvenxh-Jr-k5FNbWCjHfQ0fNkGtwtXS7mUlVa5BHXBQZHwXNfrXQvLw1eo3t5SPrwdns8WQJ6bjFlNkDK9fJoFuJFVak62LHtIx1jfa9_8SmZyttUWKQw5OjD8W3A24fSZb3stzQIskFhQxV31HGMAqE7gklN03xealJ4-lVLT7-ziNH-wWV8rvrYIm7a_PmLCr8vLxcDtCyJK9VMOaQy4HtDp0_z5iSkpO0MiqQGyaX1AB8TAVr_vNQK2fWTtya6_1rRggXEY8CZV9aNx_U49SdbR2HSn7oXayD1s7JfbVl4DgTo8EvMcvp18nhVRW-b5cjQr2SxJwB3thOcmv2fVjgKlB0NQYwwRd9AwxwtSOS424Igg4z-Wuy0DXaKm9GKKGQBdxu77ptZROORg46NyMd_P31vJr1NQeJ1S2OFXFhTWwdCF7AWGvmV25x7FE1B8DV94tbF3Fck77CbzGNbMQJ-ej_uN6cQveKhFGrlzvFpVVCQHsSpTM9K7Z7YNmA3efa5QzCbQFy4QzSRRa5_3dJMUcIMTCNNfixxUFr-kvNowMkMiCZ2-hELphTn8P-UfErECZsfUz72oWbWvfuo8KFGzYkFQh2r0p9SPuoI5HHfhPyrVPO07FhsEoGUfU0Z-XmlX4d1y-NcjU8ofLuuljt1MUvYvy_dnAB300N0ePfluQKNlQzQRxHZFNdj1QY-q9CvWo4_o86rr4IE6ALBs0g6WEozFNmFbY_kx94NbCrcV1twi57KlBlRxttTIgO5ugxUWM9FpNqjKGOK9yYP-9UqCCs78C6ownKRxlTzjRYQP-4HtLbqOVh967_kCP3D9r4GiBEZDKw81rZeuQM-vITE_nDpne0ssvW0a6RSenV2rQ1DZl9HeGwrv6XUD9zjuHVW6r7fN_CvSSjQYt4FmghDkgnFJngTUVjrpJ-ubwjsdTNwwHozbtatkxPWJNAaJO1FoeN3sBsQjS_9CBHljM8ctWIFv4ZdCjNuxvQLVOoClBydblt31d2VAxjpmL6-SJ756wt89rHcYPA8fdn7I1YEjcCoGA_gxn6JWVWMO0lX7mx4rz2ooIgCk8FdwG_emyRqnGTnxEXz2bSrHADQ-NldMmF4kMrNq2TNRgxA2zAS-hwbUnQQIw5Z_BInG_l4QqHZsxGN7BYanGxS34-aOgtAV1F2K5uLBnOw1S2KRYk4wAu14k6555zCFsGouz4JbG6Jfw1FgBhgSUSxixVp9yKPnxVgK_dxhqLO7W50DpBdRW4MVAm5kaZ9zEUoq3aEa6TzS-a3YDQBDSZ0E_n0zu7WzqYzA05RUB4halBa24aKOQaTBwLfro5hNr5v-djIE1eXZgIice6dONYQgE1S03xj5QG9Ub6MY2uAJW6_OPdo_GvRxvG4utVNrybylLUwOcOJiXz3lm_jNYNKI0N2mD5W3uPHXnMvcARuebr4BfLJzSccnPgEA8zLdxMIXzEtF6dVEmxWQtbpR_VetTEa9YMpuHG-4bKPU-aluUIeVUqsemj0X9l0Nk2PBIHoliz7eO1Y1xJVxAp6aKdWMbhOiIpMEE00VOLE6nz9xmlmWQbR9W686iY6KMIWZEurfj-amyWQMaxpAgsO2uLdd5ySEUBtPpDNBi6WyZZ2XRaAaAoZ8dn2TbJ6zcyqmiAAWVOuL3pkwfp7HFx0mc4f-g3X4fohKJNeZHpGkGGHooughqLGe4_TvdtioTaSN4rj0TG9JUxV-OI62CNEeQyKa2v7Fcmwb99hvxqJt9G-QswPyAB6V63Q6l7o2OIHpIg-XHxl-f4jsOjDvaPcN_yEYoWwlvi6-7qguovtSLV7Fc1mGXTO9gcTY93ZaGBQVzZ89wcsWXazXTk2AoMayw3Hl2Gyvj0Sl6ESUf48Tz2AK5RltgpjhQPyOoMi_cidBjvrWfBpCyd25kx4dnojq5lfL4tcqcLRHg9PEUmhDQdbuA1Iod_7AFZoKs-V0eF_-aLaTdjkPiCdcUggp6o4JZWLUkQ95v62HzGjn9VEnqJc0v1Jyx96cxwgk_BKuhEJczn0V15CNNGpNgqlwBSNX4su9fQ7qcueBCO2Bj2_e0MHpdg4X1cApZOZzfJDxAkuJpg5v1TUGPm4kcM5QEOjQb62qK4EycdTnRka0yk8eRC6bmenlJJhZKqq5B3Nuw005tW4bW5VNgEbX1JbhQlOa-jHDxPGn2VaQXak7LFiAg-hqJe0-A5skqcerB2YFaBpWELYp6NoUcIz_jabblMrLMNCTVlMbxd3DnfzWJ5WtzF1vEHOT9LReXZW0Vl8hQxFTWkfdIhqixARC66RUcVK0UoM1BJUZrYaaOryWt9nuZWob534I1gxznOy9HSqFMxvnldvNKIS-AOO_rrfVmTTwarVlJUf5BXtkb5fZvp0NfYyclRXoqBUi8QQVDapjlfj5jFle95aSNit8c81_umxCYNKRE7KAOczayyHML4CV0sD7k6d5NrT3g9usfkHlv7iC_NpnL7oiEwlyyDbSM686Xd2wr4HoBfczZ2kPcyE53RIN_XkU2oYbyVuozQb8IE2W40dzleTzM3jfZLkY4tauk6WbsSFWVI8h1teJ8Ysc6cdmBa8qN6uVkKZnyFGOhM_QTlQuUHviIbnwnW91WZLA4OpYfXoKVeOgmWZOyrTZ3_qzpKHjEG9qH4KCd2Snr7YdaKzyIXLeRQvU7tKm8aPeh2W19zO_qWXl1EVlBldHplUS8g2KFH-Uo7VPH4YiZJxSbLx3jd3Toxwn9DnUzNl4Icyzzyr13HZukzP56wJbsVKXoTHoKNoaqeN7VCxB3hMaeh_bRu60hARKLSJa8aZWusmnVItzkH5VSGL1uQq1nv4FFLJa7h_kAsrvAdl2-tQRJVQdWpohnHzTTzsKHExg-wsNssB4FJfb9TapdQOd4FJb8pNbU6yhS3cR8a9F5-qycYaqvYb5H5AB06Yb5QEzC-uJeefAoRydO47dCplgzM4vqwvtejyihct9gECfBG8brjninBlXMBJJ8zTcMahbqs8EWHkYsDGcBoeSjB8I0gujykR7L7xjAaNIXNedqwPNkXYs_uRbJ8UQvyQcZWDLpNvCPf82TgB5Da0QyLqt5DTqUVb147hattkcUPG4wTUpCt-s-D-EpUAqBw6ccXfNZ6_wdYitL6qPdo6U5lc87GnPtSo-Zrd6HGlTO2be5vu7TU69E-5FuNIgqMWnyBeQlgj_5p3bYvvKPVdOAjGLDZ3b6T6m_ILhwUrVgec0hkiYqYeVrOBF_KtAoVcmA1RsAVt2xoUbmX_juPMN73srP_F6z6fGSqIr2JLaAaLvPE_bgW1RpXnkiJ27uv5ScFeVGepElMuKcxP_pk10zilbNEwvVpmgJnfKhwd1fI49QVUBEpfjB90e3-YdzfKVBgY6rCZ2L8aFferi9cIhILJVw_eAnPi6sCHrJHh7DbKRmcdfMRsVN6MLnfw9t85hnSN0J11foKTeCV__40JtsLZ72kWiTxKH7dNv8OcAtAKzf_G9n_rYizOgUAGPawTjy2tfRRgD4r4ov__rX7CynjTZkP-LcTe5Vf98GikGWZzglUtigoIwLpaO8WjSXZQd-uBfgY2hBiLhY7XRWHi_GRxyVRC0TOINvtY_J2wvHPQw0Nn9tUigV2tR1HOeE1EvSjptCA9y1eekZ7ka4fdKWGvO34VQIUvRDuffaMEHByRKK3zdflFF5-sdQfVYZ6am8yC-OX6OYRIleHNzjs8GezxqmKxi3qTO5PF56cgQ5KFWVO8poV8LbAQ2qnIBAgF0XLApWyb31v2WreYqwLip97H_EZWSlVCn5KWNNPkdwfgBtv6SyydRx0Cc0mmeRCBIs5Kb2uWF1fjTAWFVmdTTR1ar73ilKa4fkaqBLdLB1FIZ0maa774ixZ09vKugHY9UYeuOxJ-SAkxFXl-2nl2aOuTWxD3X0kHYQoC0-QueJQkU5Jn6HCO7Zy2nFv_D5ZRq0EC3dtjdS8j7N7_Wfw6C-kf4jZJHl9e--7p2MEGwNFFDxCNueRjvi7MFaek80xZYWw_dIvkdOnWw1M8NDPVd3gH__yaXYjvPq_N6aZAIN5mLGqJ8hSQr_uOVcP59fwlFLE8ogb3Alk2WWtm-ssLOK3NFWybqugDpZTloiEE5uHmdX6psJqESYERgAFv_a_1O7rBuRm19dROMsOz2NhCz4xujDYXnjeBdLv8UA4Z3pmRec_0LqBXqt1TFmytjeXoV9pMR9shNjX7RCeqqPQoo9r59izIS79q5mpYhKybxVdOGNOUwa5dE7jNKi29pGVfFaOANQAnRTHvxYQE621uaGJGaUu1s2KYrvvUG6CXD4lmzMT3EnRLvZQbhQojjBR4_eHcyKnUhv2b-7EQIaBZS-tK_5lcyOInCfFtjkNe5SilAlXWqpLX_C3lcsDGOZBLQR5y-gNdXoe2vTL1qDZ_Ez1Qvq9Hp7lZ1ak6btrx2hmLrlFreMuyC0KxH6UuS_6wnhtKFK79fdOSS1fXwrW1rvkhZELfIthXGtVwyfk8-HxpMZLmG00lpKUvZCGQ916qqSPuJcBIGV0VmTX1vW5qjAHyTEEFEOfGzvBGuaaI8_Xv_n2tzsM6ZAP5qtj1oKK485ISQUrpMb6-sM6pRDuvyYY80tWZ9H239EKRNc2B4fN4vJ1vzxw68OMPAEMqf47Rh3xa-bSeHsrpo4B_uZqOEqoLDETTp2QJjOnQXHfl18rcwVLMBtTZ7yiQnAAo2lgHs_fuqAYupWb7E5JYD9wAeA9Gg3W2G8ZJVKHK4cTFrAnj1Uft1s_xEtgRx8V76Ay2TQkJiZ9-aknFNqhVdNqVWlTQm9vezByGNidX2E1FNZD9X79Q8oGOs5_Jldi1WQkut5iRBZnPz116XIBpRIUm17v_VYJy4szS7qdWgRJwhL_D8spCumPFdiCbl1rutMqOLGaSExCl44pn_tVVf3tVaEQ0ZlxnsP_qEezZPEZuEFtiSHmD1ZFY8IbbM4xMe1FoaqELzL_156SVYQ4pb-JNx9shgo7XT4RwmEbM-QigtYB7LEeQJHB_efmcjZU9yClIr5QOV8n5z1uqEmt1qxq_ko3BJpEo2Lq0l2l3OE_z-1KEJV9izfz6m2WZsBuqZbaPq6enpD2jZs4lW1w6F7vjTL3p4_g7Hk3pjztccld7pTbxMbiozZC22UN1-6el6HHcpTMz4nZl2doFc9iOFFTFQBOhoGDz3QCQMkqgDnu6LELJh25Blf5KoyjPoNmMqmS9e2z-z2wTVkZkdLitOXu8TlRIMgcEEqPn-q5Mt9Fuk4hnQY7sbIY-DTgLuM5ovmsqUxqTEuFCDER1jvBS9wg2CVniYidn-rGmmhuv33rUAt488hJhZtyTvPpEIUxCK-Tyjz3CFOEz2oCVpU93yYx9vkgfwmDkjD92CF7DOj6-KaUc559FhmbuNruaWq1zN9j8TqinOoIto9HPOHf6dpjP-ay_5n1gu53jCie66Mqm-q1hJ9yXXoWh0KeMJBj_ySJICNALHBGwK1HcTiLVMMF_Dzb7JcIajMF_SjrKdyO9HD_FbPGlHX-AioJJInWGJOw4QAww2SC-feBSxmA__zsVrLRo_P4ln8A32AOVqif-OvuzbrJ9rR7nGL0JRinXYy0Xo7Upu9aw2WGpkV5Sn8a3w2_MJYPRd-LmJQE3GUiZxXGrmxIpkIv6fyXstSVyV91uOtuBdpeikQr78D3eYw89bSYb1eDBBfxQyL_9U5S6cUjP9rXykoc4W6P5aV54fZfbwLNcUkN4Jvbb0UkLoNPOYcUI7N4e20PeT8FnKCDxZ8LhMLvtDX-6FocshR7vPfAOS1Hl_IdWoje1mSjYANA==
+        id: rs_68c2f06b87548197ac093b82cba2e950016e6d37acd3117d
+        summary:
+        - text: "**Planning updates for the poem**\n\nI need to use the planning tool, updating as we make progress. First,
+            I’ll draft a plan to construct a poem with 12 lines while meeting specific constraints. I'll ensure the line-initial
+            letters match the SAMIRA/DAWOOD pattern. \n\nFollowing that, I should use the update_plan tool twice: first for
+            the initial plan and then again upon completion to note that it’s done. I think I’ll need to blend these updates
+            with the poem outputs to maintain a clear flow!"
+          type: summary_text
+        - text: |-
+            **Updating the plan and progress**
+
+            I can make two tool calls before the final output: one for the initial plan and another to note that execution is completed. It makes sense to do these calls back-to-back in the commentary section. The first will be a succinct update of the plan steps, and then the second will detail the progress, such as whether I've selected capitals per line, constructed the lines, verified the acrostics, and delivered the poem. That should keep everything clear!
+          type: summary_text
+        type: reasoning
+      - arguments: '{"plan":"Plan:\n1) Map 12 lines to required initial letters: odd lines -> S A M I R A; even lines -> D
+          A W O O D.\n2) For each line, choose a world capital whose name begins with the required initial.\n3) Compose each
+          line so that the first letters of its words, in order, spell that chosen capital exactly.\n4) Keep imagery coherent
+          so the poem reads fluidly while meeting all acrostic constraints.\n5) Double-check both acrostics: (a) line-initial
+          letters form SAMIRA/DAWOOD; (b) per-line word-initials form the intended capitals.\n6) Deliver the 12-line poem."}'
+        call_id: call_QbeOap5DBC9PH8zkuG1J3fy3
+        id: fc_68c2f08b3a388197a78d6e71cad38079016e6d37acd3117d
+        name: update_plan
+        type: function_call
+      - call_id: call_QbeOap5DBC9PH8zkuG1J3fy3
+        output: plan updated
+        type: function_call_output
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      model: gpt-5
+      reasoning:
+        effort: low
+        summary: detailed
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '2389'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '6691'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757606028
+      error: null
+      id: resp_68c2f08c195081978f96d143cf93ce4b016e6d37acd3117d
+      incomplete_details: null
+      instructions: You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update
+        it as you make progress against the user's prompt
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - content:
+        - annotations: []
+          logprobs: []
+          text: |-
+            Silver owls feathered in ascent
+            Dunes open, harboring azures
+            Auroras stir tranquil airs, northern afterglow
+            Amber nights kindle autumnal reverent alleys
+            Moonlit undertow sings, coral aster tides
+            Whispers arise, rivers serenade amber wistfulness
+            Indigo sands lull a midnight amber breeze, awakening dawn
+            Over snow, lanterns overglow
+            Rustling acacias bend as trade-winds
+            Old timbers tremble as waters awake
+            Azure palms invite alchemy
+            Desert jasmine ignites breezes, oasis unveils tender incandescence
+          type: output_text
+        id: msg_68c2f08d7b608197a7334580e604cca2016e6d37acd3117d
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: low
+        summary: detailed
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - description: null
+        name: update_plan
+        parameters:
+          additionalProperties: false
+          properties:
+            plan:
+              type: string
+          required:
+          - plan
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 2276
+        input_tokens_details:
+          cached_tokens: 2176
+        output_tokens: 125
+        output_tokens_details:
+          reasoning_tokens: 0
+        total_tokens: 2401
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

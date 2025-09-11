@@ -1296,3 +1296,93 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
             ),
         ]
     )
+
+
+async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel(
+        model_name='gpt-5',
+        settings=OpenAIResponsesModelSettings(openai_reasoning_summary='detailed', openai_reasoning_effort='low'),
+    )
+    agent = Agent(model=m)
+
+    @agent.instructions
+    def system_prompt():
+        return (
+            'You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually '
+            "update it as you make progress against the user's prompt"
+        )
+
+    @agent.tool_plain
+    def update_plan(plan: str) -> str:
+        return 'plan updated'
+
+    prompt = (
+        'Compose a 12-line poem where the first letters of the odd-numbered lines form the name "SAMIRA" '
+        'and the first letters of the even-numbered lines spell out "DAWOOD." Additionally, the first letter '
+        'of each word in every line should create the capital of a country'
+    )
+
+    result = await agent.run(prompt)
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Compose a 12-line poem where the first letters of the odd-numbered lines form the name "SAMIRA" and the first letters of the even-numbered lines spell out "DAWOOD." Additionally, the first letter of each word in every line should create the capital of a country',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c2f06b87548197ac093b82cba2e950016e6d37acd3117d',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c2f06b87548197ac093b82cba2e950016e6d37acd3117d',
+                    ),
+                    ToolCallPart(
+                        tool_name='update_plan',
+                        args=IsStr(),
+                        tool_call_id='call_QbeOap5DBC9PH8zkuG1J3fy3|fc_68c2f08b3a388197a78d6e71cad38079016e6d37acd3117d',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=124, output_tokens=2084, details={'reasoning_tokens': 1920}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c2f06ae97c8197980bb8a4837e2e46016e6d37acd3117d',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='update_plan',
+                        content='plan updated',
+                        tool_call_id='call_QbeOap5DBC9PH8zkuG1J3fy3|fc_68c2f08b3a388197a78d6e71cad38079016e6d37acd3117d',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=RequestUsage(
+                    input_tokens=2276, cache_read_tokens=2176, output_tokens=125, details={'reasoning_tokens': 0}
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c2f08c195081978f96d143cf93ce4b016e6d37acd3117d',
+                finish_reason='stop',
+            ),
+        ]
+    )
