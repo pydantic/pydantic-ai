@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 from urllib.parse import urljoin
 
 import httpx
+from anthropic import AsyncAnthropic
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, cached_async_http_client, get_user_agent
@@ -103,7 +104,14 @@ def gateway_provider(
     elif upstream_provider == 'anthropic':
         from .anthropic import AnthropicProvider
 
-        return AnthropicProvider(api_key=api_key, base_url=urljoin(base_url, 'anthropic'), http_client=http_client)
+        return AnthropicProvider(
+            anthropic_client=AsyncAnthropic(
+                api_key=api_key,
+                base_url=urljoin(base_url, 'anthropic'),
+                http_client=http_client,
+                default_headers={'Authorization': api_key},
+            )
+        )
     elif upstream_provider == 'google-vertex':
         from google.genai import Client as GoogleClient
 
