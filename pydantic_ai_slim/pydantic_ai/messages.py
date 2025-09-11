@@ -598,9 +598,7 @@ class MagicBinaryContent(BinaryContent):
         self.filename = filename
 
 
-MultiModalContent = (
-    ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | MagicDocumentUrl | MagicBinaryContent
-)
+MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | MagicDocumentUrl | MagicBinaryContent
 UserContent: TypeAlias = str | MultiModalContent
 
 

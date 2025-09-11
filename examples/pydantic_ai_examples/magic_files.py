@@ -45,12 +45,14 @@ def run_with_openai() -> None:
         media_type='application/pdf',
     )
 
-    result = agent.run_sync([
-        'Summarize these inputs and mention their filenames:',
-        txt_url,
-        txt_bytes,
-        pdf_url,
-    ])
+    result = agent.run_sync(
+        [
+            'Summarize these inputs and mention their filenames:',
+            txt_url,
+            txt_bytes,
+            pdf_url,
+        ]
+    )
     print('\n[OpenAI] Output:\n', result.output)
 
 
@@ -69,11 +71,13 @@ def run_with_anthropic() -> None:
     )
 
     # For non-OpenAI providers, Magic* pass through like their base classes when supported.
-    result = agent.run_sync([
-        'Briefly summarize these documents:',
-        txt_url,
-        pdf_url,
-    ])
+    result = agent.run_sync(
+        [
+            'Briefly summarize these documents:',
+            txt_url,
+            pdf_url,
+        ]
+    )
     print('\n[Anthropic] Output:\n', result.output)
 
 
