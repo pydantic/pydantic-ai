@@ -97,6 +97,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
@@ -112,6 +113,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -161,6 +163,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
@@ -179,6 +182,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 require_parameter_descriptions,
                 schema_generator,
                 strict,
+                sequential,
                 requires_approval,
             )
             return func_
@@ -196,6 +200,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
     ) -> None:
         """Add a function as a tool to the toolset.
@@ -222,6 +227,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 If `None`, the default value is determined by the toolset.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
         """
@@ -242,6 +248,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
             strict=strict,
+            sequential=sequential,
             requires_approval=requires_approval,
         )
         self.add_tool(tool)

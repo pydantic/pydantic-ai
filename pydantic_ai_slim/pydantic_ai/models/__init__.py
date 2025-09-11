@@ -28,6 +28,7 @@ from ..exceptions import UserError
 from ..messages import (
     FileUrl,
     FinalResultEvent,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -555,6 +556,10 @@ class StreamedResponse(ABC):
 
     final_result_event: FinalResultEvent | None = field(default=None, init=False)
 
+    provider_response_id: str | None = field(default=None, init=False)
+    provider_details: dict[str, Any] | None = field(default=None, init=False)
+    finish_reason: FinishReason | None = field(default=None, init=False)
+
     _parts_manager: ModelResponsePartsManager = field(default_factory=ModelResponsePartsManager, init=False)
     _event_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _usage: RequestUsage = field(default_factory=RequestUsage, init=False)
@@ -609,6 +614,9 @@ class StreamedResponse(ABC):
             timestamp=self.timestamp,
             usage=self.usage(),
             provider_name=self.provider_name,
+            provider_response_id=self.provider_response_id,
+            provider_details=self.provider_details,
+            finish_reason=self.finish_reason,
         )
 
     def usage(self) -> RequestUsage:
