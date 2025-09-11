@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from typing_extensions import Self
 
+from pydantic_ai import messages
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR, messages
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
@@ -26,6 +26,8 @@ try:
         TextContent,
         Tool as MCPTool,
     )
+
+    from pydantic_ai.mcp import TOOL_SCHEMA_VALIDATOR
 
 except ImportError as _import_error:
     raise ImportError(
