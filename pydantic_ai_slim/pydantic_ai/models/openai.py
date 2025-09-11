@@ -763,7 +763,7 @@ class OpenAIChatModel(Model):
         handled = await OpenAIChatModel._handle_document_url(item)
         if handled is not None:
             return handled
-        if isinstance(item, VideoUrl):  # pragma: no cover
+        if isinstance(item, VideoUrl):
             raise NotImplementedError('VideoUrl is not supported for OpenAI')
         # Fallback: unknown type — return empty parts to avoid type-checker Never error
         return []
