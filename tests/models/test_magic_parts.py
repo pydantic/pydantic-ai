@@ -1,6 +1,5 @@
+# pyright: reportPrivateUsage=false, reportMissingImports=false, reportUnnecessaryTypeIgnoreComment=false
 """Tests for Magic* parts provider handling.
-
-pyright: reportPrivateUsage=false
 """
 
 from typing import Any, cast
@@ -8,7 +7,7 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai.messages import MagicBinaryContent, MagicDocumentUrl, UserPromptPart
-from tests.conftest import try_import
+from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
@@ -26,9 +25,9 @@ async def test_openai_magic_binary_text_plain_inlined_to_text():
     )
     msg = await OpenAIChatModel._map_user_prompt(part)
     assert isinstance(msg['content'], list)
-    content = cast(list[dict[str, Any]], msg['content'])  # type: ignore[assignment]
+    content = cast(list[dict[str, Any]], msg['content'])
     assert content[0]['type'] == 'text'
-    text = cast(str, content[0]['text'])  # type: ignore[index]
+    text = cast(str, content[0]['text'])
     assert text.startswith('-----BEGIN FILE filename="note.txt" type="text/plain"-----\nHello world')
     assert text.rstrip().endswith('-----END FILE-----')
 
@@ -39,7 +38,7 @@ async def test_openai_magic_binary_pdf_as_file_part():
     )
     msg = await OpenAIChatModel._map_user_prompt(part)
     assert isinstance(msg['content'], list)
-    content = cast(list[dict[str, Any]], msg['content'])  # type: ignore[assignment]
+    content = cast(list[dict[str, Any]], msg['content'])
     assert content[0]['type'] == 'file'
 
 
@@ -54,8 +53,8 @@ async def test_openai_magic_document_url_text_plain_inlined_to_text(monkeypatch:
 
     part = UserPromptPart(content=[MagicDocumentUrl(url='https://example.com/file.txt', filename='from-url.txt')])
     msg = await OpenAIChatModel._map_user_prompt(part)
-    content = cast(list[dict[str, Any]], msg['content'])  # type: ignore[assignment]
-    text = cast(str, content[0]['text'])  # type: ignore[index]
+    content = cast(list[dict[str, Any]], msg['content'])
+    text = cast(str, content[0]['text'])
     assert text.startswith('-----BEGIN FILE filename="from-url.txt" type="text/plain"-----\nHello from URL')
     assert text.rstrip().endswith('-----END FILE-----')
 
@@ -71,7 +70,7 @@ async def test_openai_magic_document_url_pdf_as_file_part(monkeypatch: pytest.Mo
     part = UserPromptPart(content=[MagicDocumentUrl(url='https://example.com/file.pdf')])
     msg = await OpenAIChatModel._map_user_prompt(part)
     assert isinstance(msg['content'], list)
-    content = cast(list[dict[str, Any]], msg['content'])  # type: ignore[assignment]
+    content = cast(list[dict[str, Any]], msg['content'])
     assert content[0]['type'] == 'file'
 
 
@@ -113,7 +112,11 @@ async def test_openai_binary_unsupported_returns_empty():
 
 
 async def test_openai_document_url_json_inlined_text(monkeypatch: pytest.MonkeyPatch):
-    async def fake_download_item(item, data_format='base64_uri', type_format='extension'):
+    from pydantic_ai.messages import DocumentUrl
+
+    async def fake_download_item(
+        item: DocumentUrl, data_format: str = 'base64_uri', type_format: str = 'extension'
+    ) -> dict[str, str]:
         return {'data': 'data:application/json;base64,ewogICJhIjogMQp9', 'data_type': 'json'}
 
     monkeypatch.setattr('pydantic_ai.models.openai.download_item', fake_download_item)
@@ -136,7 +139,9 @@ async def test_openai_regular_binary_image_maps_to_image_url():
 async def test_openai_audio_url_maps_to_input_audio(monkeypatch: pytest.MonkeyPatch):
     from pydantic_ai.messages import AudioUrl
 
-    async def fake_download_item(item, data_format='base64', type_format='extension'):
+    async def fake_download_item(
+        item: AudioUrl, data_format: str = 'base64', type_format: str = 'extension'
+    ) -> dict[str, str]:
         return {'data': 'AAA=', 'data_type': 'mp3'}
 
     monkeypatch.setattr('pydantic_ai.models.openai.download_item', fake_download_item)
@@ -149,7 +154,9 @@ async def test_openai_audio_url_maps_to_input_audio(monkeypatch: pytest.MonkeyPa
 async def test_openai_document_url_pdf_file_path(monkeypatch: pytest.MonkeyPatch):
     from pydantic_ai.messages import DocumentUrl
 
-    async def fake_download_item(item, data_format='base64_uri', type_format='extension'):
+    async def fake_download_item(
+        item: DocumentUrl, data_format: str = 'base64_uri', type_format: str = 'extension'
+    ) -> dict[str, str]:
         return {'data': 'data:application/pdf;base64,AAA', 'data_type': 'pdf'}
 
     monkeypatch.setattr('pydantic_ai.models.openai.download_item', fake_download_item)
