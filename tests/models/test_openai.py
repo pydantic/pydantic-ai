@@ -22,7 +22,6 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
-    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
