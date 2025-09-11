@@ -12,7 +12,6 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, cached_async_http_client, get_user_agent
 
 if TYPE_CHECKING:
-    from anthropic import AsyncAnthropic
     from google.genai import Client as GoogleClient
     from groq import AsyncGroq
     from openai import AsyncOpenAI
@@ -102,6 +101,8 @@ def gateway_provider(
 
         return GroqProvider(api_key=api_key, base_url=urljoin(base_url, 'groq'), http_client=http_client)
     elif upstream_provider == 'anthropic':
+        from anthropic import AsyncAnthropic
+
         from .anthropic import AnthropicProvider
 
         return AnthropicProvider(
