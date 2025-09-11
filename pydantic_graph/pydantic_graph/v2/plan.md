@@ -1,0 +1,22 @@
+- GraphWalker has to be serializable
+	- Deps have to be serializable
+		- This can be done by making it a dataclass that has a way to get all the non-serializable bits from the serializable bits
+	- GraphRunAPI has to be serializable
+		- This can be done by just giving it the ID and a way to get a connection to the state DB
+	- Graph has to be serializable
+		- Need a way to drop the need for state_type, deps_type etc. to be stored on the graph itself
+		- Need a way to serialize steps/transforms/etc. (which generally have  calls)
+			- Maybe possible by converting a function call into a dataclass under the hood..?
+			- Better: Node registry, similar to how we do evaluators
+				- Make Path serializable by:
+					- Having destination be a nodeid not a node
+				- Replace branch.source with _just_ matches, in a way that is serializable (IsInstanceOf or whatever)
+				- Matches types (callable dataclasses) for checking decision matches
+				- Transform types (callable dataclasses)
+				- Join Reducer types need to be serializable/deserializable
+				- Steps should be serializable/deserializable (ideally possible to serialize/deserialize as function references)
+					- Can potentially make it work by providing a dictionary of functions for serializing/deserializing. Note this would disallow lambdas/etc., but that's probably fine.
+
+
+- Graph can be an argument
+- 
