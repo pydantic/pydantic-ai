@@ -132,10 +132,11 @@ def dbos() -> Generator[DBOS, Any, None]:
 def cleanup_test_sqlite_file() -> Iterator[None]:
     if os.path.exists(DBOS_SQLITE_FILE):
         os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
-    yield
-
-    if os.path.exists(DBOS_SQLITE_FILE):
-        os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
+    try:
+        yield
+    finally:
+        if os.path.exists(DBOS_SQLITE_FILE):
+            os.remove(DBOS_SQLITE_FILE)  # pragma: lax no cover
 
 
 model = OpenAIChatModel(
@@ -254,6 +255,7 @@ async def test_complex_agent_run_in_workflow(allow_model_requests: None, dbos: D
         [
             'complex_agent__mcp_server__mcp.get_tools',
             'complex_agent__model.request_stream',
+            'event_stream_handler',
             'event_stream_handler',
             'event_stream_handler',
             'complex_agent__mcp_server__mcp.call_tool',

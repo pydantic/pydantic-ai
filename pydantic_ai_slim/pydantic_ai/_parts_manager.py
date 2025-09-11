@@ -156,6 +156,7 @@ class ModelResponsePartsManager:
         content: str | None = None,
         id: str | None = None,
         signature: str | None = None,
+        provider_name: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Handle incoming thinking content, creating or updating a ThinkingPart in the manager as appropriate.
 
@@ -170,6 +171,7 @@ class ModelResponsePartsManager:
             content: The thinking content to append to the appropriate ThinkingPart.
             id: An optional id for the thinking part.
             signature: An optional signature for the thinking content.
+            provider_name: An optional provider name for the thinking part.
 
         Returns:
             A `PartStartEvent` if a new part was created, or a `PartDeltaEvent` if an existing part was updated.
@@ -199,7 +201,7 @@ class ModelResponsePartsManager:
             if content is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
-                part = ThinkingPart(content=content, id=id, signature=signature)
+                part = ThinkingPart(content=content, id=id, signature=signature, provider_name=provider_name)
                 if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)
@@ -207,16 +209,12 @@ class ModelResponsePartsManager:
             else:
                 raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content')
         else:
-            if content is not None:
-                # Update the existing ThinkingPart with the new content delta
+            if content is not None or signature is not None:
+                # Update the existing ThinkingPart with the new content and/or signature delta
                 existing_thinking_part, part_index = existing_thinking_part_and_index
-                part_delta = ThinkingPartDelta(content_delta=content)
-                self._parts[part_index] = part_delta.apply(existing_thinking_part)
-                return PartDeltaEvent(index=part_index, delta=part_delta)
-            elif signature is not None:
-                # Update the existing ThinkingPart with the new signature delta
-                existing_thinking_part, part_index = existing_thinking_part_and_index
-                part_delta = ThinkingPartDelta(signature_delta=signature)
+                part_delta = ThinkingPartDelta(
+                    content_delta=content, signature_delta=signature, provider_name=provider_name
+                )
                 self._parts[part_index] = part_delta.apply(existing_thinking_part)
                 return PartDeltaEvent(index=part_index, delta=part_delta)
             else:

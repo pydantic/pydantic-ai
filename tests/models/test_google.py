@@ -61,7 +61,9 @@ with try_import() as imports_successful:
     )
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings, _metadata_as_usage  # type: ignore
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.providers.google import GoogleProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
@@ -704,14 +706,14 @@ print(f'{day_of_week=}')
                             'language': Language.PYTHON,
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google',
+                        provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
                         tool_call_id='not_provided',
                         timestamp=IsDatetime(),
-                        provider_name='google',
+                        provider_name='google-gla',
                     ),
                     TextPart(content='Today is Thursday in Utrecht.\n'),
                 ],
@@ -765,14 +767,14 @@ print(f'{day_of_week=}')
                             'language': Language.PYTHON,
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google',
+                        provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Thursday'\n"),
                         tool_call_id='not_provided',
                         timestamp=IsDatetime(),
-                        provider_name='google',
+                        provider_name='google-gla',
                     ),
                     TextPart(content='Today is Thursday in Utrecht.\n'),
                 ],
@@ -816,14 +818,14 @@ print(f'{day_of_week=}')
                             'language': Language.PYTHON,
                         },
                         tool_call_id=IsStr(),
-                        provider_name='google',
+                        provider_name='google-gla',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content=CodeExecutionResult(outcome=Outcome.OUTCOME_OK, output="day_of_week='Friday'\n"),
                         tool_call_id='not_provided',
                         timestamp=IsDatetime(),
-                        provider_name='google',
+                        provider_name='google-gla',
                     ),
                     TextPart(content='Tomorrow is Friday.\n'),
                 ],
@@ -976,28 +978,188 @@ async def test_google_model_empty_assistant_response(allow_model_requests: None,
 
 
 async def test_google_model_thinking_part(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
     agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
+    @agent.tool_plain
+    def dummy() -> None: ...  # pragma: no cover
+
     result = await agent.run('How do I cross the street?')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    SystemPromptPart(content='You are a helpful assistant.', timestamp=IsDatetime()),
-                    UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime()),
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
                 ]
             ),
             ModelResponse(
-                parts=[IsInstance(ThinkingPart), IsInstance(TextPart)],
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
                 usage=RequestUsage(
-                    input_tokens=15, output_tokens=2688, details={'thoughts_tokens': 1647, 'text_prompt_tokens': 15}
+                    input_tokens=34, output_tokens=1246, details={'thoughts_tokens': 817, 'text_prompt_tokens': 34}
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google-gla',
                 provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
+                provider_response_id='sebBaN7rGrSsqtsPhf3J0Q4',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=978, output_tokens=2417, details={'thoughts_tokens': 1476, 'text_prompt_tokens': 978}
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='zObBaKreOqSIqtsP7uur4A0',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_google_model_thinking_part_from_other_model(
+    allow_model_requests: None, google_provider: GoogleProvider, openai_api_key: str
+):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel('gpt-5', provider=provider)
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
+    agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
+    @agent.tool_plain
+    def dummy() -> None: ...  # pragma: no cover
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c1fb6c15c48196b964881266a03c8e0c14a8a9087e8689',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c1fb6b6a248196a6216e80fc2ace380c14a8a9087e8689',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=GoogleModel(
+            'gemini-2.5-pro',
+            provider=google_provider,
+            settings=GoogleModelSettings(google_thinking_config={'include_thoughts': True}),
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=1106, output_tokens=1867, details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106}
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='mPvBaJmNOMywqtsPsb_l2A4',
                 finish_reason='stop',
             ),
         ]
@@ -1005,9 +1167,13 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
 
 
 async def test_google_model_thinking_part_iter(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-03-25', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
     settings = GoogleModelSettings(google_thinking_config={'include_thoughts': True})
     agent = Agent(m, system_prompt='You are a helpful assistant.', model_settings=settings)
+
+    # Google only emits thought signatures when there are tools: https://ai.google.dev/gemini-api/docs/thinking#signatures
+    @agent.tool_plain
+    def dummy() -> None: ...  # pragma: no cover
 
     event_parts: list[Any] = []
     async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
@@ -1017,59 +1183,72 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     async for event in request_stream:
                         event_parts.append(event)
 
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='You are a helpful assistant.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='google-gla',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=34, output_tokens=1256, details={'thoughts_tokens': 787, 'text_prompt_tokens': 34}
+                ),
+                model_name='gemini-2.5-pro',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='beHBaJfEMIi-qtsP3769-Q8',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=IsInstance(ThinkingPart)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            PartStartEvent(index=1, part=IsInstance(TextPart)),
+            PartStartEvent(index=0, part=ThinkingPart(content=IsStr())),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(
+                index=0, delta=ThinkingPartDelta(content_delta='', signature_delta=IsStr(), provider_name='google-gla')
+            ),
+            PartStartEvent(index=1, part=TextPart(content=IsStr())),
             FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
-            PartDeltaEvent(index=1, delta=IsInstance(TextPartDelta)),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
+            PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
         ]
     )
 

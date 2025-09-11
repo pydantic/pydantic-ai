@@ -6,7 +6,6 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai._thinking_part import split_content_into_text_and_thinking
 from pydantic_ai.exceptions import UserError
 
 from .. import ModelHTTPError, usage
@@ -36,11 +35,13 @@ from . import Model, ModelRequestParameters, check_allow_model_requests
 try:
     from cohere import (
         AssistantChatMessageV2,
+        AssistantMessageV2ContentItem,
         AsyncClientV2,
         ChatFinishReason,
         ChatMessageV2,
         SystemChatMessageV2,
         TextAssistantMessageV2ContentItem,
+        ThinkingAssistantMessageV2ContentItem,
         ToolCallV2,
         ToolCallV2Function,
         ToolChatMessageV2,
@@ -201,11 +202,12 @@ class CohereModel(Model):
     def _process_response(self, response: V2ChatResponse) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         parts: list[ModelResponsePart] = []
-        if response.message.content is not None and len(response.message.content) > 0:
-            # While Cohere's API returns a list, it only does that for future proofing
-            # and currently only one item is being returned.
-            choice = response.message.content[0]
-            parts.extend(split_content_into_text_and_thinking(choice.text, self.profile.thinking_tags))
+        if response.message.content is not None:
+            for content in response.message.content:
+                if content.type == 'text':
+                    parts.append(TextPart(content=content.text))
+                elif content.type == 'thinking':  # pragma: no branch
+                    parts.append(ThinkingPart(content=cast(str, content.thinking)))  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue] - https://github.com/cohere-ai/cohere-python/issues/692
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
@@ -237,15 +239,13 @@ class CohereModel(Model):
                 cohere_messages.extend(self._map_user_message(message))
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
+                thinking: list[str] = []
                 tool_calls: list[ToolCallV2] = []
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # texts.append(f'<think>\n{item.content}\n</think>')
-                        pass
+                        thinking.append(item.content)
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
@@ -253,9 +253,15 @@ class CohereModel(Model):
                         pass
                     else:
                         assert_never(item)
+
                 message_param = AssistantChatMessageV2(role='assistant')
-                if texts:
-                    message_param.content = [TextAssistantMessageV2ContentItem(text='\n\n'.join(texts))]
+                if texts or thinking:
+                    contents: list[AssistantMessageV2ContentItem] = []
+                    if thinking:
+                        contents.append(ThinkingAssistantMessageV2ContentItem(thinking='\n\n'.join(thinking)))  # pyright: ignore[reportCallIssue] - https://github.com/cohere-ai/cohere-python/issues/692
+                    if texts:  # pragma: no branch
+                        contents.append(TextAssistantMessageV2ContentItem(text='\n\n'.join(texts)))
+                    message_param.content = contents
                 if tool_calls:
                     message_param.tool_calls = tool_calls
                 cohere_messages.append(message_param)

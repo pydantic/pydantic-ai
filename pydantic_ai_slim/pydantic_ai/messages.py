@@ -895,7 +895,18 @@ class ThinkingPart:
     signature: str | None = None
     """The signature of the thinking.
 
-    The signature is only available on the Anthropic models.
+    Supported by:
+
+    * Anthropic (corresponds to the `signature` field)
+    * Bedrock (corresponds to the `signature` field)
+    * Google (corresponds to the `thought_signature` field)
+    * OpenAI (corresponds to the `encrypted_content` field)
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Signatures are only sent back to the same provider.
     """
 
     part_kind: Literal['thinking'] = 'thinking'
@@ -980,7 +991,10 @@ class BuiltinToolCallPart(BaseToolCallPart):
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response.
+
+    Built-in tool calls are only sent back to the same provider.
+    """
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1198,6 +1212,12 @@ class ThinkingPartDelta:
     Note this is never treated as a delta — it can replace None.
     """
 
+    provider_name: str | None = None
+    """Optional provider name for the thinking part.
+
+    Signatures are only sent back to the same provider.
+    """
+
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
 
@@ -1222,14 +1242,18 @@ class ThinkingPartDelta:
         if isinstance(part, ThinkingPart):
             new_content = part.content + self.content_delta if self.content_delta else part.content
             new_signature = self.signature_delta if self.signature_delta is not None else part.signature
-            return replace(part, content=new_content, signature=new_signature)
+            new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
+            return replace(part, content=new_content, signature=new_signature, provider_name=new_provider_name)
         elif isinstance(part, ThinkingPartDelta):
             if self.content_delta is None and self.signature_delta is None:
                 raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
-            if self.signature_delta is not None:
-                return replace(part, signature_delta=self.signature_delta)
             if self.content_delta is not None:
-                return replace(part, content_delta=self.content_delta)
+                part = replace(part, content_delta=(part.content_delta or '') + self.content_delta)
+            if self.signature_delta is not None:
+                part = replace(part, signature_delta=self.signature_delta)
+            if self.provider_name is not None:
+                part = replace(part, provider_name=self.provider_name)
+            return part
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
         )
