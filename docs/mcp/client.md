@@ -173,7 +173,7 @@ This is particularly useful when you need to manage multiple MCP servers or want
 
 The configuration file should be a JSON file with an `mcpServers` object containing server definitions. Each server is identified by a unique key and contains the configuration for that server type:
 
-```json title="mcp_config.json"
+```json {title="mcp_config.json"}
 {
   "mcpServers": {
     "python-runner": {
@@ -198,7 +198,7 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 
 ### Usage
 
-```python title="mcp_config_loader.py"
+```python {title="mcp_config_loader.py" requires="mcp_config.json" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import load_mcp_servers
 
