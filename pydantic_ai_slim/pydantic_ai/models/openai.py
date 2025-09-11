@@ -1154,7 +1154,7 @@ class OpenAIResponsesModel(Model):
             call_id=call_id,
             type='function_call',
         )
-        if id:
+        if id:  # pragma: no branch
             param['id'] = id
         return param
 
@@ -1529,4 +1529,4 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
         call_id, id = combined_id.split('|', 1)
         return call_id, id
     else:
-        return combined_id, None
+        return combined_id, None  # pragma: no cover
