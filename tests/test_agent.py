@@ -5,7 +5,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, replace
 from datetime import timezone
-from typing import Any, Union
+from typing import Any, Literal, Union
 
 import httpx
 import pytest
@@ -73,6 +73,37 @@ def test_result_tuple():
 
     result = agent.run_sync('Hello')
     assert result.output == ('foo', 'bar')
+
+
+class Person(BaseModel):
+    name: str
+
+
+def test_result_list_of_models_with_stringified_response():
+    def return_list(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        # Simulate providers that return the nested payload as a JSON string under "response"
+        args_json = json.dumps(
+            {
+                'response': json.dumps(
+                    [
+                        {'name': 'John Doe'},
+                        {'name': 'Jane Smith'},
+                    ]
+                )
+            }
+        )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
+
+    agent = Agent(FunctionModel(return_list), output_type=list[Person])
+
+    result = agent.run_sync('Hello')
+    assert result.output == snapshot(
+        [
+            Person(name='John Doe'),
+            Person(name='Jane Smith'),
+        ]
+    )
 
 
 class Foo(BaseModel):
@@ -1557,7 +1588,7 @@ def test_native_output():
             text = '{"city": "Mexico City", "country": "Mexico"}'
         return ModelResponse(parts=[TextPart(content=text)])
 
-    m = FunctionModel(return_city_location, profile=ModelProfile(supports_json_schema_output=True))
+    m = FunctionModel(return_city_location)
 
     class CityLocation(BaseModel):
         city: str
@@ -3140,6 +3171,7 @@ def test_binary_content_serializable():
                 'provider_response_id': None,
                 'timestamp': IsStr(),
                 'kind': 'response',
+                'finish_reason': None,
             },
         ]
     )
@@ -3195,6 +3227,7 @@ def test_image_url_serializable_missing_media_type():
                 'provider_details': None,
                 'provider_response_id': None,
                 'kind': 'response',
+                'finish_reason': None,
             },
         ]
     )
@@ -3257,6 +3290,7 @@ def test_image_url_serializable():
                 'provider_details': None,
                 'provider_response_id': None,
                 'kind': 'response',
+                'finish_reason': None,
             },
         ]
     )
@@ -3751,7 +3785,7 @@ def test_multimodal_tool_response():
                     UserPromptPart(
                         content=[
                             'Here are the analysis results:',
-                            ImageUrl(url='https://example.com/chart.jpg'),
+                            ImageUrl(url='https://example.com/chart.jpg', identifier='672a5c'),
                             'The chart shows positive trends.',
                         ],
                         timestamp=IsNow(tz=timezone.utc),
@@ -4291,6 +4325,72 @@ def test_parallel_mcp_calls():
     agent = Agent(FunctionModel(call_tools_parallel), toolsets=[server])
     result = agent.run_sync()
     assert result.output == snapshot('finished')
+
+
+@pytest.mark.parametrize('mode', ['argument', 'contextmanager'])
+def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
+    """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
+
+    async def call_tools_sequential(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='call_first'),
+                ToolCallPart(tool_name='increment_integer_holder'),
+                ToolCallPart(tool_name='requires_approval'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+                ToolCallPart(tool_name='call_second'),
+            ]
+        )
+
+    sequential_toolset = FunctionToolset()
+
+    integer_holder: int = 1
+
+    @sequential_toolset.tool
+    def call_first():
+        nonlocal integer_holder
+        assert integer_holder == 1
+
+    @sequential_toolset.tool(sequential=mode == 'argument')
+    def increment_integer_holder():
+        nonlocal integer_holder
+        integer_holder = 2
+
+    @sequential_toolset.tool
+    def requires_approval():
+        from pydantic_ai.exceptions import ApprovalRequired
+
+        raise ApprovalRequired()
+
+    @sequential_toolset.tool
+    def call_second():
+        nonlocal integer_holder
+        assert integer_holder == 2
+
+    agent = Agent(
+        FunctionModel(call_tools_sequential), toolsets=[sequential_toolset], output_type=[str, DeferredToolRequests]
+    )
+
+    if mode == 'contextmanager':
+        with agent.sequential_tool_calls():
+            result = agent.run_sync()
+    else:
+        result = agent.run_sync()
+
+    assert result.output == snapshot(
+        DeferredToolRequests(approvals=[ToolCallPart(tool_name='requires_approval', tool_call_id=IsStr())])
+    )
+    assert integer_holder == 2
 
 
 def test_set_mcp_sampling_model():

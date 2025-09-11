@@ -3,7 +3,6 @@ from dataclasses import replace
 from typing import Any, cast
 
 import pytest
-from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -24,7 +23,6 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -208,7 +206,9 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c48c9481918c5c4394464ce0c60ae6111e84dd5c08',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -240,7 +240,9 @@ For **London**, it's located at approximately latitude 51° N and longitude 0° 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67e547c5a2f08191802a1f43620f348503a2086afed73b47',
+                finish_reason='stop',
             ),
         ]
     )
@@ -274,7 +276,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d3aa3481919ca581a267db1e510fe7a5a4e2123dc3',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -299,7 +303,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_681134d53c48819198ce7b89db78dffd02cbfeaababb040c',
+                finish_reason='stop',
             ),
         ]
     )
@@ -384,6 +390,20 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
     async with agent.run_stream('What is the capital of France?') as result:
         async for output in result.stream_text():
             output_text.append(output)
+        async for response, is_last in result.stream_responses(debounce_by=None):
+            if is_last:
+                assert response == snapshot(
+                    ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris.')],
+                        usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
+                        model_name='gpt-4o-2024-08-06',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                        provider_details={'finish_reason': 'completed'},
+                        provider_response_id='resp_67e554a21aa88191b65876ac5e5bbe0406c52f0e511c76ed',
+                        finish_reason='stop',
+                    )
+                )
 
     assert output_text == snapshot(['The capital of France is Paris.'])
 
@@ -431,7 +451,9 @@ OpenAI's recent launch of GPT-5 has faced mixed reactions. Despite strong benchm
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_689b7c90010c8196ac0efd68b021490f07450cfc2d48b975',
+                finish_reason='stop',
             ),
         ]
     )
@@ -455,7 +477,9 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_67f3fdfd9fa08191a3d5825db81b8df6003bc73febb56d77',
+                finish_reason='stop',
             ),
         ]
     )
@@ -699,7 +723,9 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0b40a8819cb8d55594bc2c232a001fd29e2d5573f7',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -723,7 +749,9 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0bfda8819ea65458cd7cc389b801dc81d4bc91f560',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -773,7 +801,9 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0d9494819ea4f123bba707c9ee0356a60c98816d6a',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -791,7 +821,9 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0e2b28819d9c828ef4ee526d6a03434b607c02582d',
+                finish_reason='stop',
             ),
         ]
     )
@@ -832,7 +864,9 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0f220081a1a621d6bcdc7f31a50b8591d9001d2329',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -850,7 +884,9 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f0fde708192989000a62809c6e5020197534e39cc1f',
+                finish_reason='stop',
             ),
         ]
     )
@@ -893,7 +929,9 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f10f2d081a39b3438f413b3bafc0dd57d732903c563',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -915,7 +953,9 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68477f119830819da162aa6e10552035061ad97e2eef7871',
+                finish_reason='stop',
             ),
         ]
     )
@@ -961,7 +1001,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f12d63881a1830201ed101ecfbf02f8ef7f2fb42b50',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -986,7 +1028,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1b556081918d64c9088a470bf0044fdb7d019d4115',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1036,7 +1080,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f1d38e081a1ac828acda978aa6b08e79646fe74d5ee',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -1065,7 +1111,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
                 provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68482f28c1b081a1ae73cbbee012ee4906b4ab2d00d03024',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1141,17 +1189,24 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
+                usage=RequestUsage(input_tokens=13, output_tokens=1828, details={'reasoning_tokens': 1472}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68bb4c1e21c88195992250ee4e6c3e5506370ebbaae73d2c',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1160,23 +1215,8 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
         'Considering the way to cross the street, analogously, how do I cross the river?',
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -1187,16 +1227,24 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=424, output_tokens=2033, details={'reasoning_tokens': 1408}),
+                usage=RequestUsage(input_tokens=394, output_tokens=2196, details={'reasoning_tokens': 1536}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_response_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68bb4c373f6c819585afac2acfadeede06370ebbaae73d2c',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1208,25 +1256,43 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(responses_model, model_settings=settings)
 
-    event_parts: list[Any] = []
     async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
+                    async for _ in request_stream:
+                        pass
 
-    assert event_parts == IsListOrTuple(
-        positions={
-            0: PartStartEvent(index=0, part=ThinkingPart(content='', id=IsStr())),
-            1: PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            84: PartStartEvent(index=1, part=ThinkingPart(content='', id=IsStr())),
-            85: PartDeltaEvent(index=1, delta=IsInstance(ThinkingPartDelta)),
-            186: PartStartEvent(index=2, part=ThinkingPart(content='', id=IsStr())),
-            187: PartDeltaEvent(index=2, delta=IsInstance(ThinkingPartDelta)),
-            280: PartStartEvent(index=3, part=TextPart(content='I')),
-            281: FinalResultEvent(tool_name=None, tool_call_id=None),
-            282: PartDeltaEvent(index=3, delta=IsInstance(TextPartDelta)),
-        },
-        length=631,
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=13, output_tokens=1733, details={'reasoning_tokens': 1280}),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68bb4cbe885481a3a55b6a2e6d6aa5120b681c5350c0b73b',
+                finish_reason='stop',
+            ),
+        ]
     )

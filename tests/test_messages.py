@@ -324,12 +324,20 @@ def test_video_url_invalid():
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
-    original_delta = ThinkingPartDelta(content_delta='original', signature_delta='sig1')
+    original_delta = ThinkingPartDelta(
+        content_delta='original', signature_delta='sig1', provider_name='original_provider'
+    )
 
     # Test applying delta with no content or signature - should raise error
     empty_delta = ThinkingPartDelta()
     with pytest.raises(ValueError, match='Cannot apply ThinkingPartDelta with no content or signature'):
         empty_delta.apply(original_delta)
+
+    # Test applying delta with content_delta
+    content_delta = ThinkingPartDelta(content_delta=' new_content')
+    result = content_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.content_delta == 'original new_content'
 
     # Test applying delta with signature_delta
     sig_delta = ThinkingPartDelta(signature_delta='new_sig')
@@ -337,11 +345,11 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert isinstance(result, ThinkingPartDelta)
     assert result.signature_delta == 'new_sig'
 
-    # Test applying delta with content_delta
-    content_delta = ThinkingPartDelta(content_delta='new_content')
+    # Test applying delta with provider_name
+    content_delta = ThinkingPartDelta(content_delta='', provider_name='new_provider')
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
-    assert result.content_delta == 'new_content'
+    assert result.provider_name == 'new_provider'
 
 
 def test_pre_usage_refactor_messages_deserializable():

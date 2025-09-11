@@ -4,7 +4,7 @@ import base64
 import warnings
 from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, cast, overload
 
@@ -24,12 +24,14 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
     ModelResponseStreamEvent,
+    PartStartEvent,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
@@ -72,6 +74,8 @@ try:
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
+    from openai.types.responses.response_reasoning_item_param import Summary
+    from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
 except ImportError as _import_error:
@@ -101,6 +105,25 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
 """
+
+
+_CHAT_FINISH_REASON_MAP: dict[
+    Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call'], FinishReason
+] = {
+    'stop': 'stop',
+    'length': 'length',
+    'tool_calls': 'tool_call',
+    'content_filter': 'content_filter',
+    'function_call': 'tool_call',
+}
+
+_RESPONSES_FINISH_REASON_MAP: dict[Literal['max_output_tokens', 'content_filter'] | ResponseStatus, FinishReason] = {
+    'max_output_tokens': 'length',
+    'content_filter': 'content_filter',
+    'completed': 'stop',
+    'cancelled': 'error',
+    'failed': 'error',
+}
 
 
 class OpenAIChatModelSettings(ModelSettings, total=False):
@@ -470,31 +493,40 @@ class OpenAIChatModel(Model):
 
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
-        # The `reasoning_content` is only present in DeepSeek models.
+        # The `reasoning_content` field is only present in DeepSeek models.
+        # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
-            items.append(ThinkingPart(content=reasoning_content))
+            items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
 
-        vendor_details: dict[str, Any] | None = None
+        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
+        # NOTE: We don't currently handle OpenRouter/gpt-oss `reasoning`:
+        # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        # If you need this, please file an issue.
+
+        vendor_details: dict[str, Any] = {}
 
         # Add logprobs to vendor_details if available
         if choice.logprobs is not None and choice.logprobs.content:
             # Convert logprobs to a serializable format
-            vendor_details = {
-                'logprobs': [
-                    {
-                        'token': lp.token,
-                        'bytes': lp.bytes,
-                        'logprob': lp.logprob,
-                        'top_logprobs': [
-                            {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
-                        ],
-                    }
-                    for lp in choice.logprobs.content
-                ],
-            }
+            vendor_details['logprobs'] = [
+                {
+                    'token': lp.token,
+                    'bytes': lp.bytes,
+                    'logprob': lp.logprob,
+                    'top_logprobs': [
+                        {'token': tlp.token, 'bytes': tlp.bytes, 'logprob': tlp.logprob} for tlp in lp.top_logprobs
+                    ],
+                }
+                for lp in choice.logprobs.content
+            ]
 
         if choice.message.content is not None:
-            items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
+            items.extend(
+                (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
+                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
+            )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
                 if isinstance(c, ChatCompletionMessageFunctionToolCall):
@@ -507,14 +539,20 @@ class OpenAIChatModel(Model):
                     assert_never(c)
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
+
+        raw_finish_reason = choice.finish_reason
+        vendor_details['finish_reason'] = raw_finish_reason
+        finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             timestamp=timestamp,
-            provider_details=vendor_details,
+            provider_details=vendor_details or None,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
         )
 
     async def _process_streamed_response(
@@ -530,7 +568,7 @@ class OpenAIChatModel(Model):
 
         return OpenAIStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.model,
             _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
@@ -543,6 +581,12 @@ class OpenAIChatModel(Model):
     def _get_web_search_options(self, model_request_parameters: ModelRequestParameters) -> WebSearchOptions | None:
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):  # pragma: no branch
+                if not OpenAIModelProfile.from_profile(self.profile).openai_chat_supports_web_search:
+                    raise UserError(
+                        f'WebSearchTool is not supported with `OpenAIChatModel` and model {self.model_name!r}. '
+                        f'Please use `OpenAIResponsesModel` instead.'
+                    )
+
                 if tool.user_location:
                     return WebSearchOptions(
                         search_context_size=tool.search_context_size,
@@ -554,7 +598,7 @@ class OpenAIChatModel(Model):
                 return WebSearchOptions(search_context_size=tool.search_context_size)
             else:
                 raise UserError(
-                    f'`{tool.__class__.__name__}` is not supported by `OpenAIModel`. If it should be, please file an issue.'
+                    f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
     async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
@@ -571,10 +615,11 @@ class OpenAIChatModel(Model):
                     if isinstance(item, TextPart):
                         texts.append(item.content)
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # texts.append(f'<think>\n{item.content}\n</think>')
-                        pass
+                        # NOTE: DeepSeek `reasoning_content` field should NOT be sent back per https://api-docs.deepseek.com/guides/reasoning_model,
+                        # but we currently just send it in `<think>` tags anyway as we don't want DeepSeek-specific checks here.
+                        # If you need this changed, please file an issue.
+                        start_tag, end_tag = self.profile.thinking_tags
+                        texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, ToolCallPart):
                         tool_calls.append(self._map_tool_call(item))
                     # OpenAI doesn't return built-in tool calls
@@ -812,17 +857,36 @@ class OpenAIResponsesModel(Model):
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
         for item in response.output:
-            if item.type == 'reasoning':
+            if isinstance(item, responses.ResponseReasoningItem):
+                signature = item.encrypted_content
                 for summary in item.summary:
-                    # NOTE: We use the same id for all summaries because we can merge them on the round trip.
-                    # The providers don't force the signature to be unique.
-                    items.append(ThinkingPart(content=summary.text, id=item.id))
-            elif item.type == 'message':
+                    # We use the same id for all summaries so that we can merge them on the round trip.
+                    # We only need to store the signature once.
+                    items.append(
+                        ThinkingPart(
+                            content=summary.text,
+                            id=item.id,
+                            signature=signature,
+                            provider_name=self.system if signature else None,
+                        )
+                    )
+                    signature = None
+                # NOTE: We don't currently handle the raw CoT from gpt-oss `reasoning_text`: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
+                # If you need this, please file an issue.
+            elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
-                    if content.type == 'output_text':  # pragma: no branch
+                    if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
                         items.append(TextPart(content.text))
-            elif item.type == 'function_call':
+            elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+
+        finish_reason: FinishReason | None = None
+        provider_details: dict[str, Any] | None = None
+        raw_finish_reason = details.reason if (details := response.incomplete_details) else response.status
+        if raw_finish_reason:
+            provider_details = {'finish_reason': raw_finish_reason}
+            finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
@@ -830,6 +894,8 @@ class OpenAIResponsesModel(Model):
             provider_response_id=response.id,
             timestamp=timestamp,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -846,7 +912,7 @@ class OpenAIResponsesModel(Model):
         assert isinstance(first_chunk, responses.ResponseCreatedEvent)
         return OpenAIResponsesStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.response.model,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.response.created_at),
             _provider_name=self._provider.name,
@@ -938,6 +1004,7 @@ class OpenAIResponsesModel(Model):
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
+                include=['reasoning.encrypted_content'],
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -999,7 +1066,7 @@ class OpenAIResponsesModel(Model):
             ),
         }
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage]
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
@@ -1036,33 +1103,30 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
-                # last_thinking_part_idx: int | None = None
+                reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
-                    # OpenAI doesn't return built-in tool calls
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
+                        # We don't currently track built-in tool calls from OpenAI
                         pass
                     elif isinstance(item, ThinkingPart):
-                        # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-                        # please open an issue. The below code is the code to send thinking to the provider.
-                        # if last_thinking_part_idx is not None:
-                        #     reasoning_item = cast(responses.ResponseReasoningItemParam, openai_messages[last_thinking_part_idx])  # fmt: skip
-                        #     if item.id == reasoning_item['id']:
-                        #         assert isinstance(reasoning_item['summary'], list)
-                        #         reasoning_item['summary'].append(Summary(text=item.content, type='summary_text'))
-                        #         continue
-                        # last_thinking_part_idx = len(openai_messages)
-                        # openai_messages.append(
-                        #     responses.ResponseReasoningItemParam(
-                        #         id=item.id or generate_tool_call_id(),
-                        #         summary=[Summary(text=item.content, type='summary_text')],
-                        #         type='reasoning',
-                        #     )
-                        # )
-                        pass
+                        if reasoning_item is not None and item.id == reasoning_item['id']:
+                            reasoning_item['summary'] = [
+                                *reasoning_item['summary'],
+                                Summary(text=item.content, type='summary_text'),
+                            ]
+                            continue
+
+                        reasoning_item = responses.ResponseReasoningItemParam(
+                            id=item.id or _utils.generate_tool_call_id(),
+                            summary=[Summary(text=item.content, type='summary_text')],
+                            encrypted_content=item.signature if item.provider_name == self.system else None,
+                            type='reasoning',
+                        )
+                        openai_messages.append(reasoning_item)
                     else:
                         assert_never(item)
             else:
@@ -1169,6 +1233,9 @@ class OpenAIStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
+            if chunk.id and self.provider_response_id is None:
+                self.provider_response_id = chunk.id
+
             try:
                 choice = chunk.choices[0]
             except IndexError:
@@ -1177,6 +1244,10 @@ class OpenAIStreamedResponse(StreamedResponse):
             # When using Azure OpenAI and an async content filter is enabled, the openai SDK can return None deltas.
             if choice.delta is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
+
+            if raw_finish_reason := choice.finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason}
+                self.finish_reason = _CHAT_FINISH_REASON_MAP.get(raw_finish_reason)
 
             # Handle the text part of the response
             content = choice.delta.content
@@ -1188,12 +1259,19 @@ class OpenAIStreamedResponse(StreamedResponse):
                     ignore_leading_whitespace=self._model_profile.ignore_streamed_leading_whitespace,
                 )
                 if maybe_event is not None:  # pragma: no branch
+                    if isinstance(maybe_event, PartStartEvent) and isinstance(maybe_event.part, ThinkingPart):
+                        maybe_event.part.id = 'content'
+                        maybe_event.part.provider_name = self.provider_name
                     yield maybe_event
 
-            # Handle reasoning part of the response, present in DeepSeek models
+            # The `reasoning_content` field is only present in DeepSeek models.
+            # https://api-docs.deepseek.com/guides/reasoning_model
             if reasoning_content := getattr(choice.delta, 'reasoning_content', None):
                 yield self._parts_manager.handle_thinking_delta(
-                    vendor_part_id='reasoning_content', content=reasoning_content
+                    vendor_part_id='reasoning_content',
+                    id='reasoning_content',
+                    content=reasoning_content,
+                    provider_name=self.provider_name,
                 )
 
             for dtc in choice.delta.tool_calls or []:
@@ -1237,6 +1315,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if isinstance(chunk, responses.ResponseCompletedEvent):
                 self._usage += _map_usage(chunk.response)
 
+                raw_finish_reason = (
+                    details.reason if (details := chunk.response.incomplete_details) else chunk.response.status
+                )
+                if raw_finish_reason:  # pragma: no branch
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get(raw_finish_reason)
+
             elif isinstance(chunk, responses.ResponseContentPartAddedEvent):
                 pass  # there's nothing we need to do here
 
@@ -1244,7 +1329,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCreatedEvent):
-                pass  # there's nothing we need to do here
+                if chunk.response.id:  # pragma: no branch
+                    self.provider_response_id = chunk.response.id
 
             elif isinstance(chunk, responses.ResponseFailedEvent):  # pragma: no cover
                 self._usage += _map_usage(chunk.response)
@@ -1289,7 +1375,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
-                # NOTE: We only need this if the tool call deltas don't include the final info.
+                if isinstance(chunk.item, responses.ResponseReasoningItem):
+                    # Add the signature to the part corresponding to the first summary item
+                    signature = chunk.item.encrypted_content
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=f'{chunk.item.id}-0',
+                        id=chunk.item.id,
+                        signature=signature,
+                        provider_name=self.provider_name if signature else None,
+                    )
                 pass
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
