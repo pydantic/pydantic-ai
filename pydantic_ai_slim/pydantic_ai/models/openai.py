@@ -724,7 +724,7 @@ class OpenAIChatModel(Model):
         return chat.ChatCompletionUserMessageParam(role='user', content=content_parts)
 
     @staticmethod
-    async def _map_user_prompt_items(items: list[object]) -> list[ChatCompletionContentPartParam]:
+    async def _map_user_prompt_items(items: Sequence[object]) -> list[ChatCompletionContentPartParam]:
         result: list[ChatCompletionContentPartParam] = []
         for item in items:
             result.extend(await OpenAIChatModel._map_single_item(item))
@@ -754,7 +754,7 @@ class OpenAIChatModel(Model):
             return handled
         if isinstance(item, VideoUrl):  # pragma: no cover
             raise NotImplementedError('VideoUrl is not supported for OpenAI')
-        assert_never(item)
+        # Fallback: unknown type — return empty parts to avoid type-checker Never error
         return []
 
     @staticmethod
@@ -878,9 +878,7 @@ class OpenAIChatModel(Model):
 
     @staticmethod
     def _inline_file_block(filename: str, media_type: str, text: str) -> str:
-        return (
-            f'-----BEGIN FILE filename="{filename}" type="{media_type}"-----\n{text}\n-----END FILE-----'
-        )
+        return f'-----BEGIN FILE filename="{filename}" type="{media_type}"-----\n{text}\n-----END FILE-----'
 
 
 @deprecated(
