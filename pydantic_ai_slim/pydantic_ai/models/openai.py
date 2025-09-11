@@ -910,22 +910,22 @@ class OpenAIResponsesModel(Model):
                 )
             elif isinstance(item, responses.ResponseFunctionWebSearch):
                 pass
-            elif isinstance(item, responses.ResponseComputerToolCall):
+            elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
-            elif isinstance(item, responses.response_output_item.ImageGenerationCall):
+            elif isinstance(item, responses.response_output_item.ImageGenerationCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ImageGeneration built-in tool
                 pass
-            elif isinstance(item, responses.ResponseCustomToolCall):
+            elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
                 pass
-            elif isinstance(item, responses.response_output_item.LocalShellCall):
+            elif isinstance(item, responses.response_output_item.LocalShellCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
                 pass
-            elif isinstance(item, responses.ResponseFileSearchToolCall):
+            elif isinstance(item, responses.ResponseFileSearchToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the FileSearch built-in tool
                 pass
-            elif isinstance(
+            elif isinstance(  # pragma: no cover
                 item,
                 responses.response_output_item.McpCall
                 | responses.response_output_item.McpListTools
@@ -1169,7 +1169,7 @@ class OpenAIResponsesModel(Model):
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         if item.id:
-                            if message_item is None or message_item['id'] != item.id:
+                            if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
                                     id=item.id or _utils.generate_tool_call_id(),
@@ -1193,7 +1193,7 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, BuiltinToolCallPart):
                         if item.provider_name == self.system:
-                            if item.tool_name == 'code_interpreter_call':
+                            if item.tool_name == 'code_interpreter_call':  # pragma: no branch
                                 openai_messages.append(cast(responses.ResponseCodeInterpreterToolCallParam, item.args))
                     elif isinstance(item, BuiltinToolReturnPart):
                         # Only the tool call part needs to be returned
