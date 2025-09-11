@@ -852,7 +852,7 @@ class OpenAIResponsesModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
-    def _process_response(self, response: responses.Response) -> ModelResponse:
+    def _process_response(self, response: responses.Response) -> ModelResponse:  # noqa: C901
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
@@ -886,11 +886,53 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        items.append(TextPart(content.text))
+                        items.append(TextPart(content.text, id=item.id))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(item.name, item.arguments, tool_call_id=_combine_tool_call_ids(item.call_id, item.id))
                 )
+            elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
+                items.append(
+                    BuiltinToolCallPart(
+                        tool_name=item.type,
+                        tool_call_id=item.id,
+                        args=item.model_dump(),
+                        provider_name=self.system,
+                    )
+                )
+                items.append(
+                    BuiltinToolReturnPart(
+                        tool_name=item.type,
+                        tool_call_id=item.id,
+                        content=item.outputs,
+                        provider_name=self.system,
+                    )
+                )
+            elif isinstance(item, responses.ResponseFunctionWebSearch):
+                pass
+            elif isinstance(item, responses.ResponseComputerToolCall):
+                # Pydantic AI doesn't yet support the ComputerUse built-in tool
+                pass
+            elif isinstance(item, responses.response_output_item.ImageGenerationCall):
+                # Pydantic AI doesn't yet support the ImageGeneration built-in tool
+                pass
+            elif isinstance(item, responses.ResponseCustomToolCall):
+                # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
+                pass
+            elif isinstance(item, responses.response_output_item.LocalShellCall):
+                # Pydantic AI doesn't yet support the `codex-mini-latest` LocalShell built-in tool
+                pass
+            elif isinstance(item, responses.ResponseFileSearchToolCall):
+                # Pydantic AI doesn't yet support the FileSearch built-in tool
+                pass
+            elif isinstance(
+                item,
+                responses.response_output_item.McpCall
+                | responses.response_output_item.McpListTools
+                | responses.response_output_item.McpApprovalRequest,
+            ):
+                # Pydantic AI supports MCP natively
+                pass
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -1122,14 +1164,39 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
+                        if item.id:
+                            if message_item is None or message_item['id'] != item.id:
+                                message_item = responses.ResponseOutputMessageParam(
+                                    role='assistant',
+                                    id=item.id or _utils.generate_tool_call_id(),
+                                    content=[],
+                                    type='message',
+                                    status='completed',
+                                )
+                                openai_messages.append(message_item)
+
+                            message_item['content'] = [
+                                *message_item['content'],
+                                responses.ResponseOutputTextParam(
+                                    text=item.content, type='output_text', annotations=[]
+                                ),
+                            ]
+                        else:
+                            openai_messages.append(
+                                responses.EasyInputMessageParam(role='assistant', content=item.content)
+                            )
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
-                    elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
-                        # We don't currently track built-in tool calls from OpenAI
+                    elif isinstance(item, BuiltinToolCallPart):
+                        if item.provider_name == self.system:
+                            if item.tool_name == 'code_interpreter_call':
+                                openai_messages.append(cast(responses.ResponseCodeInterpreterToolCallParam, item.args))
+                    elif isinstance(item, BuiltinToolReturnPart):
+                        # Only the tool call part needs to be returned
                         pass
                     elif isinstance(item, ThinkingPart):
                         if reasoning_item is None or reasoning_item['id'] != item.id:
@@ -1393,6 +1460,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     pass
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     pass
+                elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
+                    pass
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1409,7 +1478,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         signature=signature,
                         provider_name=self.provider_name if signature else None,
                     )
-                pass
+                elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
+                    yield self._parts_manager.handle_builtin_tool_call_part(
+                        vendor_part_id=chunk.item.id,
+                        tool_name=chunk.item.type,
+                        tool_call_id=chunk.item.id,
+                        args=chunk.item.model_dump(),
+                        provider_name=self.provider_name,
+                    )
+                    yield self._parts_manager.handle_builtin_tool_return_part(
+                        vendor_part_id=chunk.item.id,
+                        tool_name=chunk.item.type,
+                        tool_call_id=chunk.item.id,
+                        content=chunk.item.outputs,
+                        provider_name=self.provider_name,
+                    )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                 yield self._parts_manager.handle_thinking_delta(
@@ -1436,7 +1519,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
+                # TODO: Add id
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
@@ -1453,6 +1539,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseAudioDeltaEvent):  # pragma: lax no cover
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseCodeInterpreterCallInProgressEvent):
+                pass  # there's nothing we need to do here
+
+            elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
                 pass  # there's nothing we need to do here
 
             else:  # pragma: no cover
