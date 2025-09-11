@@ -38,6 +38,7 @@ from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
+    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
     from openai.types.responses.response_usage import ResponseUsage
 
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
@@ -1402,5 +1403,61 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 provider_response_id='resp_68c301935a2881939de9421990d0cd7c00b441a18c4893c1',
                 finish_reason='stop',
             ),
+        ]
+    )
+
+
+async def test_openai_responses_thinking_without_summary(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='reasoning',
+                summary=[],
+                type='reasoning',
+                encrypted_content='123',
+            ),
+            ResponseOutputMessage(
+                id='text',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='', id='reasoning', signature='123', provider_name='openai'),
+                    TextPart(content='4'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='123',
+            ),
+        ]
+    )
+
+    _, openai_messages = await model._map_messages(result.all_messages())  # type: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is 2+2?'},
+            {'id': 'reasoning', 'summary': [], 'encrypted_content': '123', 'type': 'reasoning'},
+            {'role': 'assistant', 'content': '4'},
         ]
     )

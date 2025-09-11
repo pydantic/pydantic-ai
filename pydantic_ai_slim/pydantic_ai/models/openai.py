@@ -859,18 +859,28 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
-                for summary in item.summary:
-                    # We use the same id for all summaries so that we can merge them on the round trip.
-                    # We only need to store the signature once.
+                if item.summary:
+                    for summary in item.summary:
+                        # We use the same id for all summaries so that we can merge them on the round trip.
+                        items.append(
+                            ThinkingPart(
+                                content=summary.text,
+                                id=item.id,
+                                signature=signature,
+                                provider_name=self.system if signature else None,
+                            )
+                        )
+                        # We only need to store the signature once.
+                        signature = None
+                elif signature:
                     items.append(
                         ThinkingPart(
-                            content=summary.text,
+                            content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system if signature else None,
+                            provider_name=self.system,
                         )
                     )
-                    signature = None
                 # NOTE: We don't currently handle the raw CoT from gpt-oss `reasoning_text`: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
                 # If you need this, please file an issue.
             elif isinstance(item, responses.ResponseOutputMessage):
@@ -1122,20 +1132,20 @@ class OpenAIResponsesModel(Model):
                         # We don't currently track built-in tool calls from OpenAI
                         pass
                     elif isinstance(item, ThinkingPart):
-                        if reasoning_item is not None and item.id == reasoning_item['id']:
+                        if reasoning_item is None or reasoning_item['id'] != item.id:
+                            reasoning_item = responses.ResponseReasoningItemParam(
+                                id=item.id or _utils.generate_tool_call_id(),
+                                summary=[],
+                                encrypted_content=item.signature if item.provider_name == self.system else None,
+                                type='reasoning',
+                            )
+                            openai_messages.append(reasoning_item)
+
+                        if item.content:
                             reasoning_item['summary'] = [
                                 *reasoning_item['summary'],
                                 Summary(text=item.content, type='summary_text'),
                             ]
-                            continue
-
-                        reasoning_item = responses.ResponseReasoningItemParam(
-                            id=item.id or _utils.generate_tool_call_id(),
-                            summary=[Summary(text=item.content, type='summary_text')],
-                            encrypted_content=item.signature if item.provider_name == self.system else None,
-                            type='reasoning',
-                        )
-                        openai_messages.append(reasoning_item)
                     else:
                         assert_never(item)
             else:
