@@ -285,7 +285,7 @@ async def test_image_as_binary_content_tool_response(
                     ToolReturnPart(
                         tool_name='get_image',
                         content='See file 1c8566',
-                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA',
+                        tool_call_id='call_FLm3B1f8QAan0KpbUXhNY8bA|fc_681134d47cf48191b3f62e4d28b6c3820fe7a5a4e2123dc3',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -732,7 +732,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH',
+                        tool_call_id='call_ZWkVhdUjupo528U9dqgFeRkH|fc_68477f0bb8e4819cba6d781e174d77f8001fd29e2d5573f7',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -742,7 +742,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolCallPart(
                         tool_name='final_result',
                         args='{"city":"Mexico City","country":"Mexico"}',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN|fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
                     )
                 ],
                 usage=RequestUsage(input_tokens=85, output_tokens=20, details={'reasoning_tokens': 0}),
@@ -758,7 +758,7 @@ async def test_tool_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='final_result',
                         content='Final result processed.',
-                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN',
+                        tool_call_id='call_iFBd0zULhSZRR908DfH73VwN|fc_68477f0c91cc819e8024e7e633f0f09401dc81d4bc91f560',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -795,7 +795,11 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
             ),
             ModelResponse(
                 parts=[
-                    ToolCallPart(tool_name='get_user_country', args='{}', tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr')
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args='{}',
+                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr|fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
+                    )
                 ],
                 usage=RequestUsage(input_tokens=36, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
@@ -810,7 +814,7 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr',
+                        tool_call_id='call_aTJhYjzmixZaVGqwl5gn2Ncr|fc_68477f0dff5c819ea17a1ffbaea621e00356a60c98816d6a',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -873,7 +877,7 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_tTAThu8l2S9hNky2krdwijGP',
+                        tool_call_id='call_tTAThu8l2S9hNky2krdwijGP|fc_68477f0fa7c081a19a525f7c6f180f310b8591d9001d2329',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -938,7 +942,7 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP',
+                        tool_call_id='call_UaLahjOtaM2tTyYZLxTCbOaP|fc_68477f1168a081a3981e847cd94275080dd57d732903c563',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -1010,7 +1014,7 @@ Don't include any text or Markdown fencing before or after.\
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom',
+                        tool_call_id='call_FrlL4M0CbAy8Dhv4VqF1Shom|fc_68482f1b0ff081a1b37b9170ee740d1e02f8ef7f2fb42b50',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1089,7 +1093,7 @@ Don't include any text or Markdown fencing before or after.\
                     ToolReturnPart(
                         tool_name='get_user_country',
                         content='Mexico',
-                        tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI',
+                        tool_call_id='call_my4OyoVXRT0m7bLWmsxcaCQI|fc_68482f2889d481a199caa61de7ccb62c08e79646fe74d5ee',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1292,6 +1296,110 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
                 provider_response_id='resp_68bb4cbe885481a3a55b6a2e6d6aa5120b681c5350c0b73b',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
+    m = OpenAIResponsesModel(
+        model_name='gpt-5',
+        provider=provider,
+        settings=OpenAIResponsesModelSettings(openai_reasoning_summary='detailed', openai_reasoning_effort='low'),
+    )
+    agent = Agent(model=m)
+
+    @agent.instructions
+    def system_prompt():
+        return (
+            'You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually '
+            "update it as you make progress against the user's prompt"
+        )
+
+    @agent.tool_plain
+    def update_plan(plan: str) -> str:
+        return 'plan updated'
+
+    prompt = (
+        'Compose a 12-line poem where the first letters of the odd-numbered lines form the name "SAMIRA" '
+        'and the first letters of the even-numbered lines spell out "DAWOOD." Additionally, the first letter '
+        'of each word in every line should create the capital of a country'
+    )
+
+    result = await agent.run(prompt)
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Compose a 12-line poem where the first letters of the odd-numbered lines form the name "SAMIRA" and the first letters of the even-numbered lines spell out "DAWOOD." Additionally, the first letter of each word in every line should create the capital of a country',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                    ),
+                    ToolCallPart(
+                        tool_name='update_plan',
+                        args=IsStr(),
+                        tool_call_id='call_WrCgFeUNTYD3S3yvrY7RFwXM|fc_68c3018f9aa88193952ceab700035b3600b441a18c4893c1',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=124, output_tokens=2098, details={'reasoning_tokens': 1984}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c30157af5c819393a64d8d810d562700b441a18c4893c1',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='update_plan',
+                        content='plan updated',
+                        tool_call_id='call_WrCgFeUNTYD3S3yvrY7RFwXM|fc_68c3018f9aa88193952ceab700035b3600b441a18c4893c1',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
+            ),
+            ModelResponse(
+                parts=[TextPart(content=IsStr())],
+                usage=RequestUsage(
+                    input_tokens=2272, cache_read_tokens=1152, output_tokens=114, details={'reasoning_tokens': 0}
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c301935a2881939de9421990d0cd7c00b441a18c4893c1',
                 finish_reason='stop',
             ),
         ]
