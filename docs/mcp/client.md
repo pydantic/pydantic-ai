@@ -198,7 +198,7 @@ The configuration file should be a JSON file with an `mcpServers` object contain
 
 ### Usage
 
-```python {title="mcp_config_loader.py" requires="mcp_config.json" test="skip"}
+```python {title="mcp_config_loader.py" test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.mcp import load_mcp_servers
 
