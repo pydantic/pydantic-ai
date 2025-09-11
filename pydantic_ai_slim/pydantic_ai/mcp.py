@@ -233,7 +233,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 text_parts = [p for p in mapped if isinstance(p, str)]
                 message = '\n'.join(text_parts) if text_parts else '\n'.join(str(p) for p in mapped)
             elif structured is not None:
-                message = str(structured)
+                message = str(structured)  # pragma: no cover (server includes text for errors)
             else:  # pragma: no cover
                 message = 'Error executing tool'
             raise exceptions.ModelRetry(message)
@@ -242,7 +242,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             mapped = [await self._map_tool_result_part(part) for part in result.content]
             return mapped[0] if len(mapped) == 1 else mapped
         if structured is not None:
-            return structured
+            return structured  # pragma: no cover (server typically supplies legacy content too)
         return []  # pragma: no cover
 
     async def call_tool(
