@@ -44,6 +44,9 @@ class OpenAIModelProfile(ModelProfile):
     openai_supports_encrypted_reasoning_content: bool = False
     """Whether the model supports including encrypted reasoning content in the response."""
 
+    openai_supports_tool_choice_required_with_builtin_tools: bool = True
+    """Whether the model supports `tool_choice='required'` with built-in tools like `web_search_preview`."""
+
     def __post_init__(self):  # pragma: no cover
         if not self.openai_supports_sampling_settings:
             warnings.warn(
@@ -88,6 +91,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
         openai_supports_encrypted_reasoning_content=is_reasoning_model,
+        openai_supports_tool_choice_required_with_builtin_tools=not is_reasoning_model,
     )
 
 

@@ -409,12 +409,24 @@ class OpenAIChatModel(Model):
         tools = self._get_tools(model_request_parameters)
         web_search_options = self._get_web_search_options(model_request_parameters)
 
+        # Check for conflict between built-in tools and output tools for models that don't support tool_choice=required with built-in tools
+        builtin_tools_present = bool(model_request_parameters.builtin_tools)
+        output_tools_present = bool(model_request_parameters.output_tools)
+        profile = OpenAIModelProfile.from_profile(self.profile)
+
+        if (
+            builtin_tools_present
+            and output_tools_present
+            and not profile.openai_supports_tool_choice_required_with_builtin_tools
+        ):
+            raise UserError(
+                f"Model {self.model_name!r} does not support `tool_choice='required'` with built-in tools. "
+                f'Use `output_type=NativeOutput(...)` instead.'
+            )
+
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None
-        elif (
-            not model_request_parameters.allow_text_output
-            and OpenAIModelProfile.from_profile(self.profile).openai_supports_tool_choice_required
-        ):
+        elif not model_request_parameters.allow_text_output and profile.openai_supports_tool_choice_required:
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
@@ -950,6 +962,23 @@ class OpenAIResponsesModel(Model):
             + list(model_settings.get('openai_builtin_tools', []))
             + self._get_tools(model_request_parameters)
         )
+
+        # Check for conflict between built-in tools and output tools for models that don't support tool_choice=required with built-in tools
+        builtin_tools_present = bool(
+            model_request_parameters.builtin_tools or model_settings.get('openai_builtin_tools')
+        )
+        output_tools_present = bool(model_request_parameters.output_tools)
+        profile = OpenAIModelProfile.from_profile(self.profile)
+
+        if (
+            builtin_tools_present
+            and output_tools_present
+            and not profile.openai_supports_tool_choice_required_with_builtin_tools
+        ):
+            raise UserError(
+                f"Model {self.model_name!r} does not support `tool_choice='required'` with built-in tools. "
+                f'Use `output_type=NativeOutput(...)` instead.'
+            )
 
         if not tools:
             tool_choice: Literal['none', 'required', 'auto'] | None = None

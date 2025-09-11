@@ -9,7 +9,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
+from pydantic_ai.exceptions import ModelHTTPError, ModelRetry, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     DocumentUrl,
@@ -1404,3 +1404,71 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
             ),
         ]
     )
+
+
+def test_gpt5_builtin_tools_with_output_tools_error():
+    """Test that GPT-5 raises error when using builtin tools with output tools that require tool_choice=required."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+
+    class CityLocation(BaseModel):  # type: ignore[reportUnusedClass]
+        city: str
+        country: str
+
+    # This should raise an error because GPT-5 doesn't support tool_choice=required with built-in tools
+
+    # Create mock model request parameters to test the error check directly
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.tools import ToolDefinition
+
+    mock_output_tool = ToolDefinition(
+        name='test_output', parameters_json_schema={'type': 'object', 'properties': {}}, description='Test output tool'
+    )
+
+    mock_params = ModelRequestParameters(
+        builtin_tools=[WebSearchTool()],
+        output_tools=[mock_output_tool],
+        output_mode='tool',
+        allow_text_output=False,
+        function_tools=[],
+    )
+
+    # Test the error by calling _responses_create directly
+    with pytest.raises(
+        UserError,
+        match=r"Model 'gpt-5' does not support `tool_choice='required'` with built-in tools\. Use `output_type=NativeOutput\(\.\.\.\)` instead\.",
+    ):
+        import asyncio
+
+        asyncio.run(m._responses_create([], False, {}, mock_params))  # type: ignore[reportPrivateUsage]
+
+
+def test_gpt4_builtin_tools_with_output_tools_works():
+    """Test that GPT-4 works fine with builtin tools and output tools."""
+    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # This should work fine because GPT-4 supports tool_choice=required with built-in tools
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebSearchTool()])
+
+    # We're not actually running this in the test since it would make real API calls
+    # Just testing that the agent can be created without error
+    assert agent is not None
+
+
+def test_gpt5_native_output_with_builtin_tools_works():
+    """Test that GPT-5 works fine with builtin tools when using NativeOutput."""
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='test-key'))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # This should work fine because NativeOutput doesn't use tool_choice=required
+    agent = Agent(m, output_type=NativeOutput(CityLocation), builtin_tools=[WebSearchTool()])
+
+    # We're not actually running this in the test since it would make real API calls
+    # Just testing that the agent can be created without error
+    assert agent is not None

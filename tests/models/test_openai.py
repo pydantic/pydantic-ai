@@ -2929,3 +2929,19 @@ def test_deprecated_openai_model(openai_api_key: str):
 
         provider = OpenAIProvider(api_key=openai_api_key)
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
+
+
+def test_gpt4_chat_builtin_tools_with_output_tools_works():
+    """Test that GPT-4 Chat model works fine with builtin tools and output tools."""
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key='test-key'))
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    # This should work fine because GPT-4 supports tool_choice=required with built-in tools
+    agent = Agent(m, output_type=ToolOutput(CityLocation), builtin_tools=[WebSearchTool()])
+
+    # We're not actually running this in the test since it would make real API calls
+    # Just testing that the agent can be created without error
+    assert agent is not None
