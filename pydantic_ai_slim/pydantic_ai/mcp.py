@@ -232,7 +232,7 @@ class MCPServer(AbstractToolset[Any], ABC):
                 mapped = [await self._map_tool_result_part(part) for part in result.content]
                 text_parts = [p for p in mapped if isinstance(p, str)]
                 message = '\n'.join(text_parts) if text_parts else '\n'.join(str(p) for p in mapped)
-            elif structured is not None:
+            elif structured is not None:  # pragma: no cover (server includes text for errors)
                 message = str(structured)  # pragma: no cover (server includes text for errors)
             else:  # pragma: no cover
                 message = 'Error executing tool'
