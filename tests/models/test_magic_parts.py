@@ -6,6 +6,7 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai.messages import MagicBinaryContent, MagicDocumentUrl, UserPromptPart
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
