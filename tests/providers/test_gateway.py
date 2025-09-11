@@ -13,6 +13,7 @@ from pydantic_ai import Agent, UserError
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -94,6 +95,11 @@ def test_infer_model():
     assert model.model_name == 'gemini-1.5-flash'
     assert model.system == 'google-vertex'
 
+    model = infer_model('anthropic/claude-3-5-sonnet-latest')
+    assert isinstance(model, AnthropicModel)
+    assert model.model_name == 'claude-3-5-sonnet-latest'
+    assert model.system == 'anthropic'
+
     with raises(snapshot('UserError: The model name "gemini-1.5-flash" is not in the format "provider/model_name".')):
         infer_model('gemini-1.5-flash')
 
@@ -135,3 +141,12 @@ async def test_gateway_provider_with_google_vertex(allow_model_requests: None, g
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('Paris\n')
+
+
+async def test_gateway_provider_with_anthropic(allow_model_requests: None, gateway_api_key: str):
+    provider = gateway_provider('anthropic', api_key=gateway_api_key, base_url='http://localhost:8787')
+    model = AnthropicModel('claude-3-5-sonnet-latest', provider=provider)
+    agent = Agent(model)
+
+    result = await agent.run('What is the capital of France?')
+    assert result.output == snapshot('The capital of France is Paris.')
