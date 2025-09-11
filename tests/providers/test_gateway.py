@@ -70,7 +70,7 @@ def vcr_config():
     }
 
 
-def test_infer_model():
+def test_infer_model(gateway_api_key: str):
     model = infer_model('openai/gpt-5')
     assert isinstance(model, OpenAIChatModel)
     assert model.model_name == 'gpt-5'
