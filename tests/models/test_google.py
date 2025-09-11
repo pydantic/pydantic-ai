@@ -1226,9 +1226,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
-            PartDeltaEvent(
-                index=0, delta=ThinkingPartDelta(content_delta='', signature_delta=IsStr(), provider_name='google-gla')
-            ),
+            PartDeltaEvent(index=0, delta=ThinkingPartDelta(signature_delta=IsStr(), provider_name='google-gla')),
             PartStartEvent(index=1, part=TextPart(content=IsStr())),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=IsStr())),
