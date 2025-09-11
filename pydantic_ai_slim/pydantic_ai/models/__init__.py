@@ -718,7 +718,11 @@ def infer_model(model: Model | KnownModelName | str) -> Model:  # noqa: C901
         )
         provider = 'google-vertex'
 
-    if provider == 'cohere':
+    if provider == 'gateway':
+        from ..providers.gateway import infer_model as infer_model_from_gateway
+
+        return infer_model_from_gateway(model_name)
+    elif provider == 'cohere':
         from .cohere import CohereModel
 
         return CohereModel(model_name, provider=provider)

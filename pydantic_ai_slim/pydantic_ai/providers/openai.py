@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from typing import overload
 
 import httpx
 
@@ -35,6 +36,18 @@ class OpenAIProvider(Provider[AsyncOpenAI]):
 
     def model_profile(self, model_name: str) -> ModelProfile | None:
         return openai_model_profile(model_name)
+
+    @overload
+    def __init__(self, *, openai_client: AsyncOpenAI) -> None: ...
+
+    @overload
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        openai_client: None = None,
+        http_client: httpx.AsyncClient | None = None,
+    ) -> None: ...
 
     def __init__(
         self,

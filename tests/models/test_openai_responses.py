@@ -3,7 +3,6 @@ from dataclasses import replace
 from typing import Any, cast
 
 import pytest
-from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -24,7 +23,6 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ThinkingPart,
-    ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -1191,18 +1189,23 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
+                usage=RequestUsage(input_tokens=13, output_tokens=1828, details={'reasoning_tokens': 1472}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
+                provider_response_id='resp_68bb4c1e21c88195992250ee4e6c3e5506370ebbaae73d2c',
                 finish_reason='stop',
             ),
         ]
@@ -1212,25 +1215,8 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
         'Considering the way to cross the street, analogously, how do I cross the river?',
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034841ab2881918a8c210e3d988b9208c845d2be9bcdd8'),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=2050, details={'reasoning_tokens': 1664}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68034835d12481919c80a7fd8dbe6f7e08c845d2be9bcdd8',
-                finish_reason='stop',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -1241,17 +1227,23 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
-                    ThinkingPart(content=IsStr(), id='rs_68034858dc588191bc3a6801c23e728f08c845d2be9bcdd8'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=424, output_tokens=2033, details={'reasoning_tokens': 1408}),
+                usage=RequestUsage(input_tokens=394, output_tokens=2196, details={'reasoning_tokens': 1536}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_6803484f19a88191b9ea975d7cfbbe8408c845d2be9bcdd8',
+                provider_response_id='resp_68bb4c373f6c819585afac2acfadeede06370ebbaae73d2c',
                 finish_reason='stop',
             ),
         ]
@@ -1264,25 +1256,43 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(responses_model, model_settings=settings)
 
-    event_parts: list[Any] = []
     async with agent.iter(user_prompt='How do I cross the street?') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
+                    async for _ in request_stream:
+                        pass
 
-    assert event_parts == IsListOrTuple(
-        positions={
-            0: PartStartEvent(index=0, part=ThinkingPart(content='', id=IsStr())),
-            1: PartDeltaEvent(index=0, delta=IsInstance(ThinkingPartDelta)),
-            84: PartStartEvent(index=1, part=ThinkingPart(content='', id=IsStr())),
-            85: PartDeltaEvent(index=1, delta=IsInstance(ThinkingPartDelta)),
-            186: PartStartEvent(index=2, part=ThinkingPart(content='', id=IsStr())),
-            187: PartDeltaEvent(index=2, delta=IsInstance(ThinkingPartDelta)),
-            280: PartStartEvent(index=3, part=TextPart(content='I')),
-            281: FinalResultEvent(tool_name=None, tool_call_id=None),
-            282: PartDeltaEvent(index=3, delta=IsInstance(TextPartDelta)),
-        },
-        length=631,
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
+                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(input_tokens=13, output_tokens=1733, details={'reasoning_tokens': 1280}),
+                model_name='o3-mini-2025-01-31',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68bb4cbe885481a3a55b6a2e6d6aa5120b681c5350c0b73b',
+                finish_reason='stop',
+            ),
+        ]
     )
