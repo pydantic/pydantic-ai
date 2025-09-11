@@ -1,6 +1,5 @@
 # pyright: reportPrivateUsage=false, reportMissingImports=false, reportUnnecessaryTypeIgnoreComment=false
-"""Tests for Magic* parts provider handling.
-"""
+"""Tests for Magic* parts provider handling."""
 
 from typing import Any, cast
 
