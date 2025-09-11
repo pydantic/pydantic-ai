@@ -1,6 +1,7 @@
 import os
 import re
 from typing import Any, Literal
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -70,7 +71,8 @@ def vcr_config():
     }
 
 
-def test_infer_model(gateway_api_key: str):
+@patch.dict(os.environ, {'PYDANTIC_AI_GATEWAY_API_KEY': 'test-api-key'})
+def test_infer_model():
     model = infer_model('openai/gpt-5')
     assert isinstance(model, OpenAIChatModel)
     assert model.model_name == 'gpt-5'
