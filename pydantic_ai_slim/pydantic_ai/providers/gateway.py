@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING, Any, Literal, overload
 from urllib.parse import urljoin
 
 import httpx
-from anthropic import AsyncAnthropic
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, cached_async_http_client, get_user_agent
 
 if TYPE_CHECKING:
+    from anthropic import AsyncAnthropic
     from google.genai import Client as GoogleClient
     from groq import AsyncGroq
     from openai import AsyncOpenAI
@@ -106,9 +106,9 @@ def gateway_provider(
 
         return AnthropicProvider(
             anthropic_client=AsyncAnthropic(
+                auth_token=api_key,
                 base_url=urljoin(base_url, 'anthropic'),
                 http_client=http_client,
-                default_headers={'Authorization': api_key},
             )
         )
     elif upstream_provider == 'google-vertex':

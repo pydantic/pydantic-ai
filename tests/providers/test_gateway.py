@@ -9,11 +9,11 @@ from inline_snapshot import snapshot
 from inline_snapshot.extra import raises
 
 from pydantic_ai import Agent, UserError
-from pydantic_ai.models.anthropic import AnthropicModel
 
 from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.groq import GroqModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
