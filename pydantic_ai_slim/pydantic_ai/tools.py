@@ -488,6 +488,12 @@ class ToolDefinition:
         See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
     """
 
+    metadata: dict[str, Any] | None = None
+    """Tool metadata, primarily used for filtering and tool behavior customization.
+
+    For MCP tools, this contains the `_meta` field from the tool definition.
+    """
+
     @property
     def defer(self) -> bool:
         """Whether calls to this tool will be deferred.
