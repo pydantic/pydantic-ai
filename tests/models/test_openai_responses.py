@@ -1303,8 +1303,10 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
 
 
 async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: None, openai_api_key: str):
+    provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel(
         model_name='gpt-5',
+        provider=provider,
         settings=OpenAIResponsesModelSettings(openai_reasoning_summary='detailed', openai_reasoning_effort='low'),
     )
     agent = Agent(model=m)
@@ -1343,26 +1345,38 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c2f06b87548197ac093b82cba2e950016e6d37acd3117d',
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c2f06b87548197ac093b82cba2e950016e6d37acd3117d',
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
                     ),
                     ToolCallPart(
                         tool_name='update_plan',
                         args=IsStr(),
-                        tool_call_id='call_QbeOap5DBC9PH8zkuG1J3fy3|fc_68c2f08b3a388197a78d6e71cad38079016e6d37acd3117d',
+                        tool_call_id='call_WrCgFeUNTYD3S3yvrY7RFwXM|fc_68c3018f9aa88193952ceab700035b3600b441a18c4893c1',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=124, output_tokens=2084, details={'reasoning_tokens': 1920}),
+                usage=RequestUsage(input_tokens=124, output_tokens=2098, details={'reasoning_tokens': 1984}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c2f06ae97c8197980bb8a4837e2e46016e6d37acd3117d',
+                provider_response_id='resp_68c30157af5c819393a64d8d810d562700b441a18c4893c1',
                 finish_reason='stop',
             ),
             ModelRequest(
@@ -1370,7 +1384,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     ToolReturnPart(
                         tool_name='update_plan',
                         content='plan updated',
-                        tool_call_id='call_QbeOap5DBC9PH8zkuG1J3fy3|fc_68c2f08b3a388197a78d6e71cad38079016e6d37acd3117d',
+                        tool_call_id='call_WrCgFeUNTYD3S3yvrY7RFwXM|fc_68c3018f9aa88193952ceab700035b3600b441a18c4893c1',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1379,13 +1393,13 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
             ModelResponse(
                 parts=[TextPart(content=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=2276, cache_read_tokens=2176, output_tokens=125, details={'reasoning_tokens': 0}
+                    input_tokens=2272, cache_read_tokens=1152, output_tokens=114, details={'reasoning_tokens': 0}
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c2f08c195081978f96d143cf93ce4b016e6d37acd3117d',
+                provider_response_id='resp_68c301935a2881939de9421990d0cd7c00b441a18c4893c1',
                 finish_reason='stop',
             ),
         ]
