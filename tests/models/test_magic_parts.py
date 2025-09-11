@@ -171,3 +171,21 @@ async def test_openai_video_url_raises_not_implemented():
 
     with pytest.raises(NotImplementedError):
         await OpenAIChatModel._map_single_item(VideoUrl(url='https://example.com/file.mp4'))
+
+
+async def test_openai_image_url_maps_to_image_url_part():
+    # Functional: verify that an ImageUrl input maps to an image_url content part
+    from pydantic_ai.messages import ImageUrl
+
+    part = UserPromptPart(content=[ImageUrl(url='https://example.com/picture.png')])
+    msg = await OpenAIChatModel._map_user_prompt(part)
+    content = cast(list[dict[str, Any]], msg['content'])
+    assert content[0]['type'] == 'image_url'
+
+
+async def test_openai_magic_binary_image_maps_to_image_url():
+    # Functional: MagicBinaryContent with image/* should map to image_url content part
+    part = UserPromptPart(content=[MagicBinaryContent(data=b'\x89PNG', media_type='image/png')])
+    msg = await OpenAIChatModel._map_user_prompt(part)
+    content = cast(list[dict[str, Any]], msg['content'])
+    assert content[0]['type'] == 'image_url'
