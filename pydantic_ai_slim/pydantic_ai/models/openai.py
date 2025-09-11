@@ -987,9 +987,11 @@ class OpenAIResponsesModel(Model):
             tool_choice = 'required'
         else:
             tool_choice = 'auto'
+
         previous_response_id = model_settings.get('openai_previous_response_id')
         if previous_response_id == 'auto':
             messages, previous_response_id = self._get_response_id_and_trim(messages)
+
         instructions, openai_messages = await self._map_messages(messages, model_settings)
         reasoning = self._get_reasoning(model_settings)
 
@@ -1107,26 +1109,21 @@ class OpenAIResponsesModel(Model):
         }
 
     def _get_response_id_and_trim(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], str | None]:
-        # If the message history contains only openai responses,
-        # we can limit the history to the most recent ModelRequest.
-        # The provider_response_id from the latest ModelResponse is
-        # then passed as previous_response_id to preserve context.
+        # In `auto` mode, the history is trimmed up to (but not including)
+        # the latest ModelResponse with a valid `provider_response_id`.
+        # This is then passed as `previous_response_id` in the next request
+        # to maintain context along with the trimmed history.
         response_id = None
-        latest_model_request: ModelRequest | None = None
-        for m in messages:
-            # Openai may return a dated model_name that differs from self.model_name
-            # (e.g., "gpt-5" vs "gpt-5-2025-08-07").
-            if isinstance(m, ModelResponse) and m.model_name and (self.model_name in m.model_name):
+        trimmed_messages: list[ModelMessage] = []
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 response_id = m.provider_response_id
-            elif isinstance(m, ModelRequest):
-                latest_model_request = m
-            else:
-                # Mixed model responses invalidate response_id,
-                # so the history is kept intact.
-                response_id = None
                 break
-        if response_id and latest_model_request:
-            return [latest_model_request], response_id
+            else:
+                trimmed_messages.append(m)
+
+        if response_id and trimmed_messages:
+            return list(reversed(trimmed_messages)), response_id
         else:
             return messages, None
 
