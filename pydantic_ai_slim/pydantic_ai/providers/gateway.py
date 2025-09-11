@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from groq import AsyncGroq
     from openai import AsyncOpenAI
 
+    from pydantic_ai.models.anthropic import AsyncAnthropicClient
     from pydantic_ai.providers import Provider
 
 
@@ -48,8 +49,17 @@ def gateway_provider(
 ) -> Provider[GoogleClient]: ...
 
 
+@overload
 def gateway_provider(
-    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex'] | str,
+    upstream_provider: Literal['anthropic'],
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+) -> Provider[AsyncAnthropicClient]: ...
+
+
+def gateway_provider(
+    upstream_provider: Literal['openai', 'openai-chat', 'openai-responses', 'groq', 'google-vertex', 'anthropic'] | str,
     *,
     # Every provider
     api_key: str | None = None,
@@ -90,6 +100,10 @@ def gateway_provider(
         from .groq import GroqProvider
 
         return GroqProvider(api_key=api_key, base_url=urljoin(base_url, 'groq'), http_client=http_client)
+    elif upstream_provider == 'anthropic':
+        from .anthropic import AnthropicProvider
+
+        return AnthropicProvider(api_key=api_key, base_url=urljoin(base_url, 'anthropic'), http_client=http_client)
     elif upstream_provider == 'google-vertex':
         from google.genai import Client as GoogleClient
 

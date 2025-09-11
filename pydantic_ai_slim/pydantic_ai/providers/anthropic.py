@@ -45,12 +45,15 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
     def __init__(self, *, anthropic_client: AsyncAnthropicClient | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str | None = None, http_client: httpx.AsyncClient | None = None) -> None: ...
+    def __init__(
+        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx.AsyncClient | None = None
+    ) -> None: ...
 
     def __init__(
         self,
         *,
         api_key: str | None = None,
+        base_url: str | None = None,
         anthropic_client: AsyncAnthropicClient | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -59,6 +62,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         Args:
             api_key: The API key to use for authentication, if not provided, the `ANTHROPIC_API_KEY` environment variable
                 will be used if available.
+            base_url: The base URL to use for the Anthropic API.
             anthropic_client: An existing [`AsyncAnthropic`](https://github.com/anthropics/anthropic-sdk-python)
                 client to use. If provided, the `api_key` and `http_client` arguments will be ignored.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
@@ -75,7 +79,7 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
                     'to use the Anthropic provider.'
                 )
             if http_client is not None:
-                self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
+                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
             else:
                 http_client = cached_async_http_client(provider='anthropic')
-                self._client = AsyncAnthropic(api_key=api_key, http_client=http_client)
+                self._client = AsyncAnthropic(api_key=api_key, base_url=base_url, http_client=http_client)
