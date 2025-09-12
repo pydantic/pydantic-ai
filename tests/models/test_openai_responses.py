@@ -1262,9 +1262,9 @@ async def test_openai_previous_response_id_mixed_model_history(allow_model_reque
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    history, previous_response_id = model._get_response_id_and_trim(history)  # type: ignore
+    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
     assert not previous_response_id
-    assert history == snapshot(
+    assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='The first secret key is sesame', timestamp=IsDatetime())]),
             ModelResponse(
@@ -1323,9 +1323,9 @@ async def test_openai_previous_response_id_same_model_history(allow_model_reques
     ]
 
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
-    history, previous_response_id = model._get_response_id_and_trim(history)  # type: ignore
+    previous_response_id, messages = model._get_previous_response_id_and_new_messages(history)  # type: ignore
     assert previous_response_id == 'resp_68b9bda81f5c8197a5a51a20a9f4150a000497db2a4c777b'
-    assert history == snapshot(
+    assert messages == snapshot(
         [
             ModelRequest(parts=[UserPromptPart(content='what is the first secret key?', timestamp=IsDatetime())]),
         ]

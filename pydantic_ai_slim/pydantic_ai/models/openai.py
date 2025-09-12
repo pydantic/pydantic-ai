@@ -990,7 +990,7 @@ class OpenAIResponsesModel(Model):
 
         previous_response_id = model_settings.get('openai_previous_response_id')
         if previous_response_id == 'auto':
-            messages, previous_response_id = self._get_response_id_and_trim(messages)
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
 
         instructions, openai_messages = await self._map_messages(messages, model_settings)
         reasoning = self._get_reasoning(model_settings)
@@ -1108,24 +1108,26 @@ class OpenAIResponsesModel(Model):
             ),
         }
 
-    def _get_response_id_and_trim(self, messages: list[ModelMessage]) -> tuple[list[ModelMessage], str | None]:
+    def _get_previous_response_id_and_new_messages(
+        self, messages: list[ModelMessage]
+    ) -> tuple[str | None, list[ModelMessage]]:
         # In `auto` mode, the history is trimmed up to (but not including)
         # the latest ModelResponse with a valid `provider_response_id`.
         # This is then passed as `previous_response_id` in the next request
         # to maintain context along with the trimmed history.
-        response_id = None
+        previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
-                response_id = m.provider_response_id
+                previous_response_id = m.provider_response_id
                 break
             else:
                 trimmed_messages.append(m)
 
-        if response_id and trimmed_messages:
-            return list(reversed(trimmed_messages)), response_id
+        if previous_response_id and trimmed_messages:
+            return previous_response_id, list(reversed(trimmed_messages))
         else:
-            return messages, None
+            return None, messages
 
     async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
