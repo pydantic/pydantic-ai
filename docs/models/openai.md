@@ -145,14 +145,14 @@ You can learn more about the differences between the Responses API and Chat Comp
 
 #### Referencing earlier responses
 
-The Responses API also supports referencing earlier model responses in a new request. This is available through the `openai_previous_response_id` field in
+The Responses API supports referencing earlier model responses in a new request using a `previous_response_id` parameter, to ensure the full [conversation state](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses#passing-context-from-the-previous-response) including [reasoning items](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context) are kept in context. This is available through the `openai_previous_response_id` field in
 [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings].
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-4o')
+model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model=model)
 
 result = agent.run_sync('The secret is 1234')
@@ -166,13 +166,15 @@ print(result.output)
 
 By passing the `provider_response_id` from an earlier run, you can allow the model to build on its own prior reasoning without needing to resend the full message history.
 
-Alternatively, `openai_previous_response_id` field also supports `auto` mode. When enabled, Pydantic AI automatically selects the latest request and the most recent `provider_response_id` from message history to send to OpenAI API, leveraging server-side history instead, for improved efficiency. If `openai_previous_response_id` is not set, full history is sent.
+##### Automatically referencing earlier responses
+
+When the `openai_previous_response_id` field is set to `'auto'`, Pydantic AI will automatically select the most recent `provider_response_id` from message history and omit messages that came before it, letting the OpenAI SDK leverage server-side history instead for improved efficiency.
 
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
 
-model = OpenAIResponsesModel('gpt-4o')
+model = OpenAIResponsesModel('gpt-5')
 agent = Agent(model=model)
 
 result1 = agent.run_sync('Tell me a joke.')
@@ -190,8 +192,6 @@ result2 = agent.run_sync(
 print(result2.output)
 #> This is an excellent joke invented by Samuel Colvin, it needs no explanation.
 ```
-It is recommended to use `auto` mode only when the history comes from a single, uninterrupted run,
-with all responses coming from the same OpenAI model (e.g like internal tool calls), as the server-side history will override any locally modified history.
 
 ## OpenAI-compatible Models
 
