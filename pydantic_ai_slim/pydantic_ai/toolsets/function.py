@@ -99,6 +99,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncEither[AgentDepsT, ToolParams]], ToolFuncEither[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -115,6 +116,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -166,6 +168,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
         """
 
         def tool_decorator(
@@ -184,6 +187,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 strict,
                 sequential,
                 requires_approval,
+                metadata,
             )
             return func_
 
@@ -202,6 +206,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Add a function as a tool to the toolset.
 
@@ -230,6 +235,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -250,6 +256,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict=strict,
             sequential=sequential,
             requires_approval=requires_approval,
+            metadata=metadata,
         )
         self.add_tool(tool)
 

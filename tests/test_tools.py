@@ -1887,3 +1887,53 @@ def test_deferred_tool_results_serializable():
     )
     deserialized = results_ta.validate_python(serialized)
     assert deserialized == results
+
+
+def test_tool_metadata():
+    """Test that metadata is properly set on tools."""
+    metadata = {'category': 'test', 'version': '1.0'}
+
+    def simple_tool(ctx: RunContext[None], x: int) -> int:
+        return x * 2
+
+    tool = Tool(simple_tool, metadata=metadata)
+    assert tool.metadata == metadata
+    assert tool.tool_def.metadata == metadata
+
+    # Test with agent decorator
+    agent = Agent('test')
+
+    @agent.tool(metadata={'source': 'agent'})
+    def agent_tool(ctx: RunContext[None], y: int) -> int:
+        return y + 1
+
+    agent_tool_def = agent._function_toolset.tools['agent_tool']
+    assert agent_tool_def.metadata == {'source': 'agent'}
+
+    # Test with agent.tool_plain decorator
+    @agent.tool_plain(metadata={'type': 'plain'})
+    def plain_tool(z: int) -> int:
+        return z * 3
+
+    plain_tool_def = agent._function_toolset.tools['plain_tool']
+    assert plain_tool_def.metadata == {'type': 'plain'}
+
+    # Test with FunctionToolset.tool decorator
+    from pydantic_ai.toolsets.function import FunctionToolset
+
+    toolset = FunctionToolset()
+
+    @toolset.tool(metadata={'toolset': 'function'})
+    def toolset_tool(ctx: RunContext[None], a: str) -> str:
+        return a.upper()
+
+    toolset_tool_def = toolset.tools['toolset_tool']
+    assert toolset_tool_def.metadata == {'toolset': 'function'}
+
+    # Test with FunctionToolset.add_function
+    def standalone_func(ctx: RunContext[None], b: float) -> float:
+        return b / 2
+
+    toolset.add_function(standalone_func, metadata={'method': 'add_function'})
+    standalone_tool_def = toolset.tools['standalone_func']
+    assert standalone_tool_def.metadata == {'method': 'add_function'}
