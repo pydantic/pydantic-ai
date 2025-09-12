@@ -210,9 +210,18 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # Extract UserPromptPart content from the popped message and add to ctx.deps.prompt
                 user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
                 if user_prompt_parts:
-                    # Join all UserPromptPart content (in case there are multiple)
-                    user_prompt_content = ' '.join(str(part.content) for part in user_prompt_parts)
-                    ctx.deps.prompt = user_prompt_content
+                    # For single part, use content directly; for multiple parts, combine them
+                    if len(user_prompt_parts) == 1:
+                        ctx.deps.prompt = user_prompt_parts[0].content
+                    else:
+                        # Combine multiple UserPromptPart contents
+                        combined_content: list[_messages.UserContent] = []
+                        for part in user_prompt_parts:
+                            if isinstance(part.content, str):
+                                combined_content.append(part.content)
+                            else:
+                                combined_content.extend(part.content)
+                        ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
                 call_tools_node = await self._handle_message_history_model_response(ctx, last_message)
                 if call_tools_node is not None:
