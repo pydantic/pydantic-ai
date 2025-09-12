@@ -199,7 +199,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
 
     This can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
     if the message history you're sending does not match exactly what was received from the Responses API in a previous response,
-    for example if you're using a [history processor](message-history.md#processing-message-history).
+    for example if you're using a [history processor](../../message-history.md#processing-message-history).
     In that case, you'll want to disable this.
     """
 
@@ -1153,7 +1153,7 @@ class OpenAIResponsesModel(Model):
                                 reasoning_item is None
                                 or reasoning_item['id'] != item.id
                                 and (item.signature or item.content)
-                            ):
+                            ):  # pragma: no branch
                                 reasoning_item = responses.ResponseReasoningItemParam(
                                     id=item.id,
                                     summary=[],
@@ -1429,7 +1429,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 if isinstance(chunk.item, responses.ResponseReasoningItem):
-                    if signature := chunk.item.encrypted_content:
+                    if signature := chunk.item.encrypted_content:  # pragma: no branch
                         # Add the signature to the part corresponding to the first summary item
                         yield self._parts_manager.handle_thinking_delta(
                             vendor_part_id=f'{chunk.item.id}-0',
