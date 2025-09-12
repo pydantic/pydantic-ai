@@ -765,7 +765,14 @@ class MCPServerSSE(_MCPServerHTTP):
     def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
         return core_schema.no_info_after_validator_function(
             lambda dct: MCPServerSSE(**dct),
-            core_schema.typed_dict_schema({'url': core_schema.typed_dict_field(core_schema.str_schema())}),
+            core_schema.typed_dict_schema(
+                {
+                    'url': core_schema.typed_dict_field(core_schema.str_schema()),
+                    'headers': core_schema.typed_dict_field(
+                        core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()), required=False
+                    ),
+                }
+            ),
         )
 
     @property
@@ -834,7 +841,14 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
     def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
         return core_schema.no_info_after_validator_function(
             lambda dct: MCPServerStreamableHTTP(**dct),
-            core_schema.typed_dict_schema({'url': core_schema.typed_dict_field(core_schema.str_schema())}),
+            core_schema.typed_dict_schema(
+                {
+                    'url': core_schema.typed_dict_field(core_schema.str_schema()),
+                    'headers': core_schema.typed_dict_field(
+                        core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()), required=False
+                    ),
+                }
+            ),
         )
 
     @property
