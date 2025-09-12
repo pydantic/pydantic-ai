@@ -32,7 +32,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_openai import MockOpenAIResponses, response_message
 
@@ -1224,7 +1224,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(m, model_settings=settings)
 
@@ -1236,21 +1236,34 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c',
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    IsInstance(TextPart),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c36ec63adc81a39b63da30b6a85f59033a1f85a7ada5bf'),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1828, details={'reasoning_tokens': 1472}),
-                model_name='o3-mini-2025-01-31',
+                usage=RequestUsage(input_tokens=13, output_tokens=1918, details={'reasoning_tokens': 1600}),
+                model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb4c1e21c88195992250ee4e6c3e5506370ebbaae73d2c',
+                provider_response_id='resp_68c36eaf77d081a39099dbc0fc3bdea9033a1f85a7ada5bf',
                 finish_reason='stop',
             ),
         ]
@@ -1274,21 +1287,38 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c',
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
-                    IsInstance(TextPart),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c36f0437e881a38fdf86f8d1db74f2033a1f85a7ada5bf'),
                 ],
-                usage=RequestUsage(input_tokens=394, output_tokens=2196, details={'reasoning_tokens': 1536}),
-                model_name='o3-mini-2025-01-31',
+                usage=RequestUsage(input_tokens=353, output_tokens=3097, details={'reasoning_tokens': 2624}),
+                model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb4c373f6c819585afac2acfadeede06370ebbaae73d2c',
+                provider_response_id='resp_68c36ec7742c81a3b82f5b5e6ae48390033a1f85a7ada5bf',
                 finish_reason='stop',
             ),
         ]
