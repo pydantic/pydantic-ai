@@ -876,7 +876,7 @@ class OpenAIResponsesModel(Model):
                                 content=summary.text,
                                 id=item.id,
                                 signature=signature,
-                                provider_name=self.system if signature else None,
+                                provider_name=self.system,
                             )
                         )
                         # We only need to store the signature once.
@@ -1464,6 +1464,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.part.text,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                 )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartDoneEvent):
@@ -1477,6 +1478,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=f'{chunk.item_id}-{chunk.summary_index}',
                     content=chunk.delta,
                     id=chunk.item_id,
+                    provider_name=self.provider_name,
                 )
 
             # TODO(Marcelo): We should support annotations in the future.
