@@ -678,7 +678,7 @@ wheels = [
 
 [[package]]
 name = "cohere"
-version = "5.17.0"
+version = "5.18.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastavro" },
@@ -691,9 +691,9 @@ dependencies = [
     { name = "types-requests" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8a/ea/0b4bfb4b7f0f445db97acc979308f80ed5ab31df3786b1951d6e48b30d27/cohere-5.17.0.tar.gz", hash = "sha256:70d2fb7bccf8c9de77b07e1c0b3d93accf6346242e3cdc6ce293b577afa74a63", size = 164665, upload-time = "2025-08-13T06:58:00.608Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0d/f5/4682a965449826044c853c82796805f8d3e9214471e2f120db3063116584/cohere-5.18.0.tar.gz", hash = "sha256:93a7753458a45cd30c796300182d22bb1889eadc510727e1de3d8342cb2bc0bf", size = 164340, upload-time = "2025-09-12T14:17:16.776Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/aa/21/d0eb7c8e5b3bb748190c59819928c38cafcdf8f8aaca9d21074c64cf1cae/cohere-5.17.0-py3-none-any.whl", hash = "sha256:fe7d8228cda5335a7db79a828893765a4d5a40b7f7a43443736f339dc7813fa4", size = 295301, upload-time = "2025-08-13T06:57:59.072Z" },
+    { url = "https://files.pythonhosted.org/packages/23/9b/3dc80542e60c711d57777b836a64345dda28f826c14fd64d9123278fcbfe/cohere-5.18.0-py3-none-any.whl", hash = "sha256:885e7be360206418db39425faa60dbcd7f38e39e7f84b824ee68442e6a436e93", size = 295384, upload-time = "2025-09-12T14:17:15.421Z" },
 ]
 
 [[package]]
@@ -3560,7 +3560,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.61.0" },
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
-    { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.17.0" },
+    { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
     { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.13.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
