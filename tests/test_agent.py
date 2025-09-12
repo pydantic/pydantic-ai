@@ -2008,7 +2008,12 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
     ]
 
     m = TestModel()
-    agent = Agent(m, instructions='New instructions')
+    agent = Agent(m)
+
+    @agent.instructions
+    async def instructions(ctx: RunContext) -> str:
+        assert ctx.prompt == 'Hello'
+        return 'New instructions'
 
     result = agent.run_sync(message_history=messages)
     assert result.all_messages() == snapshot(

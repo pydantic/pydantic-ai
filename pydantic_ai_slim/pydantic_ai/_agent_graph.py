@@ -186,14 +186,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
 
-        run_context = build_run_context(ctx)
-
         parts: list[_messages.ModelRequestPart] = []
-        if messages:
-            # Reevaluate any dynamic system prompt parts
-            await self._reevaluate_dynamic_prompts(messages, run_context)
-        else:
-            parts.extend(await self._sys_parts(run_context))
 
         if (tool_call_results := ctx.deps.tool_call_results) is not None:
             if messages and (last_message := messages[-1]) and isinstance(last_message, _messages.ModelRequest):
@@ -214,10 +207,24 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # Drop last message from history and reuse its parts
                 messages.pop()
                 parts.extend(last_message.parts)
+                # Extract UserPromptPart content from the popped message and add to ctx.deps.prompt
+                user_prompt_parts = [part for part in last_message.parts if isinstance(part, _messages.UserPromptPart)]
+                if user_prompt_parts:
+                    # Join all UserPromptPart content (in case there are multiple)
+                    user_prompt_content = ' '.join(str(part.content) for part in user_prompt_parts)
+                    ctx.deps.prompt = user_prompt_content
             elif isinstance(last_message, _messages.ModelResponse):
                 call_tools_node = await self._handle_message_history_model_response(ctx, last_message)
                 if call_tools_node is not None:
                     return call_tools_node
+
+        run_context = build_run_context(ctx)
+
+        if messages:
+            # Reevaluate any dynamic system prompt parts
+            await self._reevaluate_dynamic_prompts(messages, run_context)
+        else:
+            parts.extend(await self._sys_parts(run_context))
 
         if self.user_prompt is not None:
             parts.append(_messages.UserPromptPart(self.user_prompt))
