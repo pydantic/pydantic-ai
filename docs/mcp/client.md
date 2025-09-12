@@ -231,9 +231,9 @@ calculator_server = MCPServerSSE(
 agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
 ```
 
-## Tool `meta`, `annotations` & `output_schema`
+## Tool metadata
 
-MCP tools often include metadata that provides additional information about the tool's characteristics, which can use useful in [`toolset filtering`][pydantic_ai.toolsets.FilteredToolset].  These properties are available in the [`ToolDefinition.metadata`][pydantic_ai.tools.ToolDefinition.metadata].
+MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
 
 ## Custom TLS / SSL configuration
 
