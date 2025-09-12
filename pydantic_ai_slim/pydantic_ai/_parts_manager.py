@@ -355,6 +355,7 @@ class ModelResponsePartsManager:
         tool_name: str,
         args: str | dict[str, Any] | None,
         tool_call_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
         provider_name: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a BuiltinToolCallPart with the given information.
@@ -367,6 +368,7 @@ class ModelResponsePartsManager:
             tool_name: The name of the tool being invoked.
             args: The arguments for the tool call, either as a string, a dictionary, or None.
             tool_call_id: An optional string identifier for this tool call.
+            metadata: Optional metadata for this tool call.
             provider_name: An optional provider name for this tool call.
 
         Returns:
@@ -377,6 +379,7 @@ class ModelResponsePartsManager:
             provider_name=provider_name,
             tool_name=tool_name,
             args=args,
+            metadata=metadata,
             tool_call_id=tool_call_id or _generate_tool_call_id(),
         )
         if vendor_part_id is None:
@@ -402,6 +405,7 @@ class ModelResponsePartsManager:
         tool_name: str,
         content: Any,
         tool_call_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
         provider_name: str | None = None,
     ) -> ModelResponseStreamEvent:
         """Immediately create or fully-overwrite a BuiltinToolReturnPart with the given information.
@@ -414,6 +418,7 @@ class ModelResponsePartsManager:
             tool_name: The name of the tool being invoked.
             content: The content for the tool return.
             tool_call_id: An optional string identifier for this tool call.
+            metadata: Optional metadata for this tool call.
             provider_name: An optional provider name for this tool call.
 
         Returns:
@@ -424,6 +429,7 @@ class ModelResponsePartsManager:
             provider_name=provider_name,
             tool_name=tool_name,
             content=content,
+            metadata=metadata,
             tool_call_id=tool_call_id or _generate_tool_call_id(),
         )
         if vendor_part_id is None:

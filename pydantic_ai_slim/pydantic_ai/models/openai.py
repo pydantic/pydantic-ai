@@ -73,6 +73,8 @@ try:
         WebSearchOptionsUserLocationApproximate,
     )
     from openai.types.responses import ComputerToolParam, FileSearchToolParam, WebSearchToolParam
+    from openai.types.responses.response_code_interpreter_tool_call import OutputImage, OutputLogs
+    from openai.types.responses.response_function_web_search import ActionSearch
     from openai.types.responses.response_input_param import FunctionCallOutput, Message
     from openai.types.responses.response_reasoning_item_param import Summary
     from openai.types.responses.response_status import ResponseStatus
@@ -233,13 +235,13 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for more information.
     """
 
-    openai_include_code_execution_results: bool
+    openai_include_code_execution_outputs: bool
     """Whether to include the code execution results in the response.
 
     Corresponds to the `code_interpreter_call.outputs` value of the `include` parameter in the Responses API.
     """
 
-    openai_include_web_search_results: bool
+    openai_include_web_search_sources: bool
     """Whether to include the web search results in the response.
 
     Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
@@ -928,7 +930,10 @@ class OpenAIResponsesModel(Model):
                     BuiltinToolCallPart(
                         tool_name=item.type,
                         tool_call_id=item.id,
-                        args=item.model_dump(),
+                        args=item.code,
+                        metadata={
+                            'container_id': item.container_id,
+                        },
                         provider_name=self.system,
                     )
                 )
@@ -936,12 +941,43 @@ class OpenAIResponsesModel(Model):
                     BuiltinToolReturnPart(
                         tool_name=item.type,
                         tool_call_id=item.id,
-                        content=[output.model_dump() for output in item.outputs] if item.outputs else None,
+                        content=[
+                            (output.logs if isinstance(output, OutputLogs) else ImageUrl(output.url))
+                            for output in outputs
+                        ]
+                        if (outputs := item.outputs)
+                        else None,
+                        metadata={
+                            'status': item.status,
+                        },
                         provider_name=self.system,
                     )
                 )
             elif isinstance(item, responses.ResponseFunctionWebSearch):
-                pass
+                args = item.action.model_dump()
+                # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
+                args.pop('sources', None)
+                items.append(
+                    BuiltinToolCallPart(
+                        tool_name=item.type,
+                        tool_call_id=item.id,
+                        args=args,
+                        provider_name=self.system,
+                    )
+                )
+                items.append(
+                    BuiltinToolReturnPart(
+                        tool_name=item.type,
+                        tool_call_id=item.id,
+                        content=[source.url for source in sources]
+                        if (action := item.action) and isinstance(action, ActionSearch) and (sources := action.sources)
+                        else None,
+                        metadata={
+                            'status': item.status,
+                        },
+                        provider_name=self.system,
+                    )
+                )
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
                 pass
@@ -1078,9 +1114,9 @@ class OpenAIResponsesModel(Model):
         include: list[responses.ResponseIncludable] = []
         if profile.openai_supports_encrypted_reasoning_content:
             include.append('reasoning.encrypted_content')
-        if model_settings.get('openai_include_code_execution_results'):
+        if model_settings.get('openai_include_code_execution_outputs'):
             include.append('code_interpreter_call.outputs')
-        if model_settings.get('openai_include_web_search_results'):
+        if model_settings.get('openai_include_web_search_sources'):
             include.append('web_search_call.action.sources')  # pyright: ignore[reportArgumentType]
 
         try:
@@ -1140,7 +1176,7 @@ class OpenAIResponsesModel(Model):
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 web_search_tool = responses.WebSearchToolParam(
-                    type='web_search_preview', search_context_size=tool.search_context_size
+                    type='web_search', search_context_size=tool.search_context_size
                 )
                 if tool.user_location:
                     web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
@@ -1229,6 +1265,8 @@ class OpenAIResponsesModel(Model):
             elif isinstance(message, ModelResponse):
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
+                web_search_item: responses.ResponseFunctionWebSearchParam | None = None
+                code_interpreter_item: responses.ResponseCodeInterpreterToolCallParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
                         if item.id and message.provider_name == self.system:
@@ -1256,11 +1294,46 @@ class OpenAIResponsesModel(Model):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, BuiltinToolCallPart):
                         if item.provider_name == self.system:
-                            if item.tool_name == 'code_interpreter_call':  # pragma: no branch
-                                openai_messages.append(cast(responses.ResponseCodeInterpreterToolCallParam, item.args))
+                            if item.tool_name == 'code_interpreter_call' and item.metadata:
+                                code_interpreter_item = responses.ResponseCodeInterpreterToolCallParam(
+                                    id=item.tool_call_id or _utils.generate_tool_call_id(),
+                                    code=cast(str | None, item.args),
+                                    container_id=item.metadata.get('container_id', _utils.generate_tool_call_id()),
+                                    outputs=None,
+                                    status='completed',
+                                    type='code_interpreter_call',
+                                )
+                                openai_messages.append(code_interpreter_item)
+                            elif item.tool_name == 'web_search_call' and isinstance(
+                                item.args, dict
+                            ):  # pragma: no branch
+                                web_search_item = responses.ResponseFunctionWebSearchParam(
+                                    id=item.tool_call_id or _utils.generate_tool_call_id(),
+                                    action=cast(responses.response_function_web_search_param.Action, item.args),
+                                    status='completed',
+                                    type='web_search_call',
+                                )
+                                openai_messages.append(web_search_item)
                     elif isinstance(item, BuiltinToolReturnPart):
-                        # Only the tool call part needs to be returned
-                        pass
+                        if item.provider_name == self.system:
+                            if (
+                                item.tool_name == 'code_interpreter_call'
+                                and code_interpreter_item is not None
+                                and item.metadata
+                            ):
+                                outputs: list[OutputLogs | OutputImage] = []
+                                if isinstance(item.content, list):
+                                    for content in cast(list[str | ImageUrl], item.content):  # pyright: ignore[reportUnknownMemberType]
+                                        if isinstance(content, str):
+                                            outputs.append(OutputLogs(logs=content, type='logs'))
+                                        elif isinstance(content, ImageUrl):
+                                            outputs.append(OutputImage(url=content.url, type='image'))
+                                code_interpreter_item['outputs'] = outputs or None
+                                code_interpreter_item['status'] = item.metadata['status']
+                            elif (
+                                item.tool_name == 'web_search_call' and web_search_item is not None and item.metadata
+                            ):  # pragma: no branch
+                                web_search_item['status'] = item.metadata['status']
                     elif isinstance(item, ThinkingPart):
                         if (
                             item.id
@@ -1572,14 +1645,51 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.type,
                         tool_call_id=chunk.item.id,
-                        args=chunk.item.model_dump(),
+                        args=chunk.item.code,
+                        metadata={
+                            'container_id': chunk.item.container_id,
+                        },
                         provider_name=self.provider_name,
                     )
                     yield self._parts_manager.handle_builtin_tool_return_part(
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.type,
                         tool_call_id=chunk.item.id,
-                        content=[output.model_dump() for output in chunk.item.outputs] if chunk.item.outputs else None,
+                        content=[
+                            (output.logs if isinstance(output, OutputLogs) else ImageUrl(output.url))
+                            for output in outputs
+                        ]
+                        if (outputs := chunk.item.outputs)
+                        else None,
+                        metadata={
+                            'status': chunk.item.status,
+                        },
+                        provider_name=self.provider_name,
+                    )
+                elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
+                    args = chunk.item.action.model_dump()
+                    # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
+                    # TODO (DouweM): Deduplicate, let `handle_builtin_tool_call_part` take a whole `BuiltinToolCallPart`
+                    args.pop('sources', None)
+                    yield self._parts_manager.handle_builtin_tool_call_part(
+                        vendor_part_id=chunk.item.id,
+                        tool_name=chunk.item.type,  # TODO (DouweM): Use our own tool names? And consistent args/return content, for rendering?
+                        tool_call_id=chunk.item.id,
+                        args=args,
+                        provider_name=self.provider_name,
+                    )
+                    yield self._parts_manager.handle_builtin_tool_return_part(
+                        vendor_part_id=chunk.item.id,
+                        tool_name=chunk.item.type,
+                        tool_call_id=chunk.item.id,
+                        content=[source.url for source in sources]
+                        if (action := chunk.item.action)
+                        and isinstance(action, ActionSearch)
+                        and (sources := action.sources)
+                        else None,
+                        metadata={
+                            'status': chunk.item.status,
+                        },
                         provider_name=self.provider_name,
                     )
 

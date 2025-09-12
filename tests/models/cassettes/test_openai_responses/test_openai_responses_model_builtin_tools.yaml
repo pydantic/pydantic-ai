@@ -22,7 +22,7 @@ interactions:
       stream: false
       tool_choice: auto
       tools:
-      - type: web_search_preview
+      - type: web_search
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -105,7 +105,7 @@ interactions:
       tool_choice: auto
       tools:
       - search_context_size: medium
-        type: web_search_preview
+        type: web_search
         user_location:
           city: null
           country: US

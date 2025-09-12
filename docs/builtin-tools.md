@@ -26,7 +26,7 @@ making it ideal for queries that require up-to-date data.
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI Responses | ✅ | Full feature support <!-- TODO: Document `openai_include_web_search_results` setting --> |
+| OpenAI Responses | ✅ | Full feature support <!-- TODO: Document `openai_include_web_search_sources` setting --> |
 | Anthropic | ✅ | Full feature support |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | Google | ✅ | No parameter support. Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
@@ -111,7 +111,7 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | <!-- TODO: Document `openai_include_code_execution_results` setting --> |
+| OpenAI | ✅ | <!-- TODO: Document `openai_include_code_execution_outputs` setting --> |
 | Anthropic | ✅ | |
 | Google | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Groq | ❌ | |
