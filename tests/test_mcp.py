@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import base64
 import re
+import sys
 from datetime import timezone
 from pathlib import Path
+from subprocess import CalledProcessError
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from dirty_equals import HasRepr
 from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
@@ -29,7 +32,6 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage
-
 from .conftest import IsDatetime, IsNow, IsStr, try_import
 
 with try_import() as imports_successful:
@@ -44,6 +46,11 @@ with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
+else:
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mcp and openai not installed'),
@@ -106,6 +113,12 @@ async def test_context_manager_initialization_error() -> None:
     assert server._read_stream._closed  # pyright: ignore[reportPrivateUsage]
     assert server._write_stream._closed  # pyright: ignore[reportPrivateUsage]
 
+
+async def test_stdio_server_propagate_exceptions(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-mm'])
+    with pytest.raises(CalledProcessError):
+        async with server:
+            pass
 
 async def test_aexit_called_more_times_than_aenter():
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])

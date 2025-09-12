@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import functools
+import os
+import sys
 import warnings
 from abc import ABC, abstractmethod
 from asyncio import Lock
@@ -11,11 +13,20 @@ from dataclasses import field, replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from subprocess import CalledProcessError
 
 import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from anyio.streams.text import TextReceiveStream
+
+from .exceptions import iter_exc
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
+else:
+    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 from typing_extensions import Self, assert_never, deprecated
 
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -507,9 +518,41 @@ class MCPServerStdio(MCPServer):
             MemoryObjectSendStream[SessionMessage],
         ]
     ]:
+        r_fd, w_fd = os.pipe()
+        err_read_stream_writer, err_read_stream = anyio.create_memory_object_stream[str]()
+        stderr_chunks = []
+
         server = StdioServerParameters(command=self.command, args=list(self.args), env=self.env, cwd=self.cwd)
-        async with stdio_client(server=server) as (read_stream, write_stream):
-            yield read_stream, write_stream
+
+        async def write_stderr():
+            async with err_read_stream_writer:
+                async with await anyio.open_file(r_fd, encoding=server.encoding) as stream:
+                    line = await stream.read()
+                    if line:
+                        await err_read_stream_writer.send(line)
+
+        async def read_stderr():
+            async with err_read_stream:
+                async for chunk in err_read_stream:
+                    stderr_chunks.append(chunk)
+
+        raise_stderr_exception = False
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(write_stderr)
+            tg.start_soon(read_stderr)
+            try:
+                async with stdio_client(server=server, errlog=w_fd) as (read_stream, write_stream):
+                    os.close(w_fd)
+                    yield read_stream, write_stream
+            except ExceptionGroup as eg:
+                mcp_errors = [error for error in iter_exc(eg) if isinstance(error, McpError)]
+                if mcp_errors and mcp_errors[0].error.message == 'Connection closed':
+                    raise_stderr_exception = True
+                else:
+                    raise
+        if stderr_chunks and raise_stderr_exception:
+            raise CalledProcessError(1, cmd=self.command, stderr="".join(stderr_chunks).strip()) from mcp_errors[0]
+
 
     def __repr__(self) -> str:
         repr_args = [
@@ -679,7 +722,6 @@ class _MCPServerHTTP(MCPServer):
         )
 
         if self.http_client is not None:
-
             def httpx_client_factory(
                 headers: dict[str, str] | None = None,
                 timeout: httpx.Timeout | None = None,
@@ -689,9 +731,9 @@ class _MCPServerHTTP(MCPServer):
                 return self.http_client
 
             async with transport_client_partial(httpx_client_factory=httpx_client_factory) as (
-                read_stream,
-                write_stream,
-                *_,
+                    read_stream,
+                    write_stream,
+                    *_,
             ):
                 yield read_stream, write_stream
         else:
@@ -796,11 +838,11 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
 
 
 ToolResult = (
-    str
-    | messages.BinaryContent
-    | dict[str, Any]
-    | list[Any]
-    | Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
+str
+| messages.BinaryContent
+| dict[str, Any]
+| list[Any]
+| Sequence[str | messages.BinaryContent | dict[str, Any] | list[Any]]
 )
 """The result type of an MCP tool call."""
 
