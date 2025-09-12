@@ -1111,10 +1111,11 @@ class OpenAIResponsesModel(Model):
     def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage]
     ) -> tuple[str | None, list[ModelMessage]]:
-        # In `auto` mode, the history is trimmed up to (but not including)
-        # the latest ModelResponse with a valid `provider_response_id`.
-        # This is then passed as `previous_response_id` in the next request
-        # to maintain context along with the trimmed history.
+        # When `openai_previous_response_id` is set to 'auto', the most recent
+        # `provider_response_id` from the message history is selected and all
+        # earlier messages are omitted. This allows the OpenAI SDK to reuse
+        # server-side history for efficiency. The returned tuple contains the
+        # `previous_response_id` (if found) and the trimmed list of messages.
         previous_response_id = None
         trimmed_messages: list[ModelMessage] = []
         for m in reversed(messages):
