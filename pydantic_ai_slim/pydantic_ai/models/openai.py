@@ -1126,7 +1126,7 @@ class OpenAIResponsesModel(Model):
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        if item.id:
+                        if item.id and item.id.startswith('msg_'):
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
