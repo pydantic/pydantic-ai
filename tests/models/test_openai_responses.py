@@ -1528,12 +1528,6 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         [
             {'role': 'user', 'content': 'What is 2+2?'},
             {'id': 'reasoning', 'summary': [], 'encrypted_content': '123', 'type': 'reasoning'},
-            {
-                'role': 'assistant',
-                'id': 'text',
-                'content': [{'text': '4', 'type': 'output_text', 'annotations': []}],
-                'type': 'message',
-                'status': 'completed',
-            },
+            {'role': 'assistant', 'content': '4'},
         ]
     )
