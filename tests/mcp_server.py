@@ -11,6 +11,7 @@ from mcp.types import (
     SamplingMessage,
     TextContent,
     TextResourceContents,
+    ToolAnnotations,
 )
 from pydantic import AnyUrl, BaseModel
 
@@ -18,7 +19,7 @@ mcp = FastMCP('Pydantic AI MCP Server')
 log_level = 'unset'
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title='Celsius to Fahrenheit'))
 async def celsius_to_fahrenheit(celsius: float) -> float:
     """Convert Celsius to Fahrenheit.
 

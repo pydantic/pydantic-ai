@@ -489,9 +489,9 @@ class ToolDefinition:
     """
 
     metadata: dict[str, Any] | None = None
-    """Tool metadata, primarily used for filtering and tool behavior customization.
+    """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
 
-    For MCP tools, this contains the `_meta` field from the tool definition.
+    For MCP tools, this contains the `_meta`, `annotations`, and `output_schema` fields from the tool definition.
     """
 
     @property
