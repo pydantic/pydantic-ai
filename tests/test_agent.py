@@ -2004,11 +2004,19 @@ def test_run_with_history_new_structured():
 
 def test_run_with_history_ending_on_model_request_and_no_user_prompt():
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Original instructions'),
+        ModelRequest(
+            parts=[UserPromptPart(content=['Hello', ImageUrl('https://example.com/image.jpg')])],
+            instructions='Original instructions',
+        ),
     ]
 
     m = TestModel()
-    agent = Agent(m, instructions='New instructions')
+    agent = Agent(m)
+
+    @agent.instructions
+    async def instructions(ctx: RunContext) -> str:
+        assert ctx.prompt == ['Hello', ImageUrl('https://example.com/image.jpg')]
+        return 'New instructions'
 
     result = agent.run_sync(message_history=messages)
     assert result.all_messages() == snapshot(
@@ -2016,7 +2024,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='Hello',
+                        content=['Hello', ImageUrl('https://example.com/image.jpg')],
                         timestamp=IsDatetime(),
                     )
                 ],
