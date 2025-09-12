@@ -41,7 +41,9 @@ with try_import() as imports_successful:
     from openai.types.responses.response_reasoning_item import ResponseReasoningItem
     from openai.types.responses.response_usage import ResponseUsage
 
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
@@ -1325,6 +1327,117 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
     )
 
 
+async def test_openai_responses_thinking_part_from_other_model(
+    allow_model_requests: None, anthropic_api_key: str, openai_api_key: str
+):
+    m = AnthropicModel(
+        'claude-sonnet-4-0',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024}),
+    )
+    agent = Agent(m)
+
+    result = await agent.run('How do I cross the street?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='How do I cross the street?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        signature=IsStr(),
+                        provider_name='anthropic',
+                    ),
+                    TextPart(content=IsStr()),
+                ],
+                usage=RequestUsage(
+                    input_tokens=42,
+                    output_tokens=278,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 42,
+                        'output_tokens': 278,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01Xb5RvZxDvuvTBVHG7AmQna',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run(
+        'Considering the way to cross the street, analogously, how do I cross the river?',
+        model=OpenAIResponsesModel(
+            'gpt-5',
+            provider=OpenAIProvider(api_key=openai_api_key),
+            settings=OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed'),
+        ),
+        message_history=result.all_messages(),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Considering the way to cross the street, analogously, how do I cross the river?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c368d519c4819ca1c501002d55d44c09941cd87a51b324'),
+                ],
+                usage=RequestUsage(input_tokens=295, output_tokens=2778, details={'reasoning_tokens': 2432}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c368aa7c4c819c878d6f3c8a02a28609941cd87a51b324',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
 async def test_openai_responses_thinking_part_iter(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     responses_model = OpenAIResponsesModel('o3-mini', provider=provider)
@@ -1523,11 +1636,101 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
         ]
     )
 
-    _, openai_messages = await model._map_messages(result.all_messages())  # type: ignore[reportPrivateUsage]
+    _, openai_messages = await model._map_messages(result.all_messages(), model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is 2+2?'},
             {'id': 'reasoning', 'summary': [], 'encrypted_content': '123', 'type': 'reasoning'},
             {'role': 'assistant', 'content': '4'},
+        ]
+    )
+
+
+async def test_openai_responses_thinking_with_modified_history(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    settings = OpenAIResponsesModelSettings(openai_reasoning_effort='low', openai_reasoning_summary='detailed')
+    agent = Agent(m, model_settings=settings)
+
+    result = await agent.run('What is the meaning of life?')
+    messages = result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the meaning of life?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36b7dbd58819e8c05f6f1205cf2fc011e2e4dcb20dbb7',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c36b84180c819e9e4d96c79945b7af011e2e4dcb20dbb7'),
+                ],
+                usage=RequestUsage(input_tokens=13, output_tokens=509, details={'reasoning_tokens': 192}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c36b7d498c819eae7c20d569041316011e2e4dcb20dbb7',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert isinstance(response.parts, list)
+    response.parts[1] = TextPart(content='The meaning of life is 42')
+
+    with pytest.raises(
+        ModelHTTPError,
+        match="Item 'rs_68c36b7dbd58819e8c05f6f1205cf2fc011e2e4dcb20dbb7' of type 'reasoning' was provided without its required following item.",
+    ):
+        await agent.run('Anything to add?', message_history=messages)
+
+    result = await agent.run(
+        'Anything to add?',
+        message_history=messages,
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_effort='low',
+            openai_reasoning_summary='detailed',
+            openai_send_reasoning_ids=False,
+        ),
+    )
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Anything to add?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36b87d894819ca6af6d79c43c61e10f165aa9d4aec1a3',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c36b8c0bc0819ca376f8e5b44025010f165aa9d4aec1a3'),
+                ],
+                usage=RequestUsage(input_tokens=172, output_tokens=419, details={'reasoning_tokens': 128}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68c36b876578819ca92f2de1060797e80f165aa9d4aec1a3',
+                finish_reason='stop',
+            ),
         ]
     )
