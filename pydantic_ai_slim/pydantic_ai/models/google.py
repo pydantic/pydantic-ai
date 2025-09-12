@@ -596,7 +596,6 @@ class GeminiStreamedResponse(StreamedResponse):
                     signature = base64.b64encode(part.thought_signature).decode('utf-8')
                     yield self._parts_manager.handle_thinking_delta(
                         vendor_part_id='thinking',
-                        content='',  # A thought signature may occur without a preceding thinking part, so we add an empty delta so that a new part can be created
                         signature=signature,
                         provider_name=self.provider_name,
                     )
