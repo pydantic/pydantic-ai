@@ -99,7 +99,7 @@ interactions:
       alt-svc:
       - h3=":443"; ma=86400
       content-length:
-      - '99'
+      - '762'
       content-type:
       - application/json
       referrer-policy:
@@ -146,6 +146,6 @@ interactions:
         owned_by: Cerebras
       object: list
     status:
-      code: 401
-      message: Unauthorized
+      code: 200
+      message: OK
 version: 1
