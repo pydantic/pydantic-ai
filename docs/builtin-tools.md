@@ -26,10 +26,11 @@ making it ideal for queries that require up-to-date data.
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | Full feature support |
+| OpenAI Responses | ✅ | Full feature support |
 | Anthropic | ✅ | Full feature support |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
 | Google | ✅ | No parameter support. Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
@@ -37,14 +38,26 @@ making it ideal for queries that require up-to-date data.
 
 ### Usage
 
-```py title="web_search_basic.py"
+```py title="web_search_anthropic.py"
 from pydantic_ai import Agent, WebSearchTool
 
 agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[WebSearchTool()])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
-# > Scientists have developed a universal AI detector that can identify deepfake videos.
+print(result.output)
+#> Scientists have developed a universal AI detector that can identify deepfake videos.
+```
 
+With OpenAI, you must use their responses API to access the web search tool.
+
+```py title="web_search_openai.py"
+from pydantic_ai import Agent, WebSearchTool
+
+agent = Agent('openai-responses:gpt-4.1', builtin_tools=[WebSearchTool()])
+
+result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
+print(result.output)
+#> Scientists have developed a universal AI detector that can identify deepfake videos.
 ```
 
 ### Configuration Options
