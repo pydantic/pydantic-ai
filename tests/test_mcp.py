@@ -1364,7 +1364,9 @@ async def test_elicitation_callback_functionality(run_context: RunContext[int]):
         # Verify the callback was called
         assert callback_called, 'Elicitation callback should have been called'
         assert callback_message == 'Should I continue?', 'Callback should receive the question'
-        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
+        # Some servers return structured content for elicitation
+        _result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+        assert _result_text == f'User responded: {callback_response}', 'Tool should return the callback response'
 
 
 async def test_elicitation_callback_not_set(run_context: RunContext[int]):
@@ -1375,3 +1377,24 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
         # Should raise an error when elicitation is attempted without callback
         with pytest.raises(ModelRetry, match='Elicitation not supported'):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+
+async def test_direct_call_returns_text_content(mcp_server: MCPServerStdio):
+    """Direct tool call returns legacy text content when tool returns str."""
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_weather_forecast', {'location': 'Paris'})
+    assert result == 'The weather in Paris is sunny and 26 degrees Celsius.'
+
+
+async def test_direct_call_returns_structured_dict(mcp_server: MCPServerStdio):
+    """Direct tool call returns structured dict when tool returns dict."""
+    async with mcp_server:
+        result = await mcp_server.direct_call_tool('get_dict', {})
+    assert result == {'foo': 'bar', 'baz': 123}
+
+
+async def test_direct_call_error_uses_text_content(mcp_server: MCPServerStdio):
+    """On error, the raised message should prefer text content from server."""
+    async with mcp_server:
+        with pytest.raises(ModelRetry, match='This is an error'):
+            await mcp_server.direct_call_tool('get_error', {})
