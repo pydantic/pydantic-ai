@@ -159,7 +159,9 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -167,7 +169,9 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -220,7 +224,9 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, tzinfo=timezone.utc),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -309,7 +315,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -333,7 +341,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -350,7 +360,9 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile-123',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='123',
+                finish_reason='stop',
             ),
         ]
     )
@@ -472,6 +484,7 @@ async def test_stream_structured(allow_model_requests: None):
                 model_name='llama-3.3-70b-versatile',
                 timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
                 provider_name='groq',
+                provider_response_id='x',
             ),
             ModelRequest(
                 parts=[
@@ -591,7 +604,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id='chatcmpl-3c327c89-e9f5-4aac-a5d5-190e6f6f25c9',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -616,7 +631,9 @@ async def test_image_as_binary_content_tool_response(
                 model_name='meta-llama/llama-4-scout-17b-16e-instruct',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-82dfad42-6a28-4089-82c3-c8633f626c0d',
+                finish_reason='stop',
             ),
         ]
     )
@@ -695,7 +712,9 @@ async def test_groq_model_instructions(allow_model_requests: None, groq_api_key:
                 model_name='llama-3.3-70b-versatile',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-7586b6a9-fb4b-4ec7-86a0-59f0a77844cf',
+                finish_reason='stop',
             ),
         ]
     )
@@ -898,7 +917,9 @@ The current day is Tuesday.\
                 model_name='compound-beta',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='stub',
+                finish_reason='stop',
             ),
         ]
     )
@@ -922,7 +943,9 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -944,7 +967,9 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-9748c1af-1065-410a-969a-d7fb48039fbb',
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -961,7 +986,9 @@ async def test_groq_model_thinking_part(allow_model_requests: None, groq_api_key
                 model_name='deepseek-r1-distill-llama-70b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id='chatcmpl-994aa228-883a-498c-8b20-9655d770b697',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1038,7 +1065,10 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                         tool_call_id=IsStr(),
                     )
                 ],
+                model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
+                provider_name='groq',
+                finish_reason='error',
             ),
             ModelRequest(
                 parts=[
@@ -1079,7 +1109,9 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'tool_calls'},
                 provider_response_id=IsStr(),
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1103,7 +1135,9 @@ async def test_tool_use_failed_error(allow_model_requests: None, groq_api_key: s
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1150,6 +1184,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_response_id='chatcmpl-4e0ca299-7515-490a-a98a-16d7664d4fba',
             ),
             ModelRequest(
                 parts=[
@@ -1188,6 +1223,9 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'tool_calls'},
+                provider_response_id='chatcmpl-fffa1d41-1763-493a-9ced-083bd3f2d98b',
+                finish_reason='tool_call',
             ),
             ModelRequest(
                 parts=[
@@ -1206,6 +1244,9 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
+                provider_response_id='chatcmpl-fe6b5685-166f-4c71-9cd7-3d5a97301bf1',
+                finish_reason='stop',
             ),
         ]
     )
@@ -1256,7 +1297,9 @@ async def test_groq_native_output(allow_model_requests: None, groq_api_key: str)
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )
@@ -1302,7 +1345,9 @@ Don't include any text or Markdown fencing before or after.\
                 model_name='openai/gpt-oss-120b',
                 timestamp=IsDatetime(),
                 provider_name='groq',
+                provider_details={'finish_reason': 'stop'},
                 provider_response_id=IsStr(),
+                finish_reason='stop',
             ),
         ]
     )

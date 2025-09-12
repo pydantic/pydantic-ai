@@ -64,7 +64,7 @@ def test_groq_provider_with_env_base_url(monkeypatch: pytest.MonkeyPatch) -> Non
     # Test with environment variable for base_url
     monkeypatch.setenv('GROQ_BASE_URL', 'https://custom.groq.com/v1')
     provider = GroqProvider(api_key='api-key')
-    assert provider.base_url == 'https://custom.groq.com/v1'
+    assert provider.base_url == 'https://custom.groq.com/v1/'
 
 
 def test_groq_provider_model_profile(mocker: MockerFixture):

@@ -20,6 +20,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     FileUrl,
+    FinishReason,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -54,6 +55,7 @@ try:
         ContentUnionDict,
         CountTokensConfigDict,
         ExecutableCodeDict,
+        FinishReason as GoogleFinishReason,
         FunctionCallDict,
         FunctionCallingConfigDict,
         FunctionCallingConfigMode,
@@ -99,6 +101,22 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
+_FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
+    GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
+    GoogleFinishReason.STOP: 'stop',
+    GoogleFinishReason.MAX_TOKENS: 'length',
+    GoogleFinishReason.SAFETY: 'content_filter',
+    GoogleFinishReason.RECITATION: 'content_filter',
+    GoogleFinishReason.LANGUAGE: 'error',
+    GoogleFinishReason.OTHER: None,
+    GoogleFinishReason.BLOCKLIST: 'content_filter',
+    GoogleFinishReason.PROHIBITED_CONTENT: 'content_filter',
+    GoogleFinishReason.SPII: 'content_filter',
+    GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
+    GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
+    GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
+}
+
 
 class GoogleModelSettings(ModelSettings, total=False):
     """Settings used for a Gemini model request."""
@@ -127,6 +145,12 @@ class GoogleModelSettings(ModelSettings, total=False):
     """The video resolution to use for the model.
 
     See <https://ai.google.dev/api/generate-content#MediaResolution> for more information.
+    """
+
+    google_cached_content: str
+    """The name of the cached content to use for the model.
+
+    See <https://ai.google.dev/gemini-api/docs/caching> for more information.
     """
 
 
@@ -230,6 +254,7 @@ class GoogleModel(Model):
                     stop_sequences=generation_config.get('stop_sequences'),
                     presence_penalty=generation_config.get('presence_penalty'),
                     frequency_penalty=generation_config.get('frequency_penalty'),
+                    seed=generation_config.get('seed'),
                     thinking_config=generation_config.get('thinking_config'),
                     media_resolution=generation_config.get('media_resolution'),
                     response_mime_type=generation_config.get('response_mime_type'),
@@ -373,10 +398,12 @@ class GoogleModel(Model):
             stop_sequences=model_settings.get('stop_sequences'),
             presence_penalty=model_settings.get('presence_penalty'),
             frequency_penalty=model_settings.get('frequency_penalty'),
+            seed=model_settings.get('seed'),
             safety_settings=model_settings.get('google_safety_settings'),
             thinking_config=model_settings.get('google_thinking_config'),
             labels=model_settings.get('google_labels'),
             media_resolution=model_settings.get('google_video_resolution'),
+            cached_content=model_settings.get('google_cached_content'),
             tools=cast(ToolListUnionDict, tools),
             tool_config=tool_config,
             response_mime_type=response_mime_type,
@@ -396,11 +423,14 @@ class GoogleModel(Model):
                     'Content field missing from Gemini response', str(response)
                 )  # pragma: no cover
         parts = candidate.content.parts or []
-        vendor_id = response.response_id or None
+
+        vendor_id = response.response_id
         vendor_details: dict[str, Any] | None = None
-        finish_reason = candidate.finish_reason
-        if finish_reason:  # pragma: no branch
-            vendor_details = {'finish_reason': finish_reason.value}
+        finish_reason: FinishReason | None = None
+        if raw_finish_reason := candidate.finish_reason:  # pragma: no branch
+            vendor_details = {'finish_reason': raw_finish_reason.value}
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
             parts,
@@ -409,6 +439,7 @@ class GoogleModel(Model):
             usage,
             vendor_id=vendor_id,
             vendor_details=vendor_details,
+            finish_reason=finish_reason,
         )
 
     async def _process_streamed_response(
@@ -422,7 +453,7 @@ class GoogleModel(Model):
 
         return GeminiStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
             _timestamp=first_chunk.create_time or _utils.now_utc(),
             _provider_name=self._provider.name,
@@ -472,7 +503,7 @@ class GoogleModel(Model):
                     message_parts = [{'text': ''}]
                 contents.append({'role': 'user', 'parts': message_parts})
             elif isinstance(m, ModelResponse):
-                contents.append(_content_model_response(m))
+                contents.append(_content_model_response(m, self.system))
             else:
                 assert_never(m)
         if instructions := self._get_instructions(messages):
@@ -537,12 +568,20 @@ class GeminiStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk)
 
             assert chunk.candidates is not None
             candidate = chunk.candidates[0]
+
+            if chunk.response_id:  # pragma: no branch
+                self.provider_response_id = chunk.response_id
+
+            if raw_finish_reason := candidate.finish_reason:
+                self.provider_details = {'finish_reason': raw_finish_reason.value}
+                self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
             if candidate.content is None or candidate.content.parts is None:
                 if candidate.finish_reason == 'STOP':  # pragma: no cover
                     # Normal completion - skip this chunk
@@ -553,6 +592,14 @@ class GeminiStreamedResponse(StreamedResponse):
                     raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
             parts = candidate.content.parts or []
             for part in parts:
+                if part.thought_signature:
+                    signature = base64.b64encode(part.thought_signature).decode('utf-8')
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='thinking',
+                        signature=signature,
+                        provider_name=self.provider_name,
+                    )
+
                 if part.text is not None:
                     if part.thought:
                         yield self._parts_manager.handle_thinking_delta(vendor_part_id='thinking', content=part.text)
@@ -592,29 +639,41 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse) -> ContentDict:
+def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict:
     parts: list[PartDict] = []
+    thought_signature: bytes | None = None
     for item in m.parts:
+        part: PartDict = {}
+        if thought_signature:
+            part['thought_signature'] = thought_signature
+            thought_signature = None
+
         if isinstance(item, ToolCallPart):
             function_call = FunctionCallDict(name=item.tool_name, args=item.args_as_dict(), id=item.tool_call_id)
-            parts.append({'function_call': function_call})
+            part['function_call'] = function_call
         elif isinstance(item, TextPart):
-            parts.append({'text': item.content})
-        elif isinstance(item, ThinkingPart):  # pragma: no cover
-            # NOTE: We don't send ThinkingPart to the providers yet. If you are unsatisfied with this,
-            # please open an issue. The below code is the code to send thinking to the provider.
-            # parts.append({'text': item.content, 'thought': True})
-            pass
+            part['text'] = item.content
+        elif isinstance(item, ThinkingPart):
+            if item.provider_name == provider_name and item.signature:
+                # The thought signature is to be included on the _next_ part, not the thought part itself
+                thought_signature = base64.b64decode(item.signature)
+
+            if item.content:
+                part['text'] = item.content
+                part['thought'] = True
         elif isinstance(item, BuiltinToolCallPart):
-            if item.provider_name == 'google':
+            if item.provider_name == provider_name:
                 if item.tool_name == 'code_execution':  # pragma: no branch
-                    parts.append({'executable_code': cast(ExecutableCodeDict, item.args)})
+                    part['executable_code'] = cast(ExecutableCodeDict, item.args)
         elif isinstance(item, BuiltinToolReturnPart):
-            if item.provider_name == 'google':
+            if item.provider_name == provider_name:
                 if item.tool_name == 'code_execution':  # pragma: no branch
-                    parts.append({'code_execution_result': item.content})
+                    part['code_execution_result'] = item.content
         else:
             assert_never(item)
+
+        if part:
+            parts.append(part)
     return ContentDict(role='model', parts=parts)
 
 
@@ -625,39 +684,46 @@ def _process_response_from_parts(
     usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
+    finish_reason: FinishReason | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
+    item: ModelResponsePart | None = None
     for part in parts:
+        if part.thought_signature:
+            signature = base64.b64encode(part.thought_signature).decode('utf-8')
+            if not isinstance(item, ThinkingPart):
+                item = ThinkingPart(content='')
+                items.append(item)
+            item.signature = signature
+            item.provider_name = provider_name
+
         if part.executable_code is not None:
-            items.append(
-                BuiltinToolCallPart(
-                    provider_name='google', args=part.executable_code.model_dump(), tool_name='code_execution'
-                )
+            item = BuiltinToolCallPart(
+                provider_name=provider_name, args=part.executable_code.model_dump(), tool_name='code_execution'
             )
         elif part.code_execution_result is not None:
-            items.append(
-                BuiltinToolReturnPart(
-                    provider_name='google',
-                    tool_name='code_execution',
-                    content=part.code_execution_result,
-                    tool_call_id='not_provided',
-                )
+            item = BuiltinToolReturnPart(
+                provider_name=provider_name,
+                tool_name='code_execution',
+                content=part.code_execution_result,
+                tool_call_id='not_provided',
             )
         elif part.text is not None:
             if part.thought:
-                items.append(ThinkingPart(content=part.text))
+                item = ThinkingPart(content=part.text)
             else:
-                items.append(TextPart(content=part.text))
+                item = TextPart(content=part.text)
         elif part.function_call:
             assert part.function_call.name is not None
-            tool_call_part = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
+            item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
             if part.function_call.id is not None:
-                tool_call_part.tool_call_id = part.function_call.id  # pragma: no cover
-            items.append(tool_call_part)
-        elif part.function_response:  # pragma: no cover
+                item.tool_call_id = part.function_call.id  # pragma: no cover
+        else:  # pragma: no cover
             raise UnexpectedModelBehavior(
-                f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
+                f'Unsupported response from Gemini, expected all parts to be function calls, text, or thoughts, got: {part!r}'
             )
+
+        items.append(item)
     return ModelResponse(
         parts=items,
         model_name=model_name,
@@ -665,6 +731,7 @@ def _process_response_from_parts(
         provider_response_id=vendor_id,
         provider_details=vendor_details,
         provider_name=provider_name,
+        finish_reason=finish_reason,
     )
 
 
