@@ -38,7 +38,6 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from ..conftest import IsDatetime, IsStr, TestEnv, try_import
-from ..parts_from_messages import part_types_from_messages
 from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
@@ -626,49 +625,6 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
 
 Please note that news developments are continually evolving. For the most current information, refer to reputable news sources. \
 """)
-
-
-async def test_openai_responses_code_execution_tool(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[CodeExecutionTool()])
-
-    result = await agent.run('What is 3 * 12390?')
-    # NOTE: OpenAI doesn't return neither the `BuiltinToolCallPart` nor the `BuiltinToolReturnPart`.
-    assert part_types_from_messages(result.all_messages()) == snapshot([[UserPromptPart], [TextPart]])
-
-
-async def test_openai_responses_code_execution_tool_stream(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    agent = Agent(m, instructions='You are a helpful assistant.', builtin_tools=[CodeExecutionTool()])
-
-    event_parts: list[Any] = []
-    async with agent.iter(user_prompt='What is 3 * 12390?') as agent_run:
-        async for node in agent_run:
-            if Agent.is_model_request_node(node) or Agent.is_call_tools_node(node):
-                async with node.stream(agent_run.ctx) as request_stream:
-                    async for event in request_stream:
-                        event_parts.append(event)
-
-    assert event_parts == snapshot(
-        [
-            PartStartEvent(
-                index=0, part=TextPart(content='\\(', id='msg_6894960732d4819284cbfad4b9a1301d0f6766ea87e53a34')
-            ),
-            FinalResultEvent(tool_name=None, tool_call_id=None),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='3')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' \\')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='times')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='123')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='90')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' =')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='371')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='70')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='\\')),
-            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=').')),
-        ]
-    )
 
 
 def test_model_profile_strict_not_supported():
@@ -1944,7 +1900,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
     )
 
 
-async def test_openai_responses_thinking_with_code_interpreter_tool(allow_model_requests: None, openai_api_key: str):
+async def test_openai_responses_thinking_with_code_execution_tool(allow_model_requests: None, openai_api_key: str):
     provider = OpenAIProvider(api_key=openai_api_key)
     m = OpenAIResponsesModel(
         model_name='gpt-5',
@@ -2151,7 +2107,7 @@ len(str(n124)), str(n124)[:50], str(n124)[-50:]\
     )
 
 
-async def test_openai_responses_thinking_with_code_interpreter_tool_stream(
+async def test_openai_responses_thinking_with_code_execution_tool_stream(
     allow_model_requests: None, openai_api_key: str
 ):
     provider = OpenAIProvider(api_key=openai_api_key)
