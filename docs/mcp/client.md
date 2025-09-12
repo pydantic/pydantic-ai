@@ -204,10 +204,10 @@ async def main():
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
 
-How to access the metadata is MCP SDK specific. For example with the MCP Python
-SDK, it is accessible via the
-[Context](https://github.com/modelcontextprotocol/python-sdk#context)
-parameter that can be injected into tool call handlers:
+How to access the metadata is MCP server SDK specific. For example with the [MCP Python
+SDK](https://github.com/modelcontextprotocol/python-sdk), it is accessible via the
+[`ctx: Context`](https://github.com/modelcontextprotocol/python-sdk#context)
+argument that can be included on tool call handlers:
 
 ```python {title="mcp_server.py"}
 from typing import Any
