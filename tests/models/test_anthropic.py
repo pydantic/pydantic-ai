@@ -1323,7 +1323,7 @@ async def test_anthropic_model_thinking_part_from_other_model(
                         content=IsStr(),
                         id='rs_68c1fda7b4d481a1a65f48aef6a6b85e06da9901a3d98ab7',
                     ),
-                    TextPart(content=IsStr()),
+                    TextPart(content=IsStr(), id='msg_68c1fdbecbf081a18085a084257a9aef06da9901a3d98ab7'),
                 ],
                 usage=RequestUsage(input_tokens=23, output_tokens=2211, details={'reasoning_tokens': 1920}),
                 model_name='gpt-5-2025-08-07',
@@ -1981,7 +1981,12 @@ It's being celebrated as:
         [
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
-                parts=[TextPart(content='Tomorrow will be **Friday, August 15, 2025**.')],
+                parts=[
+                    TextPart(
+                        content='Tomorrow will be **Friday, August 15, 2025**.',
+                        id='msg_689dc4acfa488196a6b1ec0ebd3bd9520afe80ec3d42722e',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=458, output_tokens=17, details={'reasoning_tokens': 0}),
                 model_name='gpt-4.1-2025-04-14',
                 timestamp=IsDatetime(),

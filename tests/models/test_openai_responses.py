@@ -32,7 +32,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from ..parts_from_messages import part_types_from_messages
 from .mock_openai import MockOpenAIResponses, response_message
 
@@ -234,7 +234,8 @@ async def test_openai_responses_model_retry(allow_model_requests: None, openai_a
 It seems "Londos" might be incorrect or unknown. If you meant something else, please clarify.
 
 For **London**, it's located at approximately latitude 51° N and longitude 0° W.\
-"""
+""",
+                        id='msg_67e547c615ec81918d6671a184f82a1803a2086afed73b47',
                     )
                 ],
                 usage=RequestUsage(input_tokens=335, output_tokens=44, details={'reasoning_tokens': 0}),
@@ -299,7 +300,12 @@ async def test_image_as_binary_content_tool_response(
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='The fruit in the image is a kiwi.')],
+                parts=[
+                    TextPart(
+                        content='The fruit in the image is a kiwi.',
+                        id='msg_681134d770d881919f3a3148badde27802cbfeaababb040c',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=1185, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -395,7 +401,12 @@ async def test_openai_responses_stream(allow_model_requests: None, openai_api_ke
             if is_last:
                 assert response == snapshot(
                     ModelResponse(
-                        parts=[TextPart(content='The capital of France is Paris.')],
+                        parts=[
+                            TextPart(
+                                content='The capital of France is Paris.',
+                                id='msg_67e554a28bec8191b56d3e2331eff88006c52f0e511c76ed',
+                            )
+                        ],
                         usage=RequestUsage(input_tokens=278, output_tokens=9, details={'reasoning_tokens': 0}),
                         model_name='gpt-4o-2024-08-06',
                         timestamp=IsDatetime(),
@@ -445,7 +456,8 @@ OpenAI's recent launch of GPT-5 has faced mixed reactions. Despite strong benchm
 
 ## OpenAI's GPT-5 Launch Faces Mixed Reactions:
 - [OpenAI's big GPT-5 launch gets bumpy](https://www.axios.com/2025/08/12/gpt-5-bumpy-launch-openai?utm_source=openai) \
-"""
+""",
+                        id='msg_689b7c951b7481968513d007e75151fd07450cfc2d48b975',
                     )
                 ],
                 usage=RequestUsage(input_tokens=320, output_tokens=159, details={'reasoning_tokens': 0}),
@@ -473,7 +485,12 @@ async def test_openai_responses_model_instructions(allow_model_requests: None, o
                 instructions='You are a helpful assistant.',
             ),
             ModelResponse(
-                parts=[TextPart(content='The capital of France is Paris.')],
+                parts=[
+                    TextPart(
+                        content='The capital of France is Paris.',
+                        id='msg_67f3fdfe15b881918d7b865e6a5f4fb1003bc73febb56d77',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=24, output_tokens=8, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -579,7 +596,11 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     async for event in request_stream:
                         event_parts.append(event)
 
-    assert event_parts.pop(0) == snapshot(PartStartEvent(index=0, part=TextPart(content='Here')))
+    assert event_parts.pop(0) == snapshot(
+        PartStartEvent(
+            index=0, part=TextPart(content='Here', id='msg_68949c6f2ec4819180d56b4ad8ce5469004c84cbcf4b67dc')
+        )
+    )
     assert event_parts.pop(0) == snapshot(FinalResultEvent(tool_name=None, tool_call_id=None))
     assert ''.join(event.delta.content_delta for event in event_parts) == snapshot("""\
  are the top three news stories from around the world as of August 7, 2025:
@@ -623,7 +644,9 @@ async def test_openai_responses_code_execution_tool_stream(allow_model_requests:
 
     assert event_parts == snapshot(
         [
-            PartStartEvent(index=0, part=TextPart(content='\\(')),
+            PartStartEvent(
+                index=0, part=TextPart(content='\\(', id='msg_6894960732d4819284cbfad4b9a1301d0f6766ea87e53a34')
+            ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='3')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' \\')),
@@ -821,7 +844,12 @@ async def test_text_output_function(allow_model_requests: None, openai_api_key: 
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
+                parts=[
+                    TextPart(
+                        content='The largest city in Mexico is Mexico City.',
+                        id='msg_68477f0ebf54819d88a44fa87aadaff503434b607c02582d',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=59, output_tokens=11, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -884,7 +912,12 @@ async def test_native_output(allow_model_requests: None, openai_api_key: str):
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
+                parts=[
+                    TextPart(
+                        content='{"city":"Mexico City","country":"Mexico"}',
+                        id='msg_68477f10846c81929f1e833b0785e6f3020197534e39cc1f',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=89, output_tokens=16, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -951,7 +984,8 @@ async def test_native_output_multiple(allow_model_requests: None, openai_api_key
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
+                        content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}',
+                        id='msg_68477f1235b8819d898adc64709c7ebf061ad97e2eef7871',
                     )
                 ],
                 usage=RequestUsage(input_tokens=176, output_tokens=26, details={'reasoning_tokens': 0}),
@@ -1028,7 +1062,12 @@ Don't include any text or Markdown fencing before or after.\
 """,
             ),
             ModelResponse(
-                parts=[TextPart(content='{"city":"Mexico City","country":"Mexico"}')],
+                parts=[
+                    TextPart(
+                        content='{"city":"Mexico City","country":"Mexico"}',
+                        id='msg_68482f1c159081918a2405f458009a6a044fdb7d019d4115',
+                    )
+                ],
                 usage=RequestUsage(input_tokens=130, output_tokens=12, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-2024-08-06',
                 timestamp=IsDatetime(),
@@ -1109,7 +1148,8 @@ Don't include any text or Markdown fencing before or after.\
             ModelResponse(
                 parts=[
                     TextPart(
-                        content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}'
+                        content='{"result":{"kind":"CityLocation","data":{"city":"Mexico City","country":"Mexico"}}}',
+                        id='msg_68482f296bfc81a18665547d4008ab2c06b4ab2d00d03024',
                     )
                 ],
                 usage=RequestUsage(input_tokens=306, output_tokens=22, details={'reasoning_tokens': 0}),
@@ -1168,7 +1208,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
                 ]
             ),
             ModelResponse(
-                parts=[TextPart(content='4')],
+                parts=[TextPart(content='4', id='123')],
                 usage=RequestUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}),
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -1184,7 +1224,7 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
-    m = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     settings = OpenAIResponsesModelSettings(openai_reasoning_effort='high', openai_reasoning_summary='detailed')
     agent = Agent(m, model_settings=settings)
 
@@ -1196,21 +1236,34 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c',
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c2a8d6c8195bfee2ff3d46c5ba506370ebbaae73d2c'),
-                    IsInstance(TextPart),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c36ec63adc81a39b63da30b6a85f59033a1f85a7ada5bf'),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1828, details={'reasoning_tokens': 1472}),
-                model_name='o3-mini-2025-01-31',
+                usage=RequestUsage(input_tokens=13, output_tokens=1918, details={'reasoning_tokens': 1600}),
+                model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb4c1e21c88195992250ee4e6c3e5506370ebbaae73d2c',
+                provider_response_id='resp_68c36eaf77d081a39099dbc0fc3bdea9033a1f85a7ada5bf',
                 finish_reason='stop',
             ),
         ]
@@ -1234,21 +1287,38 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c',
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4c44500481959c3dc83bfff8bdf006370ebbaae73d2c'),
-                    IsInstance(TextPart),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                    ),
+                    TextPart(content=IsStr(), id='msg_68c36f0437e881a38fdf86f8d1db74f2033a1f85a7ada5bf'),
                 ],
-                usage=RequestUsage(input_tokens=394, output_tokens=2196, details={'reasoning_tokens': 1536}),
-                model_name='o3-mini-2025-01-31',
+                usage=RequestUsage(input_tokens=353, output_tokens=3097, details={'reasoning_tokens': 2624}),
+                model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb4c373f6c819585afac2acfadeede06370ebbaae73d2c',
+                provider_response_id='resp_68c36ec7742c81a3b82f5b5e6ae48390033a1f85a7ada5bf',
                 finish_reason='stop',
             ),
         ]
@@ -1289,7 +1359,7 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                     ),
                     ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
                     ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
-                    TextPart(content=IsStr()),
+                    TextPart(content=IsStr(), id='msg_68bb4cd204f881a3b7efcb8866b634410b681c5350c0b73b'),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=1733, details={'reasoning_tokens': 1280}),
                 model_name='o3-mini-2025-01-31',
@@ -1392,7 +1462,7 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
             ),
             ModelResponse(
-                parts=[TextPart(content=IsStr())],
+                parts=[TextPart(content=IsStr(), id='msg_68c3019459f48193a6653ef497bd4c6000b441a18c4893c1')],
                 usage=RequestUsage(
                     input_tokens=2272, cache_read_tokens=1152, output_tokens=114, details={'reasoning_tokens': 0}
                 ),
@@ -1443,7 +1513,7 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
             ModelResponse(
                 parts=[
                     ThinkingPart(content='', id='reasoning', signature='123', provider_name='openai'),
-                    TextPart(content='4'),
+                    TextPart(content='4', id='text'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),

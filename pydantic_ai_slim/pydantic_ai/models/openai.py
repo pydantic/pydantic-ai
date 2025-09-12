@@ -886,7 +886,7 @@ class OpenAIResponsesModel(Model):
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        items.append(TextPart(content.text))
+                        items.append(TextPart(content.text, id=item.id))
             elif isinstance(item, responses.ResponseFunctionToolCall):
                 items.append(
                     ToolCallPart(item.name, item.arguments, tool_call_id=_combine_tool_call_ids(item.call_id, item.id))
@@ -1122,10 +1122,31 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
+                        if item.id and item.id.startswith('msg_'):
+                            if message_item is None or message_item['id'] != item.id:  # pragma: no branch
+                                message_item = responses.ResponseOutputMessageParam(
+                                    role='assistant',
+                                    id=item.id or _utils.generate_tool_call_id(),
+                                    content=[],
+                                    type='message',
+                                    status='completed',
+                                )
+                                openai_messages.append(message_item)
+
+                            message_item['content'] = [
+                                *message_item['content'],
+                                responses.ResponseOutputTextParam(
+                                    text=item.content, type='output_text', annotations=[]
+                                ),
+                            ]
+                        else:
+                            openai_messages.append(
+                                responses.EasyInputMessageParam(role='assistant', content=item.content)
+                            )
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
@@ -1436,7 +1457,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 

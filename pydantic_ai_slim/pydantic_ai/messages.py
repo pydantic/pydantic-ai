@@ -870,6 +870,9 @@ class TextPart:
 
     _: KW_ONLY
 
+    id: str | None = None
+    """An optional identifier of the text part."""
+
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
