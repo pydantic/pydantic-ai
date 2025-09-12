@@ -1135,7 +1135,7 @@ class OpenAIResponsesModel(Model):
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        if item.id and item.id.startswith('msg_'):
+                        if item.id and message.provider_name == self.system:
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
@@ -1164,26 +1164,33 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(item, ThinkingPart):
                         if (
                             item.id
-                            and item.provider_name == self.system
-                            and OpenAIModelProfile.from_profile(
-                                self.profile
-                            ).openai_supports_encrypted_reasoning_content
+                            and message.provider_name == self.system
                             and model_settings.get('openai_send_reasoning_ids', True)
                         ):
+                            signature: str | None = None
                             if (
-                                reasoning_item is None
-                                or reasoning_item['id'] != item.id
-                                and (item.signature or item.content)
+                                item.signature
+                                and item.provider_name == self.system
+                                and OpenAIModelProfile.from_profile(
+                                    self.profile
+                                ).openai_supports_encrypted_reasoning_content
+                            ):
+                                signature = item.signature
+
+                            if (reasoning_item is None or reasoning_item['id'] != item.id) and (
+                                signature or item.content
                             ):  # pragma: no branch
                                 reasoning_item = responses.ResponseReasoningItemParam(
                                     id=item.id,
                                     summary=[],
-                                    encrypted_content=item.signature,
+                                    encrypted_content=signature,
                                     type='reasoning',
                                 )
                                 openai_messages.append(reasoning_item)
 
                             if item.content:
+                                # The check above guarantees that `reasoning_item` is not None
+                                assert reasoning_item is not None
                                 reasoning_item['summary'] = [
                                     *reasoning_item['summary'],
                                     Summary(text=item.content, type='summary_text'),
