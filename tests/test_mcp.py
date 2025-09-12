@@ -1252,6 +1252,22 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
         )
 
 
+async def test_tool_metadata_extraction():
+    """Test that MCP tool metadata is properly extracted into ToolDefinition."""
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        tools = [tool.tool_def for tool in (await server.get_tools(ctx)).values()]
+        # find `celsius_to_fahrenheit`
+        celsius_to_fahrenheit = next(tool for tool in tools if tool.name == 'celsius_to_fahrenheit')
+        assert celsius_to_fahrenheit.metadata is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations') is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations', {}).get('title', None) == 'Celsius to Fahrenheit'
+        assert celsius_to_fahrenheit.metadata.get('output_schema') is not None
+        assert celsius_to_fahrenheit.metadata.get('output_schema', {}).get('type', None) == 'object'
+
+
 async def test_client_sampling(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
