@@ -38,7 +38,7 @@ from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
-    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
+    from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
     from openai.types.responses.response_usage import ResponseUsage
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -1238,34 +1238,26 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                        id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(
+                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42c90b950819c9e32c46d4f8326ca07460311b0c8d3de'),
+                    TextPart(
                         content=IsStr(),
-                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
+                        id='msg_68c42cb1aaec819cb992bd92a8c7766007460311b0c8d3de',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c36eafb6f881a3bd47d4f10db61dee033a1f85a7ada5bf',
-                    ),
-                    TextPart(content=IsStr(), id='msg_68c36ec63adc81a39b63da30b6a85f59033a1f85a7ada5bf'),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1918, details={'reasoning_tokens': 1600}),
+                usage=RequestUsage(input_tokens=13, output_tokens=2199, details={'reasoning_tokens': 1920}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c36eaf77d081a39099dbc0fc3bdea9033a1f85a7ada5bf',
+                provider_response_id='resp_68c42c902794819cb9335264c342f65407460311b0c8d3de',
                 finish_reason='stop',
             ),
         ]
@@ -1289,38 +1281,25 @@ async def test_openai_responses_model_thinking_part(allow_model_requests: None, 
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                        id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(
+                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42cb43d3c819caf078978cc2514ea07460311b0c8d3de'),
+                    TextPart(
                         content=IsStr(),
-                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
+                        id='msg_68c42cd36134819c800463490961f7df07460311b0c8d3de',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c36ec8ae5881a3b5e89a47b3ebe438033a1f85a7ada5bf',
-                    ),
-                    TextPart(content=IsStr(), id='msg_68c36f0437e881a38fdf86f8d1db74f2033a1f85a7ada5bf'),
                 ],
-                usage=RequestUsage(input_tokens=353, output_tokens=3097, details={'reasoning_tokens': 2624}),
+                usage=RequestUsage(input_tokens=314, output_tokens=2737, details={'reasoning_tokens': 2112}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c36ec7742c81a3b82f5b5e6ae48390033a1f85a7ada5bf',
+                provider_response_id='resp_68c42cb3d520819c9d28b07036e9059507460311b0c8d3de',
                 finish_reason='stop',
             ),
         ]
@@ -1359,19 +1338,19 @@ async def test_openai_responses_thinking_part_from_other_model(
                 ],
                 usage=RequestUsage(
                     input_tokens=42,
-                    output_tokens=278,
+                    output_tokens=291,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 42,
-                        'output_tokens': 278,
+                        'output_tokens': 291,
                     },
                 ),
                 model_name='claude-sonnet-4-20250514',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_01Xb5RvZxDvuvTBVHG7AmQna',
+                provider_response_id='msg_0114iHK2ditgTf1N8FWomc4E',
                 finish_reason='stop',
             ),
         ]
@@ -1400,38 +1379,23 @@ async def test_openai_responses_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
+                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c368ab1038819c84ae1f570b3e050209941cd87a51b324',
-                    ),
-                    TextPart(content=IsStr(), id='msg_68c368d519c4819ca1c501002d55d44c09941cd87a51b324'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc'),
+                    TextPart(content=IsStr(), id='msg_68c42d0b5e5c819385352dde1f447d910ad492c7955fc6fc'),
                 ],
-                usage=RequestUsage(input_tokens=295, output_tokens=2778, details={'reasoning_tokens': 2432}),
+                usage=RequestUsage(input_tokens=306, output_tokens=3134, details={'reasoning_tokens': 2496}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c368aa7c4c819c878d6f3c8a02a28609941cd87a51b324',
+                provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
                 finish_reason='stop',
             ),
         ]
@@ -1466,20 +1430,33 @@ async def test_openai_responses_thinking_part_iter(allow_model_requests: None, o
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b',
-                        signature=IsStr(),
+                        id='rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff',
+                        signature='gAAAAABoxC0m_QWpOlSt8wyPk_gtnjiI4mNLOryYlNXO-6rrVeIqBYDDAyMVg2_ldboZvfhW8baVbpki29gkTAyNygTr7L8gF1XK0hFovoa23ZYJKvuOnyLIJF-rXCsbDG7YdMYhi3bm82pMFVQxNK4r5muWCQcHmyJ2S1YtBoJtF_D1Ah7GpW2ACvJWsGikb3neAOnI-RsmUxCRu-cew7rVWfSj8jFKs8RGNQRvDaUzVniaMXJxVW9T5C7Ytzi852MF1PfVq0U-aNBzZBtAdwQcbn5KZtGkYLYTChmCi2hMrh5-lg9CgS8pqqY9-jv2EQvKHIumdv6oLiW8K59Zvo8zGxYoqT--osfjfS0vPZhTHiSX4qCkK30YNJrWHKJ95Hpe23fnPBL0nEQE5l6XdhsyY7TwMom016P3dgWwgP5AtWmQ30zeXDs=',
                         provider_name='openai',
                     ),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
-                    ThinkingPart(content=IsStr(), id='rs_68bb4cc9730481a38d9aaf55dff8dd4a0b681c5350c0b73b'),
-                    TextPart(content=IsStr(), id='msg_68bb4cd204f881a3b7efcb8866b634410b681c5350c0b73b'),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff',
+                    ),
+                    ThinkingPart(
+                        content=IsStr(),
+                        id='rs_68c42d1d0878819d8266007cd3d1402c08fbf9b1584184ff',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68c42d26866c819da8d5c606621c911608fbf9b1584184ff',
+                    ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1733, details={'reasoning_tokens': 1280}),
+                usage=RequestUsage(input_tokens=13, output_tokens=1680, details={'reasoning_tokens': 1408}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68bb4cbe885481a3a55b6a2e6d6aa5120b681c5350c0b73b',
+                provider_response_id='resp_68c42d0fb418819dbfa579f69406b49508fbf9b1584184ff',
                 finish_reason='stop',
             ),
         ]
@@ -1529,38 +1506,26 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
+                        id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
-                    ),
-                    ThinkingPart(
-                        content=IsStr(),
-                        id='rs_68c301598b5c81938a8f95605519c25a00b441a18c4893c1',
-                    ),
+                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
+                    ThinkingPart(content=IsStr(), id='rs_68c42d29124881968e24c1ca8c1fc7860e8bc41441c948f6'),
                     ToolCallPart(
                         tool_name='update_plan',
                         args=IsStr(),
-                        tool_call_id='call_WrCgFeUNTYD3S3yvrY7RFwXM|fc_68c3018f9aa88193952ceab700035b3600b441a18c4893c1',
+                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO|fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=124, output_tokens=2098, details={'reasoning_tokens': 1984}),
+                usage=RequestUsage(input_tokens=124, output_tokens=1926, details={'reasoning_tokens': 1792}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c30157af5c819393a64d8d810d562700b441a18c4893c1',
+                provider_response_id='resp_68c42d28772c819684459966ee2201ed0e8bc41441c948f6',
                 finish_reason='stop',
             ),
             ModelRequest(
@@ -1568,22 +1533,22 @@ async def test_openai_responses_thinking_with_tool_calls(allow_model_requests: N
                     ToolReturnPart(
                         tool_name='update_plan',
                         content='plan updated',
-                        tool_call_id='call_WrCgFeUNTYD3S3yvrY7RFwXM|fc_68c3018f9aa88193952ceab700035b3600b441a18c4893c1',
+                        tool_call_id='call_gL7JE6GDeGGsFubqO2XGytyO|fc_68c42d3e9e4881968b15fbb8253f58540e8bc41441c948f6',
                         timestamp=IsDatetime(),
                     )
                 ],
                 instructions="You are a helpful assistant that uses planning. You MUST use the update_plan tool and continually update it as you make progress against the user's prompt",
             ),
             ModelResponse(
-                parts=[TextPart(content=IsStr(), id='msg_68c3019459f48193a6653ef497bd4c6000b441a18c4893c1')],
+                parts=[TextPart(content=IsStr(), id='msg_68c42d408eec8196ae1c5883e07c093e0e8bc41441c948f6')],
                 usage=RequestUsage(
-                    input_tokens=2272, cache_read_tokens=1152, output_tokens=114, details={'reasoning_tokens': 0}
+                    input_tokens=2087, cache_read_tokens=2048, output_tokens=124, details={'reasoning_tokens': 0}
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c301935a2881939de9421990d0cd7c00b441a18c4893c1',
+                provider_response_id='resp_68c42d3fd6a08196bce23d6be960ff8a0e8bc41441c948f6',
                 finish_reason='stop',
             ),
         ]
@@ -1594,13 +1559,13 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
     c = response_message(
         [
             ResponseReasoningItem(
-                id='reasoning',
+                id='rs_123',
                 summary=[],
                 type='reasoning',
                 encrypted_content='123',
             ),
             ResponseOutputMessage(
-                id='text',
+                id='msg_123',
                 content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
                 role='assistant',
                 status='completed',
@@ -1625,8 +1590,8 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
             ),
             ModelResponse(
                 parts=[
-                    ThinkingPart(content='', id='reasoning', signature='123', provider_name='openai'),
-                    TextPart(content='4', id='text'),
+                    ThinkingPart(content='', id='rs_123', signature='123', provider_name='openai'),
+                    TextPart(content='4', id='msg_123'),
                 ],
                 model_name='gpt-4o-123',
                 timestamp=IsDatetime(),
@@ -1640,8 +1605,94 @@ async def test_openai_responses_thinking_without_summary(allow_model_requests: N
     assert openai_messages == snapshot(
         [
             {'role': 'user', 'content': 'What is 2+2?'},
-            {'id': 'reasoning', 'summary': [], 'encrypted_content': '123', 'type': 'reasoning'},
-            {'role': 'assistant', 'content': '4'},
+            {'id': 'rs_123', 'summary': [], 'encrypted_content': '123', 'type': 'reasoning'},
+            {
+                'role': 'assistant',
+                'id': 'msg_123',
+                'content': [{'text': '4', 'type': 'output_text', 'annotations': []}],
+                'type': 'message',
+                'status': 'completed',
+            },
+        ]
+    )
+
+
+async def test_openai_responses_thinking_with_multiple_summaries(allow_model_requests: None):
+    c = response_message(
+        [
+            ResponseReasoningItem(
+                id='rs_123',
+                summary=[
+                    Summary(text='1', type='summary_text'),
+                    Summary(text='2', type='summary_text'),
+                    Summary(text='3', type='summary_text'),
+                    Summary(text='4', type='summary_text'),
+                ],
+                type='reasoning',
+                encrypted_content='123',
+            ),
+            ResponseOutputMessage(
+                id='msg_123',
+                content=cast(list[Content], [ResponseOutputText(text='4', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ],
+    )
+    mock_client = MockOpenAIResponses.create_mock(c)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is 2+2?')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is 2+2?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(content='1', id='rs_123', signature='123', provider_name='openai'),
+                    ThinkingPart(content='2', id='rs_123'),
+                    ThinkingPart(content='3', id='rs_123'),
+                    ThinkingPart(content='4', id='rs_123'),
+                    TextPart(content='4', id='msg_123'),
+                ],
+                model_name='gpt-4o-123',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_response_id='123',
+            ),
+        ]
+    )
+
+    _, openai_messages = await model._map_messages(result.all_messages(), model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is 2+2?'},
+            {
+                'id': 'rs_123',
+                'summary': [
+                    {'text': '1', 'type': 'summary_text'},
+                    {'text': '2', 'type': 'summary_text'},
+                    {'text': '3', 'type': 'summary_text'},
+                    {'text': '4', 'type': 'summary_text'},
+                ],
+                'encrypted_content': '123',
+                'type': 'reasoning',
+            },
+            {
+                'role': 'assistant',
+                'id': 'msg_123',
+                'content': [{'text': '4', 'type': 'output_text', 'annotations': []}],
+                'type': 'message',
+                'status': 'completed',
+            },
         ]
     )
 
@@ -1667,18 +1718,18 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c36b7dbd58819e8c05f6f1205cf2fc011e2e4dcb20dbb7',
+                        id='rs_68c42de022c881948db7ed1cc2529f2e0202c9ad459e0d23',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_68c36b84180c819e9e4d96c79945b7af011e2e4dcb20dbb7'),
+                    TextPart(content=IsStr(), id='msg_68c42de31d348194a251b43ad913ef140202c9ad459e0d23'),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=509, details={'reasoning_tokens': 192}),
+                usage=RequestUsage(input_tokens=13, output_tokens=248, details={'reasoning_tokens': 64}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c36b7d498c819eae7c20d569041316011e2e4dcb20dbb7',
+                provider_response_id='resp_68c42ddf9bbc8194aa7b97304dd909cb0202c9ad459e0d23',
                 finish_reason='stop',
             ),
         ]
@@ -1691,7 +1742,7 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
 
     with pytest.raises(
         ModelHTTPError,
-        match="Item 'rs_68c36b7dbd58819e8c05f6f1205cf2fc011e2e4dcb20dbb7' of type 'reasoning' was provided without its required following item.",
+        match=r"Item '.*' of type 'reasoning' was provided without its required following item\.",
     ):
         await agent.run('Anything to add?', message_history=messages)
 
@@ -1718,18 +1769,18 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c36b87d894819ca6af6d79c43c61e10f165aa9d4aec1a3',
+                        id='rs_68c42de4f63c819fb31b6019a4eaf67c051f82c608a83beb',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
-                    TextPart(content=IsStr(), id='msg_68c36b8c0bc0819ca376f8e5b44025010f165aa9d4aec1a3'),
+                    TextPart(content=IsStr(), id='msg_68c42de8a410819faf7a9cbebd2b4bc4051f82c608a83beb'),
                 ],
-                usage=RequestUsage(input_tokens=172, output_tokens=419, details={'reasoning_tokens': 128}),
+                usage=RequestUsage(input_tokens=142, output_tokens=355, details={'reasoning_tokens': 128}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68c36b876578819ca92f2de1060797e80f165aa9d4aec1a3',
+                provider_response_id='resp_68c42de4afcc819f995a1c59fe87c9d5051f82c608a83beb',
                 finish_reason='stop',
             ),
         ]
