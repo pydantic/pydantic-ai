@@ -27,8 +27,6 @@ from .messages import (
     BinaryContent,
     DocumentUrl,
     ImageUrl,
-    MagicBinaryContent,
-    MagicDocumentUrl,
     VideoUrl,
 )
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
@@ -62,8 +60,6 @@ __all__ = (
     'VideoUrl',
     'DocumentUrl',
     'BinaryContent',
-    'MagicDocumentUrl',
-    'MagicBinaryContent',
     # tools
     'Tool',
     'ToolDefinition',

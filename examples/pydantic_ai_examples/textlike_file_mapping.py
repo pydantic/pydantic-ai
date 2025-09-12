@@ -9,7 +9,8 @@ Behavior summary:
 
 from __future__ import annotations
 
-from pydantic_ai import Agent, MagicBinaryContent, MagicDocumentUrl
+from pydantic_ai import Agent
+from pydantic_ai.messages import BinaryContent, DocumentUrl
 
 # Load API keys from .env if available
 try:  # pragma: no cover - example bootstrap
@@ -24,24 +25,21 @@ def run_with_openai() -> None:
     agent = Agent('openai:gpt-4o')
 
     # Text file by URL → becomes inline text with a file delimiter on OpenAI
-    txt_url = MagicDocumentUrl(
+    txt_url = DocumentUrl(
         url='https://raw.githubusercontent.com/pydantic/pydantic/main/README.md',
-        filename='README.md',
         # media_type optional; inferred from extension if omitted
         media_type='text/plain',
     )
 
     # Binary text (bytes) → becomes inline text with a file delimiter on OpenAI
-    txt_bytes = MagicBinaryContent(
+    txt_bytes = BinaryContent(
         data=b'Hello from bytes',
         media_type='text/plain',
-        filename='hello.txt',
     )
 
     # PDF by URL → remains a file part (base64 + strict MIME) on OpenAI
-    pdf_url = MagicDocumentUrl(
+    pdf_url = DocumentUrl(
         url='https://arxiv.org/pdf/2403.05530.pdf',
-        filename='gemini-tech-report.pdf',
         media_type='application/pdf',
     )
 
@@ -59,14 +57,12 @@ def run_with_openai() -> None:
 def run_with_anthropic() -> None:
     agent = Agent('anthropic:claude-3-5-sonnet-latest')
 
-    txt_url = MagicDocumentUrl(
+    txt_url = DocumentUrl(
         url='https://raw.githubusercontent.com/pydantic/pydantic/main/README.md',
-        filename='README.md',
         media_type='text/plain',
     )
-    pdf_url = MagicDocumentUrl(
+    pdf_url = DocumentUrl(
         url='https://arxiv.org/pdf/2403.05530.pdf',
-        filename='gemini-tech-report.pdf',
         media_type='application/pdf',
     )
 
