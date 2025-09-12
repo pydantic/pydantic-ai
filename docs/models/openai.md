@@ -168,7 +168,7 @@ By passing the `provider_response_id` from an earlier run, you can allow the mod
 
 ##### Automatically referencing earlier responses
 
-When the `openai_previous_response_id` field is set to `'auto'`, Pydantic AI will automatically select the most recent `provider_response_id` from message history and omit messages that came before it, letting the OpenAI SDK leverage server-side history instead for improved efficiency.
+When the `openai_previous_response_id` field is set to `'auto'`, Pydantic AI will automatically select the most recent `provider_response_id` from message history and omit messages that came before it, letting the OpenAI API leverage server-side history instead for improved efficiency.
 
 ```python
 from pydantic_ai import Agent
