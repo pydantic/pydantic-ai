@@ -181,8 +181,8 @@ result1 = agent.run_sync('Tell me a joke.')
 print(result1.output)
 #> Did you hear about the toothpaste scandal? They called it Colgate.
 
-# When set to 'auto', only the latest request and the most recent provider_response_id
-# from history is sent to OpenAI API.
+# When set to 'auto', the most recent provider_response_id
+# and messages after it are sent as request.
 model_settings = OpenAIResponsesModelSettings(openai_previous_response_id='auto')
 result2 = agent.run_sync(
     'Explain?',
