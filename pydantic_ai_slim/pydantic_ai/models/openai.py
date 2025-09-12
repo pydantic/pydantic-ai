@@ -233,6 +233,18 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     for more information.
     """
 
+    openai_include_code_execution_results: bool
+    """Whether to include the code execution results in the response.
+
+    Corresponds to the `code_interpreter_call.outputs` value of the `include` parameter in the Responses API.
+    """
+
+    openai_include_web_search_results: bool
+    """Whether to include the web search results in the response.
+
+    Corresponds to the `web_search_call.action.sources` value of the `include` parameter in the Responses API.
+    """
+
 
 @dataclass(init=False)
 class OpenAIChatModel(Model):
@@ -924,7 +936,7 @@ class OpenAIResponsesModel(Model):
                     BuiltinToolReturnPart(
                         tool_name=item.type,
                         tool_call_id=item.id,
-                        content=item.outputs,
+                        content=[output.model_dump() for output in item.outputs] if item.outputs else None,
                         provider_name=self.system,
                     )
                 )
@@ -1063,9 +1075,13 @@ class OpenAIResponsesModel(Model):
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
 
-        include: list[responses.ResponseIncludable] | None = None
+        include: list[responses.ResponseIncludable] = []
         if profile.openai_supports_encrypted_reasoning_content:
-            include = ['reasoning.encrypted_content']
+            include.append('reasoning.encrypted_content')
+        if model_settings.get('openai_include_code_execution_results'):
+            include.append('code_interpreter_call.outputs')
+        if model_settings.get('openai_include_web_search_results'):
+            include.append('web_search_call.action.sources')  # pyright: ignore[reportArgumentType]
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -1563,7 +1579,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.type,
                         tool_call_id=chunk.item.id,
-                        content=chunk.item.outputs,
+                        content=[output.model_dump() for output in chunk.item.outputs] if chunk.item.outputs else None,
                         provider_name=self.provider_name,
                     )
 
