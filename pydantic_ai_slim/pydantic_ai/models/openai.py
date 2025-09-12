@@ -222,6 +222,17 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     `medium`, and `high`.
     """
 
+    openai_previous_response_id: Literal['auto'] | str
+    """The ID of a previous response from the model to use as the starting point for a continued conversation.
+
+    When set to `'auto'`, the request automatically uses the most recent
+    `provider_response_id` from the message history and omits earlier messages.
+
+    This enables the model to use server-side conversation state and faithfully reference previous reasoning.
+    See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
+    for more information.
+    """
+
 
 @dataclass(init=False)
 class OpenAIChatModel(Model):
@@ -977,6 +988,10 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+
         instructions, openai_messages = await self._map_messages(messages, model_settings)
         reasoning = self._get_reasoning(model_settings)
 
@@ -1027,6 +1042,7 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                previous_response_id=previous_response_id,
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
@@ -1091,6 +1107,28 @@ class OpenAIResponsesModel(Model):
                 f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
             ),
         }
+
+    def _get_previous_response_id_and_new_messages(
+        self, messages: list[ModelMessage]
+    ) -> tuple[str | None, list[ModelMessage]]:
+        # When `openai_previous_response_id` is set to 'auto', the most recent
+        # `provider_response_id` from the message history is selected and all
+        # earlier messages are omitted. This allows the OpenAI SDK to reuse
+        # server-side history for efficiency. The returned tuple contains the
+        # `previous_response_id` (if found) and the trimmed list of messages.
+        previous_response_id = None
+        trimmed_messages: list[ModelMessage] = []
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                previous_response_id = m.provider_response_id
+                break
+            else:
+                trimmed_messages.append(m)
+
+        if previous_response_id and trimmed_messages:
+            return previous_response_id, list(reversed(trimmed_messages))
+        else:
+            return None, messages
 
     async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
