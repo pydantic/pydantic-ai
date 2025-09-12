@@ -740,6 +740,9 @@ class BuiltinToolReturnPart(BaseToolReturnPart):
 
     _: KW_ONLY
 
+    metadata: dict[str, Any] | None = None
+    """Optional metadata for the tool return."""
+
     provider_name: str | None = None
     """The name of the provider that generated the response."""
 
@@ -992,6 +995,9 @@ class BuiltinToolCallPart(BaseToolCallPart):
     """A tool call to a built-in tool."""
 
     _: KW_ONLY
+
+    metadata: dict[str, Any] | None = None
+    """Optional metadata for the tool call."""
 
     provider_name: str | None = None
     """The name of the provider that generated the response.

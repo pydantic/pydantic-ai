@@ -8,23 +8,26 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '231'
+      - '314'
       content-type:
       - application/json
       host:
       - api.openai.com
     method: POST
     parsed_body:
+      include:
+      - reasoning.encrypted_content
       input:
-      - content: What day is it today?
+      - content: What is the weather in San Francisco today?
         role: user
       instructions: You are a helpful assistant.
-      model: gpt-4o
+      model: gpt-5
+      previous_response_id: null
       stream: false
       tool_choice: auto
       tools:
       - search_context_size: medium
-        type: web_search_preview
+        type: web_search
     uri: https://api.openai.com/v1/responses
   response:
     headers:
@@ -33,13 +36,15 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '2569'
+      - '7002'
       content-type:
       - application/json
       openai-organization:
       - pydantic-28gund
       openai-processing-ms:
-      - '3632'
+      - '7001'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
       openai-version:
       - '2020-10-01'
       strict-transport-security:
@@ -47,39 +52,49 @@ interactions:
       transfer-encoding:
       - chunked
     parsed_body:
-      created_at: 1747227360
+      background: false
+      created_at: 1757719269
       error: null
-      id: resp_682492e0aab88191afcadcbbb85e1a490e7f27fcb18d04ed
+      id: resp_046f1027167eded50068c4aae53ec48197b3bce501067a0364
       incomplete_details: null
       instructions: You are a helpful assistant.
       max_output_tokens: null
+      max_tool_calls: null
       metadata: {}
-      model: gpt-4o-2024-08-06
+      model: gpt-5-2025-08-07
       object: response
       output:
-      - id: ws_682492e1b7a08191b30170317ea7ee570e7f27fcb18d04ed
+      - encrypted_content: gAAAAABoxKrsyPp96SF6Q6K5D2oOYPgsu3MrivUnFDtvuyVCFckLaeAPVhndpbwr4mWRVCX_3yRWlbEHpeSb6eOjleDyJGyDj6AdRo_XBWCXVfuuI91fLrTQ9U1A_upFzbwVC0uYWgErr6-LoM1kAR305dlAHEtgN4FnYgIafhE82FFuMY7D5-h1kzXoIoUWayo1WtEVoWhDObeGqNZBYdypNt2zqQZCYLLBtKkJrJtxA3txXYovDxMrgJ8obg3JIBi3m_YOlJoQHehkpDjo8hR2C2bhsJJ1-ZRKMQp3f6leTG4eNc_-tPCe6IKNw_uAZVvMdbLkEHY4o6wGuRtSc9OJet8Pfamnalb4DKGT_f6Uw4dk2-wqBM8WK5EbU-tPYCo6i5S8ou44o7QDPWECbCqRchnIxr1eE6jSk0xRYVMON4dlEPQ8N6nMuH2776T91zgEP_kEdDW_KMnuB52K_SaJ7qtvrnvf5UUd3MzpTgiIFRF3pmGCGku-_qXFwtHLH81zIjT80jm8JK8hCmBpG-Cwn2mVt5MgJt3HUoATUhEaaAy6fCFPn9n_xC9yODl5NgzFi1e4wbxbG-mh6FhjmBXckBzJAaJAHCGqZJSlKHKozsO4wJWLXtVWqJD12Tp1AcagPIZqPjzBNjtLUN_aJBBb5A-ZPcnZVa0ij7-HlS-ngJd33cR965lDhAMHoen-QBuYmVIPXU31XYtMo-dfu1s7B0f1XFi7m232l10MKk0yhp8Ou7hYwbgkBAtZwREFMelQvQQpfwSPdjin91v6UNSjJt4hdBfQpR6VzWOcKCwzxlYws9rvtCydvwqOfynUO1Q_qkyY5HExXRjlzFPdiQiRFcvo7uWyRYRdoV8NBTg-nTnjYOcHWTJ0ol6Ibv7q8tIYVQFHwQ00kJ9B2JZmA6lYO-1CYawGOLUmSaW5WCTSeW8C5WBdijtIqUKRt6BNEZDjsoACBZln7ZkDDSXRpnmsoba3Tyq4zf2P_8ldzZzeztWEA02xkJIPbz6Jd4AdL_Kf2njsDcpfrJR9jMPtiZulIgTSwE_jpn4ufENQcmqNC7MknESbEHg8v6L8FtcBOLRldztNQgOsbNmv21a86OAz-NiQ6O9Yxtq2ZkfYz0VEKzajM5RJqxwByTCTY0WLsh_0jF1reGaTuGXAo_05z4r2ush-_t8_CB70CU5UpCk2BWBtcgKT1XeYpHJVPrN1pryd9sOYvxUu70R9DwRSkifk2J9uhuBAi-g-9Igtlerro3fOVwnP0Gzd0NVve48ikBu2g8mO-p1mUzoTzmZ8cM-XgAtx1JSRBU2D75sGHFgYH-lpYYqg2jcmWe7EE5YT-H6LoZEcvDxVfai_KGht9vZIzZMBKmRKwIPJdh0qSoW_FbhsdbZBKOtYRQYru3KqRugInpq3U08Qf97Rk67l0W4bDoYX-HkpQm0uWduoShLWU__1UzTN1ekiO41oAJhkL4C-XygsIfs-izdrDJb7YmpMofx5vkLmGMK9LC2xa9_FEVowOOyv6gtQflEx8fbcq2GnN8fh-NBU6wNbpmuNmuXm8ceqt8V-Vl01Xh73IBxioN8khdKBOfTKRlc_G7DtE-3UNZLIk6SAV3AdptAnil_iS7RD13U4l-BSs95d0bNJvh6x1ZN0ipVsK5_1hrdNIkbHrPoJzyQwUsVZX02WUKUC3oH6uuSBlEvYuSkQG34KO6EARaFJap_V_LYkfIlsU1fJQ6wvBnMGICWoNrFQmPeAoIcKpsncPKNOKKJ4grzHRU5Y5yI9jCsJ4DzZH1-RNlgjfrmeVFv-u7-jEYwZTbRtEsv2hnZcCGA93jhAg2ZXorU32WB2ScYUhQ9-NMZmSYMcZZB5FYbcpRPBoW__OG7pzvUBUp2xWw_4N9cg9JrNIY2sElYXmxdWf5jaNMNXVKH3gS9_8rJk7Faa8nCncevs1scRrE-o4y6Cb3vt836yTW5ZJSY8xOkqmDqQ7z698nOm9XgTdnMygXkuKZubCxTH1Ols_Vg3MgCh3Hitpqp7KsJomcplMZco6jvtRdKXfM6YllDLJDc68n7PpuIVmXS2vJoRSJYz2RPe6OGN_n64vDZQduQhoqSjSg5WOM92EDy-r1o-kjxZcFUxapdV8Sq271O5NvRXFQ==
+        id: rs_046f1027167eded50068c4aae5ae68819799b37d0e9c90ff1b
+        summary: []
+        type: reasoning
+      - action:
+          query: 'weather: San Francisco, CA'
+          type: search
+        id: ws_046f1027167eded50068c4aae7e5a4819793b2c41e11f3e363
         status: completed
         type: web_search_call
+      - encrypted_content: gAAAAABoxKrsWnQiXGJpgHQ0WEPJM9xPEkY4wvYGcNlGvE2A694inFAaEQPbLSHbf_6LZLbkGTYp5ow-GTjqWGgyZUpFp0WPbFNjAXZZseHel5tFPpPWR_UaxwqoxZv5zqoZXLACOarrBf7tqtbB7rRMtIhxUR4as6M1YF0RjWO6AYLtnAjdyYSBJeEo40NlHXaWNLucuRZYUDX6HFNwYR9HUIYd83sJMiCFV2_ECY8o_VSnX83Wjnhn3VRuQesZwXOIx1zjwlbY3HlmLu2bYru2I0_-UVmIyCFb9mEaB23vTBKj1rtvKe7PDgY4_9zvWKV9W2GMGO2yfoe0Zs8oVdUNtNyGHm-M3ikBkffLnlZ0OIVI8Xo5ibx5z5Bt8zB_Ho20yvvAMOZJ-abREy7s_XdeJfWqJxsdYlCRkrsILD3GuYpch03zL1ryWjLEDdZYWP80fM6bb3VYrSY5kJan5yDXllZGsog-vE36vGg21XfrGskoC8ROto2-4hbvM-pqdD_k-XAEX2hudnZpaCAHRmi6WGyCqvha22sd-Z6asXtYZfWw7bibmkr187xKGCTc62mq-Bz8i1NLiF10v00h69bHs-nH9oGJ6orP8CvpFLNVL_heNZdfF1qCeP5AKvbURBMUM_texbZ_YH5WkyL0Y6LnZCvPJmGaKfcpbDXf0G1t08SXjSDlrgcAxGRSLw0apdnpbXuwD21tRngcMgFGUZ4frDb8fK9tTcEd6LP4-tPDgdhlMM2wNoYDISFOVxw_ycO0I9Uf6JG98c3vosqjW0B9e_VmS_qBBA9tbhE2F6RygZ3W8fJ9UXb_Z6eEE6vefNSRa-Aum1VPRqbq3kMmiap7AdaKwwih5NcBJVAGk4_z7Ady8qFQFls1YL2feNtZEwY7cd_mOyn8c5ahcvMYhP7PLlA_51boVFhJfDotJk9-f0sqd90Pryq6mP6wkRm4kmuuO7dO25B6RT3D90O9MvnIW-o6twzQNIEsrwX9wLauk4WGxzCWmtea44u0DWJ2fkIL1bBB2PttqOdwv3IyDQWhnl5OLfIAMlTXtlg_RYkarQHJPePpG3TGrJNRnE8thoaYsxiqfOnXSGz7GnfVTxDpKodl14Po-MS5hQ8STcmDe4XDRAG9pZI9sjRLHyk45RxerlPCxJrg7BUyNt9v6Cme_EKSXVRqos-Sl07p_VRTEn-Uuf_Rjle-iSqaPrfkgtXOo4jIblIz86Yg3TxSPZSX4KvKuQA-NeF1Ja9GGMSaRzUfTHwtthEUlAau7Zk2gJWPKFTlFGjaTxRxloUdZthCuCdObcKSOC-VfiLqZE3lsAFFxY3kLOEpl_OFSUgo4G9o4qkZ8Gv9scZwaei9FF8dwm3bvoan9glRlBcZbgy6Xpfn2OffRYQgCc4ycx1BbliZY71SKRm3psBp67LULBLIeaBExSEwFpJ0A_AXGd-lNntekOOS1QaJ4svpEDbIQPUZo03quVM-vpTmKzQXZBz7quykxnKOXMA8Kze5ot8InGkxkie5KuhkviDs1jvr00JELzd3vi7BVgRzWARZmVUhgTEVQMGLJKnvUpayN4R0SjZ7NSu9Kig_8zB7XLvDbADV4jRFUzRa1pEGToh8A8SWFudOo4M2lL0z-Vu_GMwScXsbBPrNoDSroaYRpZ-et-3KXoSgE1Pk0-71EFF7_YuINcWWlfoWyTmdXMBoTGKa0T8oxn8dtLuJiFB18oN5T8vgaKqOVnx0SWXweoqnpQXVop061uy0U-TmkomEgwbnbkmBew5OedbkSS1ngHktZvUx8F6nIEbdAmdhuL6DoqkyqanMnIM32og4TgECmgOBogmxulebfg60imk5pX5S8q04WkBm-pnHGF90L2yKnZJ5MFrR_w9K3-aWnwatGH1w_0-gPl1ZUdBXxahNMyeN5eiTulKgR7NYo9SYbFkGfYhyk5iSWXXGIjaOtw2ByCi3D8gp_NSQd991n3ZaxHqokQmURCTsCqwR09o2l8jIOS7n9DEiC-hVrZ0MISEUKC2wYLngiOHS2DLgyGtARH-sMmkiyJ7KPjmGWZuDLlB5009rTiPv_wEdcCu8sE50oKq0M_x9Y82zFzFILqY3oGMR6JbvFT141Zp9jo1GyCmoT_8FybPh1ofBq4wrTHfe3jBG8XT4ttuATaQ2fT3-LdkLVmuUlHYdYpK2FyklISfSsN3zDAUlr7XLuMDx1sqHR927nch_QUK6EsHX8048Ay7VK7FsVAddyuTN5rh6yQQt5Pi2iMggPPlNxckggh8C_xxZxM-c7SLb_nXUtN2dqJaO8khApUhjZZCK7_J1i0Lg51nBSn2vY8yRqGQ_q33WObENL5NEqi6ASMQtYI6ABU_PYh7j3pm_OS2L1HEJN0gQfBp67yKrGurwESyuLpWiYCUkI4LaHOoI-7HYrJG4qkGHlKr3D_QFF1SB
+        id: rs_046f1027167eded50068c4aae853c48197beea48d1b360e686
+        summary: []
+        type: reasoning
       - content:
         - annotations: []
-          text: "Today is Wednesday, May 14, 2025.\n\n## Weather for San Francisco, CA:\nCurrent Conditions: Mostly clear,
-            50°F (10°C)\n\nDaily Forecast:\n* Wednesday, May 14: Low: 51°F (10°C), High: 65°F (18°C), Description: Areas of
-            low clouds early; otherwise, mostly sunny\n* Thursday, May 15: Low: 53°F (12°C), High: 66°F (19°C), Description:
-            Areas of low clouds, then sun\n* Friday, May 16: Low: 53°F (12°C), High: 64°F (18°C), Description: Partly sunny\n*
-            Saturday, May 17: Low: 52°F (11°C), High: 63°F (17°C), Description: Low clouds breaking for some sun; breezy in
-            the afternoon\n* Sunday, May 18: Low: 51°F (10°C), High: 68°F (20°C), Description: Clouds yielding to sun\n* Monday,
-            May 19: Low: 53°F (12°C), High: 68°F (20°C), Description: Sunny\n* Tuesday, May 20: Low: 52°F (11°C), High: 70°F
-            (21°C), Description: Mostly sunny\n "
+          logprobs: []
+          text: 'San Francisco weather today (Friday, September 12, 2025): Mostly sunny. Currently around 68°F (20°C); expect
+            a high near 68°F and a low around 59°F, dry conditions. '
           type: output_text
-        id: msg_682492e36ab08191813ec707a61c272f0e7f27fcb18d04ed
+        id: msg_046f1027167eded50068c4aaeb219481979d742f413b2501c1
         role: assistant
         status: completed
         type: message
       parallel_tool_calls: true
       previous_response_id: null
+      prompt_cache_key: null
       reasoning:
-        effort: null
+        effort: medium
         summary: null
+      safety_identifier: null
       service_tier: default
       status: completed
       store: true
@@ -87,26 +102,187 @@ interactions:
       text:
         format:
           type: text
+        verbosity: medium
       tool_choice: auto
       tools:
-      - search_context_size: medium
-        type: web_search_preview
+      - filters: null
+        search_context_size: medium
+        type: web_search
         user_location:
           city: null
           country: US
           region: null
           timezone: null
           type: approximate
+      top_logprobs: 0
       top_p: 1.0
       truncation: disabled
       usage:
-        input_tokens: 317
+        input_tokens: 9396
         input_tokens_details:
-          cached_tokens: 0
-        output_tokens: 286
+          cached_tokens: 8448
+        output_tokens: 513
         output_tokens_details:
-          reasoning_tokens: 0
-        total_tokens: 603
+          reasoning_tokens: 448
+        total_tokens: 9909
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '5718'
+      content-type:
+      - application/json
+      cookie:
+      - __cf_bm=2JtKWneCWyIto2so7YrmwuMwhqhF_wQTh.82CGwBzLk-1757719276-1.0.1.1-gCY0n9OSJKJ5_jtKLCvOm4I3u3rNZ5jCgyNDhmnpgDMs7v1Gh.RlcQ_rW7r54XZhkwWiNk4.pazmzbzcy_rnsvgyf_sJvXMsVJkAhMVs.7c;
+        _cfuvid=b6MzEu0b4_7a3fNYRHfkLi4lmvxHimY5OoPdOugQTwc-1757719276252-0.0.1.1-604800000
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the weather in San Francisco today?
+        role: user
+      - encrypted_content: gAAAAABoxKrsyPp96SF6Q6K5D2oOYPgsu3MrivUnFDtvuyVCFckLaeAPVhndpbwr4mWRVCX_3yRWlbEHpeSb6eOjleDyJGyDj6AdRo_XBWCXVfuuI91fLrTQ9U1A_upFzbwVC0uYWgErr6-LoM1kAR305dlAHEtgN4FnYgIafhE82FFuMY7D5-h1kzXoIoUWayo1WtEVoWhDObeGqNZBYdypNt2zqQZCYLLBtKkJrJtxA3txXYovDxMrgJ8obg3JIBi3m_YOlJoQHehkpDjo8hR2C2bhsJJ1-ZRKMQp3f6leTG4eNc_-tPCe6IKNw_uAZVvMdbLkEHY4o6wGuRtSc9OJet8Pfamnalb4DKGT_f6Uw4dk2-wqBM8WK5EbU-tPYCo6i5S8ou44o7QDPWECbCqRchnIxr1eE6jSk0xRYVMON4dlEPQ8N6nMuH2776T91zgEP_kEdDW_KMnuB52K_SaJ7qtvrnvf5UUd3MzpTgiIFRF3pmGCGku-_qXFwtHLH81zIjT80jm8JK8hCmBpG-Cwn2mVt5MgJt3HUoATUhEaaAy6fCFPn9n_xC9yODl5NgzFi1e4wbxbG-mh6FhjmBXckBzJAaJAHCGqZJSlKHKozsO4wJWLXtVWqJD12Tp1AcagPIZqPjzBNjtLUN_aJBBb5A-ZPcnZVa0ij7-HlS-ngJd33cR965lDhAMHoen-QBuYmVIPXU31XYtMo-dfu1s7B0f1XFi7m232l10MKk0yhp8Ou7hYwbgkBAtZwREFMelQvQQpfwSPdjin91v6UNSjJt4hdBfQpR6VzWOcKCwzxlYws9rvtCydvwqOfynUO1Q_qkyY5HExXRjlzFPdiQiRFcvo7uWyRYRdoV8NBTg-nTnjYOcHWTJ0ol6Ibv7q8tIYVQFHwQ00kJ9B2JZmA6lYO-1CYawGOLUmSaW5WCTSeW8C5WBdijtIqUKRt6BNEZDjsoACBZln7ZkDDSXRpnmsoba3Tyq4zf2P_8ldzZzeztWEA02xkJIPbz6Jd4AdL_Kf2njsDcpfrJR9jMPtiZulIgTSwE_jpn4ufENQcmqNC7MknESbEHg8v6L8FtcBOLRldztNQgOsbNmv21a86OAz-NiQ6O9Yxtq2ZkfYz0VEKzajM5RJqxwByTCTY0WLsh_0jF1reGaTuGXAo_05z4r2ush-_t8_CB70CU5UpCk2BWBtcgKT1XeYpHJVPrN1pryd9sOYvxUu70R9DwRSkifk2J9uhuBAi-g-9Igtlerro3fOVwnP0Gzd0NVve48ikBu2g8mO-p1mUzoTzmZ8cM-XgAtx1JSRBU2D75sGHFgYH-lpYYqg2jcmWe7EE5YT-H6LoZEcvDxVfai_KGht9vZIzZMBKmRKwIPJdh0qSoW_FbhsdbZBKOtYRQYru3KqRugInpq3U08Qf97Rk67l0W4bDoYX-HkpQm0uWduoShLWU__1UzTN1ekiO41oAJhkL4C-XygsIfs-izdrDJb7YmpMofx5vkLmGMK9LC2xa9_FEVowOOyv6gtQflEx8fbcq2GnN8fh-NBU6wNbpmuNmuXm8ceqt8V-Vl01Xh73IBxioN8khdKBOfTKRlc_G7DtE-3UNZLIk6SAV3AdptAnil_iS7RD13U4l-BSs95d0bNJvh6x1ZN0ipVsK5_1hrdNIkbHrPoJzyQwUsVZX02WUKUC3oH6uuSBlEvYuSkQG34KO6EARaFJap_V_LYkfIlsU1fJQ6wvBnMGICWoNrFQmPeAoIcKpsncPKNOKKJ4grzHRU5Y5yI9jCsJ4DzZH1-RNlgjfrmeVFv-u7-jEYwZTbRtEsv2hnZcCGA93jhAg2ZXorU32WB2ScYUhQ9-NMZmSYMcZZB5FYbcpRPBoW__OG7pzvUBUp2xWw_4N9cg9JrNIY2sElYXmxdWf5jaNMNXVKH3gS9_8rJk7Faa8nCncevs1scRrE-o4y6Cb3vt836yTW5ZJSY8xOkqmDqQ7z698nOm9XgTdnMygXkuKZubCxTH1Ols_Vg3MgCh3Hitpqp7KsJomcplMZco6jvtRdKXfM6YllDLJDc68n7PpuIVmXS2vJoRSJYz2RPe6OGN_n64vDZQduQhoqSjSg5WOM92EDy-r1o-kjxZcFUxapdV8Sq271O5NvRXFQ==
+        id: rs_046f1027167eded50068c4aae5ae68819799b37d0e9c90ff1b
+        summary: []
+        type: reasoning
+      - action:
+          query: 'weather: San Francisco, CA'
+          type: search
+        id: ws_046f1027167eded50068c4aae7e5a4819793b2c41e11f3e363
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABoxKrsWnQiXGJpgHQ0WEPJM9xPEkY4wvYGcNlGvE2A694inFAaEQPbLSHbf_6LZLbkGTYp5ow-GTjqWGgyZUpFp0WPbFNjAXZZseHel5tFPpPWR_UaxwqoxZv5zqoZXLACOarrBf7tqtbB7rRMtIhxUR4as6M1YF0RjWO6AYLtnAjdyYSBJeEo40NlHXaWNLucuRZYUDX6HFNwYR9HUIYd83sJMiCFV2_ECY8o_VSnX83Wjnhn3VRuQesZwXOIx1zjwlbY3HlmLu2bYru2I0_-UVmIyCFb9mEaB23vTBKj1rtvKe7PDgY4_9zvWKV9W2GMGO2yfoe0Zs8oVdUNtNyGHm-M3ikBkffLnlZ0OIVI8Xo5ibx5z5Bt8zB_Ho20yvvAMOZJ-abREy7s_XdeJfWqJxsdYlCRkrsILD3GuYpch03zL1ryWjLEDdZYWP80fM6bb3VYrSY5kJan5yDXllZGsog-vE36vGg21XfrGskoC8ROto2-4hbvM-pqdD_k-XAEX2hudnZpaCAHRmi6WGyCqvha22sd-Z6asXtYZfWw7bibmkr187xKGCTc62mq-Bz8i1NLiF10v00h69bHs-nH9oGJ6orP8CvpFLNVL_heNZdfF1qCeP5AKvbURBMUM_texbZ_YH5WkyL0Y6LnZCvPJmGaKfcpbDXf0G1t08SXjSDlrgcAxGRSLw0apdnpbXuwD21tRngcMgFGUZ4frDb8fK9tTcEd6LP4-tPDgdhlMM2wNoYDISFOVxw_ycO0I9Uf6JG98c3vosqjW0B9e_VmS_qBBA9tbhE2F6RygZ3W8fJ9UXb_Z6eEE6vefNSRa-Aum1VPRqbq3kMmiap7AdaKwwih5NcBJVAGk4_z7Ady8qFQFls1YL2feNtZEwY7cd_mOyn8c5ahcvMYhP7PLlA_51boVFhJfDotJk9-f0sqd90Pryq6mP6wkRm4kmuuO7dO25B6RT3D90O9MvnIW-o6twzQNIEsrwX9wLauk4WGxzCWmtea44u0DWJ2fkIL1bBB2PttqOdwv3IyDQWhnl5OLfIAMlTXtlg_RYkarQHJPePpG3TGrJNRnE8thoaYsxiqfOnXSGz7GnfVTxDpKodl14Po-MS5hQ8STcmDe4XDRAG9pZI9sjRLHyk45RxerlPCxJrg7BUyNt9v6Cme_EKSXVRqos-Sl07p_VRTEn-Uuf_Rjle-iSqaPrfkgtXOo4jIblIz86Yg3TxSPZSX4KvKuQA-NeF1Ja9GGMSaRzUfTHwtthEUlAau7Zk2gJWPKFTlFGjaTxRxloUdZthCuCdObcKSOC-VfiLqZE3lsAFFxY3kLOEpl_OFSUgo4G9o4qkZ8Gv9scZwaei9FF8dwm3bvoan9glRlBcZbgy6Xpfn2OffRYQgCc4ycx1BbliZY71SKRm3psBp67LULBLIeaBExSEwFpJ0A_AXGd-lNntekOOS1QaJ4svpEDbIQPUZo03quVM-vpTmKzQXZBz7quykxnKOXMA8Kze5ot8InGkxkie5KuhkviDs1jvr00JELzd3vi7BVgRzWARZmVUhgTEVQMGLJKnvUpayN4R0SjZ7NSu9Kig_8zB7XLvDbADV4jRFUzRa1pEGToh8A8SWFudOo4M2lL0z-Vu_GMwScXsbBPrNoDSroaYRpZ-et-3KXoSgE1Pk0-71EFF7_YuINcWWlfoWyTmdXMBoTGKa0T8oxn8dtLuJiFB18oN5T8vgaKqOVnx0SWXweoqnpQXVop061uy0U-TmkomEgwbnbkmBew5OedbkSS1ngHktZvUx8F6nIEbdAmdhuL6DoqkyqanMnIM32og4TgECmgOBogmxulebfg60imk5pX5S8q04WkBm-pnHGF90L2yKnZJ5MFrR_w9K3-aWnwatGH1w_0-gPl1ZUdBXxahNMyeN5eiTulKgR7NYo9SYbFkGfYhyk5iSWXXGIjaOtw2ByCi3D8gp_NSQd991n3ZaxHqokQmURCTsCqwR09o2l8jIOS7n9DEiC-hVrZ0MISEUKC2wYLngiOHS2DLgyGtARH-sMmkiyJ7KPjmGWZuDLlB5009rTiPv_wEdcCu8sE50oKq0M_x9Y82zFzFILqY3oGMR6JbvFT141Zp9jo1GyCmoT_8FybPh1ofBq4wrTHfe3jBG8XT4ttuATaQ2fT3-LdkLVmuUlHYdYpK2FyklISfSsN3zDAUlr7XLuMDx1sqHR927nch_QUK6EsHX8048Ay7VK7FsVAddyuTN5rh6yQQt5Pi2iMggPPlNxckggh8C_xxZxM-c7SLb_nXUtN2dqJaO8khApUhjZZCK7_J1i0Lg51nBSn2vY8yRqGQ_q33WObENL5NEqi6ASMQtYI6ABU_PYh7j3pm_OS2L1HEJN0gQfBp67yKrGurwESyuLpWiYCUkI4LaHOoI-7HYrJG4qkGHlKr3D_QFF1SB
+        id: rs_046f1027167eded50068c4aae853c48197beea48d1b360e686
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          text: 'San Francisco weather today (Friday, September 12, 2025): Mostly sunny. Currently around 68°F (20°C); expect
+            a high near 68°F and a low around 59°F, dry conditions. '
+          type: output_text
+        id: msg_046f1027167eded50068c4aaeb219481979d742f413b2501c1
+        role: assistant
+        status: completed
+        type: message
+      - content: how about Mexico City?
+        role: user
+      instructions: You are a helpful assistant.
+      model: gpt-5
+      previous_response_id: null
+      stream: false
+      tool_choice: auto
+      tools:
+      - search_context_size: medium
+        type: web_search
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '7240'
+      content-type:
+      - application/json
+      openai-organization:
+      - pydantic-28gund
+      openai-processing-ms:
+      - '6667'
+      openai-project:
+      - proj_dKobscVY9YJxeEaDJen54e3d
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757719276
+      error: null
+      id: resp_046f1027167eded50068c4aaeca98c8197ba1dea5869971473
+      incomplete_details: null
+      instructions: You are a helpful assistant.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABoxKrz75j-uTcKB4mIzyIDC8-SSbgOWJCb5PB6g0I9M64BtMXUgu5jTEU0iccQNSkNXajVOVzg_oAURVLWqLSqLX-OTxtIVZUH0A5sdLMdlHtCWT16JBuwj97PFeA9gybIbqY7E5ySR14Ov-SYkUCbjuDM7yAZUu_2fBNBlokNR7lHk1WkZoGVnoJ7qEI5c577KH1x72ysamQq-FqLA5MGXP1ea3wBGHy7RWXzDBmAfIQU6oRDHudkk3EK-oKjpSFZ802phEBojGS0p_88E8KZwur5PCsNTN2rQFTtectX9grIqFhN_FVffSaBQ58K_5WJXS4A-tZ0dmT3aEL-oBSeFqpOGLvhtmueip8h-eeBxAUfTorq64QUlEwUa8wEMzrwNqgVEg_s7FsMRzcYN9VS1UGK9AHSQbeW1XNn-plEidmXOkYc3yIGpWvTP32jq6sSJlUo5MAnICC1VlCcMmX7mqhsjt1RqyyjcvEjPGHhUZOhQJOMWieAaNifIU5INVf7x1Vb0ir1lJGnS_m4oz3YpbcCsyMtUu_dKmYKUGLnZ29oKpbHHehA4QIQDh6IBTixmapOFBZkHGl7IMaMNhQyfzArxOhPYoKIrrqYWWGPq0UouiRcBMw5cFwSCetwpqNKZnl7HdGBU-TEB5b7eFVaVQzQDe1tDT3XiqS3enNFARFcgKqpQGUdmG8PbcwjP0f2DE8Ul5zMpX60aca__5ngdOD6U6T5dQh1BNgO_CMVLQP2ZrWjKixBqYjW_8W4osQXJ93is4GJhpmue44jVmImWgNPdqwClzCVzcRKh17-6SP7UCfe09Ct_Sz_5J62gow91xN9-iGGmFEI4iAPh3rGbDJHTxCPlNHJa8LA6pMvlrccHotGvzkaW31oty-je6VwWI_OYiV0jRmp8ZyAde7E6kskdSwgf1JYduDyYkWavhMybu3_VmZXrqtd7O1_7UdkjPqalJfAdlMK9TYSgIs5MpyiczKTccNfVCWkDo04Dvbprff3-Ff2YISqs-1nTquk0rLwss_-FrkjkCK6JVpwURgzJ2BZRpeHJKdeh42eHU7kUcbryE4ThnJl3Sk4db2yWZGKCYND7GfiNzG-Tz6av6M9BLGra2jJ2qbshyfO7QBQe71PeUQAh0JPiCFxU-aWsMs-Lke7jOGrW88mZYZN2ud79i6ya2hlc1B63ZlLeEB4GF_IaNU9AWAUCJQAN9mBob9TdzkAkojHOuD0T7z6AxM9-8Vn4LV3t16pCNgh7QCfm2EfdZKiXaZMEmJQUVeW897tznumBZViBc1XIR4VfDXDYGIOIhJHneSDvn1-E2H9iiRWrVcoMyWDJQVI14Vu8ho-J_jFrweb3eRFityUEwbAw8hTVQh5dsUYeSGdpLAno_oTlSwKjwwzwL2D2rcXb3XWZYS354A0fLntyLOW0Eb8hjSyq31YLOABaRB8ueE3kRmIqiDli-MWH0XkiBm6XtoYWJ3Lb_XQqL5e4wBzJ4BNDEULSXxsAm02_ujYuESyiyBcCe-Bfhb117F1ECHqC6DDyONhNkxzx9YQazBfonH2b8qkp3Va6jxfvrYH37cyGNNX7OEDS-gdft7sC8nBCq7TWSQpUgeDjDbrV-6mr7b8PPMMUHTRWTzPrhB9_1o4SZOkAohgxAxUjRjlnzK929-_50CWvdeih-vbpQa2AHABwlW9auEduthbBOyB7VdDXQvWmpfXSTj56a305NNK1alawlF7Gs8c72bTmqNVNIlCeYX8OcmWfhGUx2zfiHuL0I12gnFFwyR8P6SWnbF_yjCB2hv5rIXv47K4HZ3FysHuQShmfO4GPIFRXzXsjUSN9ZlB0JIMZjO-tA7Ax6dE5aTyaEHfqK9SyunNV9u0esNiaiKKE6f-zXnpYAhMtOTLLKFI4ITTuoCWOOlRJIs6-DUZ3d0fBpaiQAtI8McDEqTOcPmfjQF00MV-6AAQKIvnSr4-oJmDRUVz_X8IIZexc22vXxKRGQfNrpMiErx2ttvvbCyHot1WlP76SysAEntIc4KMt03kQ9ioZo-0_JYuSUA3GRQP0zDTUaVnwMThpqEYaF0hkxM02A62F6clj1VCZNNwAAPpzj3CIK8Rq8md3wGKH_20BoUVH1opg0RRYRKAuW5pmYlQ0BGdtUTAEAu2wOFTOFZ6RYfGJL97WtDLyYnuxKS05-hwjWruJqXckVlMS8OxiX9hauonLRAFntQOTSYiIFAXyo3mFLu5RfEtegwjAVEtHddKIcf-L_mWWpfbRuD3bsGtuJsho3JyRBYDcVJxGNx0-qoL30xoTcf-R9DjzSr7a7COBXofgkrIo4aI7_018Q9kL0ug3gvq4daXoZkjk0itREzf1VruHJ8cFMnZu0ohbeo4iOlBZ7ex-dGIz991XVxMLX9T_xVWLU4dCkDvP4NL8iLbUCXH29A_4RFTLU28gU-QgLOOSVWOmHrUOKFobZlbV8Ws1k2grjXJRUzFvkz-TsYLg2u1liuHHP3Sm2NXk5bFsmGpDXjwjdmkykWP3wb7rt5okgeSKhvmym70CoP99K3AyB1hhBvSlTJ1QYJKXWbVxEub6QOeXZJFH7JJxG8NM0ewXg7p9aSc6IOfS_3VnxPYcQtnBrS_DuIZtX5OlOL343_38wfXqej-fu0PnJK8RAruXPK20UIO8x5cf89XZg00ObLsrcX-nacQ6rGoxy3n7ZvkoNoiTWTAlF8fSsTAHOUMaYnTrY1vi8K9q5FzOXqHqd5gJQXQCT8RI8VazWSTuwP72wEoSnLnJLsH76FqZnkcpBLCw1d7etZaDvFSFq3_8mW-NtxlOgw8hZiVPddUpHNvEZjl_xxWXifRqWEQVm4TVeBhm75ouF9M4tQ1uYjUk8Tp8YHTR2bWIgf5nJ5iSS8fHIKCx_jADNwmpRND33FEQOcBENTF0db8boc_mgqcJFDnBmzrDQWx
+        id: rs_046f1027167eded50068c4aaed09488197b2ed0f034f6af738
+        summary: []
+        type: reasoning
+      - action:
+          query: 'weather: Mexico City, Mexico'
+          type: search
+        id: ws_046f1027167eded50068c4aaeff1b881979d374e51fdcd3dd8
+        status: completed
+        type: web_search_call
+      - encrypted_content: gAAAAABoxKrz7EpugbbTBtlfNWmGteArdEei0DCIUk0cb65ryJw72GynQwAQsU-NlW02lVkY1qeB0cOmRguCUkgkGwF3GsDuv_jR7SCNZqXtwaScbsKsqzQuOEo2Q0AcuIoYOsYnZm51NE9fbZHq20bj1NFcUq4WT6R85YnG0oD9frFSTQwLs2BjlUjrQu-0Sfq8FyQKfQ6SwoC8ww7qEkAbN2Ajh-ljH1UY_hvIzwzmx_iwUJNnJrHOsark75vyxyu9Ncr_h-HBvQXw_D-6c941UW-5T4eAx6W_tnJRVQrZ8JSHGT7MsbMUUdWIdzJrGGOqj5yfu-2mRQTC4zzWW-lwxVhS-rW7p790jCk9GiZKw6N7OfLfbVbNBhe0griOqJTUJvsCs7gP9WtSW7uo-6E0lUQ_ry5zbs4ZRyrWjMmAyXSlTvL-BvFsYaTdAcxLct2L9e3G10d78MpOWkAjzN5knEQP_FTa5EXyxq65UchrnfnFio8SrjZQ7axTQrra-0wYGLuy4PvD-V8jVW_vxN9VUuVzA5x7IPaQTie79Vb7mbhxpkgSe6m6oVHK64QtxG28M36B8r4gLF3YG8I7bw2V7oHsYr1ygoY_CcfQWsgFjMwppUuDS2XN6sXMuZzGBGdyf74Wsl8aLSnMiHb8sfK4cp0IEteIDHPmjun21H_933rPFDHPy4YvKXiEOfpkv61pkMss4TUu1_wcZh4QMY8hNp0_H79muXDPCOB7a7PdUb-bGeEDOGlo-fbkSr3pVVuERV3UUfWbiPjGVycTyts6Rz5rBNkcLoc2qSLg95gYV9ET8EKVFtWi51L1gfFOLnPpeUdzMeTKmFPKG6JaBCGWwZw2XELKxmPqs9lPFuJPYlLnpaWWIBTU8h9zC37xup-nksbUB819Z5C8yE68bygLaX4gbeNO-7HOxxRCfaRuusUuOvN0VZNb03RgFf-BVExuSeuhaH9ZOLQUwypok04Dvugtn2rm1R-6HnDxd3pAeWqTx8FOMfRGLzEXfJBoEHpKAhtGY5qkDQfUKKQiGfOnU7uWl0q-ocuK3kVctMAAD6BZwIT5039KszrMiLuK_uHMbbnACmx4fz5ALtiyvI3kqDbfQYaCw_b3KFJjSJ0vozFAhIj5OIh9EBoVqZRRrJ6cUcDtR_95mqzDnhavL58_WkZWgJ0vzmwiaDq0xPV7rb1xlPhoX9lRrhlX8UlATwC5nkw4AydTO7GG62Gag-o_CCIVN4NaMGPS-cMNanSJstfu8e4eeMSW050UREFuZYoGVsRo21zHiF5GgXkiaVwJb0OOKODp1_pepJ0xW-YkIxGcwdaXK4J61PWbtaPTpXl5DqfU8ewo-i1NIocLbu8EyoXxMiFXKdcPeoW-9mj7SoqU-lrEllMv5VQPgpoS1pPuhmVDzTYStVhGj_o64O9ukOrtJ-ffKgrPbB0650ebnAuW1LTRXvNUodyNqwUOnVvkIpwgtLcsZaJzMuDJVQF2CuWsTodcZvvnSUftodqNpQWtMJfP7AgW495OzXRzRT1yPlf7Y74CrT_SpbhrehjvrMvS6PQqYAckIhH2ihWVlzqhyKjishZQZDVKpAk9HRgA13_gfUTl_SjTlHUtDwtjQHPnCrP1-ZKCHD3Hqt4uGxq5ha0F2nYjKlKebEgM_wyx_ijcCYY79Jvr_W5wp1X0W-D4moCIwi2QmD4x9M2MaAXDtnqnJLw51XR8vP9qXyMMciKkzgJZe7xXXqWh4OWbdxxm-i9fIP8UhN-mT70dygtkMIKFN06VKN5uVXvrTx8cD1mps3tr-s1jGHl6j7yNTe7HLznTbsDfDPDmc9dsgzx1FPcId5o=
+        id: rs_046f1027167eded50068c4aaf0a2f88197bc3beb4256fa439b
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 'Mexico City weather today (Friday, September 12, 2025): Periods of rain, mostly cloudy. Currently about 65°F
+            (18°C); expect a high near 71°F (22°C) and a low around 57°F (14°C). '
+          type: output_text
+        id: msg_046f1027167eded50068c4aaf287608197925592588b70b714
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools:
+      - filters: null
+        search_context_size: medium
+        type: web_search
+        user_location:
+          city: null
+          country: US
+          region: null
+          timezone: null
+          type: approximate
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 9726
+        input_tokens_details:
+          cached_tokens: 8448
+        output_tokens: 522
+        output_tokens_details:
+          reasoning_tokens: 448
+        total_tokens: 10248
       user: null
     status:
       code: 200
