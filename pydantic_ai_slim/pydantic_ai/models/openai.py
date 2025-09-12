@@ -223,12 +223,12 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_previous_response_id: Literal['auto'] | str
-    """The identifier of the most recent response to include in the API request.
+    """The ID of a previous response from the model to use as the starting point for a continued conversation.
 
-    When set to `auto`, the request automatically uses the most recent
-    `provider_response_id` along with the latest request from the message history.
+    When set to `'auto'`, the request automatically uses the most recent
+    `provider_response_id` from the message history and omits earlier messages.
 
-    This enables the model to reference previous reasoning traces.
+    This enables the model to use server-side conversation state and faithfully reference previous reasoning.
     See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
     for more information.
     """
