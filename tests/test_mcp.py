@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
@@ -1375,3 +1376,19 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
         # Should raise an error when elicitation is attempted without callback
         with pytest.raises(ModelRetry, match='Elicitation not supported'):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+
+def test_load_mcp_servers(tmp_path: Path):
+    config = tmp_path / 'mcp.json'
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStreamableHTTP(url='https://example.com/mcp')])
+
+    config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])])
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerSSE(url='https://example.com/sse')])
+
+    with pytest.raises(FileNotFoundError):
+        load_mcp_servers(tmp_path / 'does_not_exist.json')

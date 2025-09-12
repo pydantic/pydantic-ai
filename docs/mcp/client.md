@@ -163,6 +163,59 @@ async def main():
 
 1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
 
+## Loading MCP Servers from Configuration
+
+Instead of creating MCP server instances individually in code, you can load multiple servers from a JSON configuration file using [`load_mcp_servers()`][pydantic_ai.mcp.load_mcp_servers].
+
+This is particularly useful when you need to manage multiple MCP servers or want to configure servers externally without modifying code.
+
+### Configuration Format
+
+The configuration file should be a JSON file with an `mcpServers` object containing server definitions. Each server is identified by a unique key and contains the configuration for that server type:
+
+```json {title="mcp_config.json"}
+{
+  "mcpServers": {
+    "python-runner": {
+      "command": "uv",
+      "args": ["run", "mcp-run-python", "stdio"]
+    },
+    "weather-api": {
+      "url": "http://localhost:3001/sse"
+    },
+    "calculator": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+!!! note
+    The MCP server is only inferred to be an SSE server because of the `/sse` suffix.
+    Any other server with the "url" field will be inferred to be a Streamable HTTP server.
+
+    We made this decision given that the SSE transport is deprecated.
+
+### Usage
+
+```python {title="mcp_config_loader.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_servers
+
+# Load all servers from configuration file
+servers = load_mcp_servers('mcp_config.json')
+
+# Create agent with all loaded servers
+agent = Agent('openai:gpt-5', toolsets=servers)
+
+async def main():
+    async with agent:
+        result = await agent.run('What is 7 plus 5?')
+    print(result.output)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
 ## Tool call customisation
 
 The MCP servers provide the ability to set a `process_tool_call` which allows
