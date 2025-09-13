@@ -1,0 +1,148 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '215'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'What is the name of color #FF0000'
+          type: text
+        role: user
+      - content: It's name is
+        role: assistant
+      model: claude-3-5-sonnet-latest
+      stream: false
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '601'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      content:
+      - text: |2-
+           Red. #FF0000 is the hexadecimal color code for pure red in RGB color space, where:
+          - FF represents the maximum value (255) for the red channel
+          - 00 represents no green
+          - 00 represents no blue
+        type: text
+      id: msg_0139bvQ8xYiX5eFuQo2kt2uJ
+      model: claude-3-5-sonnet-20241022
+      role: assistant
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        input_tokens: 21
+        output_tokens: 58
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '186'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Hello
+          type: text
+        role: user
+      - content: It's name is
+        role: assistant
+      model: claude-3-5-sonnet-latest
+      stream: true
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    body:
+      string: |+
+        event: message_start
+        data: {"type":"message_start","message":{"id":"msg_01LrWvsWg9nVGu2ZAabNiKgH","type":"message","role":"assistant","model":"claude-3-5-sonnet-20241022","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":12,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard"}}     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Claude. It"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" was created by Anthropic and aims to be direct"}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" and honest in its interactions."}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":12,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":23}              }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    status:
+      code: 200
+      message: OK
+version: 1
+...

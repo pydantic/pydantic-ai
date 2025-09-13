@@ -383,7 +383,7 @@ class OpenAIChatModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
-        model_response = self._process_response(response)
+        model_response = self._process_response(response, model_request_parameters)
         return model_response
 
     @asynccontextmanager
@@ -439,7 +439,7 @@ class OpenAIChatModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages = await self._map_messages(messages)
+        openai_messages = await self._map_messages(messages, model_request_parameters)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -491,7 +491,9 @@ class OpenAIChatModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
 
-    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
+    def _process_response(
+        self, response: chat.ChatCompletion | str, model_request_parameters: ModelRequestParameters
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
@@ -621,7 +623,9 @@ class OpenAIChatModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    async def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+    ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -661,6 +665,11 @@ class OpenAIChatModel(Model):
                 assert_never(message)
         if instructions := self._get_instructions(messages):
             openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
+
+        # Add response prefix as assistant message if provided
+        if model_request_parameters and model_request_parameters.response_prefix:
+            openai_messages.append({'role': 'assistant', 'content': model_request_parameters.response_prefix})
+
         return openai_messages
 
     @staticmethod
@@ -1349,6 +1358,12 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        # Handle response prefix by emitting it as the first text event
+        if response_prefix := self.model_request_parameters.response_prefix:
+            maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=response_prefix)
+            if maybe_event is not None:
+                yield maybe_event
+
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
