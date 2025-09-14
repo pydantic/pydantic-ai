@@ -228,8 +228,8 @@ class MCPServer(AbstractToolset[Any], ABC):
         mapped = [await self._map_tool_result_part(part) for part in result.content]
         if result.isError:
             if result.content:
-                text_parts = [str(p) for p in mapped if isinstance(p, mcp_types.TextContent)]
-                message = '\n'.join(text_parts)
+                text_parts = [p for p in mapped if isinstance(p, str)]
+                message = '\n'.join(text_parts) if text_parts else '\n'.join(str(p) for p in mapped)
                 raise exceptions.ModelRetry(message)
 
         # If any of the results are not text content, let's map them to Pydantic AI binary message parts
@@ -238,10 +238,11 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         # Otherwise, if we have structured content, return that
         structured = result.structuredContent
-        if structured:
-            if isinstance(structured, dict) and isinstance(structured.get('result'), str):
-                return structured['result']
-            return structured
+        if structured is not None:
+            value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
+            if isinstance(value, dict | list | messages.BinaryContent):
+                return value  # type: ignore # pragma: no cover
+            return str(value)
 
         return mapped[0] if len(mapped) == 1 else mapped
 
