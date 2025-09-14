@@ -1365,9 +1365,7 @@ async def test_elicitation_callback_functionality(run_context: RunContext[int]):
         # Verify the callback was called
         assert callback_called, 'Elicitation callback should have been called'
         assert callback_message == 'Should I continue?', 'Callback should receive the question'
-        # Some servers return structured content for elicitation
-        _result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-        assert _result_text == f'User responded: {callback_response}', 'Tool should return the callback response'
+        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
 
 
 async def test_elicitation_callback_not_set(run_context: RunContext[int]):

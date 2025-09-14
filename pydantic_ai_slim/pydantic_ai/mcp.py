@@ -225,27 +225,25 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        # Prefer 'structuredContent' only when 'content' is empty.
-        # Ref: Tools / Structured Content — "SHOULD also return the serialized JSON in a TextContent block."
-        # https://modelcontextprotocol.io/specification/draft/server/tools
-        structured = result.structuredContent
+        mapped = [await self._map_tool_result_part(part) for part in result.content]
         if result.isError:
             if result.content:
-                mapped = [await self._map_tool_result_part(part) for part in result.content]
-                text_parts = [p for p in mapped if isinstance(p, str)]
-                message = '\n'.join(text_parts) if text_parts else '\n'.join(str(p) for p in mapped)
-            elif structured is not None:  # pragma: no cover (server includes text for errors)
-                message = str(structured)  # pragma: no cover (server includes text for errors)
-            else:  # pragma: no cover
-                message = 'Error executing tool'
-            raise exceptions.ModelRetry(message)
+                text_parts = [str(p) for p in mapped if isinstance(p, mcp_types.TextContent)]
+                message = '\n'.join(text_parts)
+                raise exceptions.ModelRetry(message)
 
-        if result.content:
-            mapped = [await self._map_tool_result_part(part) for part in result.content]
+        # If any of the results are not text content, let's map them to Pydantic AI binary message parts
+        if any(not isinstance(part, mcp_types.TextContent) for part in result.content):
             return mapped[0] if len(mapped) == 1 else mapped
-        if structured is not None:
-            return structured  # pragma: no cover (server typically supplies legacy content too)
-        return []
+
+        # Otherwise, if we have structured content, return that
+        structured = result.structuredContent
+        if structured:
+            if isinstance(structured, dict) and isinstance(structured.get('result'), str):
+                return structured['result']
+            return structured
+
+        return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
         self,
