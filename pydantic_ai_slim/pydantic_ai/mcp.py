@@ -242,6 +242,10 @@ class MCPServer(AbstractToolset[Any], ABC):
             value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
             if isinstance(value, dict | list | messages.BinaryContent):
                 return value  # type: ignore # pragma: no cover
+
+            if result.content:
+                return mapped[0] if len(mapped) == 1 else mapped
+
             return str(value)
 
         return mapped[0] if len(mapped) == 1 else mapped
