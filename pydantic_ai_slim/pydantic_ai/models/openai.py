@@ -190,8 +190,17 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     This can be useful for debugging and understanding the model's reasoning process.
     One of `concise` or `detailed`.
 
-    Check the [OpenAI Computer use documentation](https://platform.openai.com/docs/guides/tools-computer-use#1-send-a-request-to-the-model)
+    Check the [OpenAI Reasoning documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries)
     for more details.
+    """
+
+    openai_send_reasoning_ids: bool
+    """Whether to send reasoning IDs from the message history to the model. Enabled by default.
+
+    This can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
+    if the message history you're sending does not match exactly what was received from the Responses API in a previous response,
+    for example if you're using a [history processor](../../message-history.md#processing-message-history).
+    In that case, you'll want to disable this.
     """
 
     openai_truncation: Literal['disabled', 'auto']
@@ -211,6 +220,17 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     Lower values will result in more concise responses, while higher values will
     result in more verbose responses. Currently supported values are `low`,
     `medium`, and `high`.
+    """
+
+    openai_previous_response_id: Literal['auto'] | str
+    """The ID of a previous response from the model to use as the starting point for a continued conversation.
+
+    When set to `'auto'`, the request automatically uses the most recent
+    `provider_response_id` from the message history and omits earlier messages.
+
+    This enables the model to use server-side conversation state and faithfully reference previous reasoning.
+    See the [OpenAI Responses API documentation](https://platform.openai.com/docs/guides/reasoning#keeping-reasoning-items-in-context)
+    for more information.
     """
 
 
@@ -859,26 +879,38 @@ class OpenAIResponsesModel(Model):
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
                 signature = item.encrypted_content
-                for summary in item.summary:
-                    # We use the same id for all summaries so that we can merge them on the round trip.
-                    # We only need to store the signature once.
+                if item.summary:
+                    for summary in item.summary:
+                        # We use the same id for all summaries so that we can merge them on the round trip.
+                        items.append(
+                            ThinkingPart(
+                                content=summary.text,
+                                id=item.id,
+                                signature=signature,
+                                provider_name=self.system if signature else None,
+                            )
+                        )
+                        # We only need to store the signature once.
+                        signature = None
+                elif signature:
                     items.append(
                         ThinkingPart(
-                            content=summary.text,
+                            content='',
                             id=item.id,
                             signature=signature,
-                            provider_name=self.system if signature else None,
+                            provider_name=self.system,
                         )
                     )
-                    signature = None
                 # NOTE: We don't currently handle the raw CoT from gpt-oss `reasoning_text`: https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot
                 # If you need this, please file an issue.
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        items.append(TextPart(content.text))
+                        items.append(TextPart(content.text, id=item.id))
             elif isinstance(item, responses.ResponseFunctionToolCall):
-                items.append(ToolCallPart(item.name, item.arguments, tool_call_id=item.call_id))
+                items.append(
+                    ToolCallPart(item.name, item.arguments, tool_call_id=_combine_tool_call_ids(item.call_id, item.id))
+                )
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -956,7 +988,11 @@ class OpenAIResponsesModel(Model):
         else:
             tool_choice = 'auto'
 
-        instructions, openai_messages = await self._map_messages(messages)
+        previous_response_id = model_settings.get('openai_previous_response_id')
+        if previous_response_id == 'auto':
+            previous_response_id, messages = self._get_previous_response_id_and_new_messages(messages)
+
+        instructions, openai_messages = await self._map_messages(messages, model_settings)
         reasoning = self._get_reasoning(model_settings)
 
         text: responses.ResponseTextConfigParam | None = None
@@ -980,9 +1016,14 @@ class OpenAIResponsesModel(Model):
             text = text or {}
             text['verbosity'] = verbosity
 
-        unsupported_model_settings = OpenAIModelProfile.from_profile(self.profile).openai_unsupported_model_settings
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        unsupported_model_settings = profile.openai_unsupported_model_settings
         for setting in unsupported_model_settings:
             model_settings.pop(setting, None)
+
+        include: list[responses.ResponseIncludable] | None = None
+        if profile.openai_supports_encrypted_reasoning_content:
+            include = ['reasoning.encrypted_content']
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -1001,10 +1042,11 @@ class OpenAIResponsesModel(Model):
                 truncation=model_settings.get('openai_truncation', NOT_GIVEN),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
                 service_tier=model_settings.get('openai_service_tier', NOT_GIVEN),
+                previous_response_id=previous_response_id,
                 reasoning=reasoning,
                 user=model_settings.get('openai_user', NOT_GIVEN),
                 text=text or NOT_GIVEN,
-                include=['reasoning.encrypted_content'],
+                include=include or NOT_GIVEN,
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -1066,8 +1108,30 @@ class OpenAIResponsesModel(Model):
             ),
         }
 
-    async def _map_messages(  # noqa: C901
+    def _get_previous_response_id_and_new_messages(
         self, messages: list[ModelMessage]
+    ) -> tuple[str | None, list[ModelMessage]]:
+        # When `openai_previous_response_id` is set to 'auto', the most recent
+        # `provider_response_id` from the message history is selected and all
+        # earlier messages are omitted. This allows the OpenAI SDK to reuse
+        # server-side history for efficiency. The returned tuple contains the
+        # `previous_response_id` (if found) and the trimmed list of messages.
+        previous_response_id = None
+        trimmed_messages: list[ModelMessage] = []
+        for m in reversed(messages):
+            if isinstance(m, ModelResponse) and m.provider_name == self.system:
+                previous_response_id = m.provider_response_id
+                break
+            else:
+                trimmed_messages.append(m)
+
+        if previous_response_id and trimmed_messages:
+            return previous_response_id, list(reversed(trimmed_messages))
+        else:
+            return None, messages
+
+    async def _map_messages(  # noqa: C901
+        self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
         openai_messages: list[responses.ResponseInputItemParam] = []
@@ -1079,13 +1143,14 @@ class OpenAIResponsesModel(Model):
                     elif isinstance(part, UserPromptPart):
                         openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        openai_messages.append(
-                            FunctionCallOutput(
-                                type='function_call_output',
-                                call_id=_guard_tool_call_id(t=part),
-                                output=part.model_response_str(),
-                            )
+                        call_id = _guard_tool_call_id(t=part)
+                        call_id, _ = _split_combined_tool_call_id(call_id)
+                        item = FunctionCallOutput(
+                            type='function_call_output',
+                            call_id=call_id,
+                            output=part.model_response_str(),
                         )
+                        openai_messages.append(item)
                     elif isinstance(part, RetryPromptPart):
                         # TODO(Marcelo): How do we test this conditional branch?
                         if part.tool_name is None:  # pragma: no cover
@@ -1093,40 +1158,88 @@ class OpenAIResponsesModel(Model):
                                 Message(role='user', content=[{'type': 'input_text', 'text': part.model_response()}])
                             )
                         else:
-                            openai_messages.append(
-                                FunctionCallOutput(
-                                    type='function_call_output',
-                                    call_id=_guard_tool_call_id(t=part),
-                                    output=part.model_response(),
-                                )
+                            call_id = _guard_tool_call_id(t=part)
+                            call_id, _ = _split_combined_tool_call_id(call_id)
+                            item = FunctionCallOutput(
+                                type='function_call_output',
+                                call_id=call_id,
+                                output=part.model_response(),
                             )
+                            openai_messages.append(item)
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        openai_messages.append(responses.EasyInputMessageParam(role='assistant', content=item.content))
+                        if item.id and message.provider_name == self.system:
+                            if message_item is None or message_item['id'] != item.id:  # pragma: no branch
+                                message_item = responses.ResponseOutputMessageParam(
+                                    role='assistant',
+                                    id=item.id or _utils.generate_tool_call_id(),
+                                    content=[],
+                                    type='message',
+                                    status='completed',
+                                )
+                                openai_messages.append(message_item)
+
+                            message_item['content'] = [
+                                *message_item['content'],
+                                responses.ResponseOutputTextParam(
+                                    text=item.content, type='output_text', annotations=[]
+                                ),
+                            ]
+                        else:
+                            openai_messages.append(
+                                responses.EasyInputMessageParam(role='assistant', content=item.content)
+                            )
                     elif isinstance(item, ToolCallPart):
                         openai_messages.append(self._map_tool_call(item))
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         # We don't currently track built-in tool calls from OpenAI
                         pass
                     elif isinstance(item, ThinkingPart):
-                        if reasoning_item is not None and item.id == reasoning_item['id']:
-                            reasoning_item['summary'] = [
-                                *reasoning_item['summary'],
-                                Summary(text=item.content, type='summary_text'),
-                            ]
-                            continue
+                        if (
+                            item.id
+                            and message.provider_name == self.system
+                            and model_settings.get('openai_send_reasoning_ids', True)
+                        ):
+                            signature: str | None = None
+                            if (
+                                item.signature
+                                and item.provider_name == self.system
+                                and OpenAIModelProfile.from_profile(
+                                    self.profile
+                                ).openai_supports_encrypted_reasoning_content
+                            ):
+                                signature = item.signature
 
-                        reasoning_item = responses.ResponseReasoningItemParam(
-                            id=item.id or _utils.generate_tool_call_id(),
-                            summary=[Summary(text=item.content, type='summary_text')],
-                            encrypted_content=item.signature if item.provider_name == self.system else None,
-                            type='reasoning',
-                        )
-                        openai_messages.append(reasoning_item)
+                            if (reasoning_item is None or reasoning_item['id'] != item.id) and (
+                                signature or item.content
+                            ):  # pragma: no branch
+                                reasoning_item = responses.ResponseReasoningItemParam(
+                                    id=item.id,
+                                    summary=[],
+                                    encrypted_content=signature,
+                                    type='reasoning',
+                                )
+                                openai_messages.append(reasoning_item)
+
+                            if item.content:
+                                # The check above guarantees that `reasoning_item` is not None
+                                assert reasoning_item is not None
+                                reasoning_item['summary'] = [
+                                    *reasoning_item['summary'],
+                                    Summary(text=item.content, type='summary_text'),
+                                ]
+                        else:
+                            start_tag, end_tag = self.profile.thinking_tags
+                            openai_messages.append(
+                                responses.EasyInputMessageParam(
+                                    role='assistant', content='\n'.join([start_tag, item.content, end_tag])
+                                )
+                            )
                     else:
                         assert_never(item)
             else:
@@ -1136,12 +1249,18 @@ class OpenAIResponsesModel(Model):
 
     @staticmethod
     def _map_tool_call(t: ToolCallPart) -> responses.ResponseFunctionToolCallParam:
-        return responses.ResponseFunctionToolCallParam(
-            arguments=t.args_as_json_str(),
-            call_id=_guard_tool_call_id(t=t),
+        call_id = _guard_tool_call_id(t=t)
+        call_id, id = _split_combined_tool_call_id(call_id)
+
+        param = responses.ResponseFunctionToolCallParam(
             name=t.tool_name,
+            arguments=t.args_as_json_str(),
+            call_id=call_id,
             type='function_call',
         )
+        if id:  # pragma: no branch
+            param['id'] = id
+        return param
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
         response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {
@@ -1360,7 +1479,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=chunk.item.id,
                         tool_name=chunk.item.name,
                         args=chunk.item.arguments,
-                        tool_call_id=chunk.item.call_id,
+                        tool_call_id=_combine_tool_call_ids(chunk.item.call_id, chunk.item.id),
                     )
                 elif isinstance(chunk.item, responses.ResponseReasoningItem):
                     pass
@@ -1376,15 +1495,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
             elif isinstance(chunk, responses.ResponseOutputItemDoneEvent):
                 if isinstance(chunk.item, responses.ResponseReasoningItem):
-                    # Add the signature to the part corresponding to the first summary item
-                    signature = chunk.item.encrypted_content
-                    yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id=f'{chunk.item.id}-0',
-                        id=chunk.item.id,
-                        signature=signature,
-                        provider_name=self.provider_name if signature else None,
-                    )
-                pass
+                    if signature := chunk.item.encrypted_content:  # pragma: no branch
+                        # Add the signature to the part corresponding to the first summary item
+                        yield self._parts_manager.handle_thinking_delta(
+                            vendor_part_id=f'{chunk.item.id}-0',
+                            id=chunk.item.id,
+                            signature=signature,
+                            provider_name=self.provider_name,
+                        )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
                 yield self._parts_manager.handle_thinking_delta(
@@ -1411,7 +1529,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):
-                maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=chunk.item_id, content=chunk.delta)
+                maybe_event = self._parts_manager.handle_text_delta(
+                    vendor_part_id=chunk.item_id, content=chunk.delta, id=chunk.item_id
+                )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
@@ -1501,3 +1621,17 @@ def _map_usage(response: chat.ChatCompletion | ChatCompletionChunk | responses.R
             u.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens or 0
             u.cache_read_tokens = response_usage.prompt_tokens_details.cached_tokens or 0
         return u
+
+
+def _combine_tool_call_ids(call_id: str, id: str | None) -> str:
+    # When reasoning, the Responses API requires the `ResponseFunctionToolCall` to be returned with both the `call_id` and `id` fields.
+    # Our `ToolCallPart` has only the `call_id` field, so we combine the two fields into a single string.
+    return f'{call_id}|{id}' if id else call_id
+
+
+def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
+    if '|' in combined_id:
+        call_id, id = combined_id.split('|', 1)
+        return call_id, id
+    else:
+        return combined_id, None  # pragma: no cover

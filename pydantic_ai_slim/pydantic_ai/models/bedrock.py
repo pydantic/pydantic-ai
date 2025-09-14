@@ -681,7 +681,6 @@ class BedrockStreamedResponse(StreamedResponse):
                             yield self._parts_manager.handle_thinking_delta(
                                 vendor_part_id=index,
                                 id='redacted_content',
-                                content='',
                                 signature=redacted_content.decode('utf-8'),
                                 provider_name=self.provider_name,
                             )
