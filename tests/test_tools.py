@@ -1919,14 +1919,21 @@ def test_tool_metadata():
     assert plain_tool_def.metadata == {'type': 'plain'}
 
     # Test with FunctionToolset.tool decorator
-    toolset = FunctionToolset()
+    toolset = FunctionToolset(metadata={'foo': 'bar'})
+
+    @toolset.tool
+    def toolset_plain_tool(a: str) -> str:
+        return a.upper()  # pragma: no cover
+
+    toolset_plain_tool_def = toolset.tools['toolset_plain_tool']
+    assert toolset_plain_tool_def.metadata == {'foo': 'bar'}
 
     @toolset.tool(metadata={'toolset': 'function'})
     def toolset_tool(ctx: RunContext[None], a: str) -> str:
         return a.upper()  # pragma: no cover
 
     toolset_tool_def = toolset.tools['toolset_tool']
-    assert toolset_tool_def.metadata == {'toolset': 'function'}
+    assert toolset_tool_def.metadata == {'foo': 'bar', 'toolset': 'function'}
 
     # Test with FunctionToolset.add_function
     def standalone_func(ctx: RunContext[None], b: float) -> float:
@@ -1934,4 +1941,4 @@ def test_tool_metadata():
 
     toolset.add_function(standalone_func, metadata={'method': 'add_function'})
     standalone_tool_def = toolset.tools['standalone_func']
-    assert standalone_tool_def.metadata == {'method': 'add_function'}
+    assert standalone_tool_def.metadata == {'foo': 'bar', 'method': 'add_function'}
