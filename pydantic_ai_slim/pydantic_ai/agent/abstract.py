@@ -696,6 +696,24 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         raise NotImplementedError
         yield
 
+    @contextmanager
+    @abstractmethod
+    def override_prompts(
+        self,
+        *,
+        instructions: str | None | _utils.Unset = _utils.UNSET,
+        system_prompts: Sequence[str] | _utils.Unset = _utils.UNSET,
+    ) -> Iterator[None]:
+        """Context manager to temporarily override agent instructions and static system prompts.
+
+        Args:
+            instructions: When set (including `None`), replace the effective aggregate of literal instructions and any
+                registered instruction functions with the provided string (or clear if `None`).
+            system_prompts: When set, replace the static system prompts tuple used by the agent.
+        """
+        raise NotImplementedError
+        yield
+
     def _infer_name(self, function_frame: FrameType | None) -> None:
         """Infer the agent name from the call frame.
 

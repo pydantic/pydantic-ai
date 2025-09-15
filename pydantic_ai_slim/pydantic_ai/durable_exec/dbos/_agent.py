@@ -723,3 +723,14 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         with super().override(deps=deps, model=model, toolsets=toolsets, tools=tools):
             yield
+
+    @contextmanager
+    def override_prompts(
+        self,
+        *,
+        instructions: str | None | _utils.Unset = _utils.UNSET,
+        system_prompts: Sequence[str] | _utils.Unset = _utils.UNSET,
+    ) -> Iterator[None]:
+        # Prompts are safe to override in DBOS wrapper
+        with super().override_prompts(instructions=instructions, system_prompts=system_prompts):
+            yield
