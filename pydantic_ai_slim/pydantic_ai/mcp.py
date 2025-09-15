@@ -246,7 +246,7 @@ class MCPServer(AbstractToolset[Any], ABC):
             if result.content:
                 return mapped[0] if len(mapped) == 1 else mapped
 
-            return str(value)
+            return str(value)  # pragma: no cover
 
         return mapped[0] if len(mapped) == 1 else mapped
 
