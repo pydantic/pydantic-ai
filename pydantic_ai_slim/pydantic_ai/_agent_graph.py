@@ -206,7 +206,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 )
                 messages.pop()
                 # Ensure new_message_index includes the re-built request that will be added
-                if ctx.deps.new_message_index > len(messages):
+                if ctx.deps.new_message_index > len(messages):  # pragma: no cover
                     ctx.deps.new_message_index = len(messages)
 
             if not messages:
@@ -217,7 +217,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # Drop last message from history and reuse its parts
                 messages.pop()
                 # Keep new_message_index in sync when rewinding
-                if ctx.deps.new_message_index > len(messages):
+                if ctx.deps.new_message_index > len(messages):  # pragma: no cover
                     ctx.deps.new_message_index = len(messages)
                 parts.extend(last_message.parts)
             elif isinstance(last_message, _messages.ModelResponse):

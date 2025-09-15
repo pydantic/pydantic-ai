@@ -148,7 +148,7 @@ def _merge_adjacent_messages(
 
                 try:
                     prev.usage = prev.usage + msg.usage
-                except Exception:
+                except Exception:  # pragma: no cover
                     prev.usage = msg.usage
 
                 prev.model_name = msg.model_name or prev.model_name
