@@ -21,7 +21,16 @@ from pydantic import BaseModel
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import (
     AgentInfo,
     DeltaThinkingCalls,
@@ -34,7 +43,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsSameStr
+from .conftest import IsDatetime, IsSameStr
 
 has_ag_ui: bool = False
 with contextlib.suppress(ImportError):
@@ -59,6 +68,7 @@ with contextlib.suppress(ImportError):
         SSE_CONTENT_TYPE,
         OnCompleteFunc,
         StateDeps,
+        _messages_from_ag_ui,  # type: ignore[reportPrivateUsage]
         run_ag_ui,
     )
 
@@ -1347,3 +1357,127 @@ async def test_callback_with_error() -> None:
     assert len(events) > 0
     assert events[0]['type'] == 'RUN_STARTED'
     assert any(event['type'] == 'RUN_ERROR' for event in events)
+
+
+async def test_messages_from_ag_ui() -> None:
+    messages = [
+        SystemMessage(
+            id='msg_1',
+            content='System message',
+        ),
+        DeveloperMessage(
+            id='msg_2',
+            content='Developer message',
+        ),
+        UserMessage(
+            id='msg_3',
+            content='User message',
+        ),
+        UserMessage(
+            id='msg_4',
+            content='User message',
+        ),
+        AssistantMessage(
+            id='msg_5',
+            content='Assistant message',
+        ),
+        AssistantMessage(
+            id='msg_6',
+            tool_calls=[
+                ToolCall(
+                    id='tool_call_1',
+                    function=FunctionCall(
+                        name='tool_call_1',
+                        arguments='{}',
+                    ),
+                ),
+            ],
+        ),
+        AssistantMessage(
+            id='msg_7',
+            tool_calls=[
+                ToolCall(
+                    id='tool_call_2',
+                    function=FunctionCall(
+                        name='tool_call_2',
+                        arguments='{}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_8',
+            content='Tool message',
+            tool_call_id='tool_call_1',
+        ),
+        ToolMessage(
+            id='msg_9',
+            content='Tool message',
+            tool_call_id='tool_call_2',
+        ),
+        UserMessage(
+            id='msg_10',
+            content='User message',
+        ),
+        AssistantMessage(
+            id='msg_11',
+            content='Assistant message',
+        ),
+    ]
+
+    assert _messages_from_ag_ui(messages) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='System message',
+                        timestamp=IsDatetime(),
+                    ),
+                    SystemPromptPart(
+                        content='Developer message',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Assistant message'),
+                    ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+                    ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='tool_call_1',
+                        content='Tool message',
+                        tool_call_id='tool_call_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='tool_call_2',
+                        content='Tool message',
+                        tool_call_id='tool_call_2',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Assistant message')],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
