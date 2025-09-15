@@ -121,21 +121,25 @@ def _merge_adjacent_messages(
 
         # Merge adjacent requests
         if isinstance(prev, _messages.ModelRequest) and isinstance(msg, _messages.ModelRequest):
-            combined_parts = list(prev.parts) + list(msg.parts)
+            # Only merge if neither has a UserPromptPart (preserve new user turn boundaries)
+            prev_has_user = any(isinstance(p, _messages.UserPromptPart) for p in prev.parts)
+            msg_has_user = any(isinstance(p, _messages.UserPromptPart) for p in msg.parts)
+            if not prev_has_user and not msg_has_user:
+                combined_parts = list(prev.parts) + list(msg.parts)
 
-            seen_ids: set[str] = set()
-            new_parts_rev: list[_messages.ModelRequestPart] = []
-            for part in reversed(combined_parts):
-                if isinstance(part, _messages.ToolReturnPart):
-                    if part.tool_call_id in seen_ids:
-                        continue
-                    seen_ids.add(part.tool_call_id)
-                new_parts_rev.append(part)
-            prev.parts = list(reversed(new_parts_rev))
+                seen_ids: set[str] = set()
+                new_parts_rev: list[_messages.ModelRequestPart] = []
+                for part in reversed(combined_parts):
+                    if isinstance(part, _messages.ToolReturnPart):
+                        if part.tool_call_id in seen_ids:
+                            continue
+                        seen_ids.add(part.tool_call_id)
+                    new_parts_rev.append(part)
+                prev.parts = list(reversed(new_parts_rev))
 
-            if msg.instructions is not None:
-                prev.instructions = msg.instructions
-            continue
+                if msg.instructions is not None:
+                    prev.instructions = msg.instructions
+                continue
 
         # Merge adjacent responses when provider_response_id matches
         if isinstance(prev, _messages.ModelResponse) and isinstance(msg, _messages.ModelResponse):
