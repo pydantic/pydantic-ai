@@ -1005,6 +1005,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
@@ -1021,6 +1022,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
@@ -1067,6 +1069,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
@@ -1078,17 +1081,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # noinspection PyTypeChecker
             self._function_toolset.add_function(
                 func_,
-                True,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
-                False,
-                requires_approval,
-                metadata,
+                takes_ctx=True,
+                name=name,
+                retries=retries,
+                prepare=prepare,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                sequential=sequential,
+                requires_approval=requires_approval,
+                metadata=metadata,
             )
             return func_
 
@@ -1109,6 +1112,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
@@ -1182,17 +1186,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             # noinspection PyTypeChecker
             self._function_toolset.add_function(
                 func_,
-                False,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
-                sequential,
-                requires_approval,
-                metadata,
+                takes_ctx=False,
+                name=name,
+                retries=retries,
+                prepare=prepare,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                sequential=sequential,
+                requires_approval=requires_approval,
+                metadata=metadata,
             )
             return func_
 
