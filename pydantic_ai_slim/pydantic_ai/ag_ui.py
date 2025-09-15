@@ -23,6 +23,7 @@ from typing import (
 )
 
 from pydantic import BaseModel, ValidationError
+from typing_extensions import assert_never
 
 from . import _utils
 from ._agent_graph import CallToolsNode, ModelRequestNode
@@ -600,6 +601,8 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
                         tool_call_id=msg.tool_call_id,
                     )
                 )
+            else:
+                assert_never(msg)
 
         elif isinstance(msg, AssistantMessage):
             if response_parts is None:
@@ -622,6 +625,8 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
                     )
                     for tool_call in msg.tool_calls
                 )
+        else:
+            assert_never(msg)
 
     return result
 
