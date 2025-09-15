@@ -1627,6 +1627,18 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_grape',
                         timestamp=IsDatetime(),
                     ),
+                    UserPromptPart(
+                        content='The price of apple is 10.0.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of pear is 10.0.',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     RetryPromptPart(
                         content='Apples are not available',
                         tool_name='buy',
@@ -1638,13 +1650,6 @@ def test_parallel_tool_return_with_deferred():
                         content=True,
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'The price of apple is 10.0.',
-                            'The price of pear is 10.0.',
-                        ],
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(
@@ -1803,6 +1808,16 @@ async def test_approval_required_toolset():
             ModelRequest(
                 parts=[
                     ToolReturnPart(
+                        tool_name='bar',
+                        content=9,
+                        tool_call_id='bar',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
                         tool_name='foo',
                         content=2,
                         tool_call_id='foo1',
@@ -1812,12 +1827,6 @@ async def test_approval_required_toolset():
                         tool_name='foo',
                         content='The tool call was denied.',
                         tool_call_id='foo2',
-                        timestamp=IsDatetime(),
-                    ),
-                    ToolReturnPart(
-                        tool_name='bar',
-                        content=9,
-                        tool_call_id='bar',
                         timestamp=IsDatetime(),
                     ),
                 ]
