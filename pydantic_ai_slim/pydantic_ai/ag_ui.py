@@ -23,6 +23,7 @@ from typing import (
 )
 
 from pydantic import BaseModel, ValidationError
+from typing_extensions import assert_never
 
 from . import _utils
 from ._agent_graph import CallToolsNode, ModelRequestNode
@@ -32,7 +33,9 @@ from .messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     PartDeltaEvent,
     PartStartEvent,
@@ -573,49 +576,57 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
     """Convert a AG-UI history to a Pydantic AI one."""
     result: list[ModelMessage] = []
     tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+    request_parts: list[ModelRequestPart] | None = None
+    response_parts: list[ModelResponsePart] | None = None
     for msg in messages:
-        if isinstance(msg, UserMessage):
-            result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
+        if isinstance(msg, UserMessage | SystemMessage | DeveloperMessage | ToolMessage):
+            if request_parts is None:
+                request_parts = []
+                result.append(ModelRequest(parts=request_parts))
+                response_parts = None
+
+            if isinstance(msg, UserMessage):
+                request_parts.append(UserPromptPart(content=msg.content))
+            elif isinstance(msg, SystemMessage | DeveloperMessage):
+                request_parts.append(SystemPromptPart(content=msg.content))
+            elif isinstance(msg, ToolMessage):
+                tool_name = tool_calls.get(msg.tool_call_id)
+                if tool_name is None:  # pragma: no cover
+                    raise _ToolCallNotFoundError(tool_call_id=msg.tool_call_id)
+
+                request_parts.append(
+                    ToolReturnPart(
+                        tool_name=tool_name,
+                        content=msg.content,
+                        tool_call_id=msg.tool_call_id,
+                    )
+                )
+            else:
+                assert_never(msg)
+
         elif isinstance(msg, AssistantMessage):
+            if response_parts is None:
+                response_parts = []
+                result.append(ModelResponse(parts=response_parts))
+                request_parts = None
+
             if msg.content:
-                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+                response_parts.append(TextPart(content=msg.content))
 
             if msg.tool_calls:
                 for tool_call in msg.tool_calls:
                     tool_calls[tool_call.id] = tool_call.function.name
 
-                result.append(
-                    ModelResponse(
-                        parts=[
-                            ToolCallPart(
-                                tool_name=tool_call.function.name,
-                                tool_call_id=tool_call.id,
-                                args=tool_call.function.arguments,
-                            )
-                            for tool_call in msg.tool_calls
-                        ]
+                response_parts.extend(
+                    ToolCallPart(
+                        tool_name=tool_call.function.name,
+                        tool_call_id=tool_call.id,
+                        args=tool_call.function.arguments,
                     )
+                    for tool_call in msg.tool_calls
                 )
-        elif isinstance(msg, SystemMessage):
-            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
-        elif isinstance(msg, ToolMessage):
-            tool_name = tool_calls.get(msg.tool_call_id)
-            if tool_name is None:  # pragma: no cover
-                raise _ToolCallNotFoundError(tool_call_id=msg.tool_call_id)
-
-            result.append(
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name=tool_name,
-                            content=msg.content,
-                            tool_call_id=msg.tool_call_id,
-                        )
-                    ]
-                )
-            )
-        elif isinstance(msg, DeveloperMessage):  # pragma: no branch
-            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
+        else:
+            assert_never(msg)
 
     return result
 
