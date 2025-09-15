@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
@@ -10,14 +10,12 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
-
-if TYPE_CHECKING:
-    from pydantic_ai.mcp import MCPServer, ToolResult
 
 
 @dataclass
