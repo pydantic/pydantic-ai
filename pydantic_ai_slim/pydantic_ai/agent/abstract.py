@@ -499,12 +499,13 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 ]
 
                                 parts: list[_messages.ModelRequestPart] = []
-                                async for _event in _agent_graph.process_function_tools(
-                                    graph_ctx.deps.tool_manager,
-                                    tool_calls,
-                                    final_result,
-                                    graph_ctx,
-                                    parts,
+                                async for _event in _agent_graph.process_tool_calls(
+                                    tool_manager=graph_ctx.deps.tool_manager,
+                                    tool_calls=tool_calls,
+                                    tool_call_results=None,
+                                    final_result=final_result,
+                                    ctx=graph_ctx,
+                                    output_parts=parts,
                                 ):
                                     pass
                                 if parts:
@@ -621,7 +622,6 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             [
                 UserPromptNode(
                     user_prompt='What is the capital of France?',
-                    instructions=None,
                     instructions_functions=[],
                     system_prompts=(),
                     system_prompt_functions=[],

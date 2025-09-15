@@ -1797,7 +1797,7 @@ def test_run_with_history_new():
             ),
         ]
     )
-    assert result2._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
+    assert result2.new_messages() == result2.all_messages()[-2:]
     assert result2.output == snapshot('{"ret_a":"a-apple"}')
     assert result2._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
@@ -1854,7 +1854,7 @@ def test_run_with_history_new():
             ),
         ]
     )
-    assert result3._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
+    assert result3.new_messages() == result3.all_messages()[-2:]
     assert result3.output == snapshot('{"ret_a":"a-apple"}')
     assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result3.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
@@ -1983,7 +1983,7 @@ def test_run_with_history_new_structured():
         ]
     )
     assert result2.output == snapshot(Response(a=0))
-    assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
+    assert result2.new_messages() == result2.all_messages()[-3:]
     assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13))
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -2056,6 +2056,8 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
+    assert result.new_messages() == result.all_messages()[-1:]
+
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
     """Test that an agent run with message_history ending on ModelResponse starts with CallToolsNode."""
@@ -2109,6 +2111,8 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
         ]
     )
 
+    assert result.new_messages() == result.all_messages()[-2:]
+
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prompt():
     """Test that an agent run raises error when message_history ends on ModelResponse with tool calls and there's a new prompt."""
@@ -2160,6 +2164,8 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
             ),
         ]
     )
+
+    assert result.new_messages() == []
 
 
 def test_empty_tool_calls():
@@ -2966,6 +2972,8 @@ def test_dynamic_false_no_reevaluate():
         ]
     )
 
+    assert res_two.new_messages() == res_two.all_messages()[-2:]
+
 
 def test_dynamic_true_reevaluate_system_prompt():
     """When dynamic is true, the system prompt is reevaluated
@@ -3047,6 +3055,8 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
         ]
     )
+
+    assert res_two.new_messages() == res_two.all_messages()[-2:]
 
 
 def test_dynamic_system_prompt_no_changes():
@@ -3577,6 +3587,8 @@ def test_instructions_with_message_history():
             ),
         ]
     )
+
+    assert result.new_messages() == result.all_messages()[-2:]
 
 
 def test_instructions_parameter_with_sequence():
@@ -4700,7 +4712,11 @@ async def test_hitl_tool_approval():
                         content='File \'new_file.py\' created with content: print("Hello, world!")',
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     ToolReturnPart(
                         tool_name='delete_file',
                         content="File 'ok_to_delete.py' deleted",
@@ -4725,6 +4741,33 @@ async def test_hitl_tool_approval():
     )
     assert result.output == snapshot('Done!')
 
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content="File 'ok_to_delete.py' deleted",
+                        tool_call_id='ok_to_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content='File cannot be deleted',
+                        tool_call_id='never_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
 
 async def test_run_with_deferred_tool_results_errors():
     agent = Agent('test')
@@ -4733,7 +4776,7 @@ async def test_run_with_deferred_tool_results_errors():
 
     with pytest.raises(
         UserError,
-        match='Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.',
+        match='Tool call results were provided, but the message history does not contain a `ModelResponse`.',
     ):
         await agent.run(
             'Hello again',
@@ -4778,6 +4821,15 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
+    with pytest.raises(
+        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+    ):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
+
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
@@ -4797,7 +4849,6 @@ async def test_run_with_deferred_tool_results_errors():
 
     with pytest.raises(UserError, match="Tool call 'run_me' was already executed and its result cannot be overridden."):
         await agent.run(
-            'Hello again',
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(
                 calls={'run_me': 'Failure', 'defer_me': 'Failure'},
@@ -4808,7 +4859,6 @@ async def test_run_with_deferred_tool_results_errors():
         UserError, match="Tool call 'run_me_too' was already executed and its result cannot be overridden."
     ):
         await agent.run(
-            'Hello again',
             message_history=message_history,
             deferred_tool_results=DeferredToolResults(
                 calls={'run_me_too': 'Success', 'defer_me': 'Failure'},
@@ -4827,3 +4877,101 @@ def test_tool_requires_approval_error():
         @agent.tool_plain(requires_approval=True)
         def delete_file(path: str) -> None:
             pass
+
+
+async def test_consecutive_model_responses_in_history():
+    received_messages: list[ModelMessage] | None = None
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal received_messages
+        received_messages = messages
+        return ModelResponse(
+            parts=[
+                TextPart('All right then, goodbye!'),
+            ]
+        )
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello...')]),
+        ModelResponse(parts=[TextPart(content='...world!')]),
+        ModelResponse(parts=[TextPart(content='Anything else I can help with?')]),
+    ]
+
+    m = FunctionModel(llm)
+    agent = Agent(m)
+    result = await agent.run('No thanks', message_history=history)
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello...',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='...world!'), TextPart(content='Anything else I can help with?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='No thanks',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='All right then, goodbye!')],
+                usage=RequestUsage(input_tokens=54, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='No thanks',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='All right then, goodbye!')],
+                usage=RequestUsage(input_tokens=54, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello...',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='...world!'), TextPart(content='Anything else I can help with?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='No thanks',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )

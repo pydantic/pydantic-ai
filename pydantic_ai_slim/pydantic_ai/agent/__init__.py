@@ -45,15 +45,11 @@ from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
-    DeferredToolCallResult,
-    DeferredToolResult,
     DeferredToolResults,
     DocstringFormat,
     GenerateToolJsonSchema,
     RunContext,
     Tool,
-    ToolApproved,
-    ToolDenied,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -462,7 +458,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: C901
+    async def iter(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -505,7 +501,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             [
                 UserPromptNode(
                     user_prompt='What is the capital of France?',
-                    instructions=None,
                     instructions_functions=[],
                     system_prompts=(),
                     system_prompt_functions=[],
@@ -559,7 +554,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         del model
 
         deps = self._get_deps(deps)
-        new_message_index = len(message_history) if message_history else 0
         output_schema = self._prepare_output_schema(output_type, model_used.profile)
 
         output_type_ = output_type or self.output_type
@@ -620,27 +614,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        tool_call_results: dict[str, DeferredToolResult] | None = None
-        if deferred_tool_results is not None:
-            tool_call_results = {}
-            for tool_call_id, approval in deferred_tool_results.approvals.items():
-                if approval is True:
-                    approval = ToolApproved()
-                elif approval is False:
-                    approval = ToolDenied()
-                tool_call_results[tool_call_id] = approval
-
-            if calls := deferred_tool_results.calls:
-                call_result_types = _utils.get_union_args(DeferredToolCallResult)
-                for tool_call_id, result in calls.items():
-                    if not isinstance(result, call_result_types):
-                        result = _messages.ToolReturn(result)
-                    tool_call_results[tool_call_id] = result
-
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+        graph_deps = _agent_graph.GraphAgentDeps[
+            AgentDepsT, RunOutputDataT
+        ](
             user_deps=deps,
             prompt=user_prompt,
-            new_message_index=new_message_index,
+            new_message_index=0,  # This will be set in `UserPromptNode` based on the length of the cleaned message history
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,
@@ -651,13 +630,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors=self.history_processors,
             builtin_tools=list(self._builtin_tools),
             tool_manager=tool_manager,
-            tool_call_results=tool_call_results,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
+            deferred_tool_results=deferred_tool_results,
             instructions=self._instructions,
             instructions_functions=self._instructions_functions,
             system_prompts=self._system_prompts,

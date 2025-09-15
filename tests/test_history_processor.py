@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -174,8 +174,18 @@ async def test_history_processor_messages_sent_to_provider(
     )
     assert received_messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
-            ModelRequest(parts=[UserPromptPart(content='New question', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Previous question',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='New question',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            )
         ]
     )
 
@@ -244,8 +254,18 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
     await agent.run('Question 2', message_history=message_history)
     assert received_messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Question 1', timestamp=IsDatetime())]),
-            ModelRequest(parts=[UserPromptPart(content='Question 2', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Question 1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Question 2',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            )
         ]
     )
 
@@ -271,8 +291,18 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
 
     assert received_messages == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='Question 1', timestamp=IsDatetime())]),
-            ModelRequest(parts=[UserPromptPart(content='Question 2', timestamp=IsDatetime())]),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Question 1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='Question 2',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            )
         ]
     )
 
@@ -367,9 +397,19 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
     await agent.run('Question 2', message_history=message_history, deps=Deps())
 
     # Should have filtered responses and added prefix
-    assert len(received_messages) == 2
-    for msg in received_messages:
-        assert isinstance(msg, ModelRequest)
-        user_part = msg.parts[0]
-        assert isinstance(user_part, UserPromptPart)
-        assert cast(str, user_part.content).startswith('TEST: ')
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='TEST: Question 1',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='TEST: Question 2',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            )
+        ]
+    )
