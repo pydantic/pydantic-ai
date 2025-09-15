@@ -554,7 +554,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         del model
 
         deps = self._get_deps(deps)
-        new_message_index = len(message_history) if message_history else 0
         output_schema = self._prepare_output_schema(output_type, model_used.profile)
 
         output_type_ = output_type or self.output_type
@@ -615,10 +614,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
+        graph_deps = _agent_graph.GraphAgentDeps[
+            AgentDepsT, RunOutputDataT
+        ](
             user_deps=deps,
             prompt=user_prompt,
-            new_message_index=new_message_index,
+            new_message_index=0,  # This will be set in `UserPromptNode` based on the length of the cleaned message history
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,

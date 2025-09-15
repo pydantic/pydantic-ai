@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from dataclasses import field
+from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
@@ -186,10 +186,12 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
+        message_history = _clean_message_history(ctx.state.message_history)
         # Add message history to the `capture_run_messages` list, which will be empty at this point
-        messages.extend(ctx.state.message_history)
+        messages.extend(message_history)
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
+        ctx.deps.new_message_index = len(messages)
 
         if self.deferred_tool_results is not None:
             return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
@@ -454,6 +456,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, run_context)
+        message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
@@ -1109,3 +1112,51 @@ async def _process_message_history(
     # Replaces the message history in the state with the processed messages
     state.message_history = messages
     return messages
+
+
+def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_messages.ModelMessage]:
+    """Clean the message history by merging consecutive messages of the same type."""
+    clean_messages: list[_messages.ModelMessage] = []
+    for message in messages:
+        last_message = clean_messages[-1] if len(clean_messages) > 0 else None
+
+        if isinstance(message, _messages.ModelRequest):
+            if (
+                last_message
+                and isinstance(last_message, _messages.ModelRequest)
+                # Requests can only be merged if they have the same instructions
+                and (
+                    not last_message.instructions
+                    or not message.instructions
+                    or last_message.instructions == message.instructions
+                )
+            ):
+                parts = [*last_message.parts, *message.parts]
+                parts.sort(
+                    # Tool return parts always need to be at the start
+                    key=lambda x: 0 if isinstance(x, _messages.ToolReturnPart | _messages.RetryPromptPart) else 1
+                )
+                merged_message = _messages.ModelRequest(
+                    parts=parts,
+                    instructions=last_message.instructions or message.instructions,
+                )
+                clean_messages[-1] = merged_message
+            else:
+                clean_messages.append(message)
+        elif isinstance(message, _messages.ModelResponse):
+            if (
+                last_message
+                and isinstance(last_message, _messages.ModelResponse)
+                # Responses can only be merged if they didn't really come from an API
+                and last_message.provider_response_id is None
+                and last_message.provider_name is None
+                and last_message.model_name is None
+                and message.provider_response_id is None
+                and message.provider_name is None
+                and message.model_name is None
+            ):
+                merged_message = replace(last_message, parts=[*last_message.parts, *message.parts])
+                clean_messages[-1] = merged_message
+            else:
+                clean_messages.append(message)
+    return clean_messages

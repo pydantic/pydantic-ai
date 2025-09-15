@@ -1452,6 +1452,8 @@ def test_output_type_empty():
 
 
 def test_parallel_tool_return_with_deferred():
+    final_received_messages: list[ModelMessage] | None = None
+
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
@@ -1465,6 +1467,8 @@ def test_parallel_tool_return_with_deferred():
                 ]
             )
         else:
+            nonlocal final_received_messages
+            final_received_messages = messages
             return ModelResponse(
                 parts=[
                     TextPart('Done!'),
@@ -1666,7 +1670,119 @@ def test_parallel_tool_return_with_deferred():
             ),
         ]
     )
-    assert result.output == snapshot('Done!')
+
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Apples are not available',
+                        tool_name='buy',
+                        tool_call_id='buy_apple',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='buy',
+                        content=True,
+                        tool_call_id='buy_banana',
+                        metadata={'fruit': 'banana', 'price': 100.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='I bought a banana',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=124, output_tokens=31),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    assert final_received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What do an apple, a banana, a pear and a grape cost? Also buy me a pear.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'apple'}, tool_call_id='get_price_apple'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'banana'}, tool_call_id='get_price_banana'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'pear'}, tool_call_id='get_price_pear'),
+                    ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                ],
+                usage=RequestUsage(input_tokens=68, output_tokens=30),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_apple',
+                        metadata={'fruit': 'apple', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: banana',
+                        tool_name='get_price',
+                        tool_call_id='get_price_banana',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='get_price',
+                        content=10.0,
+                        tool_call_id='get_price_pear',
+                        metadata={'fruit': 'pear', 'price': 10.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Unknown fruit: grape',
+                        tool_name='get_price',
+                        tool_call_id='get_price_grape',
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='Apples are not available',
+                        tool_name='buy',
+                        tool_call_id='buy_apple',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='buy',
+                        content=True,
+                        tool_call_id='buy_banana',
+                        metadata={'fruit': 'banana', 'price': 100.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of apple is 10.0.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='The price of pear is 10.0.',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='I bought a banana',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+        ]
+    )
 
 
 def test_deferred_tool_call_approved_fails():

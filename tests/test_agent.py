@@ -1797,7 +1797,7 @@ def test_run_with_history_new():
             ),
         ]
     )
-    assert result2._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
+    assert result2.new_messages() == result2.all_messages()[-2:]
     assert result2.output == snapshot('{"ret_a":"a-apple"}')
     assert result2._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
@@ -1854,7 +1854,7 @@ def test_run_with_history_new():
             ),
         ]
     )
-    assert result3._new_message_index == snapshot(4)  # pyright: ignore[reportPrivateUsage]
+    assert result3.new_messages() == result3.all_messages()[-2:]
     assert result3.output == snapshot('{"ret_a":"a-apple"}')
     assert result3._output_tool_name == snapshot(None)  # pyright: ignore[reportPrivateUsage]
     assert result3.usage() == snapshot(RunUsage(requests=1, input_tokens=55, output_tokens=13))
@@ -1983,7 +1983,7 @@ def test_run_with_history_new_structured():
         ]
     )
     assert result2.output == snapshot(Response(a=0))
-    assert result2._new_message_index == snapshot(5)  # pyright: ignore[reportPrivateUsage]
+    assert result2.new_messages() == result2.all_messages()[-3:]
     assert result2._output_tool_name == snapshot('final_result')  # pyright: ignore[reportPrivateUsage]
     assert result2.usage() == snapshot(RunUsage(requests=1, input_tokens=59, output_tokens=13))
     new_msg_part_kinds = [(m.kind, [p.part_kind for p in m.parts]) for m in result2.all_messages()]
@@ -2056,6 +2056,8 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
         ]
     )
 
+    assert result.new_messages() == result.all_messages()[-1:]
+
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
     """Test that an agent run with message_history ending on ModelResponse starts with CallToolsNode."""
@@ -2109,6 +2111,8 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
         ]
     )
 
+    assert result.new_messages() == result.all_messages()[-2:]
+
 
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prompt():
     """Test that an agent run raises error when message_history ends on ModelResponse with tool calls and there's a new prompt."""
@@ -2160,6 +2164,8 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
             ),
         ]
     )
+
+    assert result.new_messages() == []
 
 
 def test_empty_tool_calls():
@@ -2966,6 +2972,8 @@ def test_dynamic_false_no_reevaluate():
         ]
     )
 
+    assert res_two.new_messages() == res_two.all_messages()[-2:]
+
 
 def test_dynamic_true_reevaluate_system_prompt():
     """When dynamic is true, the system prompt is reevaluated
@@ -3047,6 +3055,8 @@ def test_dynamic_true_reevaluate_system_prompt():
             ),
         ]
     )
+
+    assert res_two.new_messages() == res_two.all_messages()[-2:]
 
 
 def test_dynamic_system_prompt_no_changes():
@@ -3577,6 +3587,8 @@ def test_instructions_with_message_history():
             ),
         ]
     )
+
+    assert result.new_messages() == result.all_messages()[-2:]
 
 
 def test_instructions_parameter_with_sequence():
