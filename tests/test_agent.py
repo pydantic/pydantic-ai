@@ -4675,7 +4675,11 @@ async def test_hitl_tool_approval():
                         content='File \'new_file.py\' created with content: print("Hello, world!")',
                         tool_call_id='create_file',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     ToolReturnPart(
                         tool_name='delete_file',
                         content="File 'ok_to_delete.py' deleted",
@@ -4700,6 +4704,33 @@ async def test_hitl_tool_approval():
     )
     assert result.output == snapshot('Done!')
 
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content="File 'ok_to_delete.py' deleted",
+                        tool_call_id='ok_to_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='delete_file',
+                        content='File cannot be deleted',
+                        tool_call_id='never_delete',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Done!')],
+                usage=RequestUsage(input_tokens=78, output_tokens=24),
+                model_name='function:model_function:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
 
 async def test_run_with_deferred_tool_results_errors():
     agent = Agent('test')
@@ -4708,7 +4739,7 @@ async def test_run_with_deferred_tool_results_errors():
 
     with pytest.raises(
         UserError,
-        match='Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.',
+        match='Tool call results were provided, but the message history does not contain a `ModelResponse`.',
     ):
         await agent.run(
             'Hello again',

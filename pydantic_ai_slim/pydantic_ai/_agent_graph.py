@@ -16,7 +16,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai._utils import get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -26,7 +26,9 @@ from .exceptions import ToolRetryError
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
+    DeferredToolCallResult,
     DeferredToolResult,
+    DeferredToolResults,
     RunContext,
     ToolApproved,
     ToolDefinition,
@@ -123,7 +125,6 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
 
     builtin_tools: list[AbstractBuiltinTool] = dataclasses.field(repr=False)
     tool_manager: ToolManager[DepsT]
-    tool_call_results: dict[str, DeferredToolResult] | None
 
     tracer: Tracer
     instrumentation_settings: InstrumentationSettings | None
@@ -160,6 +161,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     _: dataclasses.KW_ONLY
 
+    deferred_tool_results: DeferredToolResults | None
+
     instructions: str | None
     instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
 
@@ -195,19 +198,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             parts.extend(await self._sys_parts(run_context))
 
-        if (tool_call_results := ctx.deps.tool_call_results) is not None:
-            if messages and (last_message := messages[-1]) and isinstance(last_message, _messages.ModelRequest):
-                # If tool call results were provided, that means the previous run ended on deferred tool calls.
-                # That run would typically have ended on a `ModelResponse`, but if it had a mix of deferred tool calls and ones that could already be executed,
-                # a `ModelRequest` would already have been added to the history with the preliminary results, even if it wouldn't have been sent to the model yet.
-                # So now that we have all of the deferred results, we roll back to the last `ModelResponse` and store the contents of the `ModelRequest` on `deferred_tool_results` to be handled by `CallToolsNode`.
-                ctx.deps.tool_call_results = self._update_tool_call_results_from_model_request(
-                    tool_call_results, last_message
-                )
-                messages.pop()
-
-            if not messages:
-                raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
+        if self.deferred_tool_results is not None:
+            return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
 
         if messages and (last_message := messages[-1]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
@@ -215,9 +207,18 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages.pop()
                 parts.extend(last_message.parts)
             elif isinstance(last_message, _messages.ModelResponse):
-                call_tools_node = await self._handle_message_history_model_response(ctx, last_message)
-                if call_tools_node is not None:
-                    return call_tools_node
+                if self.user_prompt is None:
+                    # `CallToolsNode` requires the tool manager to be prepared for the run step
+                    # This will raise errors for any tool name conflicts
+                    run_context = build_run_context(ctx)
+                    ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+
+                    # Skip ModelRequestNode and go directly to CallToolsNode
+                    return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                elif any(isinstance(part, _messages.ToolCallPart) for part in last_message.parts):
+                    raise exceptions.UserError(
+                        'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+                    )
 
         if self.user_prompt is not None:
             parts.append(_messages.UserPromptPart(self.user_prompt))
@@ -227,73 +228,66 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
 
-    async def _handle_message_history_model_response(
+    async def _handle_deferred_tool_results(  # noqa: C901
         self,
+        deferred_tool_results: DeferredToolResults,
+        messages: list[_messages.ModelMessage],
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        message: _messages.ModelResponse,
-    ) -> CallToolsNode[DepsT, NodeRunEndT] | None:
-        unprocessed_tool_calls = any(isinstance(part, _messages.ToolCallPart) for part in message.parts)
-        if unprocessed_tool_calls:
-            if self.user_prompt is not None:
-                raise exceptions.UserError(
-                    'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
-                )
-        else:
-            if ctx.deps.tool_call_results is not None:
-                raise exceptions.UserError(
-                    'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
-                )
+    ) -> CallToolsNode[DepsT, NodeRunEndT]:
+        last_model_request: _messages.ModelRequest | None = None
+        last_model_response: _messages.ModelResponse | None = None
+        for message in reversed(messages):
+            if isinstance(message, _messages.ModelRequest):
+                last_model_request = message
+            elif isinstance(message, _messages.ModelResponse):
+                last_model_response = message
+                break
 
-        if unprocessed_tool_calls or self.user_prompt is None:
-            # `CallToolsNode` requires the tool manager to be prepared for the run step
-            # This will raise errors for any tool name conflicts
-            run_context = build_run_context(ctx)
-            ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
+        if not last_model_response:
+            raise exceptions.UserError(
+                'Tool call results were provided, but the message history does not contain a `ModelResponse`.'
+            )
+        if not any(isinstance(part, _messages.ToolCallPart) for part in last_model_response.parts):
+            raise exceptions.UserError(
+                'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+            )
+        if self.user_prompt is not None:
+            raise exceptions.UserError(
+                'Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+            )
 
-            # Skip ModelRequestNode and go directly to CallToolsNode
-            return CallToolsNode[DepsT, NodeRunEndT](model_response=message)
+        tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
+        tool_call_results = {}
+        for tool_call_id, approval in deferred_tool_results.approvals.items():
+            if approval is True:
+                approval = ToolApproved()
+            elif approval is False:
+                approval = ToolDenied()
+            tool_call_results[tool_call_id] = approval
 
-    def _update_tool_call_results_from_model_request(
-        self, tool_call_results: dict[str, DeferredToolResult], message: _messages.ModelRequest
-    ) -> dict[str, DeferredToolResult]:
-        last_tool_return: _messages.ToolReturn | None = None
-        user_content: list[str | _messages.UserContent] = []
-        for part in message.parts:
-            if isinstance(part, _messages.ToolReturnPart):
-                if part.tool_call_id in tool_call_results:
-                    raise exceptions.UserError(
-                        f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
-                    )
+        if calls := deferred_tool_results.calls:
+            call_result_types = get_union_args(DeferredToolCallResult)
+            for tool_call_id, result in calls.items():
+                if not isinstance(result, call_result_types):
+                    result = _messages.ToolReturn(result)
+                tool_call_results[tool_call_id] = result
 
-                last_tool_return = _messages.ToolReturn(return_value=part.content, metadata=part.metadata)
-                tool_call_results[part.tool_call_id] = last_tool_return
-            elif isinstance(part, _messages.RetryPromptPart):
-                if part.tool_call_id in tool_call_results:
-                    raise exceptions.UserError(
-                        f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
-                    )
+        if last_model_request:
+            for part in last_model_request.parts:
+                if isinstance(part, _messages.ToolReturnPart):
+                    if part.tool_call_id in tool_call_results:
+                        raise exceptions.UserError(
+                            f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                        )
+                    tool_call_results[part.tool_call_id] = 'skip'
 
-                tool_call_results[part.tool_call_id] = part
-            elif isinstance(part, _messages.UserPromptPart):
-                # Tools can return user parts via `ToolReturn.content` or by returning multi-modal content.
-                # These go together with a specific `ToolReturnPart`, but we don't have a way to know which,
-                # so (below) we just add them to the last one, matching the tool-results-before-user-parts order of the request.
-                if isinstance(part.content, str):
-                    user_content.append(part.content)
-                else:
-                    user_content.extend(part.content)
-            else:
-                raise exceptions.UserError(f'Unexpected message part type: {type(part)}')  # pragma: no cover
+        # `CallToolsNode` requires the tool manager to be prepared for the run step
+        # This will raise errors for any tool name conflicts
+        run_context = build_run_context(ctx)
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        if user_content:
-            if last_tool_return is None:
-                raise exceptions.UserError(
-                    'Tool call results were provided, but the last message in the history was a `ModelRequest` with user parts not tied to preliminary tool results.'
-                )
-            assert last_tool_return is not None
-            last_tool_return.content = user_content
-
-        return tool_call_results
+        # Skip ModelRequestNode and go directly to CallToolsNode
+        return CallToolsNode[DepsT, NodeRunEndT](last_model_response, tool_call_results=tool_call_results)
 
     async def _reevaluate_dynamic_prompts(
         self, messages: list[_messages.ModelMessage], run_context: RunContext[DepsT]
@@ -482,6 +476,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that processes a model response, and decides whether to end the run or make a new request."""
 
     model_response: _messages.ModelResponse
+    tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None = None
 
     _events_iterator: AsyncIterator[_messages.HandleResponseEvent] | None = field(default=None, init=False, repr=False)
     _next_node: ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]] | None = field(
@@ -585,8 +580,14 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
 
-        async for event in process_function_tools(
-            ctx.deps.tool_manager, tool_calls, None, ctx, output_parts, output_final_result
+        async for event in process_tool_calls(
+            tool_manager=ctx.deps.tool_manager,
+            tool_calls=tool_calls,
+            tool_call_results=self.tool_call_results,
+            final_result=None,
+            ctx=ctx,
+            output_parts=output_parts,
+            output_final_result=output_final_result,
         ):
             yield event
 
@@ -652,13 +653,14 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
         run_step=ctx.state.run_step,
-        tool_call_approved=ctx.state.run_step == 0 and ctx.deps.tool_call_results is not None,
+        tool_call_approved=ctx.state.run_step == 0,
     )
 
 
-async def process_function_tools(  # noqa: C901
+async def process_tool_calls(  # noqa: C901
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
+    tool_call_results: dict[str, DeferredToolResult | Literal['skip']] | None,
     final_result: result.FinalResult[NodeRunEndT] | None,
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
     output_parts: list[_messages.ModelRequestPart],
@@ -739,14 +741,13 @@ async def process_function_tools(  # noqa: C901
         ctx.state.increment_retries(ctx.deps.max_result_retries)
         calls_to_run.extend(tool_calls_by_kind['unknown'])
 
-    deferred_tool_results: dict[str, DeferredToolResult] = {}
-    if build_run_context(ctx).tool_call_approved and ctx.deps.tool_call_results is not None:
-        deferred_tool_results = ctx.deps.tool_call_results
+    calls_to_run_results: dict[str, DeferredToolResult] = {}
+    if tool_call_results is not None:
         # Deferred tool calls are "run" as well, by reading their value from the tool call results
         calls_to_run.extend(tool_calls_by_kind['external'])
         calls_to_run.extend(tool_calls_by_kind['unapproved'])
 
-        result_tool_call_ids = set(deferred_tool_results.keys())
+        result_tool_call_ids = set(tool_call_results.keys())
         tool_call_ids_to_run = {call.tool_call_id for call in calls_to_run}
         if tool_call_ids_to_run != result_tool_call_ids:
             raise exceptions.UserError(
@@ -754,24 +755,29 @@ async def process_function_tools(  # noqa: C901
                 f'Expected: {tool_call_ids_to_run}, got: {result_tool_call_ids}'
             )
 
+        # Filter out calls that were already executed before and should now be skipped
+        calls_to_run_results = {call_id: result for call_id, result in tool_call_results.items() if result != 'skip'}
+        calls_to_run = [call for call in calls_to_run if call.tool_call_id in calls_to_run_results]
+
     deferred_calls: dict[Literal['external', 'unapproved'], list[_messages.ToolCallPart]] = defaultdict(list)
 
     if calls_to_run:
         async for event in _call_tools(
-            tool_manager,
-            calls_to_run,
-            deferred_tool_results,
-            ctx.deps.tracer,
-            ctx.deps.usage_limits,
-            output_parts,
-            deferred_calls,
+            tool_manager=tool_manager,
+            tool_calls=calls_to_run,
+            tool_call_results=calls_to_run_results,
+            tracer=ctx.deps.tracer,
+            usage_limits=ctx.deps.usage_limits,
+            output_parts=output_parts,
+            output_deferred_calls=deferred_calls,
         ):
             yield event
 
     # Finally, we handle deferred tool calls (unless they were already included in the run because results were provided)
-    if not deferred_tool_results:
+    if tool_call_results is None:
+        calls = [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]
         if final_result:
-            for call in [*tool_calls_by_kind['external'], *tool_calls_by_kind['unapproved']]:
+            for call in calls:
                 output_parts.append(
                     _messages.ToolReturnPart(
                         tool_name=call.tool_name,
@@ -779,13 +785,11 @@ async def process_function_tools(  # noqa: C901
                         tool_call_id=call.tool_call_id,
                     )
                 )
-        else:
-            for call in tool_calls_by_kind['external']:
-                deferred_calls['external'].append(call)
-                yield _messages.FunctionToolCallEvent(call)
+        elif calls:
+            deferred_calls['external'].extend(tool_calls_by_kind['external'])
+            deferred_calls['unapproved'].extend(tool_calls_by_kind['unapproved'])
 
-            for call in tool_calls_by_kind['unapproved']:
-                deferred_calls['unapproved'].append(call)
+            for call in calls:
                 yield _messages.FunctionToolCallEvent(call)
 
     if not final_result and deferred_calls:
@@ -807,7 +811,7 @@ async def process_function_tools(  # noqa: C901
 async def _call_tools(
     tool_manager: ToolManager[DepsT],
     tool_calls: list[_messages.ToolCallPart],
-    deferred_tool_results: dict[str, DeferredToolResult],
+    tool_call_results: dict[str, DeferredToolResult],
     tracer: Tracer,
     usage_limits: _usage.UsageLimits | None,
     output_parts: list[_messages.ModelRequestPart],
@@ -853,7 +857,7 @@ async def _call_tools(
         if tool_manager.should_call_sequentially(tool_calls):
             for index, call in enumerate(tool_calls):
                 if event := await handle_call_or_result(
-                    _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
                     index,
                 ):
                     yield event
@@ -861,7 +865,7 @@ async def _call_tools(
         else:
             tasks = [
                 asyncio.create_task(
-                    _call_tool(tool_manager, call, deferred_tool_results.get(call.tool_call_id), usage_limits),
+                    _call_tool(tool_manager, call, tool_call_results.get(call.tool_call_id), usage_limits),
                     name=call.tool_name,
                 )
                 for call in tool_calls
