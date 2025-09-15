@@ -205,6 +205,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     tool_call_results, last_message
                 )
                 messages.pop()
+                # Ensure new_message_index includes the re-built request that will be added
+                if ctx.deps.new_message_index > len(messages):
+                    ctx.deps.new_message_index = len(messages)
 
             if not messages:
                 raise exceptions.UserError('Tool call results were provided, but the message history is empty.')
@@ -213,6 +216,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
+                # Keep new_message_index in sync when rewinding
+                if ctx.deps.new_message_index > len(messages):
+                    ctx.deps.new_message_index = len(messages)
                 parts.extend(last_message.parts)
             elif isinstance(last_message, _messages.ModelResponse):
                 call_tools_node = await self._handle_message_history_model_response(ctx, last_message)

@@ -15,7 +15,15 @@ from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 from typing_extensions import Self
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai import (
+    Agent,
+    CallDeferred,
+    ModelRetry,
+    RunContext,
+    UnexpectedModelBehavior,
+    UserError,
+    capture_run_messages,
+)
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -2449,6 +2457,113 @@ class TestMultipleToolCalls:
                 ),
             ]
         )
+
+    def test_history_merge_adjacent_requests_and_index_alignment(self):
+        """Adjacent ModelRequests with tool returns are merged; new_messages includes the merged request before the final response."""
+
+        def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            # If any request already has tool returns, end with a text response
+            for msg in reversed(messages):
+                if isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
+                    return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('sum', {'a': 1, 'b': 2}, tool_call_id='sum-1'),
+                    ToolCallPart('sum', {'a': 3, 'b': 4}, tool_call_id='sum-2'),
+                    ToolCallPart('multiply', {'a': 5, 'b': 6}, tool_call_id='multiply-1'),
+                    ToolCallPart('multiply', {'a': 7, 'b': 8}, tool_call_id='multiply-2'),
+                ]
+            )
+
+        agent = Agent(FunctionModel(llm), output_type=str)
+
+        @agent.tool_plain
+        def sum(a: int, b: int) -> int:  # pragma: no cover
+            return a + b
+
+        @agent.tool_plain
+        def multiply(a: int, b: int) -> int:  # pragma: no cover
+            raise CallDeferred
+
+        messages = [
+            ModelRequest(parts=[UserPromptPart('Calculate 1+2, 3+4, 5*6, 7*8')]),
+            ModelResponse(
+                parts=[
+                    ToolCallPart('sum', {'a': 1, 'b': 2}, tool_call_id='sum-1'),
+                    ToolCallPart('sum', {'a': 3, 'b': 4}, tool_call_id='sum-2'),
+                    ToolCallPart('multiply', {'a': 5, 'b': 6}, tool_call_id='multiply-1'),
+                    ToolCallPart('multiply', {'a': 7, 'b': 8}, tool_call_id='multiply-2'),
+                ]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='sum', tool_call_id='sum-1', content='3')]),
+            ModelRequest(parts=[ToolReturnPart(tool_name='sum', tool_call_id='sum-2', content='7')]),
+        ]
+
+        tool_results = DeferredToolResults(calls={'multiply-1': '30', 'multiply-2': '56'})
+
+        result = agent.run_sync(message_history=messages, deferred_tool_results=tool_results)
+        new_msgs = result.new_messages()
+        assert len(new_msgs) >= 2
+        assert isinstance(new_msgs[0], ModelRequest)
+        assert isinstance(new_msgs[-1], ModelResponse)
+
+        tr_parts = [p for p in new_msgs[0].parts if isinstance(p, ToolReturnPart)]
+        ids = [p.tool_call_id for p in tr_parts]
+        assert set(ids) == {'sum-1', 'sum-2', 'multiply-1', 'multiply-2'}
+        assert len(ids) == 4
+
+    def test_history_merge_adjacent_responses_and_index_alignment(self):
+        """Multiple consecutive ModelResponses with tool calls are merged; new_messages includes a request with all ToolReturnParts."""
+
+        def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            for msg in reversed(messages):
+                if isinstance(msg, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in msg.parts):
+                    return ModelResponse(parts=[TextPart('done')])
+            # First pass: emit tool calls one per response; the agent merges them
+            for msg in reversed(messages):
+                if isinstance(msg, ModelResponse):
+                    # Already provided a response; keep returning the last one
+                    return msg
+            # Starting response
+            return ModelResponse(parts=[ToolCallPart('sum', {'a': 1, 'b': 2}, tool_call_id='sum-1')])
+
+        agent = Agent(FunctionModel(llm), output_type=str)
+
+        @agent.tool_plain
+        def sum(a: int, b: int) -> int:  # pragma: no cover
+            return a + b
+
+        @agent.tool_plain
+        def multiply(a: int, b: int) -> int:  # pragma: no cover
+            raise CallDeferred
+
+        messages = [
+            ModelRequest(parts=[UserPromptPart('Calculate 1+2, 3+4, 5*6, 7*8')]),
+            ModelResponse(parts=[ToolCallPart('sum', {'a': 1, 'b': 2}, tool_call_id='sum-1')]),
+            ModelResponse(parts=[ToolCallPart('sum', {'a': 3, 'b': 4}, tool_call_id='sum-2')]),
+            ModelResponse(parts=[ToolCallPart('multiply', {'a': 5, 'b': 6}, tool_call_id='multiply-1')]),
+            ModelResponse(parts=[ToolCallPart('multiply', {'a': 7, 'b': 8}, tool_call_id='multiply-2')]),
+            # Prior run added preliminary results for non-deferred tools
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='sum', tool_call_id='sum-1', content='3'),
+                    ToolReturnPart(tool_name='sum', tool_call_id='sum-2', content='7'),
+                ]
+            ),
+        ]
+
+        tool_results = DeferredToolResults(calls={'multiply-1': '30', 'multiply-2': '56'})
+
+        result = agent.run_sync(message_history=messages, deferred_tool_results=tool_results)
+        new_msgs = result.new_messages()
+        assert len(new_msgs) >= 2
+        assert isinstance(new_msgs[0], ModelRequest)
+        assert isinstance(new_msgs[-1], ModelResponse)
+
+        tr_parts = [p for p in new_msgs[0].parts if isinstance(p, ToolReturnPart)]
+        ids = [p.tool_call_id for p in tr_parts]
+        assert set(ids) == {'sum-1', 'sum-2', 'multiply-1', 'multiply-2'}
+        assert len(ids) == 4
 
     def test_exhaustive_strategy_executes_all_tools(self):
         """Test that 'exhaustive' strategy executes all tools while using first final result."""

@@ -96,6 +96,69 @@ S = TypeVar('S')
 NoneType = type(None)
 
 
+def _merge_adjacent_messages(
+    messages: list[_messages.ModelMessage],
+) -> list[_messages.ModelMessage]:
+    """Normalize history by merging adjacent requests/responses where safe.
+
+    - Merge consecutive ModelRequest messages by concatenating parts and
+      de-duplicating ToolReturnPart entries by tool_call_id (keeping the last).
+    - Merge consecutive ModelResponse messages iff provider_response_id matches
+      (including when both are None). Concatenate parts and sum usage; prefer
+      later timestamp and provider fields when set.
+    """
+    if not messages:
+        return messages
+
+    merged: list[_messages.ModelMessage] = []
+
+    for msg in messages:
+        if not merged:
+            merged.append(msg)
+            continue
+
+        prev = merged[-1]
+
+        # Merge adjacent requests
+        if isinstance(prev, _messages.ModelRequest) and isinstance(msg, _messages.ModelRequest):
+            combined_parts = list(prev.parts) + list(msg.parts)
+
+            seen_ids: set[str] = set()
+            new_parts_rev: list[_messages.ModelRequestPart] = []
+            for part in reversed(combined_parts):
+                if isinstance(part, _messages.ToolReturnPart):
+                    if part.tool_call_id in seen_ids:
+                        continue
+                    seen_ids.add(part.tool_call_id)
+                new_parts_rev.append(part)
+            prev.parts = list(reversed(new_parts_rev))
+
+            if msg.instructions is not None:
+                prev.instructions = msg.instructions
+            continue
+
+        # Merge adjacent responses when provider_response_id matches
+        if isinstance(prev, _messages.ModelResponse) and isinstance(msg, _messages.ModelResponse):
+            if prev.provider_response_id == msg.provider_response_id:
+                prev.parts = list(prev.parts) + list(msg.parts)
+
+                try:
+                    prev.usage = prev.usage + msg.usage
+                except Exception:
+                    prev.usage = msg.usage
+
+                prev.model_name = msg.model_name or prev.model_name
+                prev.provider_name = msg.provider_name or prev.provider_name
+                prev.provider_details = msg.provider_details or prev.provider_details
+                prev.finish_reason = msg.finish_reason or prev.finish_reason
+                prev.timestamp = msg.timestamp
+                continue
+
+        merged.append(msg)
+
+    return merged
+
+
 @dataclasses.dataclass(init=False)
 class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     """Class for defining "agents" - a way to have a specific type of "conversation" with an LLM.
@@ -559,7 +622,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         del model
 
         deps = self._get_deps(deps)
-        new_message_index = len(message_history) if message_history else 0
+
+        # Normalize the provided message history by merging adjacent compatible
+        # messages so downstream logic sees a consistent view. Keep
+        # new_message_index in sync with the normalized history length.
+        normalized_history = message_history[:] if message_history else []
+        if normalized_history:
+            normalized_history = _merge_adjacent_messages(normalized_history)
+        new_message_index = len(normalized_history)
         output_schema = self._prepare_output_schema(output_type, model_used.profile)
 
         output_type_ = output_type or self.output_type
@@ -586,7 +656,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Build the initial state
         usage = usage or _usage.RunUsage()
         state = _agent_graph.GraphAgentState(
-            message_history=message_history[:] if message_history else [],
+            message_history=normalized_history,
             usage=usage,
             retries=0,
             run_step=0,
