@@ -2003,28 +2003,53 @@ def test_run_with_history_new_structured():
 
 
 def test_run_with_history_ending_on_model_request_and_no_user_prompt():
+    m = TestModel()
+    agent = Agent(m)
+
+    @agent.system_prompt(dynamic=True)
+    async def system_prompt(ctx: RunContext) -> str:
+        return f'System prompt: user prompt length = {len(ctx.prompt or [])}'
+
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content='Hello')], instructions='Original instructions'),
+        ModelRequest(
+            parts=[
+                SystemPromptPart(content='System prompt', dynamic_ref=system_prompt.__qualname__),
+                UserPromptPart(content=['Hello', ImageUrl('https://example.com/image.jpg')]),
+                UserPromptPart(content='How goes it?'),
+            ],
+            instructions='Original instructions',
+        ),
     ]
 
-    m = TestModel()
-    agent = Agent(m, instructions='New instructions')
+    @agent.instructions
+    async def instructions(ctx: RunContext) -> str:
+        assert ctx.prompt == ['Hello', ImageUrl('https://example.com/image.jpg'), 'How goes it?']
+        return 'New instructions'
 
     result = agent.run_sync(message_history=messages)
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
-                    UserPromptPart(
-                        content='Hello',
+                    SystemPromptPart(
+                        content='System prompt: user prompt length = 3',
                         timestamp=IsDatetime(),
-                    )
+                        dynamic_ref=IsStr(),
+                    ),
+                    UserPromptPart(
+                        content=['Hello', ImageUrl(url='https://example.com/image.jpg', identifier='39cfc4')],
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='How goes it?',
+                        timestamp=IsDatetime(),
+                    ),
                 ],
                 instructions='New instructions',
             ),
             ModelResponse(
                 parts=[TextPart(content='success (no tool calls)')],
-                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                usage=RequestUsage(input_tokens=61, output_tokens=4),
                 model_name='test',
                 timestamp=IsDatetime(),
             ),
