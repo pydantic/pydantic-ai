@@ -775,23 +775,8 @@ class OpenAIChatModel(Model):
         if OpenAIChatModel._is_text_like_media_type(item.media_type):
             # Inline text-like binary content as a text block
             text = item.data.decode('utf-8')
-            # Derive a sensible default filename from media type
             media_type = item.media_type
-            if media_type == 'text/plain':
-                filename = 'file.txt'
-            elif media_type == 'text/csv':
-                filename = 'file.csv'
-            elif media_type == 'text/markdown':
-                filename = 'file.md'
-            elif media_type == 'application/json' or media_type.endswith('+json'):
-                filename = 'file.json'
-            elif media_type == 'application/xml' or media_type.endswith('+xml'):
-                filename = 'file.xml'
-            elif media_type in ('application/x-yaml', 'application/yaml', 'text/yaml'):
-                filename = 'file.yaml'
-            else:
-                filename = 'file.txt'
-            inline = OpenAIChatModel._inline_file_block(filename, media_type, text)
+            inline = OpenAIChatModel._inline_file_block(media_type, text)
             return [ChatCompletionContentPartTextParam(text=inline, type='text')]
         base64_encoded = base64.b64encode(item.data).decode('utf-8')
         if item.is_image:
@@ -830,8 +815,7 @@ class OpenAIChatModel(Model):
             return None
         if OpenAIChatModel._is_text_like_media_type(item.media_type):
             downloaded_text = await download_item(item, data_format='text', type_format='extension')
-            filename = f'file.{downloaded_text["data_type"] or "txt"}'
-            inline = OpenAIChatModel._inline_file_block(filename, item.media_type, downloaded_text['data'])
+            inline = OpenAIChatModel._inline_file_block(item.media_type, downloaded_text['data'], file_url=item.url)
             return [ChatCompletionContentPartTextParam(text=inline, type='text')]
         downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
         return [
@@ -858,8 +842,11 @@ class OpenAIChatModel(Model):
         )
 
     @staticmethod
-    def _inline_file_block(filename: str, media_type: str, text: str) -> str:
-        return f'-----BEGIN FILE filename="{filename}" type="{media_type}"-----\n{text}\n-----END FILE-----'
+    def _inline_file_block(media_type: str, text: str, file_url: str | None = None) -> str:
+        if file_url is not None:
+            return f'-----BEGIN FILE url="{file_url}" type="{media_type}"-----\n{text}\n-----END FILE-----'
+        else:
+            return f'-----BEGIN FILE type="{media_type}"-----\n{text}\n-----END FILE-----'
 
 
 @deprecated(

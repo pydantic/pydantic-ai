@@ -19,18 +19,18 @@ pytestmark = [
 ]
 
 
-async def test_openai_binary_text_plain_inlined_to_text():
+async def test_openai_binary_text_plain_inlined_to_text() -> None:
     part = UserPromptPart(content=[BinaryContent(data=b'Hello world', media_type='text/plain')])
     msg = await OpenAIChatModel._map_user_prompt(part)
     assert isinstance(msg['content'], list)
     content = cast(list[dict[str, Any]], msg['content'])
     assert content[0]['type'] == 'text'
     text = cast(str, content[0]['text'])
-    assert text.startswith('-----BEGIN FILE filename="file.txt" type="text/plain"-----\nHello world')
+    assert text.startswith('-----BEGIN FILE type="text/plain"-----\nHello world')
     assert text.rstrip().endswith('-----END FILE-----')
 
 
-async def test_openai_binary_pdf_as_file_part():
+async def test_openai_binary_pdf_as_file_part() -> None:
     part = UserPromptPart(content=[BinaryContent(data=b'%PDF-1.4', media_type='application/pdf')])
     msg = await OpenAIChatModel._map_user_prompt(part)
     assert isinstance(msg['content'], list)
@@ -38,7 +38,7 @@ async def test_openai_binary_pdf_as_file_part():
     assert content[0]['type'] == 'file'
 
 
-async def test_openai_document_url_text_plain_inlined_to_text(monkeypatch: pytest.MonkeyPatch):
+async def test_openai_document_url_text_plain_inlined_to_text(monkeypatch: pytest.MonkeyPatch) -> None:
     # Mock download_item to avoid network
     async def fake_download_item(
         item: DocumentUrl, data_format: str = 'text', type_format: str = 'extension'
@@ -47,15 +47,16 @@ async def test_openai_document_url_text_plain_inlined_to_text(monkeypatch: pytes
 
     monkeypatch.setattr('pydantic_ai.models.openai.download_item', fake_download_item)
 
-    part = UserPromptPart(content=[DocumentUrl(url='https://example.com/file.txt')])
+    url = 'https://example.com/file.txt'
+    part = UserPromptPart(content=[DocumentUrl(url=url)])
     msg = await OpenAIChatModel._map_user_prompt(part)
     content = cast(list[dict[str, Any]], msg['content'])
     text = cast(str, content[0]['text'])
-    assert text.startswith('-----BEGIN FILE filename="file.txt" type="text/plain"-----\nHello from URL')
+    assert text.startswith(f'-----BEGIN FILE url="{url}" type="text/plain"-----\nHello from URL')
     assert text.rstrip().endswith('-----END FILE-----')
 
 
-async def test_openai_document_url_pdf_as_file_part(monkeypatch: pytest.MonkeyPatch):
+async def test_openai_document_url_pdf_as_file_part(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_download_item(
         item: DocumentUrl, data_format: str = 'base64_uri', type_format: str = 'extension'
     ) -> dict[str, str]:
@@ -80,7 +81,7 @@ async def test_openai_document_url_pdf_as_file_part(monkeypatch: pytest.MonkeyPa
         ('text/plain', 'text', 'hello'),
     ],
 )
-async def test_openai_binary_text_like_media_types_inlined(media_type: str, expected_type: str, body: str):
+async def test_openai_binary_text_like_media_types_inlined(media_type: str, expected_type: str, body: str) -> None:
     part = UserPromptPart(content=[BinaryContent(data=body.encode(), media_type=media_type)])
     msg = await OpenAIChatModel._map_user_prompt(part)
     content = cast(list[dict[str, Any]], msg['content'])
@@ -89,23 +90,23 @@ async def test_openai_binary_text_like_media_types_inlined(media_type: str, expe
     assert f'type="{media_type}"' in text
 
 
-async def test_openai_map_single_item_unknown_returns_empty():
+async def test_openai_map_single_item_unknown_returns_empty() -> None:
     parts = await OpenAIChatModel._map_single_item(object())
     assert parts == []
 
 
-async def test_openai_binary_audio_maps_to_input_audio():
+async def test_openai_binary_audio_maps_to_input_audio() -> None:
     parts = await OpenAIChatModel._map_single_item(BinaryContent(data=b'abc', media_type='audio/mpeg'))
     assert len(parts) == 1
     assert parts[0]['type'] == 'input_audio'
 
 
-async def test_openai_binary_unsupported_returns_empty():
+async def test_openai_binary_unsupported_returns_empty() -> None:
     parts = await OpenAIChatModel._map_single_item(BinaryContent(data=b'data', media_type='application/octet-stream'))
     assert parts == []
 
 
-async def test_openai_document_url_json_inlined_text(monkeypatch: pytest.MonkeyPatch):
+async def test_openai_document_url_json_inlined_text(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai.messages import DocumentUrl
 
     async def fake_download_item(
@@ -122,13 +123,13 @@ async def test_openai_document_url_json_inlined_text(monkeypatch: pytest.MonkeyP
     assert parts[0]['type'] == 'text'
 
 
-async def test_openai_regular_binary_image_maps_to_image_url():
+async def test_openai_regular_binary_image_maps_to_image_url() -> None:
     parts = await OpenAIChatModel._map_single_item(BinaryContent(data=b'\x89PNG', media_type='image/png'))
     assert len(parts) == 1
     assert parts[0]['type'] == 'image_url'
 
 
-async def test_openai_audio_url_maps_to_input_audio(monkeypatch: pytest.MonkeyPatch):
+async def test_openai_audio_url_maps_to_input_audio(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai.messages import AudioUrl
 
     async def fake_download_item(
@@ -143,7 +144,7 @@ async def test_openai_audio_url_maps_to_input_audio(monkeypatch: pytest.MonkeyPa
     assert parts[0]['type'] == 'input_audio'
 
 
-async def test_openai_document_url_pdf_file_path(monkeypatch: pytest.MonkeyPatch):
+async def test_openai_document_url_pdf_file_path(monkeypatch: pytest.MonkeyPatch) -> None:
     from pydantic_ai.messages import DocumentUrl
 
     async def fake_download_item(
@@ -158,14 +159,14 @@ async def test_openai_document_url_pdf_file_path(monkeypatch: pytest.MonkeyPatch
     assert parts[0]['type'] == 'file'
 
 
-async def test_openai_video_url_raises_not_implemented():
+async def test_openai_video_url_raises_not_implemented() -> None:
     from pydantic_ai.messages import VideoUrl
 
     with pytest.raises(NotImplementedError):
         await OpenAIChatModel._map_single_item(VideoUrl(url='https://example.com/file.mp4'))
 
 
-async def test_openai_image_url_maps_to_image_url_part():
+async def test_openai_image_url_maps_to_image_url_part() -> None:
     # Functional: verify that an ImageUrl input maps to an image_url content part
     from pydantic_ai.messages import ImageUrl
 
@@ -175,7 +176,7 @@ async def test_openai_image_url_maps_to_image_url_part():
     assert content[0]['type'] == 'image_url'
 
 
-async def test_openai_binary_image_maps_to_image_url():
+async def test_openai_binary_image_maps_to_image_url() -> None:
     # Functional: BinaryContent with image/* should map to image_url content part
     part = UserPromptPart(content=[BinaryContent(data=b'\x89PNG', media_type='image/png')])
     msg = await OpenAIChatModel._map_user_prompt(part)
@@ -195,13 +196,13 @@ async def test_openai_binary_image_maps_to_image_url():
         ('text/css', 'txt', 'body { color: red; }'),  # Fallback to txt
     ],
 )
-async def test_openai_binary_content_text_like_is_inlined(media_type: str, expected_ext: str, body: str):
+async def test_openai_binary_content_text_like_is_inlined(media_type: str, expected_ext: str, body: str) -> None:
     part = UserPromptPart(content=[BinaryContent(data=body.encode(), media_type=media_type)])
     msg = await OpenAIChatModel._map_user_prompt(part)
     content = cast(list[dict[str, Any]], msg['content'])
     assert content[0]['type'] == 'text'
     text = content[0]['text']
-    assert text.startswith(f'-----BEGIN FILE filename="file.{expected_ext}" type="{media_type}"-----')
+    assert text.startswith(f'-----BEGIN FILE type="{media_type}"-----')
     assert text.rstrip().endswith('-----END FILE-----')
 
 
@@ -218,7 +219,7 @@ async def test_openai_binary_content_text_like_is_inlined(media_type: str, expec
 )
 async def test_openai_document_url_text_like_is_inlined(
     monkeypatch: pytest.MonkeyPatch, url: str, media_type: str, data_type: str, body: str, expected_ext: str
-):
+) -> None:
     async def fake_download_item(
         item: Any, data_format: str = 'text', type_format: str = 'extension'
     ) -> dict[str, str]:
@@ -232,5 +233,5 @@ async def test_openai_document_url_text_like_is_inlined(
     content = cast(list[dict[str, Any]], msg['content'])
     assert content[0]['type'] == 'text'
     text = content[0]['text']
-    assert text.startswith(f'-----BEGIN FILE filename="file.{expected_ext}" type="{media_type}"-----')
+    assert text.startswith(f'-----BEGIN FILE url="{url}" type="{media_type}"-----')
     assert text.rstrip().endswith('-----END FILE-----')
