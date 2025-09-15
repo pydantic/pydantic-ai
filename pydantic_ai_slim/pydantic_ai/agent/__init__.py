@@ -372,6 +372,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
 
+        # Prompt overrides (experimental)
+        self._override_instructions: ContextVar[_utils.Option[str | None]] = ContextVar(
+            '_override_instructions', default=None
+        )
+        self._override_system_prompts: ContextVar[_utils.Option[tuple[str, ...]]] = ContextVar(
+            '_override_system_prompts', default=None
+        )
+
         self._enter_lock = Lock()
         self._entered_count = 0
         self._exit_stack = None
@@ -594,10 +602,16 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits = usage_limits or _usage.UsageLimits()
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            parts = [
-                self._instructions,
-                *[await func.run(run_context) for func in self._instructions_functions],
-            ]
+            parts: list[str | None] = []
+            # If instructions override is set, ignore registered instruction functions and base instructions
+            if override_instructions := self._override_instructions.get():
+                base_text = override_instructions.value
+                parts = [base_text]
+            else:
+                parts = [
+                    self._instructions,
+                    *[await func.run(run_context) for func in self._instructions_functions],
+                ]
 
             model_profile = model_used.profile
             if isinstance(output_schema, _output.PromptedOutputSchema):
@@ -605,9 +619,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 parts.append(instructions)
 
             parts = [p for p in parts if p]
-            if not parts:
+            parts_to_format = [p for p in parts if p is not None]
+            if not parts_to_format:
                 return None
-            return '\n\n'.join(parts).strip()
+            return '\n\n'.join(parts_to_format).strip()
 
         if isinstance(model_used, InstrumentedModel):
             instrumentation_settings = model_used.instrumentation_settings
@@ -634,12 +649,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
+
+        # Apply overrides to the start node if present
+        if override_system_prompts := self._override_system_prompts.get():
+            system_prompts = override_system_prompts.value
+        else:
+            system_prompts = self._system_prompts
+
+        if override_instructions := self._override_instructions.get():
+            instructions_for_node = override_instructions.value
+            instructions_functions_for_node: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
+        else:
+            instructions_for_node = self._instructions
+            instructions_functions_for_node = self._instructions_functions
+
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
-            instructions=self._instructions,
-            instructions_functions=self._instructions_functions,
-            system_prompts=self._system_prompts,
+            instructions=instructions_for_node,
+            instructions_functions=instructions_functions_for_node,
+            system_prompts=system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
@@ -770,6 +799,31 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_toolsets.reset(toolsets_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
+
+    @contextmanager
+    def override_prompts(
+        self,
+        *,
+        instructions: str | None | _utils.Unset = _utils.UNSET,
+        system_prompts: Sequence[str] | _utils.Unset = _utils.UNSET,
+    ) -> Iterator[None]:
+        """Temporarily override the agent's effective instructions and static system prompts."""
+        if _utils.is_set(instructions):
+            ins_token = self._override_instructions.set(_utils.Some(instructions))
+        else:
+            ins_token = None
+
+        if _utils.is_set(system_prompts):
+            sys_token = self._override_system_prompts.set(_utils.Some(tuple(system_prompts)))
+        else:
+            sys_token = None
+        try:
+            yield
+        finally:
+            if ins_token is not None:
+                self._override_instructions.reset(ins_token)
+            if sys_token is not None:
+                self._override_system_prompts.reset(sys_token)
 
     @overload
     def instructions(
