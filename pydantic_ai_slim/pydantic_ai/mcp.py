@@ -227,7 +227,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         mapped = [await self._map_tool_result_part(part) for part in result.content]
         if result.isError:
-            if result.content:  # pragma: no cover
+            if result.content:
                 text_parts = [p for p in mapped if isinstance(p, str)]
                 message = '\n'.join(text_parts) if text_parts else '\n'.join(str(p) for p in mapped)
                 raise exceptions.ModelRetry(message)
@@ -240,10 +240,10 @@ class MCPServer(AbstractToolset[Any], ABC):
         structured = result.structuredContent
         if structured is not None:
             value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
-            if isinstance(value, dict | list | messages.BinaryContent):  # pragma: no cover
+            if isinstance(value, dict | list | messages.BinaryContent):
                 return value  # type: ignore
 
-            if result.content:
+            if result.content:  # pragma: no cover
                 return mapped[0] if len(mapped) == 1 else mapped
 
             return str(value)  # pragma: no cover
