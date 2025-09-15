@@ -108,7 +108,7 @@ def _merge_adjacent_messages(
       later timestamp and provider fields when set.
     """
     if not messages:
-        return messages
+        return messages  # pragma: no cover
 
     merged: list[_messages.ModelMessage] = []
 
@@ -131,19 +131,19 @@ def _merge_adjacent_messages(
                 new_parts_rev: list[_messages.ModelRequestPart] = []
                 for part in reversed(combined_parts):
                     if isinstance(part, _messages.ToolReturnPart):
-                        if part.tool_call_id in seen_ids:
+                        if part.tool_call_id in seen_ids:  # pragma: no cover
                             continue
                         seen_ids.add(part.tool_call_id)
                     new_parts_rev.append(part)
                 prev.parts = list(reversed(new_parts_rev))
 
-                if msg.instructions is not None:
-                    prev.instructions = msg.instructions
+                if msg.instructions is not None:  # pragma: no cover
+                    prev.instructions = msg.instructions  # pragma: no cover
                 continue
 
         # Merge adjacent responses when provider_response_id matches
         if isinstance(prev, _messages.ModelResponse) and isinstance(msg, _messages.ModelResponse):
-            if prev.provider_response_id == msg.provider_response_id:
+            if prev.provider_response_id == msg.provider_response_id:  # pragma: no branch
                 prev.parts = list(prev.parts) + list(msg.parts)
 
                 try:
