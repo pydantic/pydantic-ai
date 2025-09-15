@@ -4821,6 +4821,15 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
+    with pytest.raises(
+        UserError, match='Cannot provide a new user prompt when the message history contains unprocessed tool calls.'
+    ):
+        await agent.run(
+            'Hello again',
+            message_history=message_history,
+            deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
+        )
+
     message_history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
@@ -4868,3 +4877,101 @@ def test_tool_requires_approval_error():
         @agent.tool_plain(requires_approval=True)
         def delete_file(path: str) -> None:
             pass
+
+
+async def test_consecutive_model_responses_in_history():
+    received_messages: list[ModelMessage] | None = None
+
+    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal received_messages
+        received_messages = messages
+        return ModelResponse(
+            parts=[
+                TextPart('All right then, goodbye!'),
+            ]
+        )
+
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Hello...')]),
+        ModelResponse(parts=[TextPart(content='...world!')]),
+        ModelResponse(parts=[TextPart(content='Anything else I can help with?')]),
+    ]
+
+    m = FunctionModel(llm)
+    agent = Agent(m)
+    result = await agent.run('No thanks', message_history=history)
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello...',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='...world!'), TextPart(content='Anything else I can help with?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='No thanks',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='All right then, goodbye!')],
+                usage=RequestUsage(input_tokens=54, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='No thanks',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='All right then, goodbye!')],
+                usage=RequestUsage(input_tokens=54, output_tokens=12),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello...',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='...world!'), TextPart(content='Anything else I can help with?')],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='No thanks',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+        ]
+    )

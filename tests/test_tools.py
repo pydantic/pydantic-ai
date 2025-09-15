@@ -1464,6 +1464,7 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart('get_price', {'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart('buy', {'fruit': 'apple'}, tool_call_id='buy_apple'),
                     ToolCallPart('buy', {'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart('buy', {'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ]
             )
         else:
@@ -1513,8 +1514,9 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=30),
+                usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1563,6 +1565,7 @@ def test_parallel_tool_return_with_deferred():
             calls=[
                 ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                 ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
             ],
         )
     )
@@ -1576,6 +1579,9 @@ def test_parallel_tool_return_with_deferred():
                     return_value=True,
                     content='I bought a banana',
                     metadata={'fruit': 'banana', 'price': 100.0},
+                ),
+                'buy_pear': RetryPromptPart(
+                    content='The purchase of pears was denied.',
                 ),
             },
         ),
@@ -1598,8 +1604,9 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=30),
+                usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1656,6 +1663,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
+                    RetryPromptPart(
+                        content='The purchase of pears was denied.',
+                        tool_name='buy',
+                        tool_call_id='buy_pear',
+                        timestamp=IsDatetime(),
+                    ),
                     UserPromptPart(
                         content='I bought a banana',
                         timestamp=IsDatetime(),
@@ -1664,7 +1677,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=124, output_tokens=31),
+                usage=RequestUsage(input_tokens=137, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1688,6 +1701,12 @@ def test_parallel_tool_return_with_deferred():
                         metadata={'fruit': 'banana', 'price': 100.0},
                         timestamp=IsDatetime(),
                     ),
+                    RetryPromptPart(
+                        content='The purchase of pears was denied.',
+                        tool_name='buy',
+                        tool_call_id='buy_pear',
+                        timestamp=IsDatetime(),
+                    ),
                     UserPromptPart(
                         content='I bought a banana',
                         timestamp=IsDatetime(),
@@ -1696,7 +1715,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=124, output_tokens=31),
+                usage=RequestUsage(input_tokens=137, output_tokens=36),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1721,8 +1740,9 @@ def test_parallel_tool_return_with_deferred():
                     ToolCallPart(tool_name='get_price', args={'fruit': 'grape'}, tool_call_id='get_price_grape'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'apple'}, tool_call_id='buy_apple'),
                     ToolCallPart(tool_name='buy', args={'fruit': 'banana'}, tool_call_id='buy_banana'),
+                    ToolCallPart(tool_name='buy', args={'fruit': 'pear'}, tool_call_id='buy_pear'),
                 ],
-                usage=RequestUsage(input_tokens=68, output_tokens=30),
+                usage=RequestUsage(input_tokens=68, output_tokens=35),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -1765,6 +1785,12 @@ def test_parallel_tool_return_with_deferred():
                         content=True,
                         tool_call_id='buy_banana',
                         metadata={'fruit': 'banana', 'price': 100.0},
+                        timestamp=IsDatetime(),
+                    ),
+                    RetryPromptPart(
+                        content='The purchase of pears was denied.',
+                        tool_name='buy',
+                        tool_call_id='buy_pear',
                         timestamp=IsDatetime(),
                     ),
                     UserPromptPart(

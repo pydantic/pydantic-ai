@@ -263,7 +263,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         for message in reversed(messages):
             if isinstance(message, _messages.ModelRequest):
                 last_model_request = message
-            elif isinstance(message, _messages.ModelResponse):
+            elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
                 last_model_response = message
                 break
 
@@ -1143,7 +1143,7 @@ def _clean_message_history(messages: list[_messages.ModelMessage]) -> list[_mess
                 clean_messages[-1] = merged_message
             else:
                 clean_messages.append(message)
-        elif isinstance(message, _messages.ModelResponse):
+        elif isinstance(message, _messages.ModelResponse):  # pragma: no branch
             if (
                 last_message
                 and isinstance(last_message, _messages.ModelResponse)
