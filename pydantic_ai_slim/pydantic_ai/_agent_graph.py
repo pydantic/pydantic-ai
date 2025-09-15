@@ -215,11 +215,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         ctx.deps.prompt = combined_content
             elif isinstance(last_message, _messages.ModelResponse):
                 if self.user_prompt is None:
-                    # `CallToolsNode` requires the tool manager to be prepared for the run step
-                    # This will raise errors for any tool name conflicts
-                    run_context = build_run_context(ctx)
-                    ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
-
                     # Skip ModelRequestNode and go directly to CallToolsNode
                     return CallToolsNode[DepsT, NodeRunEndT](last_message)
                 elif any(isinstance(part, _messages.ToolCallPart) for part in last_message.parts):
@@ -305,11 +300,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                             f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
                         )
                     tool_call_results[part.tool_call_id] = 'skip'
-
-        # `CallToolsNode` requires the tool manager to be prepared for the run step
-        # This will raise errors for any tool name conflicts
-        run_context = build_run_context(ctx)
-        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         # Skip ModelRequestNode and go directly to CallToolsNode
         return CallToolsNode[DepsT, NodeRunEndT](last_model_response, tool_call_results=tool_call_results)
@@ -601,6 +591,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         tool_calls: list[_messages.ToolCallPart],
     ) -> AsyncIterator[_messages.HandleResponseEvent]:
         run_context = build_run_context(ctx)
+
+        # This will raise errors for any tool name conflicts
+        ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
         output_parts: list[_messages.ModelRequestPart] = []
         output_final_result: deque[result.FinalResult[NodeRunEndT]] = deque(maxlen=1)
