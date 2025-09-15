@@ -16,7 +16,7 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
 from pydantic_ai._tool_manager import ToolManager
-from pydantic_ai._utils import get_union_args, is_async_callable, run_in_executor
+from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, Graph, GraphRunContext
 from pydantic_graph.nodes import End, NodeRunEndT
@@ -161,14 +161,16 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
     _: dataclasses.KW_ONLY
 
-    deferred_tool_results: DeferredToolResults | None
+    deferred_tool_results: DeferredToolResults | None = None
 
-    instructions: str | None
-    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
+    instructions: str | None = None
+    instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
 
-    system_prompts: tuple[str, ...]
-    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]]
-    system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]]
+    system_prompts: tuple[str, ...] = dataclasses.field(default_factory=tuple)
+    system_prompt_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
+    system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(
+        default_factory=dict
+    )
 
     async def run(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -339,6 +341,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages.append(_messages.SystemPromptPart(prompt))
         return messages
 
+    __repr__ = dataclasses_no_defaults_repr
+
 
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
@@ -484,6 +488,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = CallToolsNode(response)
 
         return self._result
+
+    __repr__ = dataclasses_no_defaults_repr
 
 
 @dataclasses.dataclass
@@ -657,6 +663,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             return ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
         else:
             return self._handle_final_result(ctx, result.FinalResult(result_data), [])
+
+    __repr__ = dataclasses_no_defaults_repr
 
 
 def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> RunContext[DepsT]:
