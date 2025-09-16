@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from copy import copy
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, cast, overload
@@ -56,7 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _initial_run_ctx_usage: RunUsage = field(init=False)
 
     def __post_init__(self):
-        self._initial_run_ctx_usage = copy(self._run_ctx.usage)
+        self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""

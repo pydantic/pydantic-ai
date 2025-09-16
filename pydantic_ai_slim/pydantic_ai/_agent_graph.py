@@ -8,6 +8,7 @@ from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import field, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
@@ -465,7 +466,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         usage = ctx.state.usage
         if ctx.deps.usage_limits.count_tokens_before_request:
             # Copy to avoid modifying the original usage object with the counted usage
-            usage = dataclasses.replace(usage)
+            usage = deepcopy(usage)
 
             counted_usage = await ctx.deps.model.count_tokens(message_history, model_settings, model_request_parameters)
             usage.incr(counted_usage)

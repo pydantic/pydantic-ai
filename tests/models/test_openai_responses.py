@@ -1937,3 +1937,37 @@ async def test_openai_responses_thinking_with_modified_history(allow_model_reque
             ),
         ]
     )
+
+
+async def test_openai_responses_streaming_usage(allow_model_requests: None, openai_api_key: str):
+    class Result(BaseModel):
+        result: int
+
+    agent = Agent(
+        model=OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key)),
+        model_settings=OpenAIResponsesModelSettings(
+            openai_reasoning_effort='low',
+            openai_service_tier='flex',
+        ),
+        output_type=Result,
+    )
+
+    async with agent.iter('Calculate 100 * 200 / 3') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as response_stream:
+                    async for _ in response_stream:
+                        pass
+                    assert response_stream.get().usage == snapshot(
+                        RequestUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448})
+                    )
+                    assert response_stream.usage() == snapshot(
+                        RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
+                    )
+                    assert run.usage() == snapshot(RunUsage(requests=1))
+                assert run.usage() == snapshot(
+                    RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
+                )
+    assert run.usage() == snapshot(
+        RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
+    )
