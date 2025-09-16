@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturn,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -163,24 +164,22 @@ async def send_snapshot() -> StateSnapshotEvent:
     )
 
 
-async def send_custom() -> list[CustomEvent]:
-    """Display the recipe to the user.
-
-    Returns:
-        StateSnapshotEvent.
-    """
-    return [
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='custom_event1',
-            value={'key1': 'value1'},
-        ),
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='custom_event2',
-            value={'key2': 'value2'},
-        ),
-    ]
+async def send_custom() -> ToolReturn:
+    return ToolReturn(
+        return_value='Done',
+        metadata=[
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='custom_event1',
+                value={'key1': 'value1'},
+            ),
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='custom_event2',
+                value={'key2': 'value2'},
+            ),
+        ],
+    )
 
 
 def uuid_str() -> str:
@@ -785,7 +784,7 @@ async def test_tool_local_multiple_events() -> None:
                 'type': 'TOOL_CALL_RESULT',
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
-                'content': '[{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event1","value":{"key1":"value1"}},{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event2","value":{"key2":"value2"}}]',
+                'content': 'Done',
                 'role': 'tool',
             },
             {'type': 'CUSTOM', 'name': 'custom_event1', 'value': {'key1': 'value1'}},
