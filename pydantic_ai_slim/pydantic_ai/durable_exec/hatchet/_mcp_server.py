@@ -4,12 +4,13 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from hatchet_sdk import DurableContext, Hatchet
+from hatchet_sdk.runnables.workflow import Standalone
 from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
-from pydantic_ai.toolsets.wrapper import WrapperToolset
 
+from ._toolset import HatchetWrapperToolset
 from ._utils import TaskConfig
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class CallToolOutput(BaseModel):
     result: ToolResult
 
 
-class HatchetMCPServer(WrapperToolset[AgentDepsT], ABC):
+class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
     """A wrapper for MCPServer that integrates with Hatchet, turning call_tool and get_tools to Hatchet tasks."""
 
     def __init__(self, wrapped: MCPServer, *, hatchet: Hatchet, task_name_prefix: str, task_config: TaskConfig):
@@ -101,6 +102,14 @@ class HatchetMCPServer(WrapperToolset[AgentDepsT], ABC):
             return CallToolOutput[AgentDepsT](result=result)
 
         self.hatchet_wrapped_call_tool_task = wrapped_call_tool_task
+
+    @property
+    def hatchet_tasks(self) -> list[Standalone[Any, Any]]:
+        """Return the list of Hatchet tasks for this toolset."""
+        return [
+            self.hatchet_wrapped_get_tools_task,
+            self.hatchet_wrapped_call_tool_task,
+        ]
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         return await self.hatchet_wrapped_get_tools_task.aio_run(GetToolsInput(ctx=ctx))

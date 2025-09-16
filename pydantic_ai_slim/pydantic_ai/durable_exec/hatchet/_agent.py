@@ -92,23 +92,14 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         hatchet_agent_name = self._name
 
         def hatchetify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            # Replace MCPServer with HatchetMCPServer
-            try:
-                from pydantic_ai.mcp import MCPServer
+            from ._toolset import hatchetize_toolset
 
-                from ._mcp_server import HatchetMCPServer
-            except ImportError:
-                pass
-            else:
-                if isinstance(toolset, MCPServer):
-                    return HatchetMCPServer[AgentDepsT](
-                        wrapped=toolset,
-                        hatchet=hatchet,
-                        task_name_prefix=hatchet_agent_name,
-                        task_config=mcp_task_config or TaskConfig(),
-                    )
-
-            return toolset
+            return hatchetize_toolset(
+                toolset,
+                hatchet=hatchet,
+                task_name_prefix=hatchet_agent_name,
+                task_config=mcp_task_config or TaskConfig(),
+            )
 
         self._toolsets = [toolset.visit_and_replace(hatchetify_toolset) for toolset in wrapped.toolsets]
 
@@ -162,21 +153,16 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def workflows(self) -> Sequence[BaseWorkflow[Any]]:
-        workflows = [
+        workflows: list[BaseWorkflow[Any]] = [
             self.hatchet_wrapped_run_workflow,
-            self._model._hatchet_wrapped_request_task,
+            self._model.hatchet_wrapped_request_task,
         ]
 
         for toolset in self._toolsets:
-            from ._mcp_server import HatchetMCPServer
+            from ._toolset import HatchetWrapperToolset
 
-            if isinstance(toolset, HatchetMCPServer):
-                workflows.extend(
-                    [
-                        toolset.hatchet_wrapped_get_tools_task,
-                        toolset.hatchet_wrapped_call_tool_task,
-                    ]
-                )
+            if isinstance(toolset, HatchetWrapperToolset):
+                workflows.extend(toolset.hatchet_tasks)
 
         return workflows
 
