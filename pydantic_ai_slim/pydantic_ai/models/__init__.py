@@ -793,8 +793,8 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     if client.is_closed:
         # This happens if the context manager is used, so we need to create a new client.
-        # Since there is no API from functools.cache to clear the cache for a specific key,
-        # we clear the entire cache as a workaround.
+        # TODO: Since there is no API from functools.cache to clear the cache for a specific
+        #  key, clear the entire cache here as a workaround.
         _cached_async_http_client.cache_clear()
         client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     return client
