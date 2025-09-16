@@ -3083,7 +3083,7 @@ async def test_openai_binary_content_unsupported_type(openai_api_key: str, allow
 
     unsupported = Location(city='Paris', country='France')
     with pytest.raises(RuntimeError, match='stop-after-capture'):
-        await model.request([ModelRequest(parts=[UserPromptPart(content=[unsupported])])], {}, ModelRequestParameters())
+        await model.request([ModelRequest(parts=[UserPromptPart(content=[unsupported])])], {}, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
 
     user_msgs = captured[0]
     user = next(m for m in user_msgs if m.get('role') == 'user')
