@@ -187,8 +187,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         message_history = _clean_message_history(ctx.state.message_history)
-        # Add message history to the `capture_run_messages` list, which will be empty at this point
-        messages.extend(message_history)
+        # Replace the `capture_run_messages` list with the message history
+        messages[:] = message_history
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
@@ -455,7 +455,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # This will raise errors for any tool name conflicts
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
 
-        message_history = await _process_message_history(ctx.state, ctx.deps.history_processors, run_context)
+        original_history = ctx.state.message_history[:]
+        message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
+        # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
+        ctx.state.message_history[:] = message_history
+        # Update the new message index to ensure `result.new_messages()` returns the correct messages
+        ctx.deps.new_message_index -= len(original_history) - len(message_history)
+
+        # This cleaning is just for the benefit of the model classes and should not affect the user-facing message history
         message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
@@ -1086,12 +1093,11 @@ def build_agent_graph(
 
 
 async def _process_message_history(
-    state: GraphAgentState,
+    messages: list[_messages.ModelMessage],
     processors: Sequence[HistoryProcessor[DepsT]],
     run_context: RunContext[DepsT],
 ) -> list[_messages.ModelMessage]:
     """Process message history through a sequence of processors."""
-    messages = state.message_history
     for processor in processors:
         takes_ctx = is_takes_ctx(processor)
 
@@ -1109,8 +1115,12 @@ async def _process_message_history(
                 sync_processor = cast(_HistoryProcessorSync, processor)
                 messages = await run_in_executor(sync_processor, messages)
 
-    # Replaces the message history in the state with the processed messages
-    state.message_history = messages
+    if len(messages) == 0:
+        raise exceptions.UserError('Processed history cannot be empty.')
+
+    if not isinstance(messages[-1], _messages.ModelRequest):
+        raise exceptions.UserError('Processed history must end with a `ModelRequest`.')
+
     return messages
 
 
