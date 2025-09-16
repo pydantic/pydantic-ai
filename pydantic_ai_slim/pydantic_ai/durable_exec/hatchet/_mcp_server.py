@@ -36,29 +36,30 @@ class CallToolOutput(BaseModel):
 class HatchetMCPServer(WrapperToolset[AgentDepsT], ABC):
     """A wrapper for MCPServer that integrates with Hatchet, turning call_tool and get_tools to Hatchet tasks."""
 
-    def __init__(self, wrapped: MCPServer, *, task_config: TaskConfig, hatchet: Hatchet):
+    def __init__(self, wrapped: MCPServer, *, hatchet: Hatchet, task_name_prefix: str, task_config: TaskConfig):
         super().__init__(wrapped)
-        self.task_config = task_config
-        self.hatchet = hatchet
+        self._task_config = task_config
+        self._task_name_prefix = task_name_prefix
+        self._hatchet = hatchet
+        id_suffix = f'__{wrapped.id}' if wrapped.id else ''
+        self._name = f'{task_name_prefix}__mcp_server{id_suffix}'
 
         @hatchet.durable_task(
-            name=f'{self.task_config.name}.get_tools',
-            description=self.task_config.description,
+            name=f'{self._name}.get_tools',
+            description=self._task_config.description,
             input_validator=GetToolsInput[AgentDepsT],
-            on_events=self.task_config.on_events,
-            on_crons=self.task_config.on_crons,
-            version=self.task_config.version,
-            sticky=self.task_config.sticky,
-            default_priority=self.task_config.default_priority,
-            concurrency=self.task_config.concurrency,
-            schedule_timeout=self.task_config.schedule_timeout,
-            execution_timeout=self.task_config.execution_timeout,
-            retries=self.task_config.retries,
-            rate_limits=self.task_config.rate_limits,
-            desired_worker_labels=self.task_config.desired_worker_labels,
-            backoff_factor=self.task_config.backoff_factor,
-            backoff_max_seconds=self.task_config.backoff_max_seconds,
-            default_filters=self.task_config.default_filters,
+            version=self._task_config.version,
+            sticky=self._task_config.sticky,
+            default_priority=self._task_config.default_priority,
+            concurrency=self._task_config.concurrency,
+            schedule_timeout=self._task_config.schedule_timeout,
+            execution_timeout=self._task_config.execution_timeout,
+            retries=self._task_config.retries,
+            rate_limits=self._task_config.rate_limits,
+            desired_worker_labels=self._task_config.desired_worker_labels,
+            backoff_factor=self._task_config.backoff_factor,
+            backoff_max_seconds=self._task_config.backoff_max_seconds,
+            default_filters=self._task_config.default_filters,
         )
         async def wrapped_get_tools_task(
             input: GetToolsInput[AgentDepsT],
@@ -69,23 +70,21 @@ class HatchetMCPServer(WrapperToolset[AgentDepsT], ABC):
         self._hatchet_wrapped_get_tools_task = wrapped_get_tools_task
 
         @hatchet.durable_task(
-            name=f'{self.task_config.name}.get_tools',
-            description=self.task_config.description,
+            name=f'{self._name}.get_tools',
+            description=self._task_config.description,
             input_validator=CallToolInput[AgentDepsT],
-            on_events=self.task_config.on_events,
-            on_crons=self.task_config.on_crons,
-            version=self.task_config.version,
-            sticky=self.task_config.sticky,
-            default_priority=self.task_config.default_priority,
-            concurrency=self.task_config.concurrency,
-            schedule_timeout=self.task_config.schedule_timeout,
-            execution_timeout=self.task_config.execution_timeout,
-            retries=self.task_config.retries,
-            rate_limits=self.task_config.rate_limits,
-            desired_worker_labels=self.task_config.desired_worker_labels,
-            backoff_factor=self.task_config.backoff_factor,
-            backoff_max_seconds=self.task_config.backoff_max_seconds,
-            default_filters=self.task_config.default_filters,
+            version=self._task_config.version,
+            sticky=self._task_config.sticky,
+            default_priority=self._task_config.default_priority,
+            concurrency=self._task_config.concurrency,
+            schedule_timeout=self._task_config.schedule_timeout,
+            execution_timeout=self._task_config.execution_timeout,
+            retries=self._task_config.retries,
+            rate_limits=self._task_config.rate_limits,
+            desired_worker_labels=self._task_config.desired_worker_labels,
+            backoff_factor=self._task_config.backoff_factor,
+            backoff_max_seconds=self._task_config.backoff_max_seconds,
+            default_filters=self._task_config.default_filters,
         )
         async def wrapped_call_tool_task(
             input: CallToolInput[AgentDepsT],
