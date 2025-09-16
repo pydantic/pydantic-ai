@@ -4,7 +4,7 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from hatchet_sdk import DurableContext, Hatchet
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
@@ -19,10 +19,14 @@ T = TypeVar('T')
 
 
 class GetToolsInput(BaseModel, Generic[AgentDepsT]):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     ctx: RunContext[AgentDepsT]
 
 
 class CallToolInput(BaseModel, Generic[AgentDepsT]):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     name: str
     tool_args: dict[str, Any]
     ctx: RunContext[AgentDepsT]
@@ -30,6 +34,8 @@ class CallToolInput(BaseModel, Generic[AgentDepsT]):
 
 
 class CallToolOutput(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     result: ToolResult
 
 
