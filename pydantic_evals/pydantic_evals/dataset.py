@@ -604,7 +604,7 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             cases.append(row)
         if errors:
             raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
-        result = cls(cases=cases)
+        result = cls(name=dataset_model.name, cases=cases)
         if result.name is None:
             result.name = default_name
         result.evaluators = dataset_evaluators
