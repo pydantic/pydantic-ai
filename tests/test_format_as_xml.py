@@ -142,7 +142,7 @@ class ExamplePydanticFields(BaseModel):
 )
 def test_root_tag(input_obj: Any, output: str):
     assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info=False) == output
-    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info=True) == output
+    assert format_as_xml(input_obj, root_tag='examples', item_tag='example', include_field_info='once') == output
 
 
 @pytest.mark.parametrize(
@@ -158,7 +158,7 @@ def test_root_tag(input_obj: Any, output: str):
                     ExamplePydanticFields(name='Alice', height=160),
                 ],
             ),
-            True,
+            'once',
             snapshot("""\
 <name description="The person's name">John</name>
 <age title="Age" description="Years">42</age>
@@ -192,7 +192,7 @@ def test_root_tag(input_obj: Any, output: str):
                     ],
                 )
             ],
-            True,
+            'once',
             snapshot("""\
 <ExamplePydanticFields>
   <name description="The person's name">John</name>
@@ -269,7 +269,7 @@ def test_repeated_field_attributes():
         ],
     )
     assert (
-        format_as_xml(data, include_field_info=True, repeat_field_info=True)
+        format_as_xml(data, include_field_info=True)
         == """\
 <name description="The person's name">John</name>
 <age title="Age" description="Years">42</age>
@@ -292,7 +292,7 @@ def test_repeated_field_attributes():
     )
 
     assert (
-        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info=True, repeat_field_info=True)
+        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info=True)
         == """\
 <user1>
   <name description="The person's name">John</name>
@@ -336,7 +336,7 @@ def test_repeated_field_attributes():
     )
 
     assert (
-        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info=True, repeat_field_info=False)
+        format_as_xml(DataItem(user1=data, user2=data.model_copy()), include_field_info='once')
         == """\
 <user1>
   <name description="The person's name">John</name>
@@ -418,7 +418,7 @@ def test_nested_data():
     }
 
     assert (
-        format_as_xml(data, include_field_info=True)
+        format_as_xml(data, include_field_info='once')
         == """
 <values>
   <DataItem2>
@@ -583,7 +583,7 @@ def test_parse_invalid_value():
         bad: Any = object()
 
     with pytest.raises(TypeError, match='Unsupported type'):
-        format_as_xml(Invalid(), include_field_info=True)
+        format_as_xml(Invalid(), include_field_info='once')
 
 
 def test_set():

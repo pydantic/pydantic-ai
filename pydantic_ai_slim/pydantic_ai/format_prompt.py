@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 from xml.etree import ElementTree
 
 from pydantic import BaseModel
@@ -19,8 +19,7 @@ def format_as_xml(
     item_tag: str = 'item',
     none_str: str = 'null',
     indent: str | None = '  ',
-    include_field_info: bool = False,
-    repeat_field_info: bool = False,
+    include_field_info: Literal['once'] | bool = False,
 ) -> str:
     """Format a Python object as XML.
 
@@ -39,9 +38,8 @@ def format_as_xml(
         indent: Indentation string to use for pretty printing.
         include_field_info: Whether to include attributes like Pydantic `Field` attributes and dataclasses `field()`
             `metadata` as XML attributes. In both cases the allowed `Field` attributes and `field()` metadata keys are:
-            `title`, `description` and `alias`.
-        repeat_field_info: Whether to include XML attributes extracted from a field info for each occurrence of an XML
-            element relative to the same field.
+            `title`, `description` and `alias`. If a field is repeated in the data (e.g. in a list) by setting `once`
+            the attributes are included only in the first occurrence of an XML element relative to the same field.
 
     Returns:
         XML representation of the object.
@@ -65,7 +63,6 @@ def format_as_xml(
         item_tag=item_tag,
         none_str=none_str,
         include_field_info=include_field_info,
-        repeat_field_info=repeat_field_info,
     ).to_xml(root_tag)
     if root_tag is None and el.text is None:
         join = '' if indent is None else '\n'
@@ -81,8 +78,7 @@ class _ToXml:
     data: Any
     item_tag: str
     none_str: str
-    include_field_info: bool
-    repeat_field_info: bool
+    include_field_info: Literal['once'] | bool
     # a map of Pydantic and dataclasses Field paths to their metadata:
     # a field unique string representation and its class
     _fields_info: dict[str, tuple[str, FieldInfo | ComputedFieldInfo]] = field(default_factory=dict)
@@ -136,7 +132,7 @@ class _ToXml:
         element = ElementTree.Element(tag)
         if self._fields_info and path in self._fields_info:
             field_repr, field_info = self._fields_info[path]
-            if self.repeat_field_info or field_repr not in self._included_fields:
+            if self.include_field_info and self.include_field_info != 'once' or field_repr not in self._included_fields:
                 field_attributes = self._extract_attributes(field_info)
                 for k, v in field_attributes.items():
                     element.set(k, v)
