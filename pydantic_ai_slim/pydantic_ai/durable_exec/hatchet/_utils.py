@@ -10,10 +10,7 @@ from pydantic import BaseModel
 
 
 class TaskConfig(BaseModel):
-    name: str
     description: str | None = None
-    on_events: list[str] | None = None
-    on_crons: list[str] | None = None
     version: str | None = None
     sticky: StickyStrategy | None = None
     default_priority: int = 1

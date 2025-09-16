@@ -23,17 +23,16 @@ class ModelInput(BaseModel):
 class HatchetModel(WrapperModel):
     """A wrapper for Model that integrates with Hatchet, turning request and request_stream to Hatchet tasks."""
 
-    def __init__(self, model: Model, *, task_config: TaskConfig, hatchet: Hatchet):
+    def __init__(self, model: Model, *, task_name_prefix: str, task_config: TaskConfig, hatchet: Hatchet):
         super().__init__(model)
         self.task_config = task_config
         self.hatchet = hatchet
+        self._task_name_prefix = task_name_prefix
 
         @hatchet.durable_task(
-            name=self.task_config.name,
+            name=f'{self._task_name_prefix}__model.request',
             description=self.task_config.description,
             input_validator=ModelInput,
-            on_events=self.task_config.on_events,
-            on_crons=self.task_config.on_crons,
             version=self.task_config.version,
             sticky=self.task_config.sticky,
             default_priority=self.task_config.default_priority,
