@@ -225,29 +225,26 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        mapped = [await self._map_tool_result_part(part) for part in result.content]
         if result.isError:
+            error_message = 'Error in direct tool call'
             if result.content:
-                text_parts = [p for p in mapped if isinstance(p, str)]
-                message = '\n'.join(text_parts) if text_parts else '\n'.join(str(p) for p in mapped)
-                raise exceptions.ModelRetry(message)
+                text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
+                message = '\n'.join(text_parts) if text_parts else error_message
+            else:
+                message = error_message
 
-        # If any of the results are not text content, let's map them to Pydantic AI binary message parts
-        if any(not isinstance(part, mcp_types.TextContent) for part in result.content):
-            return mapped[0] if len(mapped) == 1 else mapped
+            raise exceptions.ModelRetry(message)
 
-        # Otherwise, if we have structured content, return that
         structured = result.structuredContent
-        if structured is not None:
-            value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
-            if isinstance(value, dict | list | messages.BinaryContent):
-                return value  # type: ignore
-
+        if structured and not any(not isinstance(part, mcp_types.TextContent) for part in result.content):
             if result.content:  # pragma: no cover
+                mapped = [await self._map_tool_result_part(part) for part in result.content]
                 return mapped[0] if len(mapped) == 1 else mapped
 
-            return str(value)  # pragma: no cover
+            value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
+            return value  # pragma: no cover
 
+        mapped = [await self._map_tool_result_part(part) for part in result.content]
         return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
