@@ -130,7 +130,7 @@ class _ToXml:
 
     def _create_element(self, tag: str, path: str) -> ElementTree.Element:
         element = ElementTree.Element(tag)
-        if self._fields_info and path in self._fields_info:
+        if path in self._fields_info:
             field_repr, field_info = self._fields_info[path]
             if self.include_field_info and self.include_field_info != 'once' or field_repr not in self._included_fields:
                 field_attributes = self._extract_attributes(field_info)
