@@ -120,7 +120,7 @@ class _ToXml:
                 element.tag = value.__class__.__name__
             # by dumping the model we loose all metadata in nested data structures,
             # but we have collected it when called _init_structure_info
-            self._mapping_to_xml(element, value.model_dump(mode='python'), path)
+            self._mapping_to_xml(element, value.model_dump(), path)
         elif isinstance(value, Iterable):
             for n, item in enumerate(value):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
                 element.append(self._to_xml(value=item, path=f'{path}.[{n}]' if path else f'[{n}]'))
