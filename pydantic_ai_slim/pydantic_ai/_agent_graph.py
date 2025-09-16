@@ -186,9 +186,8 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 messages = ctx_messages.messages
                 ctx_messages.used = True
 
-        message_history = _clean_message_history(ctx.state.message_history)
         # Replace the `capture_run_messages` list with the message history
-        messages[:] = message_history
+        messages[:] = _clean_message_history(ctx.state.message_history)
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
         ctx.state.message_history = messages
         ctx.deps.new_message_index = len(messages)
@@ -457,13 +456,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         original_history = ctx.state.message_history[:]
         message_history = await _process_message_history(original_history, ctx.deps.history_processors, run_context)
+        # Never merge the new `ModelRequest` with the one preceding it, to keep `new_messages()` from accidentally including part of the existing message history
+        message_history = [*_clean_message_history(message_history[:-1]), message_history[-1]]
         # `ctx.state.message_history` is the same list used by `capture_run_messages`, so we should replace its contents, not the reference
         ctx.state.message_history[:] = message_history
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
-
-        # This cleaning is just for the benefit of the model classes and should not affect the user-facing message history
-        message_history = _clean_message_history(message_history)
 
         model_request_parameters = await _prepare_request_parameters(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)

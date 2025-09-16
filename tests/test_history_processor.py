@@ -111,13 +111,17 @@ async def test_history_processor_run_replaces_message_history(
                     UserPromptPart(
                         content='Question 3',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     SystemPromptPart(
                         content='Processed answer',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ]
-            )
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
@@ -166,13 +170,17 @@ async def test_history_processor_streaming_replaces_message_history(
                     UserPromptPart(
                         content='Question 3',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     SystemPromptPart(
                         content='Processed answer',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ]
-            )
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
@@ -217,13 +225,17 @@ async def test_history_processor_messages_sent_to_provider(
                     UserPromptPart(
                         content='Previous question',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     UserPromptPart(
                         content='New question',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ]
-            )
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
@@ -345,13 +357,17 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
                     UserPromptPart(
                         content='Question 1',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     UserPromptPart(
                         content='Question 2',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ]
-            )
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
@@ -413,13 +429,17 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
                     UserPromptPart(
                         content='Question 1',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     UserPromptPart(
                         content='Question 2',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ]
-            )
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
@@ -608,13 +628,17 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
                     UserPromptPart(
                         content='TEST: Question 1',
                         timestamp=IsDatetime(),
-                    ),
+                    )
+                ]
+            ),
+            ModelRequest(
+                parts=[
                     UserPromptPart(
                         content='TEST: Question 2',
                         timestamp=IsDatetime(),
-                    ),
+                    )
                 ]
-            )
+            ),
         ]
     )
     assert captured_messages == result.all_messages()
