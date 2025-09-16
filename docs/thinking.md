@@ -100,3 +100,7 @@ Thinking is supported by the `command-a-reasoning-08-2025` model. It does not ne
 
 Text output inside `<think>` tags is automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](models/openai.md#model-profile).
+
+## Outlines
+
+Thinking is not supported by Outlines.
