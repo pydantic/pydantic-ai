@@ -3032,13 +3032,18 @@ def test_deprecated_openai_model(openai_api_key: str):
 
 @pytest.mark.vcr()
 async def test_openai_video_url_raises_not_implemented(openai_api_key: str, allow_model_requests: None) -> None:
-
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     with pytest.raises(NotImplementedError):
-        await model.request([ModelRequest(parts=[UserPromptPart(content=[VideoUrl(url='https://example.com/file.mp4')])])], {}, ModelRequestParameters())
+        await model.request(
+            [ModelRequest(parts=[UserPromptPart(content=[VideoUrl(url='https://example.com/file.mp4')])])],
+            {},
+            ModelRequestParameters(),
+        )
 
 
-async def test_openai_map_single_item_unknown_returns_empty_branch(openai_api_key: str, allow_model_requests: None) -> None:
+async def test_openai_map_single_item_unknown_returns_empty_branch(
+    openai_api_key: str, allow_model_requests: None
+) -> None:
     # Use BinaryContent with unsupported media_type to exercise empty mapping via public API
 
     captured: list[list[dict[str, Any]]] = []
