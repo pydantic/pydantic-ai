@@ -463,6 +463,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Update the new message index to ensure `result.new_messages()` returns the correct messages
         ctx.deps.new_message_index -= len(original_history) - len(message_history)
 
+        # Do one more cleaning pass to merge possible consecutive trailing `ModelRequest`s into one, with tool call parts before user parts,
+        # but don't store it in the message history on state.
+        # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
+        message_history = _clean_message_history(message_history)
+
         model_request_parameters = await _prepare_request_parameters(ctx)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
