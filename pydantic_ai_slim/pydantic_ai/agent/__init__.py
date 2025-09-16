@@ -614,12 +614,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        graph_deps = _agent_graph.GraphAgentDeps[
-            AgentDepsT, RunOutputDataT
-        ](
+        graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
-            new_message_index=0,  # This will be set in `UserPromptNode` based on the length of the cleaned message history
+            new_message_index=len(message_history) if message_history else 0,
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,

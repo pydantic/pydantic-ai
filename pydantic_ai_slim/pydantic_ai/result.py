@@ -322,9 +322,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self.all_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    def new_messages(
-        self, *, output_tool_return_content: str | None = None
-    ) -> list[_messages.ModelMessage]:  # pragma: no cover
+    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
         Messages from older runs are excluded.
