@@ -106,7 +106,7 @@ class _ToXml:
         elif isinstance(value, date):
             element.text = value.isoformat()
         elif isinstance(value, Mapping):
-            if tag is None and self._element_names and path in self._element_names:
+            if tag is None and path in self._element_names:
                 element.tag = self._element_names[path]
             self._mapping_to_xml(element, value, path)  # pyright: ignore[reportUnknownArgumentType]
         elif is_dataclass(value) and not isinstance(value, type):
