@@ -228,7 +228,7 @@ def test_docs_examples(  # noqa: C901
 
     if opt_test.startswith('skip'):
         pytest.skip(opt_test[4:].lstrip(' -') or 'running code skipped')
-    elif opt_test.startswith('ci_only') and os.environ.get('GITHUB_ACTIONS', '').lower() != 'true':
+    elif opt_test.startswith('ci_only') and os.getenv('GITHUB_ACTIONS', '').lower() != 'true':
         pytest.skip(opt_test[7:].lstrip(' -') or 'running code skipped in local tests')  # pragma: lax no cover
     else:
         test_globals: dict[str, str] = {'__name__': dunder_name}
@@ -622,6 +622,10 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'The secret is 1234':
+            return ModelResponse(parts=[TextPart('The secret is safe with me')])
+        elif m.content == 'What is the secret code?':
+            return ModelResponse(parts=[TextPart('1234')])
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'

@@ -71,6 +71,7 @@ class ModelResponsePartsManager:
         *,
         vendor_part_id: VendorId | None,
         content: str,
+        id: str | None = None,
         thinking_tags: tuple[str, str] | None = None,
         ignore_leading_whitespace: bool = False,
     ) -> ModelResponseStreamEvent | None:
@@ -85,6 +86,7 @@ class ModelResponsePartsManager:
                 of text. If None, a new part will be created unless the latest part is already
                 a TextPart.
             content: The text content to append to the appropriate TextPart.
+            id: An optional id for the text part.
             thinking_tags: If provided, will handle content between the thinking tags as thinking parts.
             ignore_leading_whitespace: If True, will ignore leading whitespace in the content.
 
@@ -137,7 +139,7 @@ class ModelResponsePartsManager:
 
             # There is no existing text part that should be updated, so create a new one
             new_part_index = len(self._parts)
-            part = TextPart(content=content)
+            part = TextPart(content=content, id=id)
             if vendor_part_id is not None:
                 self._vendor_id_to_part_index[vendor_part_id] = new_part_index
             self._parts.append(part)
@@ -198,16 +200,16 @@ class ModelResponsePartsManager:
                 existing_thinking_part_and_index = existing_part, part_index
 
         if existing_thinking_part_and_index is None:
-            if content is not None:
+            if content is not None or signature is not None:
                 # There is no existing thinking part that should be updated, so create a new one
                 new_part_index = len(self._parts)
-                part = ThinkingPart(content=content, id=id, signature=signature, provider_name=provider_name)
+                part = ThinkingPart(content=content or '', id=id, signature=signature, provider_name=provider_name)
                 if vendor_part_id is not None:  # pragma: no branch
                     self._vendor_id_to_part_index[vendor_part_id] = new_part_index
                 self._parts.append(part)
                 return PartStartEvent(index=new_part_index, part=part)
             else:
-                raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content')
+                raise UnexpectedModelBehavior('Cannot create a ThinkingPart with no content or signature')
         else:
             if content is not None or signature is not None:
                 # Update the existing ThinkingPart with the new content and/or signature delta

@@ -39,7 +39,7 @@ class GoogleGLAProvider(Provider[httpx.AsyncClient]):
                 will be used if available.
             http_client: An existing `httpx.AsyncClient` to use for making HTTP requests.
         """
-        api_key = api_key or os.environ.get('GEMINI_API_KEY')
+        api_key = api_key or os.getenv('GEMINI_API_KEY')
         if not api_key:
             raise UserError(
                 'Set the `GEMINI_API_KEY` environment variable or pass it via `GoogleGLAProvider(api_key=...)`'
