@@ -3451,28 +3451,13 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
-                            'code': """\
+                        args="""\
 n = pow(123456, 123)
 len_str = len(str(n))
 len_str, str(n)[:50], str(n)[-50:]\
 """,
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                            'outputs': [
-                                {
-                                    'logs': """\
-(627,
- '18030210630404480750814092786593857280734268863855',
- '29749134489643622579100908331839817426366854332416')\
-""",
-                                    'type': 'logs',
-                                }
-                            ],
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
+                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -3485,6 +3470,7 @@ len_str, str(n)[:50], str(n)[-50:]\
 """
                         ],
                         tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -3496,23 +3482,12 @@ len_str, str(n)[:50], str(n)[-50:]\
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
-                            'code': """\
+                        args="""\
 str_n = str(n)
 str_n[:200]\
 """,
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                            'outputs': [
-                                {
-                                    'logs': "'18030210630404480750814092786593857280734268863855968048844015985795850236081373250219782696986322573087163043641979475893207435038036769764981462654292660266470727587426920177774391231319751632369022'",
-                                    'type': 'logs',
-                                }
-                            ],
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
+                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -3521,6 +3496,7 @@ str_n[:200]\
                             "'18030210630404480750814092786593857280734268863855968048844015985795850236081373250219782696986322573087163043641979475893207435038036769764981462654292660266470727587426920177774391231319751632369022'"
                         ],
                         tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -3573,44 +3549,28 @@ str_n[:200]\
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
-                            'code': """\
+                        args="""\
 n = pow(123456, 124)
 str_n = str(n)
 len(str_n)\
 """,
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                            'outputs': [{'logs': '632', 'type': 'logs'}],
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
+                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_interpreter_call',
                         content=['632'],
                         tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
-                            'code': 'str_n[:200]',
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                            'outputs': [
-                                {
-                                    'logs': "'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499'",
-                                    'type': 'logs',
-                                }
-                            ],
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
+                        args='str_n[:200]',
                         tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
+                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -3619,25 +3579,15 @@ len(str_n)\
                             "'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499'"
                         ],
                         tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
-                            'code': 'str_n[-200:]',
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                            'outputs': [
-                                {
-                                    'logs': "'67296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
-                                    'type': 'logs',
-                                }
-                            ],
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
+                        args='str_n[-200:]',
                         tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
+                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -3646,25 +3596,15 @@ len(str_n)\
                             "'67296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'"
                         ],
                         tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
-                            'code': 'str_n',
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                            'outputs': [
-                                {
-                                    'logs': "'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
-                                    'type': 'logs',
-                                }
-                            ],
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
+                        args='str_n',
                         tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
+                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
@@ -3673,6 +3613,7 @@ len(str_n)\
                             "'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'"
                         ],
                         tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -3738,64 +3679,49 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                            'code': """\
+                        args="""\
 n = pow(123456, 123)
 len(str(n))\
 """,
-                            'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                            'outputs': None,
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
                         tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
+                        metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_interpreter_call',
                         content=None,
                         tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                            'code': 'str(n)[:100], str(n)[-100:]',
-                            'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                            'outputs': None,
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
+                        args='str(n)[:100], str(n)[-100:]',
                         tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
+                        metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_interpreter_call',
                         content=None,
                         tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_interpreter_call',
-                        args={
-                            'id': 'ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                            'code': 'n',
-                            'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                            'outputs': None,
-                            'status': 'completed',
-                            'type': 'code_interpreter_call',
-                        },
+                        args='n',
                         tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
+                        metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_interpreter_call',
                         content=None,
                         tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
+                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -3934,18 +3860,12 @@ I\
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='code_interpreter_call',
-                    args={
-                        'id': 'ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                        'code': """\
+                    args="""\
 n = pow(123456, 123)
 len(str(n))\
 """,
-                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                        'outputs': None,
-                        'status': 'completed',
-                        'type': 'code_interpreter_call',
-                    },
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
+                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 ),
             ),
@@ -3955,6 +3875,7 @@ len(str(n))\
                     tool_name='code_interpreter_call',
                     content=None,
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
+                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
@@ -3963,15 +3884,9 @@ len(str(n))\
                 index=3,
                 part=BuiltinToolCallPart(
                     tool_name='code_interpreter_call',
-                    args={
-                        'id': 'ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                        'code': 'str(n)[:100], str(n)[-100:]',
-                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                        'outputs': None,
-                        'status': 'completed',
-                        'type': 'code_interpreter_call',
-                    },
+                    args='str(n)[:100], str(n)[-100:]',
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
+                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 ),
             ),
@@ -3981,6 +3896,7 @@ len(str(n))\
                     tool_name='code_interpreter_call',
                     content=None,
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
+                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
@@ -3989,15 +3905,9 @@ len(str(n))\
                 index=5,
                 part=BuiltinToolCallPart(
                     tool_name='code_interpreter_call',
-                    args={
-                        'id': 'ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                        'code': 'n',
-                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                        'outputs': None,
-                        'status': 'completed',
-                        'type': 'code_interpreter_call',
-                    },
+                    args='n',
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
+                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 ),
             ),
@@ -4007,6 +3917,7 @@ len(str(n))\
                     tool_name='code_interpreter_call',
                     content=None,
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
+                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
@@ -4232,18 +4143,12 @@ len(str(n))\
             BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
                     tool_name='code_interpreter_call',
-                    args={
-                        'id': 'ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                        'code': """\
+                    args="""\
 n = pow(123456, 123)
 len(str(n))\
 """,
-                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                        'outputs': None,
-                        'status': 'completed',
-                        'type': 'code_interpreter_call',
-                    },
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
+                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 )
             ),
@@ -4252,6 +4157,7 @@ len(str(n))\
                     tool_name='code_interpreter_call',
                     content=None,
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
+                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
@@ -4259,15 +4165,9 @@ len(str(n))\
             BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
                     tool_name='code_interpreter_call',
-                    args={
-                        'id': 'ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                        'code': 'str(n)[:100], str(n)[-100:]',
-                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                        'outputs': None,
-                        'status': 'completed',
-                        'type': 'code_interpreter_call',
-                    },
+                    args='str(n)[:100], str(n)[-100:]',
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
+                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 )
             ),
@@ -4276,6 +4176,7 @@ len(str(n))\
                     tool_name='code_interpreter_call',
                     content=None,
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
+                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
@@ -4283,15 +4184,9 @@ len(str(n))\
             BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
                     tool_name='code_interpreter_call',
-                    args={
-                        'id': 'ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                        'code': 'n',
-                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
-                        'outputs': None,
-                        'status': 'completed',
-                        'type': 'code_interpreter_call',
-                    },
+                    args='n',
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
+                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 )
             ),
@@ -4300,6 +4195,7 @@ len(str(n))\
                     tool_name='code_interpreter_call',
                     content=None,
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
+                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
