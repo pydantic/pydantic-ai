@@ -237,12 +237,13 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         structured = result.structuredContent
         if structured and not any(not isinstance(part, mcp_types.TextContent) for part in result.content):
-            if result.content:  # pragma: no cover
-                mapped = [await self._map_tool_result_part(part) for part in result.content]
-                return mapped[0] if len(mapped) == 1 else mapped
+            return structured  # pragma: no cover
+            # if result.content:  # pragma: no cover
+            #     mapped = [await self._map_tool_result_part(part) for part in result.content]
+            #     return mapped[0] if len(mapped) == 1 else mapped
 
-            value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
-            return value  # pragma: no cover
+            # value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
+            # return value
 
         mapped = [await self._map_tool_result_part(part) for part in result.content]
         return mapped[0] if len(mapped) == 1 else mapped

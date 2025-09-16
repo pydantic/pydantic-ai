@@ -84,7 +84,8 @@ async def test_stdio_server(run_context: RunContext[int]):
 
         # Test calling the temperature conversion tool
         result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-        assert result == snapshot('32.0')
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+        assert result_text == snapshot('32.0')
 
 
 async def test_reentrant_context_manager():
@@ -130,7 +131,8 @@ async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
         result = await server.call_tool(
             'foo_celsius_to_fahrenheit', {'celsius': 0}, run_context, tools['foo_celsius_to_fahrenheit']
         )
-        assert result == snapshot('32.0')
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+        assert result_text == snapshot('32.0')
 
 
 async def test_stdio_server_with_cwd(run_context: RunContext[int]):
@@ -237,7 +239,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     parts=[
                         ToolReturnPart(
                             tool_name='celsius_to_fahrenheit',
-                            content='32.0',
+                            content={'result': '32.0'},
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                             timestamp=IsDatetime(),
                         )
@@ -315,7 +317,8 @@ async def test_log_level_unset(run_context: RunContext[int]):
         assert tools[13].name == 'get_log_level'
 
         result = await server.direct_call_tool('get_log_level', {})
-        assert result == snapshot('unset')
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+        assert result_text == snapshot('unset')
 
 
 async def test_log_level_set(run_context: RunContext[int]):
@@ -323,7 +326,8 @@ async def test_log_level_set(run_context: RunContext[int]):
     assert server.log_level == 'info'
     async with server:
         result = await server.direct_call_tool('get_log_level', {})
-        assert result == snapshot('info')
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+        assert result_text == snapshot('info')
 
 
 async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
@@ -371,7 +375,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     parts=[
                         ToolReturnPart(
                             tool_name='get_weather_forecast',
-                            content='The weather in Mexico City is sunny and 26 degrees Celsius.',
+                            content={'result': 'The weather in Mexico City is sunny and 26 degrees Celsius.'},
                             tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
                             timestamp=IsDatetime(),
                         )
@@ -1257,7 +1261,11 @@ async def test_client_sampling(run_context: RunContext[int]):
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
         result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
-        assert result == snapshot(
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+        import json
+
+        result_text = json.loads(result_text)  # type: ignore
+        assert result_text == snapshot(
             {
                 'meta': None,
                 'role': 'assistant',
@@ -1361,11 +1369,11 @@ async def test_elicitation_callback_functionality(run_context: RunContext[int]):
     async with server:
         # Call the tool that uses elicitation
         result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
-
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
         # Verify the callback was called
         assert callback_called, 'Elicitation callback should have been called'
         assert callback_message == 'Should I continue?', 'Callback should receive the question'
-        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
+        assert result_text == f'User responded: {callback_response}', 'Tool should return the callback response'
 
 
 async def test_elicitation_callback_not_set(run_context: RunContext[int]):
@@ -1382,14 +1390,16 @@ async def test_direct_call_returns_text_content(mcp_server: MCPServerStdio):
     """Direct tool call returns legacy text content when tool returns str."""
     async with mcp_server:
         result = await mcp_server.direct_call_tool('get_weather_forecast', {'location': 'Paris'})
-    assert result == 'The weather in Paris is sunny and 26 degrees Celsius.'
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+    assert result_text == 'The weather in Paris is sunny and 26 degrees Celsius.'
 
 
 async def test_direct_call_returns_structured_dict(mcp_server: MCPServerStdio):
     """Direct tool call returns structured dict when tool returns dict."""
     async with mcp_server:
         result = await mcp_server.direct_call_tool('get_dict', {})
-    assert result == {'foo': 'bar', 'baz': 123}
+        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+    assert result_text == {'foo': 'bar', 'baz': 123}
 
 
 async def test_direct_call_error_uses_text_content(mcp_server: MCPServerStdio):
