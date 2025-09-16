@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_python_implementation == 'PyPy'",
@@ -1685,8 +1685,8 @@ wheels = [
 
 [[package]]
 name = "hatchet-sdk"
-version = "1.18.1"
-source = { registry = "https://pypi.org/simple" }
+version = "1.18.2"
+source = { git = "https://github.com/hatchet-dev/hatchet.git?subdirectory=sdks%2Fpython&rev=mk%2Ftweaks-for-pydantic-ai#41013c3d474c3e509f723948f84ade27f158373b" }
 dependencies = [
     { name = "aiohttp" },
     { name = "grpcio" },
@@ -1698,10 +1698,6 @@ dependencies = [
     { name = "python-dateutil" },
     { name = "tenacity" },
     { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6c/10/5a2cf5c6d61bdc7244ffaae8d89a095732fbce0e219ddb506b4f186f931a/hatchet_sdk-1.18.1.tar.gz", hash = "sha256:2d73a26330eaa6aba41095ebfd0d9259f01f1eb611c128ca96e54efa1122c19f", size = 344794, upload-time = "2025-08-26T21:25:17.165Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/1c/40baabcfc01560027d8ec7bd8b0924f535c56ae888a1a7c4341557aaf0f6/hatchet_sdk-1.18.1-py3-none-any.whl", hash = "sha256:13716ba69725ad180cd456c51ac9bf7836a0c57e1c7f785e8a09cdffa1ccff1a", size = 857997, upload-time = "2025-08-26T21:25:15.506Z" },
 ]
 
 [[package]]
@@ -3711,7 +3707,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.31.0" },
     { name = "griffe", specifier = ">=1.3.2" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
-    { name = "hatchet-sdk", marker = "extra == 'hatchet'", specifier = ">=1.18.1" },
+    { name = "hatchet-sdk", marker = "extra == 'hatchet'", git = "https://github.com/hatchet-dev/hatchet.git?subdirectory=sdks%2Fpython&rev=mk%2Ftweaks-for-pydantic-ai" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "huggingface-hub", extras = ["inference"], marker = "extra == 'huggingface'", specifier = ">=0.33.5" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=3.14.1" },
