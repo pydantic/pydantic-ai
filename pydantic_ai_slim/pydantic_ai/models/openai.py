@@ -544,10 +544,13 @@ class OpenAIChatModel(Model):
                 for lp in choice.logprobs.content
             ]
 
-        if choice.message.content is not None:
+        if (content := choice.message.content) is not None:
+            if response_prefix := model_request_parameters.response_prefix:
+                content = response_prefix + content
+
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
+                for part in split_content_into_text_and_thinking(content, self.profile.thinking_tags)
             )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
@@ -624,7 +627,7 @@ class OpenAIChatModel(Model):
                 )
 
     async def _map_messages(
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
@@ -666,9 +669,9 @@ class OpenAIChatModel(Model):
         if instructions := self._get_instructions(messages):
             openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
 
-        # Add response prefix as assistant message if provided
-        if model_request_parameters and model_request_parameters.response_prefix:
-            openai_messages.append({'role': 'assistant', 'content': model_request_parameters.response_prefix})
+        if response_prefix := model_request_parameters.response_prefix:
+            # TODO: Add prefix=True for DeepSeek?
+            openai_messages.append(chat.ChatCompletionAssistantMessageParam(role='assistant', content=response_prefix))
 
         return openai_messages
 
@@ -1358,11 +1361,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        # Handle response prefix by emitting it as the first text event
-        if response_prefix := self.model_request_parameters.response_prefix:
-            maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=response_prefix)
-            if maybe_event is not None:
-                yield maybe_event
+        response_prefix = self.model_request_parameters.response_prefix
 
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
@@ -1385,7 +1384,11 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content is not None:
+            if content is not None or response_prefix:
+                if response_prefix:
+                    content = response_prefix + (content or '')
+                    response_prefix = None
+
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,

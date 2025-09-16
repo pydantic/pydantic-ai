@@ -473,6 +473,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         message_history = _clean_message_history(message_history)
 
+        # TODO: Raise exception if response_prefix is not supported by the ctx.deps.model.profile
+
         model_request_parameters = await _prepare_request_parameters(ctx, self.response_prefix)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 

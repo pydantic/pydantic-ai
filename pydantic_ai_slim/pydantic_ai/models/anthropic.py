@@ -266,11 +266,7 @@ class AnthropicModel(Model):
             if (allow_parallel_tool_calls := model_settings.get('parallel_tool_calls')) is not None:
                 tool_choice['disable_parallel_tool_use'] = not allow_parallel_tool_calls
 
-        system_prompt, anthropic_messages = await self._map_message(messages)
-
-        # Add response prefix as assistant message if provided
-        if model_request_parameters.response_prefix:
-            anthropic_messages.append({'role': 'assistant', 'content': model_request_parameters.response_prefix})
+        system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters)
 
         try:
             extra_headers = model_settings.get('extra_headers', {})
@@ -308,9 +304,8 @@ class AnthropicModel(Model):
         for i, item in enumerate(response.content):
             if isinstance(item, BetaTextBlock):
                 content = item.text
-                # Prepend response prefix to the first text block if provided
-                if i == 0 and model_request_parameters.response_prefix:
-                    content = model_request_parameters.response_prefix + content
+                if i == 0 and (response_prefix := model_request_parameters.response_prefix):
+                    content = response_prefix + content
                 items.append(TextPart(content=content))
             elif isinstance(item, BetaWebSearchToolResultBlock | BetaCodeExecutionToolResultBlock):
                 items.append(
@@ -410,7 +405,9 @@ class AnthropicModel(Model):
                 )
         return tools, extra_headers
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
+    async def _map_message(  # noqa: C901
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> tuple[str, list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
@@ -522,6 +519,12 @@ class AnthropicModel(Model):
                     anthropic_messages.append(BetaMessageParam(role='assistant', content=assistant_content_params))
             else:
                 assert_never(m)
+
+        if response_prefix := model_request_parameters.response_prefix:
+            anthropic_messages.append(
+                BetaMessageParam(role='assistant', content=[BetaTextBlockParam(text=response_prefix, type='text')])
+            )
+
         if instructions := self._get_instructions(messages):
             system_prompt_parts.insert(0, instructions)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -627,11 +630,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         current_block: BetaContentBlock | None = None
 
-        # Handle response prefix by emitting it as the first text event
-        if response_prefix := self.model_request_parameters.response_prefix:
-            maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=response_prefix)
-            if maybe_event is not None:
-                yield maybe_event
+        response_prefix = self.model_request_parameters.response_prefix
 
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
@@ -640,10 +639,13 @@ class AnthropicStreamedResponse(StreamedResponse):
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
-                if isinstance(current_block, BetaTextBlock) and current_block.text:
-                    maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id=event.index, content=current_block.text
-                    )
+                if isinstance(current_block, BetaTextBlock) and (current_block.text or response_prefix):
+                    text = current_block.text
+                    if response_prefix:
+                        text = response_prefix + text
+                        response_prefix = None
+
+                    maybe_event = self._parts_manager.handle_text_delta(vendor_part_id=event.index, content=text)
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(current_block, BetaThinkingBlock):

@@ -2727,23 +2727,149 @@ These stories represent major international diplomatic developments, significant
 
 async def test_anthropic_response_prefix(allow_model_requests: None, anthropic_api_key: str):
     """Test that Anthropic models correctly handle response prefix."""
-    m = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
-    agent = Agent(m)
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, instructions='Be concise.')
 
     # Test non-streaming response
-    result = await agent.run('What is the name of color #FF0000', response_prefix="It's name is")
-    assert result.output.startswith("It's name is")
+    result = await agent.run('What is the name of color #FF0000', response_prefix='Su nombre es')
+    assert result.output == snapshot(
+        'Su nombre es **rojo** (o "red" en inglés). Este es el valor hexadecimal para el color rojo puro en el espacio de color RGB.'
+    )
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the name of color #FF0000',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Su nombre es **rojo** (o "red" en inglés). Este es el valor hexadecimal para el color rojo puro en el espacio de color RGB.'
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=24,
+                    output_tokens=39,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 24,
+                        'output_tokens': 39,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01AsJ8x22wZUZK43ebDwD12n',
+                finish_reason='stop',
+            ),
+        ]
+    )
 
     # Test streaming response
     event_parts: list[Any] = []
-    async with agent.iter(user_prompt='Hello', response_prefix="It's name is") as agent_run:
+    async with agent.iter(user_prompt='What is the name of color #FF0000', response_prefix='Su nombre es') as agent_run:
         async for node in agent_run:
             if Agent.is_model_request_node(node):
                 async with node.stream(agent_run.ctx) as request_stream:
                     async for event in request_stream:
                         event_parts.append(event)
 
-    # Check that the first text part xpstarts with the prefix
-    text_parts = [p for p in event_parts if isinstance(p, PartStartEvent) and isinstance(p.part, TextPart)]
-    assert len(text_parts) > 0
-    assert cast(TextPart, text_parts[0].part).content.startswith("It's name is")
+    assert event_parts == snapshot(
+        [
+            PartStartEvent(index=0, part=TextPart(content='Su nombre es')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' **r')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='ojo** (o **red**')),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta="""\
+ en inglés).
+
+El color #FF0000 es\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' rojo puro en el sistema hex')),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta="""\
+adecimal RGB, donde:
+- FF = 255 (\
+"""
+                ),
+            ),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta="""\
+máximo valor de rojo)
+- 00 =\
+"""
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' 0 (sin')),
+            PartDeltaEvent(
+                index=0,
+                delta=TextPartDelta(
+                    content_delta="""\
+ verde)
+- 00 = \
+"""
+                ),
+            ),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='0 (sin azul)')),
+        ]
+    )
+    assert agent_run.result is not None
+    assert agent_run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the name of color #FF0000',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                instructions='Be concise.',
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+Su nombre es **rojo** (o **red** en inglés).
+
+El color #FF0000 es rojo puro en el sistema hexadecimal RGB, donde:
+- FF = 255 (máximo valor de rojo)
+- 00 = 0 (sin verde)
+- 00 = 0 (sin azul)\
+"""
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=24,
+                    output_tokens=82,
+                    details={
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'input_tokens': 24,
+                        'output_tokens': 82,
+                    },
+                ),
+                model_name='claude-sonnet-4-20250514',
+                timestamp=IsDatetime(),
+                provider_name='anthropic',
+                provider_details={'finish_reason': 'end_turn'},
+                provider_response_id='msg_01CAZPvhQ5cuSvKdgBBvi7ev',
+                finish_reason='stop',
+            ),
+        ]
+    )
