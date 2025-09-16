@@ -296,7 +296,12 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
 
         with (
             logfire_span(
-                'evaluate {name}', name=name, task_name=task_name, dataset_name=self.name, n_cases=len(self.cases)
+                'evaluate {name}',
+                name=name,
+                task_name=task_name,
+                dataset_name=self.name,
+                n_cases=len(self.cases),
+                **{'gen_ai.operation.name': 'experiment'},  # pyright: ignore[reportArgumentType]
             ) as eval_span,
             progress_bar or nullcontext(),
         ):

@@ -1493,10 +1493,12 @@ async def test_evaluate_async_logfire(
                 {
                     'assertion_pass_rate': 1.0,
                     'dataset_name': 'example',
+                    'gen_ai.operation.name': 'experiment',
                     'logfire.json_schema': {
                         'properties': {
                             'assertion_pass_rate': {},
                             'dataset_name': {},
+                            'gen_ai.operation.name': {},
                             'n_cases': {},
                             'name': {},
                             'task_name': {},
