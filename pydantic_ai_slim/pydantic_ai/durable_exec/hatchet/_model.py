@@ -14,6 +14,12 @@ from pydantic_ai.settings import ModelSettings
 from ._utils import TaskConfig
 
 
+class ModelInput(BaseModel):
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
+
+
 class HatchetModel(WrapperModel):
     """A wrapper for Model that integrates with Hatchet, turning request and request_stream to Hatchet tasks."""
 
@@ -21,11 +27,6 @@ class HatchetModel(WrapperModel):
         super().__init__(model)
         self.task_config = task_config
         self.hatchet = hatchet
-
-        class ModelInput(BaseModel):
-            messages: list[ModelMessage]
-            model_settings: ModelSettings | None
-            model_request_parameters: ModelRequestParameters
 
         @hatchet.durable_task(
             name=self.task_config.name,
@@ -55,3 +56,17 @@ class HatchetModel(WrapperModel):
             )
 
         self._hatchet_wrapped_request_task = wrapped_request_task
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return await self._hatchet_wrapped_request_task.aio_run(
+            ModelInput(
+                messages=messages,
+                model_settings=model_settings,
+                model_request_parameters=model_request_parameters,
+            )
+        )
