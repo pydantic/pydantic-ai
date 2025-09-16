@@ -73,10 +73,10 @@ class HatchetMCPServer(WrapperToolset[AgentDepsT], ABC):
         ) -> dict[str, ToolsetTool[AgentDepsT]]:
             return await super(HatchetMCPServer, self).get_tools(input.ctx)
 
-        self._hatchet_wrapped_get_tools_task = wrapped_get_tools_task
+        self.hatchet_wrapped_get_tools_task = wrapped_get_tools_task
 
         @hatchet.durable_task(
-            name=f'{self._name}.get_tools',
+            name=f'{self._name}.call_tool',
             description=self._task_config.description,
             input_validator=CallToolInput[AgentDepsT],
             version=self._task_config.version,
@@ -100,10 +100,10 @@ class HatchetMCPServer(WrapperToolset[AgentDepsT], ABC):
 
             return CallToolOutput[AgentDepsT](result=result)
 
-        self._hatchet_wrapped_call_tool_task = wrapped_call_tool_task
+        self.hatchet_wrapped_call_tool_task = wrapped_call_tool_task
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        return await self._hatchet_wrapped_get_tools_task.aio_run(GetToolsInput(ctx=ctx))
+        return await self.hatchet_wrapped_get_tools_task.aio_run(GetToolsInput(ctx=ctx))
 
     async def call_tool(
         self,
@@ -112,7 +112,7 @@ class HatchetMCPServer(WrapperToolset[AgentDepsT], ABC):
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
     ) -> ToolResult:
-        wrapped_tool_output = await self._hatchet_wrapped_call_tool_task.aio_run(
+        wrapped_tool_output = await self.hatchet_wrapped_call_tool_task.aio_run(
             CallToolInput(
                 name=name,
                 tool_args=tool_args,

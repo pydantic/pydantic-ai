@@ -56,7 +56,7 @@ class HatchetModel(WrapperModel):
                 input.messages, input.model_settings, input.model_request_parameters
             )
 
-        self._hatchet_wrapped_request_task = wrapped_request_task
+        self.hatchet_wrapped_request_task = wrapped_request_task
 
     async def request(
         self,
@@ -64,7 +64,7 @@ class HatchetModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        return await self._hatchet_wrapped_request_task.aio_run(
+        return await self.hatchet_wrapped_request_task.aio_run(
             ModelInput(
                 messages=messages,
                 model_settings=model_settings,
