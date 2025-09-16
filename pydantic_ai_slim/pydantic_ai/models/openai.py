@@ -776,7 +776,7 @@ class OpenAIChatModel(Model):
             # Inline text-like binary content as a text block
             text = item.data.decode('utf-8')
             media_type = item.media_type
-            inline = OpenAIChatModel._inline_file_block(media_type, text)
+            inline = OpenAIChatModel._inline_file_block(media_type, text, identifier=item.identifier)
             return [ChatCompletionContentPartTextParam(text=inline, type='text')]
         base64_encoded = base64.b64encode(item.data).decode('utf-8')
         if item.is_image:
@@ -815,7 +815,9 @@ class OpenAIChatModel(Model):
             return None
         if OpenAIChatModel._is_text_like_media_type(item.media_type):
             downloaded_text = await download_item(item, data_format='text', type_format='extension')
-            inline = OpenAIChatModel._inline_file_block(item.media_type, downloaded_text['data'], file_url=item.url)
+            inline = OpenAIChatModel._inline_file_block(
+                item.media_type, downloaded_text['data'], identifier=item.identifier
+            )
             return [ChatCompletionContentPartTextParam(text=inline, type='text')]
         downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
         return [
@@ -836,17 +838,17 @@ class OpenAIChatModel(Model):
             or media_type.endswith('+json')
             or media_type == 'application/xml'
             or media_type.endswith('+xml')
-            or media_type == 'text/csv'
-            or media_type == 'text/markdown'
-            or media_type in ('application/x-yaml', 'application/yaml', 'text/yaml')
+            or media_type in ('application/x-yaml', 'application/yaml')
         )
 
     @staticmethod
-    def _inline_file_block(media_type: str, text: str, file_url: str | None = None) -> str:
-        if file_url is not None:
-            return f'-----BEGIN FILE url="{file_url}" type="{media_type}"-----\n{text}\n-----END FILE-----'
-        else:
-            return f'-----BEGIN FILE type="{media_type}"-----\n{text}\n-----END FILE-----'
+    def _inline_file_block(media_type: str, text: str, identifier: str | None) -> str:
+        id_attr = f' id="{identifier}"' if identifier else ''
+        return ''.join([
+            '-----BEGIN FILE', id_attr, ' type="', media_type, '"-----\n',
+            text,
+            '\n-----END FILE-----'
+        ])
 
 
 @deprecated(

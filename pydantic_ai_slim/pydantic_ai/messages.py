@@ -133,10 +133,13 @@ class FileUrl(ABC):
     )
 
     identifier: str | None = None
-    """The identifier of the file, such as a unique ID. generating one from the url if not explicitly set
+    """Stable identifier for this file, used to correlate references in prompts and tool calls.
 
     This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
     and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+    It's also included in inline-text delimiters for providers that require inlining text content, so the model can
+    distinguish multiple files. If not provided, a short hash will be generated.
 
     This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
     If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,

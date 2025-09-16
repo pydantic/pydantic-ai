@@ -822,6 +822,60 @@ async def test_document_url_input(allow_model_requests: None, openai_api_key: st
     assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
 
 
+@pytest.mark.parametrize(
+    'media_type,body',
+    [
+        ('text/plain', 'Hello'),
+        ('application/json', '{"a":1}'),
+        ('application/xml', '<a>1</a>'),
+        ('application/yaml', 'a: 1'),
+    ],
+)
+async def test_openai_binary_content_text_like_is_inlined(media_type: str, body: str) -> None:
+    content = BinaryContent(data=body.encode(), media_type=media_type)
+    part = UserPromptPart(content=[content])
+    identifier = content.identifier
+    msg = await OpenAIChatModel._map_user_prompt(part)
+    content = cast(list[dict[str, Any]], msg['content'])
+    assert content[0]['type'] == 'text'
+    text = content[0]['text']
+    assert text.startswith(f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----')
+    assert text.rstrip().endswith('-----END FILE-----')
+
+
+@pytest.mark.parametrize(
+    'url,media_type,data_type,body,expected_ext',
+    [
+        ('https://example.com/file.txt', 'text/plain', 'txt', 'hello', 'txt'),
+        ('https://example.com/data.csv', 'text/csv', 'csv', 'a,b\n1,2', 'csv'),
+        ('https://example.com/data.json', 'application/json', 'json', '{"a":1}', 'json'),
+        ('https://example.com/data.xml', 'application/xml', 'xml', '<a>1</a>', 'xml'),
+        ('https://example.com/readme.md', 'text/markdown', 'md', '# Title', 'md'),
+        ('https://example.com/conf.yaml', 'application/yaml', 'yaml', 'a: 1', 'yaml'),
+    ],
+)
+async def test_openai_document_url_text_like_is_inlined(
+    monkeypatch: pytest.MonkeyPatch, url: str, media_type: str, data_type: str, body: str, expected_ext: str
+) -> None:
+    async def fake_download_item(
+        item: Any, data_format: str = 'text', type_format: str = 'extension'
+    ) -> dict[str, str]:
+        assert data_format == 'text'
+        return {'data': body, 'data_type': data_type}
+
+    monkeypatch.setattr('pydantic_ai.models.openai.download_item', fake_download_item)
+    document_url = DocumentUrl(url=url, media_type=media_type)
+    identifier = document_url.identifier
+
+    part = UserPromptPart(content=[document_url])
+    msg = await OpenAIChatModel._map_user_prompt(part)
+    content = cast(list[dict[str, Any]], msg['content'])
+    assert content[0]['type'] == 'text'
+    text = content[0]['text']
+    assert text.startswith(f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----')
+    assert text.rstrip().endswith('-----END FILE-----')
+
+
 @pytest.mark.vcr()
 async def test_image_url_tool_response(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
