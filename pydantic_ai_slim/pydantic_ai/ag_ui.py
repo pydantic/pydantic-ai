@@ -559,15 +559,15 @@ async def _handle_tool_result_event(
         content=result.model_response_str(),
     )
 
-    # Now check for  AG-UI events returned by the tool calls.
-    content = result.content
-    if isinstance(content, BaseEvent):
-        yield content
-    elif isinstance(content, str | bytes):  # pragma: no branch
+    # Now check for AG-UI events returned by the tool calls.
+    possible_event = result.metadata or result.content
+    if isinstance(possible_event, BaseEvent):
+        yield possible_event
+    elif isinstance(possible_event, str | bytes):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
-    elif isinstance(content, Iterable):  # pragma: no branch
-        for item in content:  # type: ignore[reportUnknownMemberType]
+    elif isinstance(possible_event, Iterable):  # pragma: no branch
+        for item in possible_event:  # type: ignore[reportUnknownMemberType]
             if isinstance(item, BaseEvent):  # pragma: no branch
                 yield item
 
