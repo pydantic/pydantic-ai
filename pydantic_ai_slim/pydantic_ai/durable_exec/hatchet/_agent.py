@@ -1,17 +1,47 @@
 from __future__ import annotations
 
-from hatchet_sdk import Hatchet
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from typing import Any, Generic, overload
 
-from pydantic_ai.agent import AbstractAgent, WrapperAgent
+from hatchet_sdk import DurableContext, Hatchet
+from pydantic import BaseModel, Field
+from typing_extensions import Never
+
+from pydantic_ai import (
+    messages as _messages,
+    models,
+    usage as _usage,
+)
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.output import OutputDataT
+from pydantic_ai.models import Model
+from pydantic_ai.output import OutputDataT, OutputSpec
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
+    DeferredToolResults,
 )
 from pydantic_ai.toolsets import AbstractToolset
 
 from ._model import HatchetModel
 from ._utils import TaskConfig
+
+
+class RunAgentInput(BaseModel, Generic[RunOutputDataT, AgentDepsT]):
+    user_prompt: str | Sequence[_messages.UserContent] | None = None
+    output_type: OutputSpec[RunOutputDataT] | None = None
+    message_history: list[_messages.ModelMessage] | None = None
+    deferred_tool_results: DeferredToolResults | None = None
+    model: models.Model | models.KnownModelName | str | None = None
+    deps: AgentDepsT
+    model_settings: ModelSettings | None = None
+    usage_limits: _usage.UsageLimits | None = None
+    usage: _usage.RunUsage | None = None
+    infer_name: bool = True
+    toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
+    event_stream_handler: EventStreamHandler[AgentDepsT] | None = None
+    deprecated_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
 class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
@@ -39,7 +69,12 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         if not self._name:
             raise UserError(
-                "An agent needs to have a unique `name` in order to be used with DBOS. The name will be used to identify the agent's workflows and steps."
+                "An agent needs to have a unique `name` in order to be used with Hatchet. The name will be used to identify the agent's workflows and tasks."
+            )
+
+        if not isinstance(wrapped.model, Model):
+            raise UserError(
+                'An agent needs to have a `model` in order to be used with Hatchet, it cannot be set at agent run time.'
             )
 
         self._model = HatchetModel(
@@ -51,7 +86,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         hatchet_agent_name = self._name
 
         def hatchetify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            # Replace MCPServer with DBOSMCPServer
+            # Replace MCPServer with HatchetMCPServer
             try:
                 from pydantic_ai.mcp import MCPServer
 
@@ -70,3 +105,124 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             return toolset
 
         self._toolsets = [toolset.visit_and_replace(hatchetify_toolset) for toolset in wrapped.toolsets]
+
+        @hatchet.durable_task(name=f'{self._name}.run', input_validator=RunAgentInput[Any, Any])
+        async def wrapped_run_workflow(
+            input: RunAgentInput[RunOutputDataT, AgentDepsT],
+            ctx: DurableContext,
+        ) -> AgentRunResult[Any]:
+            with self._hatchet_overrides():
+                return await super(WrapperAgent, self).run(
+                    input.user_prompt,
+                    output_type=input.output_type,
+                    message_history=input.message_history,
+                    deferred_tool_results=input.deferred_tool_results,
+                    model=input.model,
+                    deps=input.deps,
+                    model_settings=input.model_settings,
+                    usage_limits=input.usage_limits,
+                    usage=input.usage,
+                    infer_name=input.infer_name,
+                    toolsets=input.toolsets,
+                    event_stream_handler=input.event_stream_handler,
+                    **input.deprecated_kwargs,
+                )
+
+        self.hatchet_wrapped_run_workflow = wrapped_run_workflow
+
+    @property
+    def name(self) -> str | None:
+        return self._name
+
+    @name.setter
+    def name(self, value: str | None) -> None:  # pragma: no cover
+        raise UserError(
+            'The agent name cannot be changed after creation. If you need to change the name, create a new agent.'
+        )
+
+    @property
+    def model(self) -> Model:
+        return self._model
+
+    @property
+    def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        with self._hatchet_overrides():
+            return super().toolsets
+
+    @contextmanager
+    def _hatchet_overrides(self) -> Iterator[None]:
+        # Override with HatchetModel and HatchetMCPServer in the toolsets.
+        with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
+            yield
+
+    @overload
+    async def run(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> AgentRunResult[OutputDataT]: ...
+
+    @overload
+    async def run(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> AgentRunResult[RunOutputDataT]: ...
+
+    async def run(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **_deprecated_kwargs: Never,
+    ) -> AgentRunResult[Any]:
+        """Run the agent with a user prompt in async mode."""
+        return await self.hatchet_wrapped_run_workflow.aio_run(
+            RunAgentInput[RunOutputDataT, AgentDepsT](
+                user_prompt=user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                deprecated_kwargs=_deprecated_kwargs,
+            )
+        )
