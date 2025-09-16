@@ -4,8 +4,6 @@
 
 ::: pydantic_ai.providers.google
 
-::: pydantic_ai.providers.google_vertex
-
 ::: pydantic_ai.providers.openai
 
 ::: pydantic_ai.providers.deepseek
@@ -17,6 +15,8 @@
 ::: pydantic_ai.providers.azure
 
 ::: pydantic_ai.providers.cohere
+
+::: pydantic_ai.providers.cerebras.CerebrasProvider
 
 ::: pydantic_ai.providers.mistral.MistralProvider
 
@@ -37,3 +37,7 @@
 ::: pydantic_ai.providers.huggingface.HuggingFaceProvider
 
 ::: pydantic_ai.providers.moonshotai.MoonshotAIProvider
+
+::: pydantic_ai.providers.ollama.OllamaProvider
+
+::: pydantic_ai.providers.litellm.LiteLLMProvider

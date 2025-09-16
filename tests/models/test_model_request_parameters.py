@@ -9,6 +9,7 @@ def test_model_request_parameters_are_serializable():
     )
     assert TypeAdapter(ModelRequestParameters).dump_python(params) == {
         'function_tools': [],
+        'builtin_tools': [],
         'output_mode': 'text',
         'allow_text_output': True,
         'output_tools': [],

@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from io import StringIO
-from typing import Any, Callable, Generic, Literal, Protocol
+from typing import Any, Generic, Literal, Protocol, cast
 
 from pydantic import BaseModel, TypeAdapter
 from rich.console import Console
@@ -27,11 +27,15 @@ __all__ = (
     'EvaluationReportAdapter',
     'ReportCase',
     'ReportCaseAdapter',
+    'ReportCaseFailure',
+    'ReportCaseFailureAdapter',
     'EvaluationRenderer',
     'RenderValueConfig',
     'RenderNumberConfig',
     'ReportCaseAggregate',
 )
+
+from ..evaluators.evaluator import EvaluatorFailure
 
 MISSING_VALUE_STR = '[i]<missing>[/i]'
 EMPTY_CELL_STR = '-'
@@ -42,7 +46,7 @@ OutputT = TypeVar('OutputT', default=Any)
 MetadataT = TypeVar('MetadataT', default=Any)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     """A single case in an evaluation report."""
 
@@ -67,12 +71,40 @@ class ReportCase(Generic[InputsT, OutputT, MetadataT]):
     task_duration: float
     total_duration: float  # includes evaluator execution time
 
-    # TODO(DavidM): Drop these once we can reference child spans in details panel:
-    trace_id: str
-    span_id: str
+    trace_id: str | None = None
+    """The trace ID of the case span."""
+    span_id: str | None = None
+    """The span ID of the case span."""
+
+    evaluator_failures: list[EvaluatorFailure] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
+class ReportCaseFailure(Generic[InputsT, OutputT, MetadataT]):
+    """A single case in an evaluation report that failed due to an error during task execution."""
+
+    name: str
+    """The name of the [case][pydantic_evals.Case]."""
+    inputs: InputsT
+    """The inputs to the task, from [`Case.inputs`][pydantic_evals.Case.inputs]."""
+    metadata: MetadataT | None
+    """Any metadata associated with the case, from [`Case.metadata`][pydantic_evals.Case.metadata]."""
+    expected_output: OutputT | None
+    """The expected output of the task, from [`Case.expected_output`][pydantic_evals.Case.expected_output]."""
+
+    error_message: str
+    """The message of the exception that caused the failure."""
+    error_stacktrace: str
+    """The stacktrace of the exception that caused the failure."""
+
+    trace_id: str | None = None
+    """The trace ID of the case span."""
+    span_id: str | None = None
+    """The span ID of the case span."""
 
 
 ReportCaseAdapter = TypeAdapter(ReportCase[Any, Any, Any])
+ReportCaseFailureAdapter = TypeAdapter(ReportCaseFailure[Any, Any, Any])
 
 
 class ReportCaseAggregate(BaseModel):
@@ -152,22 +184,33 @@ class ReportCaseAggregate(BaseModel):
         )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
     """A report of the results of evaluating a model on a set of cases."""
 
     name: str
     """The name of the report."""
+
     cases: list[ReportCase[InputsT, OutputT, MetadataT]]
     """The cases in the report."""
+    failures: list[ReportCaseFailure[InputsT, OutputT, MetadataT]] = field(default_factory=list)
+    """The failures in the report. These are cases where task execution raised an exception."""
 
-    def averages(self) -> ReportCaseAggregate:
-        return ReportCaseAggregate.average(self.cases)
+    trace_id: str | None = None
+    """The trace ID of the evaluation."""
+    span_id: str | None = None
+    """The span ID of the evaluation."""
+
+    def averages(self) -> ReportCaseAggregate | None:
+        if self.cases:
+            return ReportCaseAggregate.average(self.cases)
+        return None
 
     def print(
         self,
         width: int | None = None,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
+        *,
         include_input: bool = False,
         include_metadata: bool = False,
         include_expected_output: bool = False,
@@ -176,6 +219,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
         include_averages: bool = True,
+        include_errors: bool = True,
+        include_error_stacktrace: bool = False,
+        include_evaluator_failures: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -183,6 +229,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         label_configs: dict[str, RenderValueConfig] | None = None,
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
+        include_reasons: bool = False,
     ):  # pragma: no cover
         """Print this report to the console, optionally comparing it to a baseline report.
 
@@ -198,6 +245,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
             include_averages=include_averages,
+            include_evaluator_failures=include_evaluator_failures,
             input_config=input_config,
             metadata_config=metadata_config,
             output_config=output_config,
@@ -205,12 +253,26 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             label_configs=label_configs,
             metric_configs=metric_configs,
             duration_config=duration_config,
+            include_reasons=include_reasons,
         )
-        Console(width=width).print(table)
+        console = Console(width=width)
+        console.print(table)
+        if include_errors and self.failures:
+            failures_table = self.failures_table(
+                include_input=include_input,
+                include_metadata=include_metadata,
+                include_expected_output=include_expected_output,
+                include_error_message=True,
+                include_error_stacktrace=include_error_stacktrace,
+                input_config=input_config,
+                metadata_config=metadata_config,
+            )
+            console.print(failures_table, style='red')
 
     def console_table(
         self,
         baseline: EvaluationReport[InputsT, OutputT, MetadataT] | None = None,
+        *,
         include_input: bool = False,
         include_metadata: bool = False,
         include_expected_output: bool = False,
@@ -219,6 +281,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         include_total_duration: bool = False,
         include_removed_cases: bool = False,
         include_averages: bool = True,
+        include_evaluator_failures: bool = True,
         input_config: RenderValueConfig | None = None,
         metadata_config: RenderValueConfig | None = None,
         output_config: RenderValueConfig | None = None,
@@ -226,6 +289,7 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
         label_configs: dict[str, RenderValueConfig] | None = None,
         metric_configs: dict[str, RenderNumberConfig] | None = None,
         duration_config: RenderNumberConfig | None = None,
+        include_reasons: bool = False,
     ) -> Table:
         """Return a table containing the data from this report, or the diff between this report and a baseline report.
 
@@ -240,6 +304,9 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             include_total_duration=include_total_duration,
             include_removed_cases=include_removed_cases,
             include_averages=include_averages,
+            include_error_message=False,
+            include_error_stacktrace=False,
+            include_evaluator_failures=include_evaluator_failures,
             input_config={**_DEFAULT_VALUE_CONFIG, **(input_config or {})},
             metadata_config={**_DEFAULT_VALUE_CONFIG, **(metadata_config or {})},
             output_config=output_config or _DEFAULT_VALUE_CONFIG,
@@ -247,11 +314,47 @@ class EvaluationReport(Generic[InputsT, OutputT, MetadataT]):
             label_configs=label_configs or {},
             metric_configs=metric_configs or {},
             duration_config=duration_config or _DEFAULT_DURATION_CONFIG,
+            include_reasons=include_reasons,
         )
         if baseline is None:
             return renderer.build_table(self)
         else:  # pragma: no cover
             return renderer.build_diff_table(self, baseline)
+
+    def failures_table(
+        self,
+        *,
+        include_input: bool = False,
+        include_metadata: bool = False,
+        include_expected_output: bool = False,
+        include_error_message: bool = True,
+        include_error_stacktrace: bool = True,
+        input_config: RenderValueConfig | None = None,
+        metadata_config: RenderValueConfig | None = None,
+    ) -> Table:
+        """Return a table containing the failures in this report."""
+        renderer = EvaluationRenderer(
+            include_input=include_input,
+            include_metadata=include_metadata,
+            include_expected_output=include_expected_output,
+            include_output=False,
+            include_durations=False,
+            include_total_duration=False,
+            include_removed_cases=False,
+            include_averages=False,
+            input_config={**_DEFAULT_VALUE_CONFIG, **(input_config or {})},
+            metadata_config={**_DEFAULT_VALUE_CONFIG, **(metadata_config or {})},
+            output_config=_DEFAULT_VALUE_CONFIG,
+            score_configs={},
+            label_configs={},
+            metric_configs={},
+            duration_config=_DEFAULT_DURATION_CONFIG,
+            include_reasons=False,
+            include_error_message=include_error_message,
+            include_error_stacktrace=include_error_stacktrace,
+            include_evaluator_failures=False,  # Not applicable for failures table
+        )
+        return renderer.build_failures_table(self)
 
     def __str__(self) -> str:  # pragma: lax no cover
         """Return a string representation of the report."""
@@ -273,7 +376,7 @@ class RenderValueConfig(TypedDict, total=False):
     diff_style: str
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _ValueRenderer:
     value_formatter: str | Callable[[Any], str] = '{}'
     diff_checker: Callable[[Any, Any], bool] | None = lambda x, y: x != y
@@ -388,7 +491,7 @@ class RenderNumberConfig(TypedDict, total=False):
     """
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _NumberRenderer:
     """See documentation of `RenderNumberConfig` for more details about the parameters here."""
 
@@ -490,7 +593,7 @@ class _NumberRenderer:
             return None
 
         diff = new - old
-        if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):  # pragma: no cover
+        if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
             return None
         return self.diff_increase_style if diff > 0 else self.diff_decrease_style
 
@@ -519,7 +622,7 @@ _DEFAULT_DURATION_CONFIG = RenderNumberConfig(
 T = TypeVar('T')
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ReportCaseRenderer:
     include_input: bool
     include_metadata: bool
@@ -529,15 +632,19 @@ class ReportCaseRenderer:
     include_labels: bool
     include_metrics: bool
     include_assertions: bool
+    include_reasons: bool
     include_durations: bool
     include_total_duration: bool
+    include_error_message: bool
+    include_error_stacktrace: bool
+    include_evaluator_failures: bool
 
     input_renderer: _ValueRenderer
     metadata_renderer: _ValueRenderer
     output_renderer: _ValueRenderer
-    score_renderers: dict[str, _NumberRenderer]
-    label_renderers: dict[str, _ValueRenderer]
-    metric_renderers: dict[str, _NumberRenderer]
+    score_renderers: Mapping[str, _NumberRenderer]
+    label_renderers: Mapping[str, _ValueRenderer]
+    metric_renderers: Mapping[str, _NumberRenderer]
     duration_renderer: _NumberRenderer
 
     def build_base_table(self, title: str) -> Table:
@@ -560,8 +667,26 @@ class ReportCaseRenderer:
             table.add_column('Metrics', overflow='fold')
         if self.include_assertions:
             table.add_column('Assertions', overflow='fold')
+        if self.include_evaluator_failures:
+            table.add_column('Evaluator Failures', overflow='fold')
         if self.include_durations:
             table.add_column('Durations' if self.include_total_duration else 'Duration', justify='right')
+        return table
+
+    def build_failures_table(self, title: str) -> Table:
+        """Build and return a Rich Table for the failures output."""
+        table = Table(title=title, show_lines=True)
+        table.add_column('Case ID', style='bold')
+        if self.include_input:
+            table.add_column('Inputs', overflow='fold')
+        if self.include_metadata:
+            table.add_column('Metadata', overflow='fold')
+        if self.include_expected_output:
+            table.add_column('Expected Output', overflow='fold')
+        if self.include_error_message:
+            table.add_column('Error Message', overflow='fold')
+        if self.include_error_stacktrace:
+            table.add_column('Error Stacktrace', overflow='fold')
         return table
 
     def build_row(self, case: ReportCase) -> list[str]:
@@ -581,16 +706,19 @@ class ReportCaseRenderer:
             row.append(self.output_renderer.render_value(None, case.output) or EMPTY_CELL_STR)
 
         if self.include_scores:
-            row.append(self._render_dict({k: v.value for k, v in case.scores.items()}, self.score_renderers))
+            row.append(self._render_dict({k: v for k, v in case.scores.items()}, self.score_renderers))
 
         if self.include_labels:
-            row.append(self._render_dict({k: v.value for k, v in case.labels.items()}, self.label_renderers))
+            row.append(self._render_dict({k: v for k, v in case.labels.items()}, self.label_renderers))
 
         if self.include_metrics:
             row.append(self._render_dict(case.metrics, self.metric_renderers))
 
         if self.include_assertions:
             row.append(self._render_assertions(list(case.assertions.values())))
+
+        if self.include_evaluator_failures:
+            row.append(self._render_evaluator_failures(case.evaluator_failures))
 
         if self.include_durations:
             row.append(self._render_durations(case))
@@ -624,6 +752,9 @@ class ReportCaseRenderer:
 
         if self.include_assertions:
             row.append(self._render_aggregate_assertions(aggregate.assertions))
+
+        if self.include_evaluator_failures:
+            row.append(EMPTY_AGGREGATE_CELL_STR)
 
         if self.include_durations:
             row.append(self._render_durations(aggregate))
@@ -669,7 +800,11 @@ class ReportCaseRenderer:
             row.append(scores_diff)
 
         if self.include_labels:  # pragma: no branch
-            labels_diff = self._render_dicts_diff(baseline.labels, new_case.labels, self.label_renderers)
+            labels_diff = self._render_dicts_diff(
+                {k: v.value for k, v in baseline.labels.items()},
+                {k: v.value for k, v in new_case.labels.items()},
+                self.label_renderers,
+            )
             row.append(labels_diff)
 
         if self.include_metrics:  # pragma: no branch
@@ -681,6 +816,12 @@ class ReportCaseRenderer:
                 list(baseline.assertions.values()), list(new_case.assertions.values())
             )
             row.append(assertions_diff)
+
+        if self.include_evaluator_failures:  # pragma: no branch
+            evaluator_failures_diff = self._render_evaluator_failures_diff(
+                baseline.evaluator_failures, new_case.evaluator_failures
+            )
+            row.append(evaluator_failures_diff)
 
         if self.include_durations:  # pragma: no branch
             durations_diff = self._render_durations_diff(baseline, new_case)
@@ -725,9 +866,33 @@ class ReportCaseRenderer:
             assertions_diff = self._render_aggregate_assertions_diff(baseline.assertions, new.assertions)
             row.append(assertions_diff)
 
+        if self.include_evaluator_failures:  # pragma: no branch
+            row.append(EMPTY_AGGREGATE_CELL_STR)
+
         if self.include_durations:  # pragma: no branch
             durations_diff = self._render_durations_diff(baseline, new)
             row.append(durations_diff)
+
+        return row
+
+    def build_failure_row(self, case: ReportCaseFailure) -> list[str]:
+        """Build a table row for a single case failure."""
+        row = [case.name]
+
+        if self.include_input:
+            row.append(self.input_renderer.render_value(None, case.inputs) or EMPTY_CELL_STR)
+
+        if self.include_metadata:
+            row.append(self.metadata_renderer.render_value(None, case.metadata) or EMPTY_CELL_STR)
+
+        if self.include_expected_output:
+            row.append(self.output_renderer.render_value(None, case.expected_output) or EMPTY_CELL_STR)
+
+        if self.include_error_message:
+            row.append(case.error_message or EMPTY_CELL_STR)
+
+        if self.include_error_stacktrace:
+            row.append(case.error_stacktrace or EMPTY_CELL_STR)
 
         return row
 
@@ -779,26 +944,36 @@ class ReportCaseRenderer:
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
-    @staticmethod
     def _render_dict(
-        case_dict: dict[str, T],
+        self,
+        case_dict: Mapping[str, EvaluationResult[T] | T],
         renderers: Mapping[str, _AbstractRenderer[T]],
         *,
         include_names: bool = True,
     ) -> str:
         diff_lines: list[str] = []
         for key, val in case_dict.items():
-            rendered = renderers[key].render_value(key if include_names else None, val)
+            value = cast(EvaluationResult[T], val).value if isinstance(val, EvaluationResult) else val
+            rendered = renderers[key].render_value(key if include_names else None, value)
+            if self.include_reasons and isinstance(val, EvaluationResult) and (reason := val.reason):
+                rendered += f'\n  Reason: {reason}\n'
             diff_lines.append(rendered)
         return '\n'.join(diff_lines) if diff_lines else EMPTY_CELL_STR
 
-    @staticmethod
     def _render_assertions(
+        self,
         assertions: list[EvaluationResult[bool]],
     ) -> str:
         if not assertions:
             return EMPTY_CELL_STR
-        return ''.join(['[green]✔[/]' if a.value else '[red]✗[/]' for a in assertions])
+        lines: list[str] = []
+        for a in assertions:
+            line = '[green]✔[/]' if a.value else '[red]✗[/]'
+            if self.include_reasons:
+                line = f'{a.name}: {line}\n'
+                line = f'{line}  Reason: {a.reason}\n\n' if a.reason else line
+            lines.append(line)
+        return ''.join(lines)
 
     @staticmethod
     def _render_aggregate_assertions(
@@ -834,8 +1009,33 @@ class ReportCaseRenderer:
         rendered_new = default_render_percentage(new) + ' [green]✔[/]' if new is not None else EMPTY_CELL_STR
         return rendered_new if rendered_baseline == rendered_new else f'{rendered_baseline} → {rendered_new}'
 
+    def _render_evaluator_failures(
+        self,
+        failures: list[EvaluatorFailure],
+    ) -> str:
+        if not failures:
+            return EMPTY_CELL_STR  # pragma: no cover
+        lines: list[str] = []
+        for failure in failures:
+            line = f'[red]{failure.name}[/]'
+            if failure.error_message:
+                line += f': {failure.error_message}'
+            lines.append(line)
+        return '\n'.join(lines)
 
-@dataclass
+    def _render_evaluator_failures_diff(
+        self,
+        baseline_failures: list[EvaluatorFailure],
+        new_failures: list[EvaluatorFailure],
+    ) -> str:
+        baseline_str = self._render_evaluator_failures(baseline_failures)
+        new_str = self._render_evaluator_failures(new_failures)
+        if baseline_str == new_str:
+            return baseline_str  # pragma: no cover
+        return f'{baseline_str}\n→\n{new_str}'
+
+
+@dataclass(kw_only=True)
 class EvaluationRenderer:
     """A class for rendering an EvalReport or the diff between two EvalReports."""
 
@@ -859,6 +1059,13 @@ class EvaluationRenderer:
     metric_configs: dict[str, RenderNumberConfig]
     duration_config: RenderNumberConfig
 
+    # Data to include
+    include_reasons: bool  # only applies to reports, not to diffs
+
+    include_error_message: bool
+    include_error_stacktrace: bool
+    include_evaluator_failures: bool
+
     def include_scores(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.scores for case in self._all_cases(report, baseline))
 
@@ -870,6 +1077,11 @@ class EvaluationRenderer:
 
     def include_assertions(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
         return any(case.assertions for case in self._all_cases(report, baseline))
+
+    def include_evaluator_failures_column(self, report: EvaluationReport, baseline: EvaluationReport | None = None):
+        return self.include_evaluator_failures and any(
+            case.evaluator_failures for case in self._all_cases(report, baseline)
+        )
 
     def _all_cases(self, report: EvaluationReport, baseline: EvaluationReport | None) -> list[ReportCase]:
         if not baseline:
@@ -905,8 +1117,12 @@ class EvaluationRenderer:
             include_labels=self.include_labels(report, baseline),
             include_metrics=self.include_metrics(report, baseline),
             include_assertions=self.include_assertions(report, baseline),
+            include_reasons=self.include_reasons,
             include_durations=self.include_durations,
             include_total_duration=self.include_total_duration,
+            include_error_message=self.include_error_message,
+            include_error_stacktrace=self.include_error_stacktrace,
+            include_evaluator_failures=self.include_evaluator_failures_column(report, baseline),
             input_renderer=input_renderer,
             metadata_renderer=metadata_renderer,
             output_renderer=output_renderer,
@@ -924,7 +1140,9 @@ class EvaluationRenderer:
 
         if self.include_averages:  # pragma: no branch
             average = report.averages()
-            table.add_row(*case_renderer.build_aggregate_row(average))
+            if average:  # pragma: no branch
+                table.add_row(*case_renderer.build_aggregate_row(average))
+
         return table
 
     def build_diff_table(self, report: EvaluationReport, baseline: EvaluationReport) -> Table:
@@ -968,6 +1186,14 @@ class EvaluationRenderer:
             report_average = ReportCaseAggregate.average(report_cases)
             baseline_average = ReportCaseAggregate.average(baseline_cases)
             table.add_row(*case_renderer.build_diff_aggregate_row(report_average, baseline_average))
+
+        return table
+
+    def build_failures_table(self, report: EvaluationReport) -> Table:
+        case_renderer = self._get_case_renderer(report)
+        table = case_renderer.build_failures_table('Case Failures')
+        for case in report.failures:
+            table.add_row(*case_renderer.build_failure_row(case))
 
         return table
 

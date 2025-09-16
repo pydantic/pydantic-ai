@@ -5,10 +5,10 @@ This module has to use numerous internal Pydantic APIs and is therefore brittle 
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from inspect import Parameter, signature
-from typing import TYPE_CHECKING, Any, Callable, Union, cast
+from typing import TYPE_CHECKING, Any, Concatenate, cast, get_origin
 
 from pydantic import ConfigDict
 from pydantic._internal import _decorators, _generate_schema, _typing_extra
@@ -17,7 +17,7 @@ from pydantic.fields import FieldInfo
 from pydantic.json_schema import GenerateJsonSchema
 from pydantic.plugin._schema_validator import create_schema_validator
 from pydantic_core import SchemaValidator, core_schema
-from typing_extensions import Concatenate, ParamSpec, TypeIs, TypeVar, get_origin
+from typing_extensions import ParamSpec, TypeIs, TypeVar
 
 from ._griffe import doc_descriptions
 from ._run_context import RunContext
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 __all__ = ('function_schema',)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class FunctionSchema:
     """Internal information about a function schema."""
 
@@ -154,9 +154,13 @@ def function_schema(  # noqa: C901
             if p.kind == Parameter.VAR_POSITIONAL:
                 annotation = list[annotation]
 
-            # FieldInfo.from_annotation expects a type, `annotation` is Any
+            required = p.default is Parameter.empty
+            # FieldInfo.from_annotated_attribute expects a type, `annotation` is Any
             annotation = cast(type[Any], annotation)
-            field_info = FieldInfo.from_annotation(annotation)
+            if required:
+                field_info = FieldInfo.from_annotation(annotation)
+            else:
+                field_info = FieldInfo.from_annotated_attribute(annotation, p.default)
             if field_info.description is None:
                 field_info.description = field_descriptions.get(field_name)
 
@@ -164,7 +168,7 @@ def function_schema(  # noqa: C901
                 field_name,
                 field_info,
                 decorators,
-                required=p.default is Parameter.empty,
+                required=required,
             )
             # noinspection PyTypeChecker
             td_schema.setdefault('metadata', {})['is_model_like'] = is_model_like(annotation)
@@ -227,7 +231,7 @@ R = TypeVar('R')
 
 WithCtx = Callable[Concatenate[RunContext[Any], P], R]
 WithoutCtx = Callable[P, R]
-TargetFunc = Union[WithCtx[P, R], WithoutCtx[P, R]]
+TargetFunc = WithCtx[P, R] | WithoutCtx[P, R]
 
 
 def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
@@ -281,7 +285,6 @@ def _build_schema(
     td_schema = core_schema.typed_dict_schema(
         fields,
         config=core_config,
-        total=var_kwargs_schema is None,
         extras_schema=gen_schema.generate_schema(var_kwargs_schema) if var_kwargs_schema else None,
     )
     return td_schema, None

@@ -5,21 +5,22 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Annotated, Any, Literal, Protocol, Union, cast
+from typing import Annotated, Any, Literal, Protocol, cast
 from uuid import uuid4
 
 import httpx
 import pydantic
 from httpx import USE_CLIENT_DEFAULT, Response as HTTPResponse
-from typing_extensions import NotRequired, TypedDict, assert_never
-
-from pydantic_ai.providers import Provider, infer_provider
+from typing_extensions import NotRequired, TypedDict, assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._output import OutputObjectDefinition
+from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FileUrl,
     ModelMessage,
     ModelRequest,
@@ -36,27 +37,21 @@ from ..messages import (
     VideoUrl,
 )
 from ..profiles import ModelProfileSpec
+from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
-from . import (
-    Model,
-    ModelRequestParameters,
-    StreamedResponse,
-    check_allow_model_requests,
-    download_item,
-    get_user_agent,
-)
+from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
 LatestGeminiModelNames = Literal[
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
     'gemini-2.5-flash',
-    'gemini-2.5-flash-lite-preview-06-17',
+    'gemini-2.5-flash-lite',
     'gemini-2.5-pro',
 ]
 """Latest Gemini models."""
 
-GeminiModelName = Union[str, LatestGeminiModelNames]
+GeminiModelName = str | LatestGeminiModelNames
 """Possible Gemini model names.
 
 Since Gemini supports a variety of date-stamped models, we explicitly list the latest models but
@@ -92,6 +87,7 @@ class GeminiModelSettings(ModelSettings, total=False):
     """
 
 
+@deprecated('Use `GoogleModel` instead. See <https://ai.pydantic.dev/models/google/> for more details.')
 @dataclass(init=False)
 class GeminiModel(Model):
     """A model that uses Gemini via `generativelanguage.googleapis.com` API.
@@ -105,10 +101,9 @@ class GeminiModel(Model):
     client: httpx.AsyncClient = field(repr=False)
 
     _model_name: GeminiModelName = field(repr=False)
-    _provider: Literal['google-gla', 'google-vertex'] | Provider[httpx.AsyncClient] | None = field(repr=False)
+    _provider: Provider[httpx.AsyncClient] = field(repr=False)
     _auth: AuthProtocol | None = field(repr=False)
     _url: str | None = field(repr=False)
-    _system: str = field(default='gemini', repr=False)
 
     def __init__(
         self,
@@ -129,11 +124,10 @@ class GeminiModel(Model):
             settings: Default model settings for this model instance.
         """
         self._model_name = model_name
-        self._provider = provider
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
-        self._system = provider.name
+        self._provider = provider
         self.client = provider.client
         self._url = str(self.client.base_url)
 
@@ -143,6 +137,16 @@ class GeminiModel(Model):
     def base_url(self) -> str:
         assert self._url is not None, 'URL not initialized'  # pragma: no cover
         return self._url  # pragma: no cover
+
+    @property
+    def model_name(self) -> GeminiModelName:
+        """The model name."""
+        return self._model_name
+
+    @property
+    def system(self) -> str:
+        """The model provider."""
+        return self._provider.name
 
     async def request(
         self,
@@ -164,27 +168,16 @@ class GeminiModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
         async with self._make_request(
             messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
-            yield await self._process_streamed_response(http_response)
-
-    @property
-    def model_name(self) -> GeminiModelName:
-        """The model name."""
-        return self._model_name
-
-    @property
-    def system(self) -> str:
-        """The system / model provider."""
-        return self._system
+            yield await self._process_streamed_response(http_response, model_request_parameters)
 
     def _get_tools(self, model_request_parameters: ModelRequestParameters) -> _GeminiTools | None:
-        tools = [_function_from_abstract_tool(t) for t in model_request_parameters.function_tools]
-        if model_request_parameters.output_tools:
-            tools += [_function_from_abstract_tool(t) for t in model_request_parameters.output_tools]
+        tools = [_function_from_abstract_tool(t) for t in model_request_parameters.tool_defs.values()]
         return _GeminiTools(function_declarations=tools) if tools else None
 
     def _get_tool_config(
@@ -218,7 +211,9 @@ class GeminiModel(Model):
         generation_config = _settings_to_generation_config(model_settings)
         if model_request_parameters.output_mode == 'native':
             if tools:
-                raise UserError('Gemini does not support structured output and tools at the same time.')
+                raise UserError(
+                    'Gemini does not support `NativeOutput` and tools at the same time. Use `output_type=ToolOutput(...)` instead.'
+                )
 
             generation_config['response_mime_type'] = 'application/json'
 
@@ -235,8 +230,8 @@ class GeminiModel(Model):
             request_data['safetySettings'] = gemini_safety_settings
 
         if gemini_labels := model_settings.get('gemini_labels'):
-            if self._system == 'google-vertex':
-                request_data['labels'] = gemini_labels
+            if self._provider.name == 'google-vertex':
+                request_data['labels'] = gemini_labels  # pragma: lax no cover
 
         headers = {'Content-Type': 'application/json', 'User-Agent': get_user_agent()}
         url = f'/{self._model_name}:{"streamGenerateContent" if streamed else "generateContent"}'
@@ -276,7 +271,6 @@ class GeminiModel(Model):
         if finish_reason:
             vendor_details = {'finish_reason': finish_reason}
         usage = _metadata_as_usage(response)
-        usage.requests = 1
         return _process_response_from_parts(
             parts,
             response.get('model_version', self._model_name),
@@ -285,7 +279,9 @@ class GeminiModel(Model):
             vendor_details=vendor_details,
         )
 
-    async def _process_streamed_response(self, http_response: HTTPResponse) -> StreamedResponse:
+    async def _process_streamed_response(
+        self, http_response: HTTPResponse, model_request_parameters: ModelRequestParameters
+    ) -> StreamedResponse:
         """Process a streamed response, and prepare a streaming response to return."""
         aiter_bytes = http_response.aiter_bytes()
         start_response: _GeminiResponse | None = None
@@ -306,7 +302,13 @@ class GeminiModel(Model):
         if start_response is None:
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
-        return GeminiStreamedResponse(_model_name=self._model_name, _content=content, _stream=aiter_bytes)
+        return GeminiStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _content=content,
+            _stream=aiter_bytes,
+            _provider_name=self._provider.name,
+        )
 
     async def _message_to_gemini_content(
         self, messages: list[ModelMessage]
@@ -366,11 +368,11 @@ class GeminiModel(Model):
                             inline_data={'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
                         )
                         content.append(inline_data)
-                    else:
+                    else:  # pragma: lax no cover
                         file_data = _GeminiFileDataPart(file_data={'file_uri': item.url, 'mime_type': item.media_type})
                         content.append(file_data)
                 else:
-                    assert_never(item)
+                    assert_never(item)  # pragma: lax no cover
         return content
 
     def _map_response_schema(self, o: OutputObjectDefinition) -> dict[str, Any]:
@@ -426,6 +428,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GeminiModelName
     _content: bytearray
     _stream: AsyncIterator[bytes]
+    _provider_name: str
     _timestamp: datetime = field(default_factory=_utils.now_utc, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
@@ -495,6 +498,11 @@ class GeminiStreamedResponse(StreamedResponse):
     def model_name(self) -> GeminiModelName:
         """Get the model name of the response."""
         return self._model_name
+
+    @property
+    def provider_name(self) -> str:
+        """Get the provider name."""
+        return self._provider_name
 
     @property
     def timestamp(self) -> datetime:
@@ -609,6 +617,9 @@ def _content_model_response(m: ModelResponse) -> _GeminiContent:
         elif isinstance(item, TextPart):
             if item.content:
                 parts.append(_GeminiTextPart(text=item.content))
+        elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
+            # This is currently never returned from gemini
+            pass
         else:
             assert_never(item)
     return _GeminiContent(role='model', parts=parts)
@@ -661,7 +672,7 @@ def _function_call_part_from_call(tool: ToolCallPart) -> _GeminiFunctionCallPart
 def _process_response_from_parts(
     parts: Sequence[_GeminiPartUnion],
     model_name: GeminiModelName,
-    usage: usage.Usage,
+    usage: usage.RequestUsage,
     vendor_id: str | None,
     vendor_details: dict[str, Any] | None = None,
 ) -> ModelResponse:
@@ -681,7 +692,7 @@ def _process_response_from_parts(
                 f'Unsupported response from Gemini, expected all parts to be function calls or text, got: {part!r}'
             )
     return ModelResponse(
-        parts=items, usage=usage, model_name=model_name, vendor_id=vendor_id, vendor_details=vendor_details
+        parts=items, usage=usage, model_name=model_name, provider_response_id=vendor_id, provider_details=vendor_details
     )
 
 
@@ -726,16 +737,13 @@ def _part_discriminator(v: Any) -> str:
 
 # See <https://ai.google.dev/api/caching#Part>
 # we don't currently support other part types
-# TODO discriminator
 _GeminiPartUnion = Annotated[
-    Union[
-        Annotated[_GeminiTextPart, pydantic.Tag('text')],
-        Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')],
-        Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')],
-        Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')],
-        Annotated[_GeminiFileDataPart, pydantic.Tag('file_data')],
-        Annotated[_GeminiThoughtPart, pydantic.Tag('thought')],
-    ],
+    Annotated[_GeminiTextPart, pydantic.Tag('text')]
+    | Annotated[_GeminiFunctionCallPart, pydantic.Tag('function_call')]
+    | Annotated[_GeminiFunctionResponsePart, pydantic.Tag('function_response')]
+    | Annotated[_GeminiInlineDataPart, pydantic.Tag('inline_data')]
+    | Annotated[_GeminiFileDataPart, pydantic.Tag('file_data')]
+    | Annotated[_GeminiThoughtPart, pydantic.Tag('thought')],
     pydantic.Discriminator(_part_discriminator),
 ]
 
@@ -847,31 +855,45 @@ class _GeminiUsageMetaData(TypedDict, total=False):
     ]
 
 
-def _metadata_as_usage(response: _GeminiResponse) -> usage.Usage:
+def _metadata_as_usage(response: _GeminiResponse) -> usage.RequestUsage:
     metadata = response.get('usage_metadata')
     if metadata is None:
-        return usage.Usage()  # pragma: no cover
+        return usage.RequestUsage()
     details: dict[str, int] = {}
-    if cached_content_token_count := metadata.get('cached_content_token_count'):
-        details['cached_content_tokens'] = cached_content_token_count  # pragma: no cover
+    if cached_content_token_count := metadata.get('cached_content_token_count', 0):
+        details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := metadata.get('thoughts_token_count'):
+    if thoughts_token_count := metadata.get('thoughts_token_count', 0):
         details['thoughts_tokens'] = thoughts_token_count
 
-    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count'):
-        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count  # pragma: no cover
+    if tool_use_prompt_token_count := metadata.get('tool_use_prompt_token_count', 0):
+        details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
+    input_audio_tokens = 0
+    output_audio_tokens = 0
+    cache_audio_read_tokens = 0
     for key, metadata_details in metadata.items():
         if key.endswith('_details') and metadata_details:
             metadata_details = cast(list[_GeminiModalityTokenCount], metadata_details)
             suffix = key.removesuffix('_details')
             for detail in metadata_details:
-                details[f'{detail["modality"].lower()}_{suffix}'] = detail['token_count']
+                modality = detail['modality']
+                details[f'{modality.lower()}_{suffix}'] = value = detail.get('token_count', 0)
+                if value and modality == 'AUDIO':
+                    if key == 'prompt_tokens_details':
+                        input_audio_tokens = value
+                    elif key == 'candidates_tokens_details':
+                        output_audio_tokens = value
+                    elif key == 'cache_tokens_details':  # pragma: no branch
+                        cache_audio_read_tokens = value
 
-    return usage.Usage(
-        request_tokens=metadata.get('prompt_token_count', 0),
-        response_tokens=metadata.get('candidates_token_count', 0),
-        total_tokens=metadata.get('total_token_count', 0),
+    return usage.RequestUsage(
+        input_tokens=metadata.get('prompt_token_count', 0),
+        output_tokens=metadata.get('candidates_token_count', 0) + thoughts_token_count,
+        cache_read_tokens=cached_content_token_count,
+        input_audio_tokens=input_audio_tokens,
+        output_audio_tokens=output_audio_tokens,
+        cache_audio_read_tokens=cache_audio_read_tokens,
         details=details,
     )
 

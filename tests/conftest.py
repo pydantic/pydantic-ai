@@ -7,23 +7,23 @@ import os
 import re
 import secrets
 import sys
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
 from pathlib import Path
 from types import ModuleType
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 import httpx
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
 from pytest_mock import MockerFixture
-from typing_extensions import TypeAlias
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
+from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
@@ -129,7 +129,7 @@ def env() -> Iterator[TestEnv]:
     test_env.reset()
 
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def anyio_backend():
     return 'asyncio'
 
@@ -230,6 +230,24 @@ def event_loop() -> Iterator[None]:
     new_loop.close()
 
 
+@pytest.fixture(autouse=True)
+def no_instrumentation_by_default():
+    Agent.instrument_all(False)
+
+
+try:
+    import logfire
+
+    logfire.DEFAULT_LOGFIRE_INSTANCE.config.ignore_no_config = True
+
+    @pytest.fixture(autouse=True)
+    def fresh_logfire():
+        logfire.shutdown(flush=False)
+
+except ImportError:
+    pass
+
+
 def raise_if_exception(e: Any) -> None:
     if isinstance(e, Exception):
         raise e
@@ -251,7 +269,7 @@ def pytest_recording_configure(config: Any, vcr: VCR):
 def mock_vcr_aiohttp_content(mocker: MockerFixture):
     try:
         from vcr.stubs import aiohttp_stubs
-    except ImportError:
+    except ImportError:  # pragma: lax no cover
         return
 
     # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
@@ -372,6 +390,11 @@ def heroku_inference_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def cerebras_api_key() -> str:
+    return os.getenv('CEREBRAS_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def bedrock_provider():
     try:
         import boto3
@@ -390,7 +413,7 @@ def bedrock_provider():
         pytest.skip('boto3 is not installed')
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     # Locally, we authenticate via `gcloud` CLI, so we don't need to patch anything.
     if not os.getenv('CI', False):
@@ -399,7 +422,7 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
     try:
         from google.genai import _api_client
     except ImportError:
-        pytest.skip('google is not installed')
+        return  # do nothing if this isn't installed
 
     @dataclass
     class NoOpCredentials:
@@ -412,17 +435,17 @@ def vertex_provider_auth(mocker: MockerFixture) -> None:  # pragma: lax no cover
             return False
 
     return_value = (NoOpCredentials(), 'pydantic-ai')
-    mocker.patch.object(_api_client, '_load_auth', return_value=return_value)
+    mocker.patch.object(_api_client, 'load_auth', return_value=return_value)
 
 
 @pytest.fixture()
-async def vertex_provider():
+async def vertex_provider(vertex_provider_auth: None):  # pragma: lax no cover
     # NOTE: You need to comment out this line to rewrite the cassettes locally.
-    if not os.getenv('CI', False):  # pragma: lax no cover
+    if not os.getenv('CI', False):
         pytest.skip('Requires properly configured local google vertex config to pass')
 
     try:
-        from google import genai
+        from google.genai import Client
 
         from pydantic_ai.providers.google import GoogleProvider
     except ImportError:  # pragma: lax no cover
@@ -430,7 +453,7 @@ async def vertex_provider():
 
     project = os.getenv('GOOGLE_PROJECT', 'pydantic-ai')
     location = os.getenv('GOOGLE_LOCATION', 'us-central1')
-    client = genai.Client(vertexai=True, project=project, location=location)
+    client = Client(vertexai=True, project=project, location=location)
 
     try:
         yield GoogleProvider(client=client)
@@ -452,11 +475,15 @@ def model(
     bedrock_provider: BedrockProvider,
 ) -> Model:  # pragma: lax no cover
     try:
-        if request.param == 'openai':
-            from pydantic_ai.models.openai import OpenAIModel
+        if request.param == 'test':
+            from pydantic_ai.models.test import TestModel
+
+            return TestModel()
+        elif request.param == 'openai':
+            from pydantic_ai.models.openai import OpenAIChatModel
             from pydantic_ai.providers.openai import OpenAIProvider
 
-            return OpenAIModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
+            return OpenAIChatModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
         elif request.param == 'anthropic':
             from pydantic_ai.models.anthropic import AnthropicModel
             from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -478,10 +505,10 @@ def model(
 
             return CohereModel('command-r-plus', provider=CohereProvider(api_key=co_api_key))
         elif request.param == 'gemini':
-            from pydantic_ai.models.gemini import GeminiModel
-            from pydantic_ai.providers.google_gla import GoogleGLAProvider
+            from pydantic_ai.models.gemini import GeminiModel  # type: ignore[reportDeprecated]
+            from pydantic_ai.providers.google_gla import GoogleGLAProvider  # type: ignore[reportDeprecated]
 
-            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))
+            return GeminiModel('gemini-1.5-flash', provider=GoogleGLAProvider(api_key=gemini_api_key))  # type: ignore[reportDeprecated]
         elif request.param == 'google':
             from pydantic_ai.models.google import GoogleModel
             from pydantic_ai.providers.google import GoogleProvider

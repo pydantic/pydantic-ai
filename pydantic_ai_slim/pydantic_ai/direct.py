@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from types import TracebackType
 
-from pydantic_ai.usage import Usage
+from pydantic_ai.usage import RequestUsage
 from pydantic_graph._utils import get_event_loop as _get_event_loop
 
 from . import agent, messages, models, settings
@@ -56,8 +56,8 @@ async def model_request(
         print(model_response)
         '''
         ModelResponse(
-            parts=[TextPart(content='Paris')],
-            usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
+            parts=[TextPart(content='The capital of France is Paris.')],
+            usage=RequestUsage(input_tokens=56, output_tokens=7),
             model_name='claude-3-5-haiku-latest',
             timestamp=datetime.datetime(...),
         )
@@ -109,8 +109,8 @@ def model_request_sync(
     print(model_response)
     '''
     ModelResponse(
-        parts=[TextPart(content='Paris')],
-        usage=Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57),
+        parts=[TextPart(content='The capital of France is Paris.')],
+        usage=RequestUsage(input_tokens=56, output_tokens=7),
         model_name='claude-3-5-haiku-latest',
         timestamp=datetime.datetime(...),
     )
@@ -167,6 +167,7 @@ def model_request_stream(
             '''
             [
                 PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
+                FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(
                     index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
                 ),
@@ -223,6 +224,7 @@ def model_request_stream_sync(
         '''
         [
             PartStartEvent(index=0, part=TextPart(content='Albert Einstein was ')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
                 index=0, delta=TextPartDelta(content_delta='a German-born theoretical ')
             ),
@@ -366,7 +368,7 @@ class StreamedResponseSync:
         """Build a ModelResponse from the data received from the stream so far."""
         return self._ensure_stream_ready().get()
 
-    def usage(self) -> Usage:
+    def usage(self) -> RequestUsage:
         """Get the usage of the response so far."""
         return self._ensure_stream_ready().usage()
 

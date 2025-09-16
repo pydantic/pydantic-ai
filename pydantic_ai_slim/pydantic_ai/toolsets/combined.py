@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from asyncio import Lock
+from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass, field, replace
+from typing import Any
 
 from typing_extensions import Self
 
 from .._run_context import AgentDepsT, RunContext
-from .._utils import get_async_lock
 from ..exceptions import UserError
 from .abstract import AbstractToolset, ToolsetTool
 
 
-@dataclass
+@dataclass(kw_only=True)
 class _CombinedToolsetTool(ToolsetTool[AgentDepsT]):
     """A tool definition for a combined toolset tools that keeps track of the source toolset and tool."""
 
@@ -31,14 +31,17 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: asyncio.Lock = field(compare=False, init=False)
-    _entered_count: int = field(init=False)
-    _exit_stack: AsyncExitStack | None = field(init=False)
+    _enter_lock: Lock = field(compare=False, init=False, default_factory=Lock)
+    _entered_count: int = field(init=False, default=0)
+    _exit_stack: AsyncExitStack | None = field(init=False, default=None)
 
-    def __post_init__(self):
-        self._enter_lock = get_async_lock()
-        self._entered_count = 0
-        self._exit_stack = None
+    @property
+    def id(self) -> str | None:
+        return None  # pragma: no cover
+
+    @property
+    def label(self) -> str:
+        return f'{self.__class__.__name__}({", ".join(toolset.label for toolset in self.toolsets)})'  # pragma: no cover
 
     async def __aenter__(self) -> Self:
         async with self._enter_lock:
@@ -63,13 +66,15 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
             for name, tool in tools.items():
-                if existing_tools := all_tools.get(name):
+                tool_toolset = tool.toolset
+                if existing_tool := all_tools.get(name):
+                    capitalized_toolset_label = tool_toolset.label[0].upper() + tool_toolset.label[1:]
                     raise UserError(
-                        f'{toolset.name} defines a tool whose name conflicts with existing tool from {existing_tools.toolset.name}: {name!r}. {toolset.tool_name_conflict_hint}'
+                        f'{capitalized_toolset_label} defines a tool whose name conflicts with existing tool from {existing_tool.toolset.label}: {name!r}. {toolset.tool_name_conflict_hint}'
                     )
 
                 all_tools[name] = _CombinedToolsetTool(
-                    toolset=tool.toolset,
+                    toolset=tool_toolset,
                     tool_def=tool.tool_def,
                     max_retries=tool.max_retries,
                     args_validator=tool.args_validator,
@@ -87,3 +92,8 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:
             toolset.apply(visitor)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractToolset[AgentDepsT]], AbstractToolset[AgentDepsT]]
+    ) -> AbstractToolset[AgentDepsT]:
+        return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])

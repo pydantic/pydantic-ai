@@ -1,8 +1,25 @@
 import sys
+from datetime import datetime, timezone
 
 import pytest
+from inline_snapshot import snapshot
 
-from pydantic_ai.messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, ThinkingPartDelta, VideoUrl
+from pydantic_ai.messages import (
+    AudioUrl,
+    BinaryContent,
+    DocumentUrl,
+    ImageUrl,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    RequestUsage,
+    TextPart,
+    ThinkingPartDelta,
+    UserPromptPart,
+    VideoUrl,
+)
+
+from .conftest import IsNow
 
 
 def test_image_url():
@@ -39,6 +56,24 @@ def test_youtube_video_url(url: str, is_youtube: bool):
     assert video_url.is_youtube is is_youtube
     assert video_url.media_type == 'video/mp4'
     assert video_url.format == 'mp4'
+
+
+@pytest.mark.parametrize(
+    'url, expected_data_type',
+    [
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.md', 'text/markdown'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.txt', 'text/plain'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.pdf', 'application/pdf'),
+        ('https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.rtf', 'application/rtf'),
+        (
+            'https://raw.githubusercontent.com/pydantic/pydantic-ai/refs/heads/main/docs/help.asciidoc',
+            'text/x-asciidoc',
+        ),
+    ],
+)
+def test_document_url_other_types(url: str, expected_data_type: str) -> None:
+    document_url = DocumentUrl(url=url)
+    assert document_url.media_type == expected_data_type
 
 
 def test_document_url():
@@ -135,7 +170,7 @@ def test_audio_url(audio_url: AudioUrl, media_type: str, format: str):
 
 
 def test_audio_url_invalid():
-    with pytest.raises(ValueError, match='Unknown audio file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from audio URL: foobar.potato'):
         AudioUrl('foobar.potato').media_type
 
 
@@ -155,10 +190,10 @@ def test_image_url_formats(image_url: ImageUrl, media_type: str, format: str):
 
 
 def test_image_url_invalid():
-    with pytest.raises(ValueError, match='Unknown image file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
         ImageUrl('foobar.potato').media_type
 
-    with pytest.raises(ValueError, match='Unknown image file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from image URL: foobar.potato'):
         ImageUrl('foobar.potato').format
 
 
@@ -195,7 +230,7 @@ def test_document_url_formats(document_url: DocumentUrl, media_type: str, format
 
 
 def test_document_url_invalid():
-    with pytest.raises(ValueError, match='Unknown document file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from document URL: foobar.potato'):
         DocumentUrl('foobar.potato').media_type
 
     with pytest.raises(ValueError, match='Unknown document media type: text/x-python'):
@@ -283,18 +318,26 @@ def test_video_url_formats(video_url: VideoUrl, media_type: str, format: str):
 
 
 def test_video_url_invalid():
-    with pytest.raises(ValueError, match='Unknown video file extension: foobar.potato'):
+    with pytest.raises(ValueError, match='Could not infer media type from video URL: foobar.potato'):
         VideoUrl('foobar.potato').media_type
 
 
 def test_thinking_part_delta_apply_to_thinking_part_delta():
     """Test lines 768-775: Apply ThinkingPartDelta to another ThinkingPartDelta."""
-    original_delta = ThinkingPartDelta(content_delta='original', signature_delta='sig1')
+    original_delta = ThinkingPartDelta(
+        content_delta='original', signature_delta='sig1', provider_name='original_provider'
+    )
 
     # Test applying delta with no content or signature - should raise error
     empty_delta = ThinkingPartDelta()
     with pytest.raises(ValueError, match='Cannot apply ThinkingPartDelta with no content or signature'):
         empty_delta.apply(original_delta)
+
+    # Test applying delta with content_delta
+    content_delta = ThinkingPartDelta(content_delta=' new_content')
+    result = content_delta.apply(original_delta)
+    assert isinstance(result, ThinkingPartDelta)
+    assert result.content_delta == 'original new_content'
 
     # Test applying delta with signature_delta
     sig_delta = ThinkingPartDelta(signature_delta='new_sig')
@@ -302,8 +345,68 @@ def test_thinking_part_delta_apply_to_thinking_part_delta():
     assert isinstance(result, ThinkingPartDelta)
     assert result.signature_delta == 'new_sig'
 
-    # Test applying delta with content_delta
-    content_delta = ThinkingPartDelta(content_delta='new_content')
+    # Test applying delta with provider_name
+    content_delta = ThinkingPartDelta(content_delta='', provider_name='new_provider')
     result = content_delta.apply(original_delta)
     assert isinstance(result, ThinkingPartDelta)
-    assert result.content_delta == 'new_content'
+    assert result.provider_name == 'new_provider'
+
+
+def test_pre_usage_refactor_messages_deserializable():
+    # https://github.com/pydantic/pydantic-ai/pull/2378 changed the `ModelResponse` fields,
+    # but we as tell people to store those in the DB we want to be very careful not to break deserialization.
+    data = [
+        {
+            'parts': [
+                {
+                    'content': 'What is the capital of Mexico?',
+                    'timestamp': datetime.now(tz=timezone.utc),
+                    'part_kind': 'user-prompt',
+                }
+            ],
+            'instructions': None,
+            'kind': 'request',
+        },
+        {
+            'parts': [{'content': 'Mexico City.', 'part_kind': 'text'}],
+            'usage': {
+                'requests': 1,
+                'request_tokens': 13,
+                'response_tokens': 76,
+                'total_tokens': 89,
+                'details': None,
+            },
+            'model_name': 'gpt-5-2025-08-07',
+            'timestamp': datetime.now(tz=timezone.utc),
+            'kind': 'response',
+            'vendor_details': {
+                'finish_reason': 'STOP',
+            },
+            'vendor_id': 'chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
+        },
+    ]
+    messages = ModelMessagesTypeAdapter.validate_python(data)
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the capital of Mexico?',
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Mexico City.')],
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=76,
+                    details={},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsNow(tz=timezone.utc),
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id='chatcmpl-CBpEXeCfDAW4HRcKQwbqsRDn7u7C5',
+            ),
+        ]
+    )

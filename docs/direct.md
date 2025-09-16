@@ -26,9 +26,9 @@ model_response = model_request_sync(
 )
 
 print(model_response.parts[0].content)
-#> Paris
+#> The capital of France is Paris.
 print(model_response.usage)
-#> Usage(requests=1, request_tokens=56, response_tokens=1, total_tokens=57)
+#> RequestUsage(input_tokens=56, output_tokens=7)
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -40,13 +40,14 @@ You can also use the direct API to work with function/tool calling.
 Even here we can use Pydantic to generate the JSON schema for the tool:
 
 ```python
-from pydantic import BaseModel
-from typing_extensions import Literal
+from typing import Literal
 
+from pydantic import BaseModel
+
+from pydantic_ai import ToolDefinition
 from pydantic_ai.direct import model_request
 from pydantic_ai.messages import ModelRequest
 from pydantic_ai.models import ModelRequestParameters
-from pydantic_ai.tools import ToolDefinition
 
 
 class Divide(BaseModel):
@@ -83,7 +84,7 @@ async def main():
                 tool_call_id='pyd_ai_2e0e396768a14fe482df90a29a78dc7b',
             )
         ],
-        usage=Usage(requests=1, request_tokens=55, response_tokens=7, total_tokens=62),
+        usage=RequestUsage(input_tokens=55, output_tokens=7),
         model_name='gpt-4.1-nano',
         timestamp=datetime.datetime(...),
     )
@@ -122,7 +123,7 @@ model_response = model_request_sync(
 )
 
 print(model_response.parts[0].content)
-#> Paris
+#> The capital of France is Paris.
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -145,7 +146,7 @@ model_response = model_request_sync(
 )
 
 print(model_response.parts[0].content)
-#> Paris
+#> The capital of France is Paris.
 ```
 
 See [Debugging and Monitoring](logfire.md) for more details, including how to instrument with plain OpenTelemetry without Logfire.

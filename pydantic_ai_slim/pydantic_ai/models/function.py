@@ -2,21 +2,22 @@ from __future__ import annotations as _annotations
 
 import inspect
 import re
-from collections.abc import AsyncIterator, Awaitable, Iterable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from datetime import datetime
 from itertools import chain
-from typing import Callable, Union
+from typing import Any, TypeAlias
 
-from typing_extensions import TypeAlias, assert_never, overload
-
-from pydantic_ai.profiles import ModelProfileSpec
+from typing_extensions import assert_never, overload
 
 from .. import _utils, usage
+from .._run_context import RunContext
 from .._utils import PeekableAsyncStream
 from ..messages import (
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -30,6 +31,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -42,8 +44,8 @@ class FunctionModel(Model):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    function: FunctionDef | None = None
-    stream_function: StreamFunctionDef | None = None
+    function: FunctionDef | None
+    stream_function: StreamFunctionDef | None
 
     _model_name: str = field(repr=False)
     _system: str = field(default='function', repr=False)
@@ -109,6 +111,12 @@ class FunctionModel(Model):
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
+        # Use a default profile that supports JSON schema and object output if none provided
+        if profile is None:
+            profile = ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+            )
         super().__init__(settings=settings, profile=profile)
 
     async def request(
@@ -118,10 +126,10 @@ class FunctionModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         agent_info = AgentInfo(
-            model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
-            model_request_parameters.output_tools,
-            model_settings,
+            function_tools=model_request_parameters.function_tools,
+            allow_text_output=model_request_parameters.allow_text_output,
+            output_tools=model_request_parameters.output_tools,
+            model_settings=model_settings,
         )
 
         assert self.function is not None, 'FunctionModel must receive a `function` to support non-streamed requests'
@@ -136,7 +144,6 @@ class FunctionModel(Model):
         # Add usage data if not already present
         if not response.usage.has_values():  # pragma: no branch
             response.usage = _estimate_usage(chain(messages, [response]))
-            response.usage.requests = 1
         return response
 
     @asynccontextmanager
@@ -145,12 +152,13 @@ class FunctionModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         agent_info = AgentInfo(
-            model_request_parameters.function_tools,
-            model_request_parameters.allow_text_output,
-            model_request_parameters.output_tools,
-            model_settings,
+            function_tools=model_request_parameters.function_tools,
+            allow_text_output=model_request_parameters.allow_text_output,
+            output_tools=model_request_parameters.output_tools,
+            model_settings=model_settings,
         )
 
         assert self.stream_function is not None, (
@@ -163,7 +171,11 @@ class FunctionModel(Model):
         if isinstance(first, _utils.Unset):
             raise ValueError('Stream function must return at least one item')
 
-        yield FunctionStreamedResponse(_model_name=self._model_name, _iter=response_stream)
+        yield FunctionStreamedResponse(
+            model_request_parameters=model_request_parameters,
+            _model_name=self._model_name,
+            _iter=response_stream,
+        )
 
     @property
     def model_name(self) -> str:
@@ -176,7 +188,7 @@ class FunctionModel(Model):
         return self._system
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class AgentInfo:
     """Information about an agent.
 
@@ -206,13 +218,17 @@ class DeltaToolCall:
 
     name: str | None = None
     """Incremental change to the name of the tool."""
+
     json_args: str | None = None
     """Incremental change to the arguments as JSON"""
+
+    _: KW_ONLY
+
     tool_call_id: str | None = None
     """Incremental change to the tool call ID."""
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DeltaThinkingPart:
     """Incremental change to a thinking part.
 
@@ -231,18 +247,16 @@ DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 """A mapping of thinking call IDs to incremental changes."""
 
-# TODO: Change the signature to Callable[[list[ModelMessage], ModelSettings, ModelRequestParameters], ...]
-FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], Union[ModelResponse, Awaitable[ModelResponse]]]
+FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
 
-# TODO: Change signature as indicated above
 StreamFunctionDef: TypeAlias = Callable[
-    [list[ModelMessage], AgentInfo], AsyncIterator[Union[str, DeltaToolCalls, DeltaThinkingCalls]]
+    [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
 ]
 """A function used to generate a streamed response.
 
-While this is defined as having return type of `AsyncIterator[Union[str, DeltaToolCalls, DeltaThinkingCalls]]`, it should
-really be considered as `Union[AsyncIterator[str], AsyncIterator[DeltaToolCalls], AsyncIterator[DeltaThinkingCalls]]`,
+While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]`, it should
+really be considered as `AsyncIterator[str] | AsyncIterator[DeltaToolCalls] | AsyncIterator[DeltaThinkingCalls]`,
 
 E.g. you need to yield all text, all `DeltaToolCalls`, or all `DeltaThinkingCalls`, not mix them.
 """
@@ -263,7 +277,7 @@ class FunctionStreamedResponse(StreamedResponse):
         async for item in self._iter:
             if isinstance(item, str):
                 response_tokens = _estimate_string_tokens(item)
-                self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                self._usage += usage.RequestUsage(output_tokens=response_tokens)
                 maybe_event = self._parts_manager.handle_text_delta(vendor_part_id='content', content=item)
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -272,16 +286,17 @@ class FunctionStreamedResponse(StreamedResponse):
                     if isinstance(delta, DeltaThinkingPart):
                         if delta.content:  # pragma: no branch
                             response_tokens = _estimate_string_tokens(delta.content)
-                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_thinking_delta(
                             vendor_part_id=dtc_index,
                             content=delta.content,
                             signature=delta.signature,
+                            provider_name='function' if delta.signature else None,
                         )
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:
                             response_tokens = _estimate_string_tokens(delta.json_args)
-                            self._usage += usage.Usage(response_tokens=response_tokens, total_tokens=response_tokens)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         maybe_event = self._parts_manager.handle_tool_call_delta(
                             vendor_part_id=dtc_index,
                             tool_name=delta.name,
@@ -299,12 +314,17 @@ class FunctionStreamedResponse(StreamedResponse):
         return self._model_name
 
     @property
+    def provider_name(self) -> None:
+        """Get the provider name."""
+        return None
+
+    @property
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
 
 
-def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
+def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
     """Very rough guesstimate of the token usage associated with a series of messages.
 
     This is designed to be used solely to give plausible numbers for testing!
@@ -315,7 +335,7 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
     for message in messages:
         if isinstance(message, ModelRequest):
             for part in message.parts:
-                if isinstance(part, (SystemPromptPart, UserPromptPart)):
+                if isinstance(part, SystemPromptPart | UserPromptPart):
                     request_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolReturnPart):
                     request_tokens += _estimate_string_tokens(part.model_response_str())
@@ -331,14 +351,20 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.Usage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
+                # TODO(Marcelo): We need to add coverage here.
+                elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
+                    call = part
+                    response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())
+                # TODO(Marcelo): We need to add coverage here.
+                elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
+                    response_tokens += _estimate_string_tokens(part.model_response_str())
                 else:
                     assert_never(part)
         else:
             assert_never(message)
-    return usage.Usage(
-        request_tokens=request_tokens,
-        response_tokens=response_tokens,
-        total_tokens=request_tokens + response_tokens,
+    return usage.RequestUsage(
+        input_tokens=request_tokens,
+        output_tokens=response_tokens,
     )
 
 

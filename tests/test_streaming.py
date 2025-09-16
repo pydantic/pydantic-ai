@@ -3,11 +3,11 @@ from __future__ import annotations as _annotations
 import datetime
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
-from typing import Any, Union
+from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
@@ -15,28 +15,33 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
 from pydantic_ai.agent import AgentRun
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.output import DeferredToolCalls, PromptedOutput, TextOutput
-from pydantic_ai.result import AgentStream, FinalResult, Usage
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.output import PromptedOutput, TextOutput
+from pydantic_ai.result import AgentStream, FinalResult, RunUsage
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition
+from pydantic_ai.usage import RequestUsage
 from pydantic_graph import End
 
-from .conftest import IsInt, IsNow, IsStr
+from .conftest import IsDatetime, IsInt, IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
 
@@ -59,9 +64,10 @@ async def test_streamed_text_response():
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=51, response_tokens=0, total_tokens=51),
+                    usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -73,11 +79,11 @@ async def test_streamed_text_response():
             ]
         )
         assert result.usage() == snapshot(
-            Usage(
+            RunUsage(
                 requests=2,
-                request_tokens=103,
-                response_tokens=5,
-                total_tokens=108,
+                input_tokens=103,
+                output_tokens=5,
+                tool_calls=1,
             )
         )
         response = await result.get_output()
@@ -89,9 +95,10 @@ async def test_streamed_text_response():
                 ModelRequest(parts=[UserPromptPart(content='Hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=51, response_tokens=0, total_tokens=51),
+                    usage=RequestUsage(input_tokens=51),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelRequest(
                     parts=[
@@ -102,18 +109,19 @@ async def test_streamed_text_response():
                 ),
                 ModelResponse(
                     parts=[TextPart(content='{"ret_a":"a-apple"}')],
-                    usage=Usage(request_tokens=52, response_tokens=11, total_tokens=63),
+                    usage=RequestUsage(input_tokens=52, output_tokens=11),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
         assert result.usage() == snapshot(
-            Usage(
+            RunUsage(
                 requests=2,
-                request_tokens=103,
-                response_tokens=11,
-                total_tokens=114,
+                input_tokens=103,
+                output_tokens=11,
+                tool_calls=1,
             )
         )
 
@@ -145,8 +153,8 @@ async def test_structured_response_iter():
 
     chunks: list[list[int]] = []
     async with agent.run_stream('') as result:
-        async for structured_response, last in result.stream_structured(debounce_by=None):
-            response_data = await result.validate_structured_output(structured_response, allow_partial=not last)
+        async for structured_response, last in result.stream_responses(debounce_by=None):
+            response_data = await result.validate_response_output(structured_response, allow_partial=not last)
             chunks.append(response_data)
 
     assert chunks == snapshot([[1], [1, 2, 3, 4], [1, 2, 3, 4]])
@@ -171,7 +179,7 @@ async def test_streamed_text_stream():
 
     async with agent.run_stream('Hello') as result:
         # typehint to test (via static typing) that the stream type is correctly inferred
-        chunks: list[str] = [c async for c in result.stream()]
+        chunks: list[str] = [c async for c in result.stream_output()]
         # two chunks with `stream()` due to not-final vs. final
         assert chunks == snapshot(['The cat sat on the mat.', 'The cat sat on the mat.'])
         assert result.is_complete
@@ -203,7 +211,7 @@ async def test_streamed_text_stream():
         return text.upper()
 
     async with agent.run_stream('Hello', output_type=TextOutput(upcase)) as result:
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 'THE ',
                 'THE CAT ',
@@ -216,49 +224,56 @@ async def test_streamed_text_stream():
         )
 
     async with agent.run_stream('Hello') as result:
-        assert [c async for c, _is_last in result.stream_structured(debounce_by=None)] == snapshot(
+        assert [c async for c, _is_last in result.stream_responses(debounce_by=None)] == snapshot(
             [
                 ModelResponse(
                     parts=[TextPart(content='The ')],
-                    usage=Usage(request_tokens=51, response_tokens=1, total_tokens=52),
+                    usage=RequestUsage(input_tokens=51, output_tokens=1),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat ')],
-                    usage=Usage(request_tokens=51, response_tokens=2, total_tokens=53),
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat ')],
-                    usage=Usage(request_tokens=51, response_tokens=3, total_tokens=54),
+                    usage=RequestUsage(input_tokens=51, output_tokens=3),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on ')],
-                    usage=Usage(request_tokens=51, response_tokens=4, total_tokens=55),
+                    usage=RequestUsage(input_tokens=51, output_tokens=4),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the ')],
-                    usage=Usage(request_tokens=51, response_tokens=5, total_tokens=56),
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
-                    usage=Usage(request_tokens=51, response_tokens=7, total_tokens=58),
+                    usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
                 ModelResponse(
                     parts=[TextPart(content='The cat sat on the mat.')],
-                    usage=Usage(request_tokens=51, response_tokens=7, total_tokens=58),
+                    usage=RequestUsage(input_tokens=51, output_tokens=7),
                     model_name='test',
                     timestamp=IsNow(tz=timezone.utc),
+                    provider_name='test',
                 ),
             ]
         )
@@ -323,7 +338,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=50, response_tokens=5, total_tokens=55),
+                    usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -345,7 +360,7 @@ async def test_call_tool():
                 ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
                 ModelResponse(
                     parts=[ToolCallPart(tool_name='ret_a', args='{"x": "hello"}', tool_call_id=IsStr())],
-                    usage=Usage(request_tokens=50, response_tokens=5, total_tokens=55),
+                    usage=RequestUsage(input_tokens=50, output_tokens=5),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -367,7 +382,7 @@ async def test_call_tool():
                             tool_call_id=IsStr(),
                         )
                     ],
-                    usage=Usage(request_tokens=50, response_tokens=7, total_tokens=57),
+                    usage=RequestUsage(input_tokens=50, output_tokens=7),
                     model_name='function::stream_structured_function',
                     timestamp=IsNow(tz=timezone.utc),
                 ),
@@ -420,7 +435,7 @@ async def test_call_tool_wrong_name():
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='foobar', args='{}', tool_call_id=IsStr())],
-                usage=Usage(request_tokens=50, response_tokens=1, total_tokens=51),
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
                 model_name='function::stream_structured_function',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -476,7 +491,7 @@ async def test_early_strategy_stops_after_first_final_result():
                     ToolCallPart(tool_name='regular_tool', args='{"x": 1}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=10, total_tokens=60),
+                usage=RequestUsage(input_tokens=50, output_tokens=10),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -532,7 +547,7 @@ async def test_early_strategy_uses_first_final_result():
                     ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=8, total_tokens=58),
+                usage=RequestUsage(input_tokens=50, output_tokens=8),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -599,7 +614,7 @@ async def test_exhaustive_strategy_executes_all_tools():
                     ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
                     ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}', tool_call_id=IsStr()),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=18, total_tokens=68),
+                usage=RequestUsage(input_tokens=50, output_tokens=18),
                 model_name='function::sf',
                 timestamp=IsNow(tz=timezone.utc),
             ),
@@ -708,7 +723,7 @@ async def test_early_strategy_with_final_result_in_middle():
                         part_kind='tool-call',
                     ),
                 ],
-                usage=Usage(request_tokens=50, response_tokens=14, total_tokens=64),
+                usage=RequestUsage(input_tokens=50, output_tokens=14),
                 model_name='function::sf',
                 timestamp=IsNow(tz=datetime.timezone.utc),
                 kind='response',
@@ -779,9 +794,10 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='regular_tool', args={'x': 0}, tool_call_id=IsStr())],
-                usage=Usage(request_tokens=57, response_tokens=0, total_tokens=57),
+                usage=RequestUsage(input_tokens=57),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -792,9 +808,10 @@ async def test_early_strategy_does_not_apply_to_tool_calls_without_final_tool():
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'value': 'a'}, tool_call_id=IsStr())],
-                usage=Usage(request_tokens=58, response_tokens=4, total_tokens=62),
+                usage=RequestUsage(input_tokens=58, output_tokens=4),
                 model_name='test',
                 timestamp=IsNow(tz=timezone.utc),
+                provider_name='test',
             ),
             ModelRequest(
                 parts=[
@@ -848,7 +865,7 @@ async def test_iter_stream_output():
     stream: AgentStream
     messages: list[str] = []
 
-    stream_usage: Usage | None = None
+    stream_usage: RunUsage | None = None
     async with agent.iter('Hello') as run:
         async for node in run:
             if agent.is_model_request_node(node):
@@ -857,11 +874,7 @@ async def test_iter_stream_output():
                         messages.append(chunk)
                 stream_usage = deepcopy(stream.usage())
     assert run.next_node == End(data=FinalResult(output='The bat sat on the mat.', tool_name=None, tool_call_id=None))
-    assert (
-        run.usage()
-        == stream_usage
-        == Usage(requests=1, request_tokens=51, response_tokens=7, total_tokens=58, details=None)
-    )
+    assert run.usage() == stream_usage == RunUsage(requests=1, input_tokens=51, output_tokens=7)
 
     assert messages == [
         '',
@@ -898,12 +911,11 @@ async def test_iter_stream_responses():
     assert messages == [
         ModelResponse(
             parts=[TextPart(content=text, part_kind='text')],
-            usage=Usage(
-                requests=0, request_tokens=IsInt(), response_tokens=IsInt(), total_tokens=IsInt(), details=None
-            ),
+            usage=RequestUsage(input_tokens=IsInt(), output_tokens=IsInt()),
             model_name='test',
             timestamp=IsNow(tz=timezone.utc),
             kind='response',
+            provider_name='test',
         )
         for text in [
             '',
@@ -926,7 +938,7 @@ async def test_stream_iter_structured_validator() -> None:
     class NotOutputType(BaseModel):
         not_value: str
 
-    agent = Agent[None, Union[OutputType, NotOutputType]]('test', output_type=Union[OutputType, NotOutputType])  # pyright: ignore[reportArgumentType]
+    agent = Agent[None, OutputType | NotOutputType]('test', output_type=OutputType | NotOutputType)
 
     @agent.output_validator
     def output_validator(data: OutputType | NotOutputType) -> OutputType | NotOutputType:
@@ -1072,7 +1084,7 @@ async def test_stream_structured_output():
 
     async with agent.run_stream('') as result:
         assert not result.is_complete
-        assert [c async for c in result.stream(debounce_by=None)] == snapshot(
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
             [
                 CityLocation(city='Mexico '),
                 CityLocation(city='Mexico City'),
@@ -1108,6 +1120,42 @@ async def test_iter_stream_structured_output():
                     )
 
 
+async def test_iter_stream_output_tool_dont_hit_retry_limit():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        """Stream partial JSON data that will initially fail validation."""
+        assert agent_info.output_tools is not None
+        assert len(agent_info.output_tools) == 1
+        name = agent_info.output_tools[0].name
+
+        yield {0: DeltaToolCall(name=name)}
+        yield {0: DeltaToolCall(json_args='{"c')}
+        yield {0: DeltaToolCall(json_args='ity":')}
+        yield {0: DeltaToolCall(json_args=' "Mex')}
+        yield {0: DeltaToolCall(json_args='ico City",')}
+        yield {0: DeltaToolCall(json_args=' "cou')}
+        yield {0: DeltaToolCall(json_args='ntry": "Mexico"}')}
+
+    agent = Agent(FunctionModel(stream_function=text_stream), output_type=CityLocation)
+
+    async with agent.iter('Generate city info') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    assert [c async for c in stream.stream_output(debounce_by=None)] == snapshot(
+                        [
+                            CityLocation(city='Mex'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                            CityLocation(city='Mexico City', country='Mexico'),
+                        ]
+                    )
+
+
 def test_function_tool_event_tool_call_id_properties():
     """Ensure that the `tool_call_id` property on function tool events mirrors the underlying part's ID."""
     # Prepare a ToolCallPart with a fixed ID
@@ -1125,50 +1173,128 @@ def test_function_tool_event_tool_call_id_properties():
     assert result_event.tool_call_id == return_part.tool_call_id == 'return_id_456'
 
 
-async def test_deferred_tool():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+async def test_tool_raises_call_deferred():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
-    async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='deferred')
-
-    @agent.tool_plain(prepare=prepare_tool)
+    @agent.tool_plain()
     def my_tool(x: int) -> int:
-        return x + 1  # pragma: no cover
+        raise CallDeferred
 
     async with agent.run_stream('Hello') as result:
         assert not result.is_complete
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            [DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])]
+        )
+        assert await result.get_output() == snapshot(
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            )
+        )
+        responses = [c async for c, _is_last in result.stream_responses(debounce_by=None)]
+        assert responses == snapshot(
+            [
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                    usage=RequestUsage(input_tokens=51),
+                    model_name='test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                )
+            ]
+        )
+        assert await result.validate_response_output(responses[0]) == snapshot(
+            DeferredToolRequests(calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())])
+        )
+        assert result.usage() == snapshot(RunUsage(requests=1, input_tokens=51, output_tokens=0))
+        assert result.timestamp() == IsNow(tz=timezone.utc)
+        assert result.is_complete
+
+
+async def test_tool_raises_approval_required():
+    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='my_tool', json_args='{"x": 1}', tool_call_id='my_tool')}
+        else:
+            yield 'Done!'
+
+    agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool
+    def my_tool(ctx: RunContext[None], x: int) -> int:
+        if not ctx.tool_call_approved:
+            raise ApprovalRequired
+        return x * 42
+
+    async with agent.run_stream('Hello') as result:
+        assert not result.is_complete
+        messages = result.all_messages()
         output = await result.get_output()
         assert output == snapshot(
-            DeferredToolCalls(
-                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                tool_defs={
-                    'my_tool': ToolDefinition(
-                        name='my_tool',
-                        parameters_json_schema={
-                            'additionalProperties': False,
-                            'properties': {'x': {'type': 'integer'}},
-                            'required': ['x'],
-                            'type': 'object',
-                        },
-                        kind='deferred',
-                    )
-                },
+            DeferredToolRequests(
+                approvals=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id=IsStr())],
             )
         )
         assert result.is_complete
 
+    async with agent.run_stream(
+        message_history=messages,
+        deferred_tool_results=DeferredToolResults(approvals={'my_tool': ToolApproved(override_args={'x': 2})}),
+    ) as result:
+        assert not result.is_complete
+        output = await result.get_output()
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Hello',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args='{"x": 1}', tool_call_id='my_tool')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=3),
+                    model_name='function::llm',
+                    timestamp=IsDatetime(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool',
+                            content=84,
+                            tool_call_id='my_tool',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='Done!')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function::llm',
+                    timestamp=IsDatetime(),
+                ),
+            ]
+        )
+        assert output == snapshot('Done!')
+        assert result.is_complete
+
 
 async def test_deferred_tool_iter():
-    agent = Agent(TestModel(), output_type=[str, DeferredToolCalls])
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
     async def prepare_tool(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition:
-        return replace(tool_def, kind='deferred')
+        return replace(tool_def, kind='external')
 
     @agent.tool_plain(prepare=prepare_tool)
     def my_tool(x: int) -> int:
         return x + 1  # pragma: no cover
 
-    outputs: list[str | DeferredToolCalls] = []
+    @agent.tool_plain(requires_approval=True)
+    def my_other_tool(x: int) -> int:
+        return x + 1  # pragma: no cover
+
+    outputs: list[str | DeferredToolRequests] = []
     events: list[Any] = []
 
     async with agent.iter('test') as run:
@@ -1186,20 +1312,9 @@ async def test_deferred_tool_iter():
 
     assert outputs == snapshot(
         [
-            DeferredToolCalls(
-                tool_calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
-                tool_defs={
-                    'my_tool': ToolDefinition(
-                        name='my_tool',
-                        parameters_json_schema={
-                            'additionalProperties': False,
-                            'properties': {'x': {'type': 'integer'}},
-                            'required': ['x'],
-                            'type': 'object',
-                        },
-                        kind='deferred',
-                    )
-                },
+            DeferredToolRequests(
+                calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+                approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
             )
         ]
     )
@@ -1210,6 +1325,183 @@ async def test_deferred_tool_iter():
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
             FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
+        ]
+    )
+
+
+async def test_tool_raises_call_deferred_approval_required_iter():
+    agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def my_tool(x: int) -> int:
+        raise CallDeferred
+
+    @agent.tool_plain
+    def my_other_tool(x: int) -> int:
+        raise ApprovalRequired
+
+    events: list[Any] = []
+
+    async with agent.iter('test') as run:
+        async for node in run:
+            if agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+            if agent.is_call_tools_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        events.append(event)
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
+            PartStartEvent(
+                index=1,
+                part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())),
+        ]
+    )
+
+    assert run.result is not None
+    assert run.result.output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr())],
+            approvals=[ToolCallPart(tool_name='my_other_tool', args={'x': 0}, tool_call_id=IsStr())],
+        )
+    )
+
+
+async def test_run_event_stream_handler():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+        async for event in stream:
+            events.append(event)
+
+    result = await test_agent.run('Hello', event_stream_handler=event_stream_handler)
+    assert result.output == snapshot('{"ret_a":"a-apple"}')
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+        ]
+    )
+
+
+def test_run_sync_event_stream_handler():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+        async for event in stream:
+            events.append(event)
+
+    result = test_agent.run_sync('Hello', event_stream_handler=event_stream_handler)
+    assert result.output == snapshot('{"ret_a":"a-apple"}')
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
+            PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
+        ]
+    )
+
+
+async def test_run_stream_event_stream_handler():
+    m = TestModel()
+
+    test_agent = Agent(m)
+    assert test_agent.name is None
+
+    @test_agent.tool_plain
+    async def ret_a(x: str) -> str:
+        return f'{x}-apple'
+
+    events: list[AgentStreamEvent] = []
+
+    async def event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]):
+        async for event in stream:
+            events.append(event)
+
+    async with test_agent.run_stream('Hello', event_stream_handler=event_stream_handler) as result:
+        assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            ['{"ret_a":', '{"ret_a":"a-apple"}', '{"ret_a":"a-apple"}']
+        )
+
+    assert events == snapshot(
+        [
+            PartStartEvent(
+                index=0,
+                part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
+            ),
+            FunctionToolCallEvent(part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr())),
+            FunctionToolResultEvent(
+                result=ToolReturnPart(
+                    tool_name='ret_a',
+                    content='a-apple',
+                    tool_call_id=IsStr(),
+                    timestamp=IsNow(tz=timezone.utc),
+                )
+            ),
+            PartStartEvent(index=0, part=TextPart(content='')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
     )

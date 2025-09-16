@@ -42,7 +42,7 @@ async def main():
             console.log(f'Using model: {model}')
             with Live('', console=console, vertical_overflow='visible') as live:
                 async with agent.run_stream(prompt, model=model) as result:
-                    async for message in result.stream():
+                    async for message in result.stream_output():
                         live.update(Markdown(message))
             console.log(result.usage())
         else:

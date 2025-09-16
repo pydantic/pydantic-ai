@@ -1,5 +1,5 @@
 import functools
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 
 import anyio
 import anyio.to_thread
@@ -43,7 +43,9 @@ class DuckDuckGoSearchTool:
     client: DDGS
     """The DuckDuckGo search client."""
 
-    max_results: int | None = None
+    _: KW_ONLY
+
+    max_results: int | None
     """The maximum number of results. If None, returns results only from the first response."""
 
     async def __call__(self, query: str) -> list[DuckDuckGoResult]:

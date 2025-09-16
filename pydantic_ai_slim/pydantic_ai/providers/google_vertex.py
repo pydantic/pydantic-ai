@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import functools
+from asyncio import Lock
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import Literal, overload
 
 import anyio.to_thread
 import httpx
+from typing_extensions import deprecated
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import cached_async_http_client
@@ -29,6 +31,7 @@ except ImportError as _import_error:
 __all__ = ('GoogleVertexProvider',)
 
 
+@deprecated('`GoogleVertexProvider` is deprecated, use `GoogleProvider` with `GoogleModel` instead.')
 class GoogleVertexProvider(Provider[httpx.AsyncClient]):
     """Provider for Vertex AI API."""
 
@@ -116,7 +119,7 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
-    _refresh_lock: anyio.Lock = anyio.Lock()
+    _refresh_lock: Lock = Lock()
 
     credentials: BaseCredentials | ServiceAccountCredentials | None
 

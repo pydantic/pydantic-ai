@@ -2,10 +2,11 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from dataclasses import KW_ONLY, dataclass
+from typing import TYPE_CHECKING, Any, cast
 
-from .. import _mcp, exceptions, usage
+from .. import _mcp, exceptions
+from .._run_context import RunContext
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -35,6 +36,8 @@ class MCPSamplingModel(Model):
     session: ServerSession
     """The MCP server session to use for sampling."""
 
+    _: KW_ONLY
+
     default_max_tokens: int = 16_384
     """Default max tokens to use if not set in [`ModelSettings`][pydantic_ai.settings.ModelSettings.max_tokens].
 
@@ -62,7 +65,6 @@ class MCPSamplingModel(Model):
         if result.role == 'assistant':
             return ModelResponse(
                 parts=[_mcp.map_from_sampling_content(result.content)],
-                usage=usage.Usage(requests=1),
                 model_name=result.model,
             )
         else:
@@ -76,6 +78,7 @@ class MCPSamplingModel(Model):
         messages: list[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         raise NotImplementedError('MCP Sampling does not support streaming')
         yield

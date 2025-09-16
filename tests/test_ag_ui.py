@@ -7,6 +7,7 @@ import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
 
@@ -17,8 +18,20 @@ from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.agent import Agent, AgentRunResult
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import (
     AgentInfo,
     DeltaThinkingCalls,
@@ -27,10 +40,11 @@ from pydantic_ai.models.function import (
     DeltaToolCalls,
     FunctionModel,
 )
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsSameStr
+from .conftest import IsDatetime, IsSameStr
 
 has_ag_ui: bool = False
 with contextlib.suppress(ImportError):
@@ -53,8 +67,10 @@ with contextlib.suppress(ImportError):
 
     from pydantic_ai.ag_ui import (
         SSE_CONTENT_TYPE,
+        OnCompleteFunc,
         StateDeps,
-        _Adapter,  # type: ignore[reportPrivateUsage]
+        _messages_from_ag_ui,  # type: ignore[reportPrivateUsage]
+        run_ag_ui,
     )
 
     has_ag_ui = True
@@ -91,13 +107,15 @@ def simple_result() -> Any:
     )
 
 
-async def collect_events_from_adapter(
-    adapter: _Adapter[AgentDepsT, OutputDataT], *run_inputs: RunAgentInput, deps: AgentDepsT = None
+async def run_and_collect_events(
+    agent: Agent[AgentDepsT, OutputDataT],
+    *run_inputs: RunAgentInput,
+    deps: AgentDepsT = None,
+    on_complete: OnCompleteFunc | None = None,
 ) -> list[dict[str, Any]]:
-    """Helper function to collect events from an AG-UI adapter run."""
     events = list[dict[str, Any]]()
     for run_input in run_inputs:
-        async for event in adapter.run(run_input, deps=deps):
+        async for event in run_ag_ui(agent, run_input, deps=deps, on_complete=on_complete):
             events.append(json.loads(event.removeprefix('data: ')))
     return events
 
@@ -146,24 +164,22 @@ async def send_snapshot() -> StateSnapshotEvent:
     )
 
 
-async def send_custom() -> list[CustomEvent]:
-    """Display the recipe to the user.
-
-    Returns:
-        StateSnapshotEvent.
-    """
-    return [
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='custom_event1',
-            value={'key1': 'value1'},
-        ),
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='custom_event2',
-            value={'key2': 'value2'},
-        ),
-    ]
+async def send_custom() -> ToolReturn:
+    return ToolReturn(
+        return_value='Done',
+        metadata=[
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='custom_event1',
+                value={'key1': 'value1'},
+            ),
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='custom_event2',
+                value={'key2': 'value2'},
+            ),
+        ],
+    )
 
 
 def uuid_str() -> str:
@@ -180,7 +196,7 @@ def create_input(
         thread_id=thread_id,
         run_id=uuid_str(),
         messages=list(messages),
-        state=state,
+        state=dict(state) if state else {},
         context=[],
         tools=tools or [],
         forwarded_props=None,
@@ -198,7 +214,7 @@ async def test_basic_user_message() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=simple_stream),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -206,7 +222,7 @@ async def test_basic_user_message() -> None:
         )
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -223,9 +239,9 @@ async def test_empty_messages() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input()
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -244,7 +260,7 @@ async def test_multiple_messages() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=simple_stream),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -268,7 +284,7 @@ async def test_multiple_messages() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -278,7 +294,7 @@ async def test_messages_with_history() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=simple_stream),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -290,7 +306,7 @@ async def test_messages_with_history() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == simple_result()
 
@@ -313,7 +329,7 @@ async def test_tool_ag_ui() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[send_snapshot, send_custom, current_time],
     )
-    adapter = _Adapter(agent=agent)
+
     thread_id = uuid_str()
     run_inputs = [
         create_input(
@@ -351,7 +367,7 @@ async def test_tool_ag_ui() -> None:
         ),
     ]
 
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -423,7 +439,7 @@ async def test_tool_ag_ui_multiple() -> None:
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
     )
-    adapter = _Adapter(agent=agent)
+
     tool_call_id1 = uuid_str()
     tool_call_id2 = uuid_str()
     run_inputs = [
@@ -482,7 +498,7 @@ async def test_tool_ag_ui_multiple() -> None:
         ),
     ]
 
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -558,7 +574,7 @@ async def test_tool_ag_ui_parts() -> None:
             yield '{"get_weather": "Tool result"}'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
-    adapter = _Adapter(agent=agent)
+
     run_inputs = [
         (
             first_input := create_input(
@@ -596,7 +612,7 @@ async def test_tool_ag_ui_parts() -> None:
             thread_id=first_input.thread_id,
         ),
     ]
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -671,14 +687,14 @@ async def test_tool_local_single_event() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[send_snapshot],
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
             content='Please call send_snapshot',
         ),
     )
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -740,14 +756,14 @@ async def test_tool_local_multiple_events() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[send_custom],
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
             content='Please call send_custom',
         ),
     )
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -768,7 +784,7 @@ async def test_tool_local_multiple_events() -> None:
                 'type': 'TOOL_CALL_RESULT',
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
-                'content': '[{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event1","value":{"key1":"value1"}},{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event2","value":{"key2":"value2"}}]',
+                'content': 'Done',
                 'role': 'tool',
             },
             {'type': 'CUSTOM', 'name': 'custom_event1', 'value': {'key1': 'value1'}},
@@ -808,7 +824,6 @@ async def test_tool_local_parts() -> None:
         tools=[send_snapshot, send_custom, current_time],
     )
 
-    adapter = _Adapter(agent=agent)
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -816,7 +831,7 @@ async def test_tool_local_parts() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -857,19 +872,23 @@ async def test_tool_local_parts() -> None:
 
 
 async def test_thinking() -> None:
-    """Test thinking events - now supported by FunctionModel."""
-
     async def stream_function(
         messages: list[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaThinkingCalls | str]:
-        yield {0: DeltaThinkingPart(content='Thinking ')}
-        yield {0: DeltaThinkingPart(content='about the weather')}
-        yield 'Thought about the weather'
+        yield {0: DeltaThinkingPart(content='')}
+        yield "Let's do some thinking"
+        yield ''
+        yield {1: DeltaThinkingPart(content='Thinking ')}
+        yield {1: DeltaThinkingPart(content='about the weather')}
+        yield {2: DeltaThinkingPart(content='')}
+        yield {3: DeltaThinkingPart(content='')}
+        yield {3: DeltaThinkingPart(content='Thinking about the meaning of life')}
+        yield {4: DeltaThinkingPart(content='Thinking about the universe')}
 
     agent = Agent(
         model=FunctionModel(stream_function=stream_function),
     )
-    adapter = _Adapter(agent=agent)
+
     run_input = create_input(
         UserMessage(
             id='msg_1',
@@ -877,7 +896,7 @@ async def test_thinking() -> None:
         ),
     )
 
-    events = await collect_events_from_adapter(adapter, run_input)
+    events = await run_and_collect_events(agent, run_input)
 
     assert events == snapshot(
         [
@@ -886,17 +905,27 @@ async def test_thinking() -> None:
                 'threadId': (thread_id := IsSameStr()),
                 'runId': (run_id := IsSameStr()),
             },
-            {'type': 'THINKING_TEXT_MESSAGE_START'},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking '},
-            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'about the weather'},
-            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_END'},
             {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
             {
                 'type': 'TEXT_MESSAGE_CONTENT',
                 'messageId': message_id,
-                'delta': 'Thought about the weather',
+                'delta': "Let's do some thinking",
             },
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking '},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'about the weather'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking about the meaning of life'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Thinking about the universe'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
             {
                 'type': 'RUN_FINISHED',
                 'threadId': thread_id,
@@ -929,7 +958,7 @@ async def test_tool_local_then_ag_ui() -> None:
         model=FunctionModel(stream_function=stream_function),
         tools=[current_time],
     )
-    adapter = _Adapter(agent=agent)
+
     run_inputs = [
         (
             first_input := create_input(
@@ -985,7 +1014,7 @@ async def test_tool_local_then_ag_ui() -> None:
             thread_id=first_input.thread_id,
         ),
     ]
-    events = await collect_events_from_adapter(adapter, *run_inputs)
+    events = await run_and_collect_events(agent, *run_inputs)
 
     assert events == snapshot(
         [
@@ -1050,11 +1079,21 @@ async def test_tool_local_then_ag_ui() -> None:
 async def test_request_with_state() -> None:
     """Test request with state modification."""
 
+    seen_states: list[int] = []
+
+    async def store_state(
+        ctx: RunContext[StateDeps[StateInt]], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        seen_states.append(ctx.deps.state.value)
+        ctx.deps.state.value += 1
+        return tool_defs
+
     agent: Agent[StateDeps[StateInt], str] = Agent(
         model=FunctionModel(stream_function=simple_stream),
         deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
+        prepare_tools=store_state,
     )
-    adapter = _Adapter(agent=agent)
+
     run_inputs = [
         create_input(
             UserMessage(
@@ -1074,33 +1113,90 @@ async def test_request_with_state() -> None:
                 id='msg_3',
                 content='Hello, how are you?',
             ),
+        ),
+        create_input(
+            UserMessage(
+                id='msg_4',
+                content='Hello, how are you?',
+            ),
             state=StateInt(value=42),
         ),
     ]
 
-    deps = StateDeps(StateInt())
+    deps = StateDeps(StateInt(value=0))
 
-    last_value = deps.state.value
     for run_input in run_inputs:
         events = list[dict[str, Any]]()
-        async for event in adapter.run(run_input, deps=deps):
+        async for event in run_ag_ui(agent, run_input, deps=deps):
             events.append(json.loads(event.removeprefix('data: ')))
 
         assert events == simple_result()
-        assert deps.state.value == run_input.state.value if run_input.state is not None else last_value
-        last_value = deps.state.value
+    assert seen_states == snapshot([41, 0, 0, 42])
 
-    assert deps.state.value == 42
+
+async def test_request_with_state_without_handler() -> None:
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        ),
+        state=StateInt(value=41),
+    )
+
+    with pytest.raises(
+        UserError,
+        match='AG-UI state is provided but `deps` of type `NoneType` does not implement the `StateHandler` protocol: it needs to be a dataclass with a non-optional `state` field.',
+    ):
+        async for _ in run_ag_ui(agent, run_input):
+            pass
+
+
+async def test_request_with_state_with_custom_handler() -> None:
+    @dataclass
+    class CustomStateDeps:
+        state: dict[str, Any]
+
+    seen_states: list[dict[str, Any]] = []
+
+    async def store_state(ctx: RunContext[CustomStateDeps], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        seen_states.append(ctx.deps.state)
+        return tool_defs
+
+    agent: Agent[CustomStateDeps, str] = Agent(
+        model=FunctionModel(stream_function=simple_stream),
+        deps_type=CustomStateDeps,
+        prepare_tools=store_state,
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Hello, how are you?',
+        ),
+        state={'value': 42},
+    )
+
+    async for _ in run_ag_ui(agent, run_input, deps=CustomStateDeps(state={'value': 0})):
+        pass
+
+    assert seen_states[-1] == {'value': 42}
 
 
 async def test_concurrent_runs() -> None:
     """Test concurrent execution of multiple runs."""
     import asyncio
 
-    agent = Agent(
-        model=FunctionModel(stream_function=simple_stream),
+    agent: Agent[StateDeps[StateInt], str] = Agent(
+        model=TestModel(),
+        deps_type=StateDeps[StateInt],  # type: ignore[reportUnknownArgumentType]
     )
-    adapter = _Adapter(agent=agent)
+
+    @agent.tool
+    async def get_state(ctx: RunContext[StateDeps[StateInt]]) -> int:
+        return ctx.deps.state.value
+
     concurrent_tasks: list[asyncio.Task[list[dict[str, Any]]]] = []
 
     for i in range(5):  # Test with 5 concurrent runs
@@ -1109,10 +1205,11 @@ async def test_concurrent_runs() -> None:
                 id=f'msg_{i}',
                 content=f'Message {i}',
             ),
+            state=StateInt(value=i),
             thread_id=f'test_thread_{i}',
         )
 
-        task = asyncio.create_task(collect_events_from_adapter(adapter, run_input))
+        task = asyncio.create_task(run_and_collect_events(agent, run_input, deps=StateDeps(StateInt())))
         concurrent_tasks.append(task)
 
     results = await asyncio.gather(*concurrent_tasks)
@@ -1121,9 +1218,23 @@ async def test_concurrent_runs() -> None:
     for i, events in enumerate(results):
         assert events == [
             {'type': 'RUN_STARTED', 'threadId': f'test_thread_{i}', 'runId': (run_id := IsSameStr())},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': (tool_call_id := IsSameStr()),
+                'toolCallName': 'get_state',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_END', 'toolCallId': tool_call_id},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': tool_call_id,
+                'content': str(i),
+                'role': 'tool',
+            },
             {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'success '},
-            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': '(no tool calls)'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': '{"get_s'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': message_id, 'delta': 'tate":' + str(i) + '}'},
             {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
             {'type': 'RUN_FINISHED', 'threadId': f'test_thread_{i}', 'runId': run_id},
         ]
@@ -1158,3 +1269,214 @@ async def test_to_ag_ui() -> None:
                         events.append(json.loads(line.removeprefix('data: ')))
 
             assert events == simple_result()
+
+
+async def test_callback_sync() -> None:
+    """Test that sync callbacks work correctly."""
+
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def sync_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg1',
+            content='Hello!',
+        )
+    )
+
+    events = await run_and_collect_events(agent, run_input, on_complete=sync_callback)
+
+    # Verify callback was called
+    assert len(captured_results) == 1
+    run_result = captured_results[0]
+
+    # Verify we can access messages
+    messages = run_result.all_messages()
+    assert len(messages) >= 1
+
+    # Verify events were still streamed normally
+    assert len(events) > 0
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_callback_async() -> None:
+    """Test that async callbacks work correctly."""
+
+    captured_results: list[AgentRunResult[Any]] = []
+
+    async def async_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)
+
+    agent = Agent(TestModel())
+    run_input = create_input(
+        UserMessage(
+            id='msg1',
+            content='Hello!',
+        )
+    )
+
+    events = await run_and_collect_events(agent, run_input, on_complete=async_callback)
+
+    # Verify callback was called
+    assert len(captured_results) == 1
+    run_result = captured_results[0]
+
+    # Verify we can access messages
+    messages = run_result.all_messages()
+    assert len(messages) >= 1
+
+    # Verify events were still streamed normally
+    assert len(events) > 0
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert events[-1]['type'] == 'RUN_FINISHED'
+
+
+async def test_callback_with_error() -> None:
+    """Test that callbacks are not called when errors occur."""
+
+    captured_results: list[AgentRunResult[Any]] = []
+
+    def error_callback(run_result: AgentRunResult[Any]) -> None:
+        captured_results.append(run_result)  # pragma: no cover
+
+    agent = Agent(TestModel())
+    # Empty messages should cause an error
+    run_input = create_input()  # No messages will cause _NoMessagesError
+
+    events = await run_and_collect_events(agent, run_input, on_complete=error_callback)
+
+    # Verify callback was not called due to error
+    assert len(captured_results) == 0
+
+    # Verify error event was sent
+    assert len(events) > 0
+    assert events[0]['type'] == 'RUN_STARTED'
+    assert any(event['type'] == 'RUN_ERROR' for event in events)
+
+
+async def test_messages_from_ag_ui() -> None:
+    messages = [
+        SystemMessage(
+            id='msg_1',
+            content='System message',
+        ),
+        DeveloperMessage(
+            id='msg_2',
+            content='Developer message',
+        ),
+        UserMessage(
+            id='msg_3',
+            content='User message',
+        ),
+        UserMessage(
+            id='msg_4',
+            content='User message',
+        ),
+        AssistantMessage(
+            id='msg_5',
+            content='Assistant message',
+        ),
+        AssistantMessage(
+            id='msg_6',
+            tool_calls=[
+                ToolCall(
+                    id='tool_call_1',
+                    function=FunctionCall(
+                        name='tool_call_1',
+                        arguments='{}',
+                    ),
+                ),
+            ],
+        ),
+        AssistantMessage(
+            id='msg_7',
+            tool_calls=[
+                ToolCall(
+                    id='tool_call_2',
+                    function=FunctionCall(
+                        name='tool_call_2',
+                        arguments='{}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_8',
+            content='Tool message',
+            tool_call_id='tool_call_1',
+        ),
+        ToolMessage(
+            id='msg_9',
+            content='Tool message',
+            tool_call_id='tool_call_2',
+        ),
+        UserMessage(
+            id='msg_10',
+            content='User message',
+        ),
+        AssistantMessage(
+            id='msg_11',
+            content='Assistant message',
+        ),
+    ]
+
+    assert _messages_from_ag_ui(messages) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='System message',
+                        timestamp=IsDatetime(),
+                    ),
+                    SystemPromptPart(
+                        content='Developer message',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Assistant message'),
+                    ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+                    ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='tool_call_1',
+                        content='Tool message',
+                        tool_call_id='tool_call_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='tool_call_2',
+                        content='Tool message',
+                        tool_call_id='tool_call_2',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Assistant message')],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
