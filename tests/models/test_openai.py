@@ -3065,9 +3065,7 @@ async def test_openai_map_single_item_unknown_returns_empty_branch(
     assert parts == []
 
 
-async def test_openai_binary_content_unsupported_branch_returns_none_then_empty(
-    openai_api_key: str, allow_model_requests: None
-) -> None:
+async def test_openai_binary_content_unsupported_type(openai_api_key: str, allow_model_requests: None) -> None:
     # Covers BinaryContent unsupported path (not text-like, not image/audio/document) via public API
 
     captured: list[list[dict[str, Any]]] = []
@@ -3079,9 +3077,13 @@ async def test_openai_binary_content_unsupported_branch_returns_none_then_empty(
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     model.client.chat.completions.create = fake_create
 
-    bc = BinaryContent(data=b'data', media_type='application/octet-stream')
+    class Location(TypedDict):
+        city: str
+        country: str
+
+    unsupported = Location(city='Paris', country='France')
     with pytest.raises(RuntimeError, match='stop-after-capture'):
-        await model.request([ModelRequest(parts=[UserPromptPart(content=[bc])])], {}, ModelRequestParameters())
+        await model.request([ModelRequest(parts=[UserPromptPart(content=[unsupported])])], {}, ModelRequestParameters())
 
     user_msgs = captured[0]
     user = next(m for m in user_msgs if m.get('role') == 'user')

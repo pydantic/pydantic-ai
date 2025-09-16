@@ -743,34 +743,27 @@ class OpenAIChatModel(Model):
     async def _map_single_item(item: object) -> list[ChatCompletionContentPartParam]:
         if isinstance(item, str):
             return [ChatCompletionContentPartTextParam(text=item, type='text')]
-        handled = OpenAIChatModel._handle_image_url(item)
-        if handled is not None:
-            return handled
-        handled = await OpenAIChatModel._handle_binary_content(item)
-        if handled is not None:
-            return handled
-        handled = await OpenAIChatModel._handle_audio_url(item)
-        if handled is not None:
-            return handled
-        handled = await OpenAIChatModel._handle_document_url(item)
-        if handled is not None:
-            return handled
-        if isinstance(item, VideoUrl):
+        elif isinstance(item, ImageUrl):
+            return OpenAIChatModel._handle_image_url(item) or []
+        elif isinstance(item, BinaryContent):
+            return await OpenAIChatModel._handle_binary_content(item) or []
+        elif isinstance(item, AudioUrl):
+            return await OpenAIChatModel._handle_audio_url(item) or []
+        elif isinstance(item, DocumentUrl):
+            return await OpenAIChatModel._handle_document_url(item) or []
+        elif isinstance(item, VideoUrl):
             raise NotImplementedError('VideoUrl is not supported for OpenAI')
-        # Fallback: unknown type — return empty parts to avoid type-checker Never error
-        return []
+        else:
+            # Fallback: unknown type — return empty parts to avoid type-checker Never error
+            return []
 
     @staticmethod
-    def _handle_image_url(item: object) -> list[ChatCompletionContentPartParam] | None:
-        if not isinstance(item, ImageUrl):
-            return None
+    def _handle_image_url(item: ImageUrl) -> list[ChatCompletionContentPartParam]:
         image_url = ImageURL(url=item.url)
         return [ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')]
 
     @staticmethod
-    async def _handle_binary_content(item: object) -> list[ChatCompletionContentPartParam] | None:
-        if not isinstance(item, BinaryContent):
-            return None
+    async def _handle_binary_content(item: BinaryContent) -> list[ChatCompletionContentPartParam]:
         if OpenAIChatModel._is_text_like_media_type(item.media_type):
             # Inline text-like binary content as a text block
             text = item.data.decode('utf-8')
@@ -795,12 +788,10 @@ class OpenAIChatModel(Model):
                     type='file',
                 )
             ]
-        return None
+        return []
 
     @staticmethod
-    async def _handle_audio_url(item: object) -> list[ChatCompletionContentPartParam] | None:
-        if not isinstance(item, AudioUrl):
-            return None
+    async def _handle_audio_url(item: AudioUrl) -> list[ChatCompletionContentPartParam]:
         downloaded_item = await download_item(item, data_format='base64', type_format='extension')
         assert downloaded_item['data_type'] in ('wav', 'mp3'), (
             f'Unsupported audio format: {downloaded_item["data_type"]}'
@@ -809,9 +800,7 @@ class OpenAIChatModel(Model):
         return [ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')]
 
     @staticmethod
-    async def _handle_document_url(item: object) -> list[ChatCompletionContentPartParam] | None:
-        if not isinstance(item, DocumentUrl):
-            return None
+    async def _handle_document_url(item: DocumentUrl) -> list[ChatCompletionContentPartParam]:
         if OpenAIChatModel._is_text_like_media_type(item.media_type):
             downloaded_text = await download_item(item, data_format='text', type_format='extension')
             inline = OpenAIChatModel._inline_file_block(
