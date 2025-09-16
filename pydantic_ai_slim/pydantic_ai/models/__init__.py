@@ -783,7 +783,7 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
     requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
 
-    Each client would get its own transport with its own connection pool, the default pool size is defined by httpx.DEFAULT_LIMITS.
+    Each client will get its own transport with its own connection pool. The default pool size is defined by `httpx.DEFAULT_LIMITS`.
 
     There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
@@ -795,7 +795,7 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
     if client.is_closed:
         # This happens if the context manager is used, so we need to create a new client.
-        # TODO: Since there is no API from functools.cache to clear the cache for a specific
+        # Since there is no API from `functools.cache` to clear the cache for a specific
         #  key, clear the entire cache here as a workaround.
         _cached_async_http_client.cache_clear()
         client = _cached_async_http_client(provider=provider, timeout=timeout, connect=connect)
