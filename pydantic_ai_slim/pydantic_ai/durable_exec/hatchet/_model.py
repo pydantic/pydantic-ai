@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from hatchet_sdk import DurableContext, Hatchet
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -15,6 +15,8 @@ from ._utils import TaskConfig
 
 
 class ModelInput(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters

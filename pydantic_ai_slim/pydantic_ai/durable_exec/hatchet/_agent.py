@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from typing import Any, Generic, overload
 
 from hatchet_sdk import DurableContext, Hatchet
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import Never
 
 from pydantic_ai import (
@@ -29,6 +29,8 @@ from ._utils import TaskConfig
 
 
 class RunAgentInput(BaseModel, Generic[RunOutputDataT, AgentDepsT]):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     user_prompt: str | Sequence[_messages.UserContent] | None = None
     output_type: OutputSpec[RunOutputDataT] | None = None
     message_history: list[_messages.ModelMessage] | None = None
