@@ -783,6 +783,8 @@ def cached_async_http_client(*, provider: str | None = None, timeout: int = 600,
     The client is cached based on the provider parameter. If provider is None, it's used for non-provider specific
     requests (like downloading images). Multiple agents and calls can share the same client when they use the same provider.
 
+    Each client would get its own transport with its own connection pool, the default pool size is defined by httpx.DEFAULT_LIMITS.
+
     There are good reasons why in production you should use a `httpx.AsyncClient` as an async context manager as
     described in [encode/httpx#2026](https://github.com/encode/httpx/pull/2026), but when experimenting or showing
     examples, it's very useful not to.
