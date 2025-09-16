@@ -848,7 +848,7 @@ async def test_openai_binary_content_text_like_is_inlined(
 
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
     # Monkeypatch the client's create method
-    model.client.chat.completions.create = fake_create  # type: ignore[assignment]
+    model.client.chat.completions.create = fake_create
 
     # Act
     with pytest.raises(RuntimeError, match='stop-after-capture'):
@@ -903,7 +903,7 @@ async def test_openai_document_url_text_like_is_inlined(
         raise RuntimeError('stop-after-capture')
 
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    model.client.chat.completions.create = fake_create  # type: ignore[assignment]
+    model.client.chat.completions.create = fake_create
 
     with pytest.raises(RuntimeError, match='stop-after-capture'):
         await model.request(
@@ -3048,7 +3048,7 @@ async def test_openai_map_single_item_unknown_returns_empty_branch(openai_api_ke
         raise RuntimeError('stop-after-capture')
 
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    model.client.chat.completions.create = fake_create  # type: ignore[assignment]
+    model.client.chat.completions.create = fake_create
 
     bc = BinaryContent(data=b'data', media_type='application/octet-stream')
     with pytest.raises(RuntimeError, match='stop-after-capture'):
@@ -3072,7 +3072,7 @@ async def test_openai_binary_content_unsupported_branch_returns_none_then_empty(
         raise RuntimeError('stop-after-capture')
 
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    model.client.chat.completions.create = fake_create  # type: ignore[assignment]
+    model.client.chat.completions.create = fake_create
 
     bc = BinaryContent(data=b'data', media_type='application/octet-stream')
     with pytest.raises(RuntimeError, match='stop-after-capture'):
