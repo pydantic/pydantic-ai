@@ -5,7 +5,8 @@ from contextlib import contextmanager
 from typing import Any, Generic, overload
 
 from hatchet_sdk import DurableContext, Hatchet
-from pydantic import BaseModel, ConfigDict, Field
+from hatchet_sdk.runnables.workflow import BaseWorkflow
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Never
 
 from pydantic_ai import (
@@ -63,6 +64,9 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Args:
             wrapped: The agent to wrap.
             hatchet: The Hatchet instance to use for creating tasks.
+            name: Optional unique agent name to use in the Hatchet tasks' names. If not provided, the agent's `name` will be used.
+            mcp_task_config: The base Hatchet task config to use for MCP server tasks. If no config is provided, use the default settings.
+            model_task_config: The Hatchet task config to use for model request tasks. If no config is provided, use the default settings.
         """
         super().__init__(wrapped)
 
@@ -111,7 +115,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         @hatchet.durable_task(name=f'{self._name}.run', input_validator=RunAgentInput[Any, Any])
         async def wrapped_run_workflow(
             input: RunAgentInput[RunOutputDataT, AgentDepsT],
-            ctx: DurableContext,
+            _ctx: DurableContext,
         ) -> AgentRunResult[Any]:
             with self._hatchet_overrides():
                 return await super(WrapperAgent, self).run(
@@ -153,9 +157,28 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _hatchet_overrides(self) -> Iterator[None]:
-        # Override with HatchetModel and HatchetMCPServer in the toolsets.
         with super().override(model=self._model, toolsets=self._toolsets, tools=[]):
             yield
+
+    @property
+    def workflows(self) -> Sequence[BaseWorkflow[Any]]:
+        workflows = [
+            self.hatchet_wrapped_run_workflow,
+            self._model._hatchet_wrapped_request_task,
+        ]
+
+        for toolset in self._toolsets:
+            from ._mcp_server import HatchetMCPServer
+
+            if isinstance(toolset, HatchetMCPServer):
+                workflows.extend(
+                    [
+                        toolset.hatchet_wrapped_get_tools_task,
+                        toolset.hatchet_wrapped_call_tool_task,
+                    ]
+                )
+
+        return workflows
 
     @overload
     async def run(
@@ -211,7 +234,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode."""
-        return await self.hatchet_wrapped_run_workflow.aio_run(
+        result = await self.hatchet_wrapped_run_workflow.aio_run(
             RunAgentInput[RunOutputDataT, AgentDepsT](
                 user_prompt=user_prompt,
                 output_type=output_type,
@@ -228,3 +251,8 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 deprecated_kwargs=_deprecated_kwargs,
             )
         )
+
+        if isinstance(result, dict):
+            return TypeAdapter(AgentRunResult[Any]).validate_python(result)
+
+        return result
