@@ -37,8 +37,8 @@ def format_as_xml(
         none_str: String to use for `None` values.
         indent: Indentation string to use for pretty printing.
         include_field_info: Whether to include attributes like Pydantic `Field` attributes and dataclasses `field()`
-            `metadata` as XML attributes. In both cases the allowed `Field` attributes and `field()` metadata keys are:
-            `title`, `description` and `alias`. If a field is repeated in the data (e.g. in a list) by setting `once`
+            `metadata` as XML attributes. In both cases the allowed `Field` attributes and `field()` metadata keys are
+            `title` and `description`. If a field is repeated in the data (e.g. in a list) by setting `once`
             the attributes are included only in the first occurrence of an XML element relative to the same field.
 
     Returns:
@@ -88,7 +88,7 @@ class _ToXml:
     _element_names: dict[str, str] = field(default_factory=dict)
     # flag for parsing dataclasses and Pydantic models once
     _is_info_extracted: bool = False
-    _FIELD_ATTRIBUTES = ('title', 'description', 'alias')
+    _FIELD_ATTRIBUTES = ('title', 'description')
 
     def to_xml(self, tag: str | None = None) -> ElementTree.Element:
         return self._to_xml(value=self.data, path='', tag=tag)

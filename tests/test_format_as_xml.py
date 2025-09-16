@@ -28,7 +28,7 @@ class ExamplePydanticFields(BaseModel):
     name: str = Field(description="The person's name")
     age: int = Field(description='Years', title='Age', default=18)
     height: float = Field(description="The person's height", exclude=True)
-    children: list[Self] | None = Field(alias='child', default=None)
+    children: list[Self] | None = Field(title='child', alias='child_list', default=None)
 
     @computed_field(title='Location')
     def location(self) -> str | None:
@@ -153,7 +153,7 @@ def test_root_tag(input_obj: Any, output: str):
                 name='John',
                 age=42,
                 height=160.0,
-                child=[
+                child_list=[
                     ExamplePydanticFields(name='Liam', height=150),
                     ExamplePydanticFields(name='Alice', height=160),
                 ],
@@ -162,7 +162,7 @@ def test_root_tag(input_obj: Any, output: str):
             snapshot("""\
 <name description="The person's name">John</name>
 <age title="Age" description="Years">42</age>
-<children alias="child">
+<children title="child">
   <ExamplePydanticFields>
     <name>Liam</name>
     <age>18</age>
@@ -186,7 +186,7 @@ def test_root_tag(input_obj: Any, output: str):
                     name='John',
                     age=42,
                     height=160.0,
-                    child=[
+                    child_list=[
                         ExamplePydanticFields(name='Liam', height=150),
                         ExamplePydanticFields(name='Alice', height=160),
                     ],
@@ -197,7 +197,7 @@ def test_root_tag(input_obj: Any, output: str):
 <ExamplePydanticFields>
   <name description="The person's name">John</name>
   <age title="Age" description="Years">42</age>
-  <children alias="child">
+  <children title="child">
     <ExamplePydanticFields>
       <name>Liam</name>
       <age>18</age>
@@ -221,7 +221,7 @@ def test_root_tag(input_obj: Any, output: str):
                 name='John',
                 age=42,
                 height=160.0,
-                child=[
+                child_list=[
                     ExamplePydanticFields(name='Liam', height=150),
                     ExamplePydanticFields(name='Alice', height=160),
                 ],
@@ -263,7 +263,7 @@ def test_repeated_field_attributes():
         name='John',
         age=42,
         height=160.0,
-        child=[
+        child_list=[
             ExamplePydanticFields(name='Liam', height=150),
             ExamplePydanticFields(name='Alice', height=160),
         ],
@@ -273,17 +273,17 @@ def test_repeated_field_attributes():
         == """\
 <name description="The person's name">John</name>
 <age title="Age" description="Years">42</age>
-<children alias="child">
+<children title="child">
   <ExamplePydanticFields>
     <name description="The person's name">Liam</name>
     <age title="Age" description="Years">18</age>
-    <children alias="child">null</children>
+    <children title="child">null</children>
     <location title="Location">null</location>
   </ExamplePydanticFields>
   <ExamplePydanticFields>
     <name description="The person's name">Alice</name>
     <age title="Age" description="Years">18</age>
-    <children alias="child">null</children>
+    <children title="child">null</children>
     <location title="Location">null</location>
   </ExamplePydanticFields>
 </children>
@@ -297,17 +297,17 @@ def test_repeated_field_attributes():
 <user1>
   <name description="The person's name">John</name>
   <age title="Age" description="Years">42</age>
-  <children alias="child">
+  <children title="child">
     <ExamplePydanticFields>
       <name description="The person's name">Liam</name>
       <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
+      <children title="child">null</children>
       <location title="Location">null</location>
     </ExamplePydanticFields>
     <ExamplePydanticFields>
       <name description="The person's name">Alice</name>
       <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
+      <children title="child">null</children>
       <location title="Location">null</location>
     </ExamplePydanticFields>
   </children>
@@ -316,17 +316,17 @@ def test_repeated_field_attributes():
 <user2>
   <name description="The person's name">John</name>
   <age title="Age" description="Years">42</age>
-  <children alias="child">
+  <children title="child">
     <ExamplePydanticFields>
       <name description="The person's name">Liam</name>
       <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
+      <children title="child">null</children>
       <location title="Location">null</location>
     </ExamplePydanticFields>
     <ExamplePydanticFields>
       <name description="The person's name">Alice</name>
       <age title="Age" description="Years">18</age>
-      <children alias="child">null</children>
+      <children title="child">null</children>
       <location title="Location">null</location>
     </ExamplePydanticFields>
   </children>
@@ -341,7 +341,7 @@ def test_repeated_field_attributes():
 <user1>
   <name description="The person's name">John</name>
   <age title="Age" description="Years">42</age>
-  <children alias="child">
+  <children title="child">
     <ExamplePydanticFields>
       <name>Liam</name>
       <age>18</age>
@@ -393,7 +393,7 @@ def test_nested_data():
 
     @pydantic_dataclass
     class DataItem2:
-        model: ModelItem1 = field(metadata={'title': 'the model', 'alias': 'info'})
+        model: ModelItem1 = field(metadata={'title': 'the model', 'description': 'info'})
         others: tuple[ModelItem1] | None = None
         count: int = field(default=10, metadata={'info': 'a count'})
 
@@ -422,7 +422,7 @@ def test_nested_data():
         == """
 <values>
   <DataItem2>
-    <model title="the model" alias="info">
+    <model title="the model" description="info">
       <name description="Name">Alice</name>
       <value>42</value>
       <items description="Items">
