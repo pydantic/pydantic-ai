@@ -106,7 +106,7 @@ def example_cases() -> list[Case[TaskInput, TaskOutput, TaskMetadata]]:
 def example_dataset(
     example_cases: list[Case[TaskInput, TaskOutput, TaskMetadata]],
 ) -> Dataset[TaskInput, TaskOutput, TaskMetadata]:
-    return Dataset[TaskInput, TaskOutput, TaskMetadata](cases=example_cases)
+    return Dataset[TaskInput, TaskOutput, TaskMetadata](name='example', cases=example_cases)
 
 
 @pytest.fixture
@@ -1241,7 +1241,7 @@ async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskIn
     async def task(inputs: TaskInput) -> TaskOutput:
         return TaskOutput(answer=inputs.query.upper())
 
-    report = await example_dataset.evaluate(task, name='custom_task')
+    report = await example_dataset.evaluate(task, task_name='custom_task')
     assert report.name == 'custom_task'
 
 
@@ -1491,16 +1491,24 @@ async def test_evaluate_async_logfire(
             (
                 'evaluate {name}',
                 {
-                    'name': 'mock_async_task',
-                    'n_cases': 2,
                     'assertion_pass_rate': 1.0,
-                    'logfire.msg_template': 'evaluate {name}',
-                    'logfire.msg': 'evaluate mock_async_task',
-                    'logfire.span_type': 'span',
+                    'dataset_name': 'example',
                     'logfire.json_schema': {
+                        'properties': {
+                            'assertion_pass_rate': {},
+                            'dataset_name': {},
+                            'n_cases': {},
+                            'name': {},
+                            'task_name': {},
+                        },
                         'type': 'object',
-                        'properties': {'name': {}, 'n_cases': {}, 'assertion_pass_rate': {}},
                     },
+                    'logfire.msg': 'evaluate mock_async_task',
+                    'logfire.msg_template': 'evaluate {name}',
+                    'logfire.span_type': 'span',
+                    'n_cases': 2,
+                    'name': 'mock_async_task',
+                    'task_name': 'mock_async_task',
                 },
             ),
             (
