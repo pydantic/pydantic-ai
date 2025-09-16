@@ -29,6 +29,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -3027,3 +3028,57 @@ def test_deprecated_openai_model(openai_api_key: str):
 
         provider = OpenAIProvider(api_key=openai_api_key)
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
+
+
+@pytest.mark.vcr()
+async def test_openai_video_url_raises_not_implemented(openai_api_key: str, allow_model_requests: None) -> None:
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    with pytest.raises(NotImplementedError):
+        await model.request([ModelRequest(parts=[UserPromptPart(content=[VideoUrl(url='https://example.com/file.mp4')])])], {}, ModelRequestParameters())
+
+
+async def test_openai_map_single_item_unknown_returns_empty_branch(openai_api_key: str, allow_model_requests: None) -> None:
+    # Use BinaryContent with unsupported media_type to exercise empty mapping via public API
+
+    captured: list[list[dict[str, Any]]] = []
+
+    async def fake_create(*args: Any, **kwargs: Any):
+        captured.append(kwargs['messages'])
+        raise RuntimeError('stop-after-capture')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    model.client.chat.completions.create = fake_create  # type: ignore[assignment]
+
+    bc = BinaryContent(data=b'data', media_type='application/octet-stream')
+    with pytest.raises(RuntimeError, match='stop-after-capture'):
+        await model.request([ModelRequest(parts=[UserPromptPart(content=[bc])])], {}, ModelRequestParameters())
+
+    user_msgs = captured[0]
+    user = next(m for m in user_msgs if m.get('role') == 'user')
+    parts = cast(list[dict[str, Any]], user['content'])
+    assert parts == []
+
+
+async def test_openai_binary_content_unsupported_branch_returns_none_then_empty(
+    openai_api_key: str, allow_model_requests: None
+) -> None:
+    # Covers BinaryContent unsupported path (not text-like, not image/audio/document) via public API
+
+    captured: list[list[dict[str, Any]]] = []
+
+    async def fake_create(*args: Any, **kwargs: Any):
+        captured.append(kwargs['messages'])
+        raise RuntimeError('stop-after-capture')
+
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    model.client.chat.completions.create = fake_create  # type: ignore[assignment]
+
+    bc = BinaryContent(data=b'data', media_type='application/octet-stream')
+    with pytest.raises(RuntimeError, match='stop-after-capture'):
+        await model.request([ModelRequest(parts=[UserPromptPart(content=[bc])])], {}, ModelRequestParameters())
+
+    user_msgs = captured[0]
+    user = next(m for m in user_msgs if m.get('role') == 'user')
+    parts = cast(list[dict[str, Any]], user['content'])
+    assert parts == []

@@ -743,7 +743,6 @@ class OpenAIChatModel(Model):
     async def _map_single_item(item: object) -> list[ChatCompletionContentPartParam]:
         if isinstance(item, str):
             return [ChatCompletionContentPartTextParam(text=item, type='text')]
-        # Magic* no longer used; logic ported to base handlers
         handled = OpenAIChatModel._handle_image_url(item)
         if handled is not None:
             return handled
