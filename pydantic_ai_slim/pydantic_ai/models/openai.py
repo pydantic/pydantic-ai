@@ -844,11 +844,7 @@ class OpenAIChatModel(Model):
     @staticmethod
     def _inline_file_block(media_type: str, text: str, identifier: str | None) -> str:
         id_attr = f' id="{identifier}"' if identifier else ''
-        return ''.join([
-            '-----BEGIN FILE', id_attr, ' type="', media_type, '"-----\n',
-            text,
-            '\n-----END FILE-----'
-        ])
+        return ''.join(['-----BEGIN FILE', id_attr, ' type="', media_type, '"-----\n', text, '\n-----END FILE-----'])
 
 
 @deprecated(
