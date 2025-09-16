@@ -133,7 +133,7 @@ class FileUrl(ABC):
     )
 
     identifier: str | None = None
-    """Stable identifier for this file, used to correlate references in prompts and tool calls.
+    """The identifier of the file, such as a unique ID. generating one from the url if not explicitly set
 
     This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
     and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
