@@ -47,7 +47,13 @@ class Deps:
 
 
 chat_agent = Agent(
-    'openai:gpt-4.1', instructions='You are a helpful assistant.', deps_type=Deps
+    'openai:gpt-4.1',
+    deps_type=Deps,
+    instructions="""
+You are a helpful assistant.
+
+Always reply with markdown. ALWAYS use code fences for code examples and lines of code.
+""",
 )
 
 
@@ -71,7 +77,7 @@ async def retrieve_memories(ctx: RunContext[Deps], memory_contains: str) -> str:
         ctx.deps.user_id,
         f'%{memory_contains}%',
     )
-    return '\n'.join([row['value'] for row in rows])
+    return '\n'.join([row[0] for row in rows])
 
 
 starlette_chat = StarletteChat(chat_agent)

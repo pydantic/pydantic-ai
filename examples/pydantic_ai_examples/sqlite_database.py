@@ -57,10 +57,10 @@ class Database:
         if commit:
             await self._asyncify(self.con.commit)
 
-    async def fetchall(self, sql: LiteralString, *args: Any) -> list[dict[str, Any]]:
+    async def fetchall(self, sql: LiteralString, *args: Any) -> list[tuple[str, ...]]:
         c = await self._asyncify(self._execute, sql, *args)
         rows = await self._asyncify(c.fetchall)
-        return [dict(row) for row in rows]
+        return [tuple(row) for row in rows]
 
     def _execute(
         self, sql: LiteralString, *args: Any, commit: bool = False
