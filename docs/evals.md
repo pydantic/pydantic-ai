@@ -94,7 +94,7 @@ Dataset (1) ──────────── (Many) Case
     The key difference from traditional unit testing is that AI systems are
     probabilistic. If you're type checking you'll still get a simple pass/fail,
     but scores for text outputs are likely qualitative and/or categorical,
-    and more open to interpretation. Keep in mind that unlike unit test coverage reports, we are looking at  model behavior over the probabilistic space of user inputs, **not** coverage of source code.
+    and more open to interpretation.
 
 ## Datasets and Cases
 
