@@ -14,8 +14,7 @@ import pytest
 from httpx import AsyncClient
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai._run_context import RunContext
+from pydantic_ai import Agent, ModelSettings, RunContext
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -36,6 +35,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import cached_async_http_client
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RequestUsage
@@ -1635,3 +1635,23 @@ async def test_dbos_agent_with_model_retry(allow_model_requests: None, dbos: DBO
             ),
         ]
     )
+
+
+class CustomModelSettings(ModelSettings, total=False):
+    custom_setting: str
+
+
+def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(str(agent_info.model_settings))])
+
+
+model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
+model = FunctionModel(return_settings, settings=model_settings)
+
+settings_agent = Agent(model, name='settings_agent')
+settings_dbos_agent = DBOSAgent(settings_agent)
+
+
+async def test_custom_model_settings(allow_model_requests: None, dbos: DBOS):
+    result = await settings_dbos_agent.run('Give me those settings')
+    assert result.output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")
