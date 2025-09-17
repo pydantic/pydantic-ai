@@ -70,7 +70,7 @@ Dataset (1) ──────────── (Many) Case
 2. **Experiment execution**: Run `dataset.evaluate_sync(task_function)`
 3. **Cases run**: Each Case is executed against the Task
 4. **Evaluation**: Evaluators score the Task outputs for each Case
-5. **Results**: Experiment collects all Case results and returns a summary report
+5. **Results**: All Case results are collected into a summary report
 
 !!! note "A metaphor"
 
