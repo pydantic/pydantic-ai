@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, Generic
 
@@ -16,6 +19,8 @@ from .tools import ToolDefinition
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 from .usage import UsageLimits
 
+_sequential_tool_calls_ctx_var: ContextVar[bool] = ContextVar('sequential_tool_calls', default=False)
+
 
 @dataclass
 class ToolManager(Generic[AgentDepsT]):
@@ -29,6 +34,16 @@ class ToolManager(Generic[AgentDepsT]):
     """The cached tools for this run step."""
     failed_tools: set[str] = field(default_factory=set)
     """Names of tools that failed in this run step."""
+
+    @classmethod
+    @contextmanager
+    def sequential_tool_calls(cls) -> Iterator[None]:
+        """Run tool calls sequentially during the context."""
+        token = _sequential_tool_calls_ctx_var.set(True)
+        try:
+            yield
+        finally:
+            _sequential_tool_calls_ctx_var.reset(token)
 
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> ToolManager[AgentDepsT]:
         """Build a new tool manager for the next run step, carrying over the retries from the current run step."""
@@ -58,7 +73,9 @@ class ToolManager(Generic[AgentDepsT]):
 
     def should_call_sequentially(self, calls: list[ToolCallPart]) -> bool:
         """Whether to require sequential tool calls for a list of tool calls."""
-        return any(tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name)))
+        return _sequential_tool_calls_ctx_var.get() or any(
+            tool_def.sequential for call in calls if (tool_def := self.get_tool_def(call.tool_name))
+        )
 
     def get_tool_def(self, name: str) -> ToolDefinition | None:
         """Get the tool definition for a given tool name, or `None` if the tool is unknown."""

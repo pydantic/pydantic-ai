@@ -387,6 +387,7 @@ def test_logfire(
                                 'strict': None,
                                 'sequential': False,
                                 'kind': 'function',
+                                'metadata': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -780,6 +781,7 @@ def test_instructions_with_structured_output_exclude_content_v2(
                                 'strict': None,
                                 'sequential': False,
                                 'kind': 'output',
+                                'metadata': None,
                             }
                         ],
                         'allow_text_output': False,

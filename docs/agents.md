@@ -280,7 +280,6 @@ async def main():
     [
         UserPromptNode(
             user_prompt='What is the capital of France?',
-            instructions=None,
             instructions_functions=[],
             system_prompts=(),
             system_prompt_functions=[],
@@ -343,7 +342,6 @@ async def main():
         [
             UserPromptNode(
                 user_prompt='What is the capital of France?',
-                instructions=None,
                 instructions_functions=[],
                 system_prompts=(),
                 system_prompt_functions=[],
