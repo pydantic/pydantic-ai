@@ -161,11 +161,9 @@ dataset.add_evaluator(MyEvaluator())
 
 _(This example is complete, it can be run "as is")_
 
-## Run your Experiment
+## Running Experiments
 
-<!-- TODO: check this renaming makes sense? Do we need to add something about naming experiments with commit message in the config? IDK if this is anticipating a change that hasn't arrived in the library yet? -->
-
-This involves running a task against all cases in a dataset:
+Performing evaluations involves running a task against all cases in a dataset, also known as running an "experiment".
 
 Putting the above two examples together and using the more declarative `evaluators` kwarg to [`Dataset`][pydantic_evals.Dataset]:
 
