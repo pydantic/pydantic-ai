@@ -1602,18 +1602,18 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                     call_part, return_part = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_builtin_tool_call_part(
-                        vendor_part_id=chunk.item.id, part=call_part
+                        vendor_part_id=f'{chunk.item.id}-call', part=call_part
                     )
                     yield self._parts_manager.handle_builtin_tool_return_part(
-                        vendor_part_id=chunk.item.id, part=return_part
+                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
                     )
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_builtin_tool_call_part(
-                        vendor_part_id=chunk.item.id, part=call_part
+                        vendor_part_id=f'{chunk.item.id}-call', part=call_part
                     )
                     yield self._parts_manager.handle_builtin_tool_return_part(
-                        vendor_part_id=chunk.item.id, part=return_part
+                        vendor_part_id=f'{chunk.item.id}-return', part=return_part
                     )
 
             elif isinstance(chunk, responses.ResponseReasoningSummaryPartAddedEvent):
