@@ -86,7 +86,7 @@ Dataset (1) ──────────── (Many) Case
     evaluation criteria that should apply across all tests in the suite.
 
     - **Experiments** are like running your entire test suite and getting a
-    coverage report. When you execute `dataset.evaluate_sync(my_ai_function)`,
+    report. When you execute `dataset.evaluate_sync(my_ai_function)`,
     you're running all your cases against your AI system and
     collecting the results - just like running `pytest` and getting a
     summary of passes, failures, and performance metrics.
