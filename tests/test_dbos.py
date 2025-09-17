@@ -1033,17 +1033,16 @@ async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBO
     )
 
 
-async def simple_event_stream_handler(
-    ctx: RunContext[None],
-    stream: AsyncIterable[AgentStreamEvent],
-):
-    pass
-
-
 async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_requests: None, dbos: DBOS) -> None:
-    # DBOS workflow input must be serializable, so we cannot use a function as a dependency.
-    # Therefore, we cannot pass in an event stream handler as an argument.
-    with workflow_raises(TypeError, snapshot('Serialized data item should not be a function')):
+    # DBOS workflow input must be serializable, so we cannot use an inner function as an argument.
+    # It's fine to pass in an event_stream_handler that is defined as a top-level function.
+    async def simple_event_stream_handler(
+        ctx: RunContext[None],
+        stream: AsyncIterable[AgentStreamEvent],
+    ):
+        pass
+
+    with workflow_raises(TypeError, snapshot('Serialized function should be defined at the top level of a module')):
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
 
 
