@@ -66,7 +66,7 @@ Dataset (1) ──────────── (Many) Case
 
 ### Data Flow
 
-1. **Dataset creation**: Define case templates and evaluators in YAML/JSON
+1. **Dataset creation**: Define cases and evaluators in YAML/JSON, or directly in Python
 2. **Experiment execution**: Run `dataset.evaluate_sync(task_function)`
 3. **Cases run**: Each Case is executed against the Task
 4. **Evaluation**: Evaluators score the Task outputs for each Case
