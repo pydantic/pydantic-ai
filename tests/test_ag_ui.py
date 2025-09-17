@@ -20,8 +20,11 @@ from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -34,6 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import (
     AgentInfo,
+    BuiltinToolCallsReturns,
     DeltaThinkingCalls,
     DeltaThinkingPart,
     DeltaToolCall,
@@ -1378,10 +1382,27 @@ async def test_messages_from_ag_ui() -> None:
         ),
         AssistantMessage(
             id='msg_5',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|function|search_1',
+                    function=FunctionCall(
+                        name='web_search',
+                        arguments='{"query": "Hello, world!"}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_6',
+            content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+            tool_call_id='pyd_ai_builtin|function|search_1',
+        ),
+        AssistantMessage(
+            id='msg_7',
             content='Assistant message',
         ),
         AssistantMessage(
-            id='msg_6',
+            id='msg_8',
             tool_calls=[
                 ToolCall(
                     id='tool_call_1',
@@ -1393,7 +1414,7 @@ async def test_messages_from_ag_ui() -> None:
             ],
         ),
         AssistantMessage(
-            id='msg_7',
+            id='msg_9',
             tool_calls=[
                 ToolCall(
                     id='tool_call_2',
@@ -1405,21 +1426,21 @@ async def test_messages_from_ag_ui() -> None:
             ],
         ),
         ToolMessage(
-            id='msg_8',
+            id='msg_10',
             content='Tool message',
             tool_call_id='tool_call_1',
         ),
         ToolMessage(
-            id='msg_9',
+            id='msg_11',
             content='Tool message',
             tool_call_id='tool_call_2',
         ),
         UserMessage(
-            id='msg_10',
+            id='msg_12',
             content='User message',
         ),
         AssistantMessage(
-            id='msg_11',
+            id='msg_13',
             content='Assistant message',
         ),
     ]
@@ -1448,6 +1469,19 @@ async def test_messages_from_ag_ui() -> None:
             ),
             ModelResponse(
                 parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args='{"query": "Hello, world!"}',
+                        tool_call_id='search_1',
+                        provider_name='function',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+                        tool_call_id='search_1',
+                        timestamp=IsDatetime(),
+                        provider_name='function',
+                    ),
                     TextPart(content='Assistant message'),
                     ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
                     ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
@@ -1479,4 +1513,94 @@ async def test_messages_from_ag_ui() -> None:
                 timestamp=IsDatetime(),
             ),
         ]
+    )
+
+
+async def test_builtin_tool_call() -> None:
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        yield {
+            0: BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                args='{"query":',
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        yield {
+            0: DeltaToolCall(
+                name=WebSearchTool.kind,
+                json_args='"Hello world"}',
+                tool_call_id='search_1',
+            )
+        }
+        yield {
+            1: BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                content={
+                    'results': [
+                        {
+                            'title': '"Hello, World!" program',
+                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                        }
+                    ]
+                },
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert (
+        events
+        == snapshot(
+            [
+                {
+                    'type': 'RUN_STARTED',
+                    'threadId': (thread_id := IsSameStr()),
+                    'runId': (run_id := IsSameStr()),
+                },
+                {
+                    'type': 'TOOL_CALL_START',
+                    'toolCallId': 'pyd_ai_builtin|function|search_1',
+                    'toolCallName': 'web_search',
+                    'parentMessageId': (parent_message_id := IsSameStr()),
+                },
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '{"query":'},
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '"Hello world"}'},
+                {'type': 'TOOL_CALL_END', 'toolCallId': 'pyd_ai_builtin|function|search_1'},
+                {
+                    'type': 'TOOL_CALL_RESULT',
+                    'messageId': parent_message_id,  # TODO (DM): Is this right for built-in tool call results, or should it have a new message ID?
+                    'toolCallId': 'pyd_ai_builtin|function|search_1',
+                    'content': '{"results":[{"title":"\\"Hello, World!\\" program","url":"https://en.wikipedia.org/wiki/%22Hello,_World!%22_program"}]}',
+                    'role': 'tool',
+                },
+                {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+                {
+                    'type': 'TEXT_MESSAGE_CONTENT',
+                    'messageId': message_id,
+                    'delta': 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". ',
+                },
+                {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+                {
+                    'type': 'RUN_FINISHED',
+                    'threadId': thread_id,
+                    'runId': run_id,
+                },
+            ]
+        )
     )
