@@ -1498,6 +1498,9 @@ class FunctionToolResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@deprecated(
+    '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.'
+)
 @dataclass(repr=False)
 class BuiltinToolCallEvent:
     """An event indicating the start to a call to a built-in tool."""
@@ -1511,6 +1514,9 @@ class BuiltinToolCallEvent:
     """Event type identifier, used as a discriminator."""
 
 
+@deprecated(
+    '`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.'
+)
 @dataclass(repr=False)
 class BuiltinToolResultEvent:
     """An event indicating the result of a built-in tool call."""
@@ -1525,7 +1531,10 @@ class BuiltinToolResultEvent:
 
 
 HandleResponseEvent = Annotated[
-    FunctionToolCallEvent | FunctionToolResultEvent | BuiltinToolCallEvent | BuiltinToolResultEvent,
+    FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
+    | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""

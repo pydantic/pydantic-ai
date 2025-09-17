@@ -18,9 +18,9 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserErro
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
-    BuiltinToolCallEvent,
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
@@ -68,6 +68,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
@@ -410,7 +416,7 @@ print(result)\
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' -428,330,955.977')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='45.')),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args={
@@ -425,7 +431,7 @@ print(result)\
                     provider_name='google-gla',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
@@ -434,7 +440,7 @@ print(result)\
                     provider_name='google-gla',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args={
@@ -449,7 +455,7 @@ print(result)\
                     provider_name='google-gla',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'outcome': 'OUTCOME_OK', 'output': '-428330955.97745\n'},
@@ -1878,7 +1884,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
         ),
         pytest.param(
             ImageUrl(url='gs://pydantic-ai-dev/wikipedia_screenshot.png'),
-            "The main content of the URL is the Wikipedia homepage, featuring options to access Wikipedia in different languages and information about the number of articles in each ' It' also includes links to other Wikimedia projects and information about Wikipedia's host, the Wikimedia Foundation.\n",
+            "The main content of the URL is the Wikipedia homepage, featuring options to access Wikipedia in different languages and information about the number of articles in each language. It also includes links to other Wikimedia projects and information about Wikipedia's host, the Wikimedia Foundation.\n",
             id='ImageUrl (gs)',
         ),
         pytest.param(

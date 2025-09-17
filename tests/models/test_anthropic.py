@@ -19,9 +19,9 @@ from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
-    BuiltinToolCallEvent,
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
@@ -93,6 +93,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 # Type variable for generic AsyncStream
@@ -2856,7 +2862,7 @@ So for today, you can expect partly sunny to sunny skies with a\
             PartDeltaEvent(
                 index=16, delta=TextPartDelta(content_delta='aping up to be a pleasant day in San Francisco!')
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather today"}',
@@ -2864,7 +2870,7 @@ So for today, you can expect partly sunny to sunny skies with a\
                     provider_name='anthropic',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=[
@@ -2944,7 +2950,7 @@ So for today, you can expect partly sunny to sunny skies with a\
                     provider_name='anthropic',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args='{"query": "San Francisco weather September 16 2025"}',
@@ -2952,7 +2958,7 @@ So for today, you can expect partly sunny to sunny skies with a\
                     provider_name='anthropic',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=[
@@ -3669,7 +3675,7 @@ Here's how it breaks down following the order of operations:
                 ),
             ),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='1.02255 = -428,330,955.97745')),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args='{"code": "# Calculate the expression: 65465-6544 * 65464-6+1.02255\\n# Following order of operations (PEMDAS/BODMAS)\\n\\nexpression = \\"65465-6544 * 65464-6+1.02255\\"\\nprint(f\\"Expression: {expression}\\")\\n\\n# Let\'s break it down step by step\\nstep1 = 6544 * 65464  # Multiplication first\\nprint(f\\"Step 1 - Multiplication: 6544 * 65464 = {step1}\\")\\n\\nstep2 = 65465 - step1  # First subtraction\\nprint(f\\"Step 2 - First subtraction: 65465 - {step1} = {step2}\\")\\n\\nstep3 = step2 - 6  # Second subtraction\\nprint(f\\"Step 3 - Second subtraction: {step2} - 6 = {step3}\\")\\n\\nfinal_result = step3 + 1.02255  # Final addition\\nprint(f\\"Step 4 - Final addition: {step3} + 1.02255 = {final_result}\\")\\n\\n# Let\'s also verify with direct calculation\\ndirect_result = 65465-6544 * 65464-6+1.02255\\nprint(f\\"\\\\nDirect calculation: {direct_result}\\")\\nprint(f\\"Results match: {final_result == direct_result}\\")"}',
@@ -3677,7 +3683,7 @@ Here's how it breaks down following the order of operations:
                     provider_name='anthropic',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={
@@ -4676,7 +4682,7 @@ These stories represent major international diplomatic developments, significant
             ),
             PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' changes in the US, and major transportation')),
             PartDeltaEvent(index=21, delta=TextPartDelta(content_delta=' disruptions affecting North America.')),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args='{"query": "top world news today"}',
@@ -4684,7 +4690,7 @@ These stories represent major international diplomatic developments, significant
                     provider_name='anthropic',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=[
@@ -4764,7 +4770,7 @@ These stories represent major international diplomatic developments, significant
                     provider_name='anthropic',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args='{"query": "breaking news headlines August 14 2025"}',
@@ -4772,7 +4778,7 @@ These stories represent major international diplomatic developments, significant
                     provider_name='anthropic',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content=[

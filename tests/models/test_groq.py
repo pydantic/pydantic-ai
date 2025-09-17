@@ -19,9 +19,9 @@ from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavi
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BinaryContent,
-    BuiltinToolCallEvent,
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     FinalResultEvent,
     ImageUrl,
@@ -69,6 +69,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='groq not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
@@ -1727,7 +1733,7 @@ Score: 0.2700
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='-')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='94')),
             PartDeltaEvent(index=3, delta=TextPartDelta(content_delta='%.')),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'What is the weather in San Francisco today?'},
@@ -1735,7 +1741,7 @@ Score: 0.2700
                     provider_name='groq',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content={
@@ -5162,6 +5168,13 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ModelResponse(
                 parts=[
                     TextPart(content=''),
+                    ThinkingPart(
+                        content="""\
+The user requests to call the tool with non-existent parameters to test error handling. We need to call the function "get_something_by_name" with wrong parameters. The function expects a single argument object with "name". Non-existent parameters means we could provide a wrong key, or missing name. Let's provide an object with wrong key "nonexistent": "value". That should cause error. So we call the function with {"nonexistent": "test"}.
+
+We need to output the call.\
+"""
+                    ),
                     ToolCallPart(
                         tool_name='get_something_by_name',
                         args={'nonexistent': 'test'},
@@ -5200,6 +5213,7 @@ async def test_tool_use_failed_error_streaming(allow_model_requests: None, groq_
             ModelResponse(
                 parts=[
                     TextPart(content=''),
+                    ThinkingPart(content='We need to call with correct param: name. Use a placeholder name.'),
                     ToolCallPart(
                         tool_name='get_something_by_name',
                         args='{"name":"test_name"}',

@@ -12,9 +12,9 @@ from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
-    BuiltinToolCallEvent,
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
@@ -54,6 +54,12 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.anyio,
     pytest.mark.vcr,
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
@@ -1058,7 +1064,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' for the')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta=' cooler evening')),
             PartDeltaEvent(index=4, delta=TextPartDelta(content_delta='. ')),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
                     args={'query': 'weather: San Francisco, CA', 'type': 'search'},
@@ -1066,7 +1072,7 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     provider_name='openai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
                     content={'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}], 'status': 'completed'},
@@ -3171,7 +3177,7 @@ len(str(n))\
             PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='854')),
             PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='332')),
             PartDeltaEvent(index=7, delta=TextPartDelta(content_delta='416')),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args={
@@ -3185,7 +3191,7 @@ len(str(n))\
                     provider_name='openai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
@@ -3194,7 +3200,7 @@ len(str(n))\
                     provider_name='openai',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args={
@@ -3205,7 +3211,7 @@ len(str(n))\
                     provider_name='openai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},
@@ -3214,7 +3220,7 @@ len(str(n))\
                     provider_name='openai',
                 )
             ),
-            BuiltinToolCallEvent(
+            BuiltinToolCallEvent(  # pyright: ignore[reportDeprecated]
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
                     args={'code': 'n', 'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
@@ -3222,7 +3228,7 @@ len(str(n))\
                     provider_name='openai',
                 )
             ),
-            BuiltinToolResultEvent(
+            BuiltinToolResultEvent(  # pyright: ignore[reportDeprecated]
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
                     content={'status': 'completed'},

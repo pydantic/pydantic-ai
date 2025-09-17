@@ -558,9 +558,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
-                        yield _messages.BuiltinToolCallEvent(part)
+                        yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
-                        yield _messages.BuiltinToolResultEvent(part)
+                        yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         thinking_parts.append(part)
                     else:
