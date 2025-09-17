@@ -18,7 +18,7 @@ We've designed Pydantic Evals to be useful while not being too opinionated since
 
 ## Code-First Evaluation
 
-Pydantic Evals follows a **code-first approach** where you define all evaluation components (datasets, experiments, tasks, cases and evaluators) in Python code. This differs from platforms with fully web-based configuration.
+Pydantic Evals follows a **code-first approach** where you define all evaluation components (datasets, experiments, tasks, cases and evaluators) in Python code, or as serialized data loaded by Python code. This differs from platforms with fully web-based configuration.
 
 When you run an _Experiment_ you'll see results appear wherever you run your python code (IDE, terminal, etc) - send this data to any notebook or application for further visualisation and analysis.
 
