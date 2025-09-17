@@ -509,6 +509,7 @@ class GroqStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
+            executed_tool_call_id: str | None = None
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -524,8 +525,6 @@ class GroqStreamedResponse(StreamedResponse):
                     self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-                print(choice.delta)
-
                 if choice.delta.reasoning is not None:
                     # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
                     yield self._parts_manager.handle_thinking_delta(
@@ -534,11 +533,16 @@ class GroqStreamedResponse(StreamedResponse):
 
                 if choice.delta.executed_tools:
                     for tool in choice.delta.executed_tools:
-                        call_part, return_part = _map_executed_tool(tool, self.provider_name)
-                        if call_part and return_part:
+                        call_part, return_part = _map_executed_tool(
+                            tool, self.provider_name, streaming=True, tool_call_id=executed_tool_call_id
+                        )
+                        if call_part:
+                            executed_tool_call_id = call_part.tool_call_id
                             yield self._parts_manager.handle_builtin_tool_call_part(
                                 vendor_part_id=f'executed_tools-{tool.index}-call', part=call_part
                             )
+                        if return_part:
+                            executed_tool_call_id = None
                             yield self._parts_manager.handle_builtin_tool_return_part(
                                 vendor_part_id=f'executed_tools-{tool.index}-return', part=return_part
                             )
@@ -642,25 +646,34 @@ class _GroqToolUseFailedError(BaseModel):
 
 
 def _map_executed_tool(
-    tool: ExecutedTool, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    tool: ExecutedTool, provider_name: str, streaming: bool = False, tool_call_id: str | None = None
+) -> tuple[BuiltinToolCallPart | None, BuiltinToolReturnPart | None]:
     if tool.type == 'search':
-        tool_call_id = generate_tool_call_id()
-        return (
-            BuiltinToolCallPart(
-                tool_name=WebSearchTool.kind,
-                args=from_json(tool.arguments),
-                provider_name=provider_name,
-                tool_call_id=tool_call_id,
-            ),
-            BuiltinToolReturnPart(
-                tool_name=WebSearchTool.kind,
-                content=tool.search_results.model_dump(mode='json')
-                if (tool.search_results and (tool.search_results.images or tool.search_results.results))
-                else tool.output,
-                provider_name=provider_name,
-                tool_call_id=tool_call_id,
-            ),
+        if tool.search_results and (tool.search_results.images or tool.search_results.results):
+            results = tool.search_results.model_dump(mode='json')
+        else:
+            results = tool.output
+
+        tool_call_id = tool_call_id or generate_tool_call_id()
+        call_part = BuiltinToolCallPart(
+            tool_name=WebSearchTool.kind,
+            args=from_json(tool.arguments),
+            provider_name=provider_name,
+            tool_call_id=tool_call_id,
         )
+        return_part = BuiltinToolReturnPart(
+            tool_name=WebSearchTool.kind,
+            content=results,
+            provider_name=provider_name,
+            tool_call_id=tool_call_id,
+        )
+
+        if streaming:
+            if results:
+                return None, return_part
+            else:
+                return call_part, None
+        else:
+            return call_part, return_part
     else:
         return None, None

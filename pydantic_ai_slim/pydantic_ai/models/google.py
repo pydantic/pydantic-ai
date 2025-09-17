@@ -574,6 +574,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        code_execution_tool_call_id: str | None = None
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk)
 
@@ -587,14 +588,18 @@ class GeminiStreamedResponse(StreamedResponse):
                 self.provider_details = {'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
-            web_search_call, web_search_return = _map_grounding_metadata(
-                candidate.grounding_metadata, self.provider_name
-            )
-            if web_search_call and web_search_return:
-                yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=uuid4(), part=web_search_call)
-                yield self._parts_manager.handle_builtin_tool_return_part(
-                    vendor_part_id=uuid4(), part=web_search_return
-                )
+            # Google streams the grounding metadata (including the web search queries and results)
+            # _after_ the text that was generated using it, so it would show up out of order in the stream,
+            # and cause issues with the logic that doesn't consider text ahead of built-in tool calls as output.
+            # If that gets fixed (or we have a workaround), we can uncomment this:
+            # web_search_call, web_search_return = _map_grounding_metadata(
+            #     candidate.grounding_metadata, self.provider_name
+            # )
+            # if web_search_call and web_search_return:
+            #     yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=uuid4(), part=web_search_call)
+            #     yield self._parts_manager.handle_builtin_tool_return_part(
+            #         vendor_part_id=uuid4(), part=web_search_return
+            #     )
 
             if candidate.content is None or candidate.content.parts is None:
                 if candidate.finish_reason == 'STOP':  # pragma: no cover
@@ -606,7 +611,6 @@ class GeminiStreamedResponse(StreamedResponse):
                     raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
 
             parts = candidate.content.parts or []
-            code_execution_tool_call_id: str | None = None
             for part in parts:
                 if part.thought_signature:
                     signature = base64.b64encode(part.thought_signature).decode('utf-8')

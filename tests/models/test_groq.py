@@ -1307,25 +1307,6 @@ The weather in San Francisco today is partly cloudy with a temperature of 61°F 
                 index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content=None,
-                    tool_call_id=IsStr(),
-                    timestamp=IsDatetime(),
-                    provider_name='groq',
-                ),
-            ),
-            PartStartEvent(
-                index=1,
-                part=BuiltinToolCallPart(
-                    tool_name='web_search',
-                    args={'query': 'What is the weather in San Francisco today?'},
-                    tool_call_id=IsStr(),
-                    provider_name='groq',
-                ),
-            ),
-            PartStartEvent(
-                index=2,
-                part=BuiltinToolReturnPart(
-                    tool_name='web_search',
                     content={
                         'images': None,
                         'results': [
