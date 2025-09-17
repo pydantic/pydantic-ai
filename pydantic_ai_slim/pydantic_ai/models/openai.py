@@ -1250,12 +1250,12 @@ class OpenAIResponsesModel(Model):
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
-                                and item.metadata
-                                and (container_id := item.metadata.get('container_id'))
+                                and (args := item.args_as_dict())
+                                and (container_id := args.get('container_id'))
                             ):
                                 code_interpreter_item = responses.ResponseCodeInterpreterToolCallParam(
                                     id=item.tool_call_id,
-                                    code=cast(str | None, item.args),
+                                    code=args.get('code'),
                                     container_id=container_id,
                                     outputs=None,
                                     status='completed',
@@ -1265,11 +1265,11 @@ class OpenAIResponsesModel(Model):
                             elif (
                                 item.tool_name == WebSearchTool.kind
                                 and item.tool_call_id
-                                and isinstance(item.args, dict)
+                                and (args := item.args_as_dict())
                             ):  # pragma: no branch
                                 web_search_item = responses.ResponseFunctionWebSearchParam(
                                     id=item.tool_call_id,
-                                    action=cast(responses.response_function_web_search_param.Action, item.args),
+                                    action=cast(responses.response_function_web_search_param.Action, args),
                                     status='completed',
                                     type='web_search_call',
                                 )
@@ -1279,31 +1279,18 @@ class OpenAIResponsesModel(Model):
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
-                                and item.metadata
-                                and (status := item.metadata.get('status'))
+                                and isinstance(item.content, dict)
+                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (status := content.get('status'))
                             ):
-                                outputs: list[responses.response_code_interpreter_tool_call_param.Output] = []
-                                if isinstance(item.content, list):
-                                    for content in cast(list[str | ImageUrl], item.content):  # pyright: ignore[reportUnknownMemberType]
-                                        if isinstance(content, str):
-                                            outputs.append(
-                                                responses.response_code_interpreter_tool_call_param.OutputLogs(
-                                                    logs=content, type='logs'
-                                                )
-                                            )
-                                        elif isinstance(content, ImageUrl):
-                                            outputs.append(
-                                                responses.response_code_interpreter_tool_call_param.OutputImage(
-                                                    url=content.url, type='image'
-                                                )
-                                            )
-                                code_interpreter_item['outputs'] = outputs or None
+                                code_interpreter_item['outputs'] = content.get('outputs')
                                 code_interpreter_item['status'] = status
                             elif (
                                 item.tool_name == WebSearchTool.kind
                                 and web_search_item is not None
-                                and item.metadata
-                                and (status := item.metadata.get('status'))
+                                and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
+                                and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
+                                and (status := content.get('status'))
                             ):  # pragma: no branch
                                 web_search_item['status'] = status
                     elif isinstance(item, ThinkingPart):
@@ -1780,34 +1767,26 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
 def _map_code_interpreter_tool_call(
     item: responses.ResponseCodeInterpreterToolCall, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    content: list[str | ImageUrl] | None = None
-    if outputs := item.outputs:
-        content = []
-        for output in outputs:
-            if isinstance(output, responses.response_code_interpreter_tool_call.OutputLogs):
-                content.append(output.logs)
-            elif isinstance(output, responses.response_code_interpreter_tool_call.OutputImage):
-                content.append(ImageUrl(output.url))
-            else:
-                assert_never(output)
+    result: dict[str, Any] = {
+        'status': item.status,
+    }
+    if item.outputs:
+        result['outputs'] = [output.model_dump(mode='json') for output in item.outputs]
 
     return (
         BuiltinToolCallPart(
-            tool_name=CodeExecutionTool.kind or item.type,
+            tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
-            args=item.code,
-            metadata={
+            args={
+                'code': item.code,
                 'container_id': item.container_id,
             },
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
-            tool_name=CodeExecutionTool.kind or item.type,
+            tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
-            content=content,
-            metadata={
-                'status': item.status,
-            },
+            content=result,
             provider_name=provider_name,
         ),
     )
@@ -1816,32 +1795,29 @@ def _map_code_interpreter_tool_call(
 def _map_web_search_tool_call(
     item: responses.ResponseFunctionWebSearch, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    args = item.action.model_dump()
-    # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
-    args.pop('sources', None)
+    action = item.action
 
-    content: list[dict[str, Any]] | None = None
-    if (
-        (action := item.action)
-        and isinstance(action, responses.response_function_web_search.ActionSearch)
-        and (sources := action.sources)
-    ):
-        content = [source.model_dump() for source in sources]
+    args = action.model_dump(mode='json')
+    # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
+    sources = args.pop('sources', None)
+
+    result = {
+        'status': item.status,
+    }
+    if sources:
+        result['sources'] = sources
 
     return (
         BuiltinToolCallPart(
-            tool_name=WebSearchTool.kind or item.type,
+            tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
             args=args,
             provider_name=provider_name,
         ),
         BuiltinToolReturnPart(
-            tool_name=WebSearchTool.kind or item.type,
+            tool_name=WebSearchTool.kind,
             tool_call_id=item.id,
-            content=content,
-            metadata={
-                'status': item.status,
-            },
+            content=result,
             provider_name=provider_name,
         ),
     )

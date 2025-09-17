@@ -18,7 +18,7 @@ class AbstractBuiltinTool(ABC):
     The builtin tools are passed to the model as part of the `ModelRequestParameters`.
     """
 
-    kind: str | None = None
+    kind: str = 'unknown_builtin_tool'
     """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
 
 
@@ -83,7 +83,7 @@ class WebSearchTool(AbstractBuiltinTool):
     * Anthropic
     """
 
-    kind: str | None = 'web_search'
+    kind: str = 'web_search'
     """The kind of tool."""
 
 
@@ -119,7 +119,7 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     """
 
-    kind: str | None = 'code_execution'
+    kind: str = 'code_execution'
     """The kind of tool."""
 
 
@@ -131,5 +131,5 @@ class UrlContextTool(AbstractBuiltinTool):
     * Google
     """
 
-    kind: str | None = 'url_context'
+    kind: str = 'url_context'
     """The kind of tool."""

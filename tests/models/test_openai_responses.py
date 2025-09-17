@@ -468,9 +468,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aaab56508195a1effa9583720d20',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -488,9 +487,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aab0c534819593df0190332e7aa3',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -511,9 +509,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aab597f48195ac7021b00e057308',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -534,9 +531,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aabe83a88195b7a5ec62ec10a26e',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -554,9 +550,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac378308195aca61a302c5ebae6',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -574,9 +569,8 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0e3d55e9502941380068c4aac9b92081958054d2ec8fabe63f',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -671,9 +665,8 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_028829e50fbcad090068c9c8306aec8195ae9451d32175ed69',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -730,9 +723,8 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_028829e50fbcad090068c9c83e3a648195a241c1a97eddfee8',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -799,9 +791,8 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0b385a0fdc82fd920068c4aaf7037081978e951ac15bf07978',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -869,9 +860,8 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ws_0b4f29854724a3120068c4ab0f070c8191b903ff534320cb64',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -946,9 +936,11 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=[{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                        content={
+                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'status': 'completed',
+                        },
                         tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -1003,9 +995,8 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content=[{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                    content={'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}], 'status': 'completed'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
@@ -1078,9 +1069,8 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
             BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='web_search',
-                    content=[{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                    content={'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}], 'status': 'completed'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
@@ -1116,9 +1106,11 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     ),
                     BuiltinToolReturnPart(
                         tool_name='web_search',
-                        content=[{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                        content={
+                            'sources': [{'type': 'api', 'url': None, 'name': 'oai-weather'}],
+                            'status': 'completed',
+                        },
                         tool_call_id='ws_00a60507bf41223d0068c9d31b6aec81a09d9e568afa7b59aa',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -2457,26 +2449,33 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args="""\
+                        args={
+                            'code': """\
 n = pow(123456, 123)
 len_str = len(str(n))
 len_str, str(n)[:50], str(n)[-50:]\
 """,
+                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
-                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=[
-                            """\
+                        content={
+                            'outputs': [
+                                dict(
+                                    logs="""\
 (627,
  '18030210630404480750814092786593857280734268863855',
  '29749134489643622579100908331839817426366854332416')\
-"""
-                        ],
+""",
+                                    type='logs',
+                                )
+                            ],
+                            'status': 'completed',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -2488,21 +2487,28 @@ len_str, str(n)[:50], str(n)[-50:]\
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args="""\
+                        args={
+                            'code': """\
 str_n = str(n)
 str_n[:200]\
 """,
+                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
-                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=[
-                            "'18030210630404480750814092786593857280734268863855968048844015985795850236081373250219782696986322573087163043641979475893207435038036769764981462654292660266470727587426920177774391231319751632369022'"
-                        ],
+                        content={
+                            'outputs': [
+                                dict(
+                                    logs="'18030210630404480750814092786593857280734268863855968048844015985795850236081373250219782696986322573087163043641979475893207435038036769764981462654292660266470727587426920177774391231319751632369022'",
+                                    type='logs',
+                                )
+                            ],
+                            'status': 'completed',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -2555,71 +2561,90 @@ str_n[:200]\
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args="""\
+                        args={
+                            'code': """\
 n = pow(123456, 124)
 str_n = str(n)
 len(str_n)\
 """,
+                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
-                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=['632'],
+                        content={'outputs': [dict(logs='632', type='logs')], 'status': 'completed'},
                         tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='str_n[:200]',
+                        args={
+                            'code': 'str_n[:200]',
+                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
-                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=[
-                            "'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499'"
-                        ],
+                        content={
+                            'outputs': [
+                                dict(
+                                    logs="'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499'",
+                                    type='logs',
+                                )
+                            ],
+                            'status': 'completed',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='str_n[-200:]',
+                        args={
+                            'code': 'str_n[-200:]',
+                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
-                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=[
-                            "'67296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'"
-                        ],
+                        content={
+                            'outputs': [
+                                dict(
+                                    logs="'67296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
+                                    type='logs',
+                                )
+                            ],
+                            'status': 'completed',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='str_n',
+                        args={'code': 'str_n', 'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
-                        metadata={'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=[
-                            "'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'"
-                        ],
+                        content={
+                            'outputs': [
+                                dict(
+                                    logs="'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
+                                    type='logs',
+                                )
+                            ],
+                            'status': 'completed',
+                        },
                         tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -2685,49 +2710,49 @@ async def test_openai_responses_thinking_with_code_execution_tool_stream(
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args="""\
+                        args={
+                            'code': """\
 n = pow(123456, 123)
 len(str(n))\
 """,
+                            'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
+                        },
                         tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                        metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='str(n)[:100], str(n)[-100:]',
+                        args={
+                            'code': 'str(n)[:100], str(n)[-100:]',
+                            'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
+                        },
                         tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                        metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
-                        args='n',
+                        args={'code': 'n', 'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                         tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                        metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content=None,
+                        content={'status': 'completed'},
                         tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                        metadata={'status': 'completed'},
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
@@ -2866,12 +2891,14 @@ I\
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args="""\
+                    args={
+                        'code': """\
 n = pow(123456, 123)
 len(str(n))\
 """,
+                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
+                    },
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 ),
             ),
@@ -2879,9 +2906,8 @@ len(str(n))\
                 index=2,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content=None,
+                    content={'status': 'completed'},
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
@@ -2890,9 +2916,11 @@ len(str(n))\
                 index=3,
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='str(n)[:100], str(n)[-100:]',
+                    args={
+                        'code': 'str(n)[:100], str(n)[-100:]',
+                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
+                    },
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 ),
             ),
@@ -2900,9 +2928,8 @@ len(str(n))\
                 index=4,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content=None,
+                    content={'status': 'completed'},
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
@@ -2911,9 +2938,8 @@ len(str(n))\
                 index=5,
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='n',
+                    args={'code': 'n', 'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 ),
             ),
@@ -2921,9 +2947,8 @@ len(str(n))\
                 index=6,
                 part=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content=None,
+                    content={'status': 'completed'},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 ),
@@ -3149,21 +3174,22 @@ len(str(n))\
             BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args="""\
+                    args={
+                        'code': """\
 n = pow(123456, 123)
 len(str(n))\
 """,
+                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
+                    },
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content=None,
+                    content={'status': 'completed'},
                     tool_call_id='ci_68c3509faff0819e96f6d45e6faf78490f2d670b80edc507',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
@@ -3171,18 +3197,19 @@ len(str(n))\
             BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='str(n)[:100], str(n)[-100:]',
+                    args={
+                        'code': 'str(n)[:100], str(n)[-100:]',
+                        'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e',
+                    },
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content=None,
+                    content={'status': 'completed'},
                     tool_call_id='ci_68c350a41d2c819ebb23bdfb9ff322770f2d670b80edc507',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
@@ -3190,18 +3217,16 @@ len(str(n))\
             BuiltinToolCallEvent(
                 part=BuiltinToolCallPart(
                     tool_name='code_execution',
-                    args='n',
+                    args={'code': 'n', 'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    metadata={'container_id': 'cntr_68c3509aa0348191ad0bfefe24878dbb0deaa35a4e39052e'},
                     provider_name='openai',
                 )
             ),
             BuiltinToolResultEvent(
                 result=BuiltinToolReturnPart(
                     tool_name='code_execution',
-                    content=None,
+                    content={'status': 'completed'},
                     tool_call_id='ci_68c350a5e1f8819eb082eccb870199ec0f2d670b80edc507',
-                    metadata={'status': 'completed'},
                     timestamp=IsDatetime(),
                     provider_name='openai',
                 )
