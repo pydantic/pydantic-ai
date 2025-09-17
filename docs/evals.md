@@ -124,7 +124,7 @@ Evaluators analyze and score the results of your Task when tested against a Case
 
 These can be a classic unit test: deterministic, code-based checks, such as testing model output format with a regex, or checking for the appearance of PII or sensitive data. Alternatively Evaluators can assess the non-deterministic model outputs for qualities like accuracy, precision/recall, hallucinations or instruction-following.
 
-While both kinds of testing are necessary and useful in LLM systems, classical code-based tests are cheaper and easier than tests which require either human or machine review of model outputs. We encourage you to look for quick wins of this type, when setting up a test framework for your system.
+While both kinds of testing are useful in LLM systems, classical code-based tests are cheaper and easier than tests which require either human or machine review of model outputs. We encourage you to look for quick wins of this type, when setting up a test framework for your system.
 
 Pydantic Evals includes several built-in evaluators and allows you to define custom evaluators:
 
