@@ -20,7 +20,7 @@ We've designed Pydantic Evals to be useful while not being too opinionated since
 
 Pydantic Evals follows a **code-first approach** where you define all evaluation components (datasets, experiments, tasks, cases and evaluators) in Python code, or as serialized data loaded by Python code. This differs from platforms with fully web-based configuration.
 
-When you run an _Experiment_ you'll see results appear wherever you run your python code (IDE, terminal, etc) - send this data to any notebook or application for further visualisation and analysis.
+When you run an _Experiment_ you'll see a progress indicator and can print the results wherever you run your python code (IDE, terminal, etc). You also get a report object back that you can serialize and store or send to a notebook or other application for further visualization and analysis.
 
 If you are using [Pydantic Logfire](https://logfire.pydantic.dev/docs/guides/web-ui/evals/), your experiment results automatically appear in the Logfire web interface for visualization, comparison, and collaborative analysis. Logfire serves as a read-only observability layer - you write and run evals in code, then view and analyze results in the web UI.
 
