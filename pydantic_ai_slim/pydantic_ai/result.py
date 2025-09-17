@@ -163,7 +163,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
             return cast(OutputDataT, deferred_tool_requests)
         elif isinstance(self._output_schema, TextOutputSchema):
-            text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
+            text = ''.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
 
             result_data = await self._output_schema.process(
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False

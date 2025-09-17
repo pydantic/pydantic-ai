@@ -659,7 +659,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         output_schema = ctx.deps.output_schema
 
-        text = '\n\n'.join(texts)
+        text = ''.join(texts)
         try:
             run_context = build_run_context(ctx)
             if isinstance(output_schema, _output.TextOutputSchema):
