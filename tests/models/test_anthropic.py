@@ -3717,19 +3717,11 @@ async def test_anthropic_server_tool_pass_history_to_another_provider(
 
     result = await agent.run('What day is today?')
     assert result.output == snapshot("""\
-Let me search to find today's date.
-
 Based on the search results, today is Thursday, August 14, 2025. Here are some additional details about the date:
 
-
-
-It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year
-
-.
+It is the 226th day of the year 2025 in the Gregorian calendar, with 139 days remaining until the end of the year.
 
 Some interesting observances for today include:
-
-
 It's being celebrated as:
 - Color Book Day
 - National Creamsicle Day
@@ -4861,4 +4853,174 @@ These stories represent major international diplomatic developments, significant
                 )
             ),
         ]
+    )
+
+
+async def test_anthropic_text_parts_ahead_of_built_in_tool_call(allow_model_requests: None, anthropic_api_key: str):
+    # Verify that text parts ahead of the built-in tool call are not included in the output
+
+    anthropic_model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(anthropic_model, builtin_tools=[WebSearchTool()], instructions='Be very concise.')
+
+    result = await agent.run('Briefly mention 1 event that happened today in history?')
+    assert result.output == snapshot("""\
+Here's one significant historical event that occurred on September 17:
+
+In 1939, Finnish runner Taisto Mäki made history by becoming the first person to run 10,000 meters in less than 30 minutes, completing the distance in 29 minutes and 52 seconds.\
+""")
+
+    async with agent.run_stream('Briefly mention 1 event that happened tomorrow in history?') as result:
+        chunks = [c async for c in result.stream_output(debounce_by=None)]
+        assert chunks == snapshot(
+            [
+                'Let',
+                'Let me search for a significant',
+                'Let me search for a significant historical event that occurred on',
+                'Let me search for a significant historical event that occurred on September 18th.',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                '',
+                'Here',
+                "Here's one notable historical event that occurred on September",
+                "Here's one notable historical event that occurred on September 18th: ",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marke",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
+                "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally.",
+            ]
+        )
+
+    assert await result.get_output() == snapshot(
+        "Here's one notable historical event that occurred on September 18th: On September 18, 1793, President George Washington marked the location for the Capitol Building in Washington DC, and he would return periodically to oversee its construction personally."
+    )
+
+    async with agent.run_stream('Briefly mention 1 event that happened yesterday in history?') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None)]
+        assert chunks == snapshot(
+            [
+                'Let',
+                'Let me search for a historical',
+                'Let me search for a historical event that occurred on September',
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since",
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17,",
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025",
+                "Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Base\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), \
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, \
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, an\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristoc\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat\
+""",
+                """\
+Let me search for a historical event that occurred on September 16th (yesterday's date since today is September 17, 2025).
+
+Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat.\
+""",
+            ]
+        )
+
+    assert await result.get_output() == snapshot(
+        "Based on yesterday's date (September 16, 2025), Asian markets rose higher as Federal Reserve rate cut hopes lifted global market sentiment. Additionally, there were severe rain and gales impacting parts of New Zealand, and a notable court case involving a British aristocrat."
+    )
+
+    async with agent.run_stream('Briefly mention 1 event that happened the day after tomorrow in history?') as result:
+        chunks = [c async for c in result.stream_text(debounce_by=None, delta=True)]
+        assert chunks == snapshot(
+            [
+                'Let',
+                ' me search for historical',
+                ' events that occurred on',
+                ' September 19th.',
+                """\
+
+
+""",
+                'Here',
+                "'s one significant historical event that occurred on September",
+                ' 19th: ',
+                'New Zealand made history by becoming the first self-governing nation to grant women the right',
+                ' to vote in national elections. It',
+                ' would take 27 more',
+                ' years before American women gained the',
+                ' same right.',
+            ]
+        )
+
+    assert await result.get_output() == snapshot(
+        "Here's one significant historical event that occurred on September 19th: New Zealand made history by becoming the first self-governing nation to grant women the right to vote in national elections. It would take 27 more years before American women gained the same right."
     )

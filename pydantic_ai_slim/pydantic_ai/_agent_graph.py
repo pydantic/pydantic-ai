@@ -545,18 +545,19 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             # Ensure that the stream is only run once
 
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
-                texts: list[str] = []
+                text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
                 thinking_parts: list[_messages.ThinkingPart] = []
 
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
-                        # ignore empty content for text parts, see #437
-                        if part.content:
-                            texts.append(part.content)
+                        text += part.content
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
                     elif isinstance(part, _messages.BuiltinToolCallPart):
+                        # Text parts before a built-in tool call are essentially thoughts,
+                        # not part of the final result output, so we reset the accumulated text
+                        text = ''
                         yield _messages.BuiltinToolCallEvent(part)
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
                         yield _messages.BuiltinToolResultEvent(part)
@@ -572,9 +573,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 if tool_calls:
                     async for event in self._handle_tool_calls(ctx, tool_calls):
                         yield event
-                elif texts:
+                elif text:
                     # No events are emitted during the handling of text responses, so we don't need to yield anything
-                    self._next_node = await self._handle_text_response(ctx, texts)
+                    self._next_node = await self._handle_text_response(ctx, text)
                 elif thinking_parts:
                     # handle thinking-only responses (responses that contain only ThinkingPart instances)
                     # this can happen with models that support thinking mode when they don't provide
@@ -593,9 +594,16 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
                         for message in reversed(ctx.state.message_history):
                             if isinstance(message, _messages.ModelResponse):
-                                last_texts = [p.content for p in message.parts if isinstance(p, _messages.TextPart)]
-                                if last_texts:
-                                    self._next_node = await self._handle_text_response(ctx, last_texts)
+                                text = ''
+                                for part in message.parts:
+                                    if isinstance(part, _messages.TextPart):
+                                        text += part.content
+                                    elif isinstance(part, _messages.BuiltinToolCallPart):
+                                        # Text parts before a built-in tool call are essentially thoughts,
+                                        # not part of the final result output, so we reset the accumulated text
+                                        text = ''
+                                if text:
+                                    self._next_node = await self._handle_text_response(ctx, text)
                                     return
 
                     raise exceptions.UnexpectedModelBehavior('Received empty model response')
@@ -655,11 +663,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
     async def _handle_text_response(
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        texts: list[str],
+        text: str,
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         output_schema = ctx.deps.output_schema
-
-        text = '\n\n'.join(texts)
         try:
             run_context = build_run_context(ctx)
             if isinstance(output_schema, _output.TextOutputSchema):
