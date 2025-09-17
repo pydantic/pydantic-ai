@@ -135,8 +135,9 @@ class AgentWorker(Worker[Sequence[ModelMessage]], Generic[WorkerOutputT, AgentDe
         await self.storage.update_task(task['id'], state='working')
 
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
-        message_history = await self.storage.load_context(task['context_id']) or []
-        message_history.extend(self.build_message_history(task.get('history', [])))
+        context_history = await self.storage.load_context(task['context_id']) or []
+        task_history = self.build_message_history(task.get('history', []))
+        message_history = list(context_history) + list(task_history)
 
         try:
             result = await self.agent.run(message_history=message_history)  # type: ignore
@@ -196,8 +197,8 @@ class AgentWorker(Worker[Sequence[ModelMessage]], Generic[WorkerOutputT, AgentDe
             json_schema = type_adapter.json_schema(mode='serialization')
             return DataPart(kind='data', data={'result': data}, metadata={'json_schema': json_schema})
 
-    def build_message_history(self, history: list[Message]) -> Sequence[ModelMessage]:
-        model_messages: Sequence[ModelMessage] = []
+    def build_message_history(self, history: list[Message]) -> list[ModelMessage]:
+        model_messages: list[ModelMessage] = []
         for message in history:
             if message['role'] == 'user':
                 model_messages.append(ModelRequest(parts=self._request_parts_from_a2a(message['parts'])))

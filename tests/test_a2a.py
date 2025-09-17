@@ -530,7 +530,7 @@ async def test_a2a_multiple_tasks_same_context():
 
     def track_messages(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Store a copy of the messages received by the model
-        messages_received.append(messages.copy())
+        messages_received.append(list(messages))
         # Return the standard response
         assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'

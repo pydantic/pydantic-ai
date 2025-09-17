@@ -30,7 +30,7 @@ def received_messages() -> list[ModelMessage]:
 
 
 @pytest.fixture
-def function_model(received_messages: Sequence[ModelMessage]) -> FunctionModel:
+def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
     def capture_model_function(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Capture the messages that the provider actually receives
         received_messages.clear()
@@ -45,9 +45,9 @@ def function_model(received_messages: Sequence[ModelMessage]) -> FunctionModel:
     return FunctionModel(capture_model_function, stream_function=capture_model_stream_function)
 
 
-async def test_history_processor_no_op(function_model: FunctionModel, received_messages: Sequence[ModelMessage]):
+async def test_history_processor_no_op(function_model: FunctionModel, received_messages: list[ModelMessage]):
     def no_op_history_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
-        return messages
+        return list(messages)
 
     agent = Agent(function_model, history_processors=[no_op_history_processor])
 
@@ -84,13 +84,13 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
 
 
 async def test_history_processor_run_replaces_message_history(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+    function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """Test that the history processor replaces the message history in the state."""
 
     def process_previous_answers(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Keep the last message (last question) and add a new system prompt
-        return messages[-1:] + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
+        return list(messages[-1:]) + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
 
     agent = Agent(function_model, history_processors=[process_previous_answers])
 
@@ -137,13 +137,13 @@ async def test_history_processor_run_replaces_message_history(
 
 
 async def test_history_processor_streaming_replaces_message_history(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+    function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """Test that the history processor replaces the message history in the state."""
 
     def process_previous_answers(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Keep the last message (last question) and add a new system prompt
-        return messages[-1:] + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
+        return list(messages[-1:]) + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
 
     agent = Agent(function_model, history_processors=[process_previous_answers])
 
@@ -192,7 +192,7 @@ async def test_history_processor_streaming_replaces_message_history(
 
 
 async def test_history_processor_messages_sent_to_provider(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+    function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """Test what messages are actually sent to the provider after processing."""
 
@@ -384,9 +384,7 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_on_streamed_run(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
-):
+async def test_history_processor_on_streamed_run(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """Test that history processors work on streamed runs."""
 
     async def async_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -513,7 +511,7 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
 
 
 async def test_history_processor_with_context_async(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+    function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     """Test async history processor that takes RunContext."""
 
@@ -565,9 +563,7 @@ async def test_history_processor_with_context_async(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_mixed_signatures(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
-):
+async def test_history_processor_mixed_signatures(function_model: FunctionModel, received_messages: list[ModelMessage]):
     """Test mixing processors with and without context."""
 
     def simple_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -651,9 +647,7 @@ async def test_history_processor_mixed_signatures(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_replace_messages(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
-):
+async def test_history_processor_replace_messages(function_model: FunctionModel, received_messages: list[ModelMessage]):
     history: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Original message')]),
         ModelResponse(parts=[TextPart(content='Original response')]),
@@ -704,9 +698,7 @@ async def test_history_processor_replace_messages(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_empty_history(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
-):
+async def test_history_processor_empty_history(function_model: FunctionModel, received_messages: list[ModelMessage]):
     def return_new_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return []
 
@@ -717,7 +709,7 @@ async def test_history_processor_empty_history(
 
 
 async def test_history_processor_history_ending_in_response(
-    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+    function_model: FunctionModel, received_messages: list[ModelMessage]
 ):
     def return_new_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return [ModelResponse(parts=[TextPart(content='Provider response')])]

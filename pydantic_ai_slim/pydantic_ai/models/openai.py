@@ -1128,7 +1128,7 @@ class OpenAIResponsesModel(Model):
         if previous_response_id and trimmed_messages:
             return previous_response_id, list(reversed(trimmed_messages))
         else:
-            return None, messages
+            return None, list(messages)
 
     async def _map_messages(  # noqa: C901
         self, messages: Sequence[ModelMessage], model_settings: OpenAIResponsesModelSettings

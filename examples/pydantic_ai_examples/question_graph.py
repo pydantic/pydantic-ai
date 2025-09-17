@@ -7,7 +7,6 @@ Run with:
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,8 +33,8 @@ ask_agent = Agent('openai:gpt-4o', output_type=str)
 @dataclass
 class QuestionState:
     question: str | None = None
-    ask_agent_messages: Sequence[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: Sequence[ModelMessage] = field(default_factory=list)
+    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
+    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
 
 
 @dataclass
@@ -45,7 +44,7 @@ class Ask(BaseNode[QuestionState]):
             'Ask a simple question with a single correct answer.',
             message_history=ctx.state.ask_agent_messages,
         )
-        ctx.state.ask_agent_messages += result.all_messages()
+        ctx.state.ask_agent_messages.extend(result.all_messages())
         ctx.state.question = result.output
         return Answer(result.output)
 
@@ -86,7 +85,7 @@ class Evaluate(BaseNode[QuestionState, None, str]):
             format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
             message_history=ctx.state.evaluate_agent_messages,
         )
-        ctx.state.evaluate_agent_messages += result.all_messages()
+        ctx.state.evaluate_agent_messages.extend(result.all_messages())
         if result.output.correct:
             return End(result.output.comment)
         else:

@@ -1640,7 +1640,7 @@ class HitlAgentWorkflow:
 
     @workflow.run
     async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
-        messages: list[ModelRequest] = [ModelRequest.user_text_prompt(prompt)]
+        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         while True:
             result = await hitl_temporal_agent.run(
                 message_history=messages, deferred_tool_results=self._deferred_tool_results
