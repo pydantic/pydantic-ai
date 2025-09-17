@@ -56,14 +56,13 @@ Dataset (1) ──────────── (Many) Case
 
 ### Key Relationships
 
-1. **Dataset → Cases**: One Dataset contains many Cases (composition)
-2. **Dataset → Experiments**: One Dataset can be used in many Experiments
-   over time (aggregation)
+1. **Dataset → Cases**: One Dataset contains many Cases
+2. **Dataset → Experiments**: One Dataset can be used across many Experiments
+   over time
 3. **Experiment → Case results**: One Experiment generates results by
    executing each Case
 4. **Experiment → Task**: One Experiment evaluates one defined Task
-5. **Experiment → Evaluators**: One Experiment uses multiple Evaluators (dataset-level + case-specific)
-6. **Case results → Evaluators**: Individual Case results are scored by both dataset-level evaluators and case-specific evaluators (if they exist)
+5. **Experiment → Evaluators**: One Experiment uses multiple Evaluators. Dataset-wide Evaluators are run against all Cases, and Case-specific Evaluators against their respective Cases
 
 ### Data Flow
 
