@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Sequence
 
 import anyio
 import httpx
@@ -36,7 +37,7 @@ pytestmark = [
 ]
 
 
-def return_string(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+def return_string(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
     assert info.output_tools is not None
     args_json = '{"response": ["foo", "bar"]}'
     return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -52,7 +53,7 @@ class UserProfile(BaseModel):
     email: str
 
 
-def return_pydantic_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+def return_pydantic_model(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
     assert info.output_tools is not None
     args_json = '{"name": "John Doe", "age": 30, "email": "john@example.com"}'
     return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -488,7 +489,7 @@ async def test_a2a_file_message_with_data():
 async def test_a2a_error_handling():
     """Test that errors during task execution properly update task state."""
 
-    def raise_error(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def raise_error(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise RuntimeError('Test error during agent execution')
 
     error_model = FunctionModel(raise_error)
@@ -527,7 +528,7 @@ async def test_a2a_multiple_tasks_same_context():
 
     messages_received: list[list[ModelMessage]] = []
 
-    def track_messages(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def track_messages(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Store a copy of the messages received by the model
         messages_received.append(messages.copy())
         # Return the standard response
@@ -634,7 +635,7 @@ async def test_a2a_multiple_tasks_same_context():
 async def test_a2a_thinking_response():
     """Test that ModelResponse messages with ThinkingPart are properly handled."""
 
-    def return_thinking_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_thinking_response(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         # Create a response with thinking part and text part
         return ModelResponse(

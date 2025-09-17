@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 import warnings
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -170,7 +170,7 @@ class InstrumentationSettings:
                 **tokens_histogram_kwargs,  # pyright: ignore
             )
 
-    def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
+    def messages_to_otel_events(self, messages: Sequence[ModelMessage]) -> list[Event]:
         """Convert a list of model messages to OpenTelemetry events.
 
         Args:
@@ -208,7 +208,7 @@ class InstrumentationSettings:
             event.body = InstrumentedModel.serialize_any(event.body)
         return events
 
-    def messages_to_otel_messages(self, messages: list[ModelMessage]) -> list[_otel_messages.ChatMessage]:
+    def messages_to_otel_messages(self, messages: Sequence[ModelMessage]) -> list[_otel_messages.ChatMessage]:
         result: list[_otel_messages.ChatMessage] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -227,7 +227,7 @@ class InstrumentationSettings:
                 result.append(otel_message)
         return result
 
-    def handle_messages(self, input_messages: list[ModelMessage], response: ModelResponse, system: str, span: Span):
+    def handle_messages(self, input_messages: Sequence[ModelMessage], response: ModelResponse, system: str, span: Span):
         if self.version == 1:
             events = self.messages_to_otel_events(input_messages)
             for event in self.messages_to_otel_events([response]):
@@ -327,7 +327,7 @@ class InstrumentedModel(WrapperModel):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -339,7 +339,7 @@ class InstrumentedModel(WrapperModel):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -358,7 +358,7 @@ class InstrumentedModel(WrapperModel):
     @contextmanager
     def _instrument(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> Iterator[Callable[[ModelResponse], None]]:

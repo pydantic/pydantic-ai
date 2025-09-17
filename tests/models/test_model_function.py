@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict
 from datetime import timezone
 
@@ -30,11 +30,11 @@ from ..conftest import IsNow, IsStr
 pytestmark = pytest.mark.anyio
 
 
-def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+def hello(_messages: Sequence[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('hello world')])  # pragma: no cover
 
 
-async def stream_hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+async def stream_hello(_messages: Sequence[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
     yield 'hello '  # pragma: no cover
     yield 'world'  # pragma: no cover
 
@@ -50,7 +50,7 @@ def test_init() -> None:
     assert m2.model_name == 'function:hello:stream_hello'
 
 
-async def return_last(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+async def return_last(messages: Sequence[ModelMessage], _: AgentInfo) -> ModelResponse:
     last = messages[-1].parts[-1]
     response = asdict(last)
     response.pop('timestamp', None)
@@ -96,7 +96,7 @@ def test_simple():
     )
 
 
-async def weather_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
+async def weather_model(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
     assert info.allow_text_output
     assert {t.name for t in info.function_tools} == {'get_location', 'get_weather'}
     last = messages[-1].parts[-1]
@@ -201,7 +201,7 @@ def test_weather():
     assert result.output == 'Sunny in Ipswich'
 
 
-async def call_function_model(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: lax no cover
+async def call_function_model(messages: Sequence[ModelMessage], _: AgentInfo) -> ModelResponse:  # pragma: lax no cover
     last = messages[-1].parts[-1]
     if isinstance(last, UserPromptPart):
         if isinstance(last.content, str) and last.content.startswith('{'):
@@ -239,7 +239,7 @@ def test_var_args():
     )
 
 
-async def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+async def call_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         assert len(info.function_tools) == 1
         tool_name = info.function_tools[0].name
@@ -326,7 +326,7 @@ def spam() -> str:
 
 
 def test_register_all():
-    async def f(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def f(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
                 TextPart(
@@ -394,7 +394,7 @@ def test_call_all():
 def test_retry_str():
     call_count = 0
 
-    async def try_again(msgs_: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+    async def try_again(msgs_: Sequence[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
@@ -416,7 +416,7 @@ def test_retry_str():
 def test_retry_result_type():
     call_count = 0
 
-    async def try_again(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+    async def try_again(messages: Sequence[ModelMessage], _: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
@@ -438,7 +438,7 @@ def test_retry_result_type():
     assert result.output == snapshot(Foo(x=2))
 
 
-async def stream_text_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+async def stream_text_function(_messages: Sequence[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
     yield 'hello '
     yield 'world'
 
@@ -467,7 +467,7 @@ class Foo(BaseModel):
 
 async def test_stream_structure():
     async def stream_structured_function(
-        _messages: list[ModelMessage], agent_info: AgentInfo
+        _messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.output_tools is not None
         assert len(agent_info.output_tools) == 1
@@ -498,7 +498,7 @@ async def test_pass_both():
     Agent(FunctionModel(return_last, stream_function=stream_text_function))
 
 
-async def stream_text_function_empty(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+async def stream_text_function_empty(_messages: Sequence[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
     if False:
         yield 'hello '
 

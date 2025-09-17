@@ -7,6 +7,7 @@ Run with:
 
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,8 +34,8 @@ ask_agent = Agent('openai:gpt-4o', output_type=str)
 @dataclass
 class QuestionState:
     question: str | None = None
-    ask_agent_messages: list[ModelMessage] = field(default_factory=list)
-    evaluate_agent_messages: list[ModelMessage] = field(default_factory=list)
+    ask_agent_messages: Sequence[ModelMessage] = field(default_factory=list)
+    evaluate_agent_messages: Sequence[ModelMessage] = field(default_factory=list)
 
 
 @dataclass

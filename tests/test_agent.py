@@ -2,7 +2,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import Any, Literal, Union
@@ -64,7 +64,7 @@ pytestmark = pytest.mark.anyio
 
 
 def test_result_tuple():
-    def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_tuple(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -80,7 +80,7 @@ class Person(BaseModel):
 
 
 def test_result_list_of_models_with_stringified_response():
-    def return_list(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_list(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         # Simulate providers that return the nested payload as a JSON string under "response"
         args_json = json.dumps(
@@ -112,7 +112,7 @@ class Foo(BaseModel):
 
 
 def test_result_pydantic_model():
-    def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_model(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"a": 1, "b": "foo"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -125,7 +125,7 @@ def test_result_pydantic_model():
 
 
 def test_result_pydantic_model_retry():
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_model(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": "wrong", "b": "foo"}'
@@ -189,7 +189,7 @@ def test_result_pydantic_model_retry():
 
 
 def test_result_pydantic_model_validation_error():
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_model(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 1, "b": "foo"}'
@@ -243,7 +243,7 @@ Fix the errors and try again.""")
 
 
 def test_output_validator():
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_model(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         if len(messages) == 1:
             args_json = '{"a": 41, "b": "foo"}'
@@ -306,7 +306,7 @@ def test_output_validator():
 def test_plain_response_then_tuple():
     call_index = 0
 
-    def return_tuple(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_tuple(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_index
 
         assert info.output_tools is not None
@@ -694,7 +694,7 @@ def test_output_type_function():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -734,7 +734,7 @@ def test_output_type_function_with_run_context():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -775,7 +775,7 @@ def test_output_type_bound_instance_method():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -817,7 +817,7 @@ def test_output_type_bound_instance_method_with_run_context():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -856,7 +856,7 @@ def test_output_type_function_with_retry():
             raise ModelRetry('City not found, I only know Mexico City')
         return Weather(temperature=28.7, description='sunny')
 
-    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         if len(messages) == 1:
@@ -938,7 +938,7 @@ def test_output_type_text_output_function_with_retry():
             raise ModelRetry('City not found, I only know Mexico City')
         return Weather(temperature=28.7, description='sunny')
 
-    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         if len(messages) == 1:
@@ -1014,7 +1014,7 @@ def test_output_type_async_function():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -1053,7 +1053,7 @@ def test_output_type_function_with_custom_tool_name():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -1092,7 +1092,7 @@ def test_output_type_function_or_model():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -1133,7 +1133,7 @@ def test_output_type_function_or_model():
 
 
 def test_output_type_text_output_function():
-    def say_world(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def say_world(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='world')])
 
     agent = Agent(FunctionModel(say_world), output_type=TextOutput(upcase))
@@ -1167,7 +1167,7 @@ def test_output_type_handoff_to_agent():
     def get_weather(city: str) -> Weather:
         return Weather(temperature=28.7, description='sunny')
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         args_json = '{"city": "Mexico City"}'
@@ -1183,7 +1183,7 @@ def test_output_type_handoff_to_agent():
         handoff_result = result
         return result.output
 
-    def call_handoff_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_handoff_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         args_json = '{"city": "Mexico City"}'
@@ -1274,7 +1274,7 @@ def test_output_type_multiple_custom_tools():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -1348,7 +1348,7 @@ def test_output_type_structured_dict():
 
     output_tools = None
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         nonlocal output_tools
@@ -1394,7 +1394,7 @@ def test_output_type_structured_dict():
 
 
 def test_default_structured_output_mode():
-    def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def hello(_: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover
 
     tool_model = FunctionModel(hello, profile=ModelProfile(default_structured_output_mode='tool'))
@@ -1421,7 +1421,7 @@ def test_default_structured_output_mode():
 
 
 def test_prompted_output():
-    def return_city_location(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def return_city_location(_: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         text = CityLocation(city='Mexico City', country='Mexico').model_dump_json()
         return ModelResponse(parts=[TextPart(content=text)])
 
@@ -1468,7 +1468,7 @@ Don't include any text or Markdown fencing before or after.\
 
 
 def test_prompted_output_with_template():
-    def return_foo(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def return_foo(_: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         text = Foo(bar='baz').model_dump_json()
         return ModelResponse(parts=[TextPart(content=text)])
 
@@ -1534,7 +1534,7 @@ def test_prompted_output_with_defs():
         foo: Foo
         baz: Baz
 
-    def return_foo_bar(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def return_foo_bar(_: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         text = '{"result": {"kind": "FooBar", "data": {"foo": {"foo": "foo"}, "bar": {"bar": "bar"}}}}'
         return ModelResponse(parts=[TextPart(content=text)])
 
@@ -1581,7 +1581,7 @@ Don't include any text or Markdown fencing before or after.\
 
 
 def test_native_output():
-    def return_city_location(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def return_city_location(messages: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             text = '{"city": "Mexico City"}'
         else:
@@ -1664,7 +1664,7 @@ def test_prompted_output_function_with_retry():
             raise ModelRetry('City not found, I only know Mexico City')
         return Weather(temperature=28.7, description='sunny')
 
-    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         if len(messages) == 1:
@@ -2010,7 +2010,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
     async def system_prompt(ctx: RunContext) -> str:
         return f'System prompt: user prompt length = {len(ctx.prompt or [])}'
 
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelRequest(
             parts=[
                 SystemPromptPart(content='System prompt', dynamic_ref=system_prompt.__qualname__),
@@ -2062,7 +2062,7 @@ def test_run_with_history_ending_on_model_request_and_no_user_prompt():
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_prompt():
     """Test that an agent run with message_history ending on ModelResponse starts with CallToolsNode."""
 
-    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def simple_response(_messages: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='Final response')])
 
     agent = Agent(FunctionModel(simple_response))
@@ -2117,7 +2117,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_no_user_p
 def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prompt():
     """Test that an agent run raises error when message_history ends on ModelResponse with tool calls and there's a new prompt."""
 
-    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def simple_response(_messages: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
 
     agent = Agent(FunctionModel(simple_response))
@@ -2137,7 +2137,7 @@ def test_run_with_history_ending_on_model_response_with_tool_calls_and_user_prom
 def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_prompt():
     """Test that an agent run raises error when message_history ends on ModelResponse without tool calls or a new prompt."""
 
-    def simple_response(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def simple_response(_messages: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='Final response')])  # pragma: no cover
 
     agent = Agent(FunctionModel(simple_response))
@@ -2169,7 +2169,7 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
 
 
 def test_empty_tool_calls():
-    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def empty(_: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[])
 
     agent = Agent(FunctionModel(empty))
@@ -2179,7 +2179,7 @@ def test_empty_tool_calls():
 
 
 def test_unknown_tool():
-    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def empty(_: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[ToolCallPart('foobar', '{}')])
 
     agent = Agent(FunctionModel(empty))
@@ -2217,7 +2217,7 @@ def test_unknown_tool():
 
 
 def test_unknown_tool_fix():
-    def empty(m: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def empty(m: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         if len(m) > 1:
             return ModelResponse(parts=[TextPart('success')])
         else:
@@ -2377,7 +2377,7 @@ class TestMultipleToolCalls:
         """Test that 'early' strategy stops processing regular tools after first final result."""
         tool_called = []
 
-        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def return_model(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
@@ -2448,7 +2448,7 @@ class TestMultipleToolCalls:
     def test_early_strategy_uses_first_final_result(self):
         """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
-        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def return_model(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
@@ -2485,7 +2485,7 @@ class TestMultipleToolCalls:
         """Test that 'exhaustive' strategy executes all tools while using first final result."""
         tool_called: list[str] = []
 
-        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def return_model(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
@@ -2594,7 +2594,7 @@ class TestMultipleToolCalls:
         """Test that 'early' strategy stops at first final result, regardless of position."""
         tool_called = []
 
-        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def return_model(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
@@ -2715,7 +2715,7 @@ class TestMultipleToolCalls:
     def test_multiple_final_result_are_validated_correctly(self):
         """Tests that if multiple final results are returned, but one fails validation, the other is used."""
 
-        def return_model(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def return_model(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
             assert info.output_tools is not None
             return ModelResponse(
                 parts=[
@@ -2752,7 +2752,7 @@ class TestMultipleToolCalls:
 
 
 async def test_model_settings_override() -> None:
-    def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_settings(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
 
     my_agent = Agent(FunctionModel(return_settings))
@@ -2765,7 +2765,7 @@ async def test_model_settings_override() -> None:
 
 
 async def test_empty_text_part():
-    def return_empty_text(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_empty_text(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"response": ["foo", "bar"]}'
         return ModelResponse(
@@ -2784,7 +2784,7 @@ async def test_empty_text_part():
 def test_heterogeneous_responses_non_streaming() -> None:
     """Indicates that tool calls are prioritized over text in heterogeneous responses."""
 
-    def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_model(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         parts: list[ModelResponsePart] = []
         if len(messages) == 1:
@@ -3364,7 +3364,7 @@ def test_tool_return_part_binary_content_serialization():
 def test_tool_returning_binary_content_directly():
     """Test that a tool returning BinaryContent directly works correctly."""
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('get_image', {})])
         else:
@@ -3386,7 +3386,7 @@ def test_tool_returning_binary_content_directly():
 def test_tool_returning_binary_content_with_identifier():
     """Test that a tool returning BinaryContent directly works correctly."""
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('get_image', {})])
         else:
@@ -3430,7 +3430,7 @@ def test_tool_returning_binary_content_with_identifier():
 def test_tool_returning_file_url_with_identifier():
     """Test that a tool returning FileUrl subclasses with identifiers works correctly."""
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('get_files', {})])
         else:
@@ -3613,7 +3613,7 @@ You are a potato.\
 
 
 def test_empty_final_response():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('foo'), ToolCallPart('my_tool', {'x': 1})])
         elif len(messages) == 3:
@@ -3696,7 +3696,7 @@ def test_agent_repr() -> None:
 
 
 def test_tool_call_with_validation_value_error_serializable():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('foo_tool', {'bar': 0})])
         elif len(messages) == 3:
@@ -3743,7 +3743,7 @@ def test_unsupported_output_mode():
     class Foo(BaseModel):
         bar: str
 
-    def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+    def hello(_: Sequence[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('hello')])  # pragma: no cover
 
     model = FunctionModel(hello, profile=ModelProfile(supports_tools=False, supports_json_schema_output=False))
@@ -3762,7 +3762,7 @@ def test_unsupported_output_mode():
 def test_multimodal_tool_response():
     """Test ToolReturn with custom content and tool return."""
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
@@ -3842,7 +3842,7 @@ def test_multimodal_tool_response():
 def test_plain_tool_response():
     """Test ToolReturn with custom content and tool return."""
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
@@ -3909,7 +3909,7 @@ def test_plain_tool_response():
 def test_many_multimodal_tool_response():
     """Test ToolReturn with custom content and tool return."""
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
@@ -3946,7 +3946,7 @@ def test_many_multimodal_tool_response():
 def test_multimodal_tool_response_nested():
     """Test ToolReturn with custom content and tool return."""
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[TextPart('Starting analysis'), ToolCallPart('analyze_data', {})])
         else:
@@ -4109,7 +4109,7 @@ def test_toolset_factory():
         toolset_creation_counts['via_toolsets_arg'] += 1
         return toolset.prefixed('via_toolsets_arg')
 
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def respond(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('via_toolsets_arg_foo')])
         elif len(messages) == 3:
@@ -4151,7 +4151,7 @@ def test_adding_tools_during_run():
         toolset.add_function(foo)
         return 'foo tool added'
 
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def respond(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('add_foo_tool')])
         elif len(messages) == 3:
@@ -4347,7 +4347,7 @@ def test_parallel_mcp_calls():
     except ImportError:  # pragma: lax no cover
         pytest.skip('mcp is not installed')
 
-    async def call_tools_parallel(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def call_tools_parallel(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
@@ -4368,7 +4368,7 @@ def test_parallel_mcp_calls():
 def test_sequential_calls(mode: Literal['argument', 'contextmanager']):
     """Test that tool calls are executed correctly when a `sequential` tool is present in the call."""
 
-    async def call_tools_sequential(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def call_tools_sequential(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
                 ToolCallPart(tool_name='call_first'),
@@ -4526,7 +4526,7 @@ async def test_thinking_only_response_retry():
 
     call_count = 0
 
-    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def model_function(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
 
@@ -4588,7 +4588,7 @@ async def test_thinking_only_response_retry():
 
 
 async def test_hitl_tool_approval():
-    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def model_function(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
@@ -4772,7 +4772,7 @@ async def test_hitl_tool_approval():
 async def test_run_with_deferred_tool_results_errors():
     agent = Agent('test')
 
-    message_history: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])])]
+    message_history: Sequence[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=['Hello', 'world'])])]
 
     with pytest.raises(
         UserError,
@@ -4784,7 +4784,7 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
-    message_history: list[ModelMessage] = [
+    message_history: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[TextPart(content='Hello to you too!')]),
     ]
@@ -4799,7 +4799,7 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
-    message_history: list[ModelMessage] = [
+    message_history: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(parts=[ToolCallPart(tool_name='say_hello')]),
     ]
@@ -4830,7 +4830,7 @@ async def test_run_with_deferred_tool_results_errors():
             deferred_tool_results=DeferredToolResults(approvals={'create_file': True}),
         )
 
-    message_history: list[ModelMessage] = [
+    message_history: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello')]),
         ModelResponse(
             parts=[
@@ -4880,9 +4880,9 @@ def test_tool_requires_approval_error():
 
 
 async def test_consecutive_model_responses_in_history():
-    received_messages: list[ModelMessage] | None = None
+    received_messages: Sequence[ModelMessage] | None = None
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal received_messages
         received_messages = messages
         return ModelResponse(
@@ -4891,7 +4891,7 @@ async def test_consecutive_model_responses_in_history():
             ]
         )
 
-    history: list[ModelMessage] = [
+    history: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Hello...')]),
         ModelResponse(parts=[TextPart(content='...world!')]),
         ModelResponse(parts=[TextPart(content='Anything else I can help with?')]),

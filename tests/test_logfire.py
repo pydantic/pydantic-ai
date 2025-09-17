@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -1129,7 +1129,7 @@ def test_output_type_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -1190,7 +1190,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
         assert ctx is not None
         return WeatherInfo(temperature=28.7, description='sunny')
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -1254,7 +1254,7 @@ def test_output_type_function_with_retry_logfire_attributes(
             raise ModelRetry('City not found, I only know Mexico City')
         return WeatherInfo(temperature=28.7, description='sunny')
 
-    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         if len(messages) == 1:
@@ -1345,7 +1345,7 @@ def test_output_type_function_with_custom_tool_name_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -1413,7 +1413,7 @@ def test_output_type_bound_instance_method_logfire_attributes(
 
     weather = Weather(temperature=28.7, description='sunny')
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -1480,7 +1480,7 @@ def test_output_type_bound_instance_method_with_run_context_logfire_attributes(
 
     weather = Weather(temperature=28.7, description='sunny')
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -1542,7 +1542,7 @@ def test_output_type_async_function_logfire_attributes(
     async def get_weather_async(city: str) -> WeatherInfo:
         return WeatherInfo(temperature=28.7, description='sunny')
 
-    def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
@@ -1606,7 +1606,7 @@ def test_text_output_function_logfire_attributes(
 ) -> None:
     """Test logfire attributes for TextOutput functions (PlainTextOutputProcessor)."""
 
-    def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_text_response(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Return a plain text response (not a tool call)
         from pydantic_ai.messages import TextPart
 
@@ -1671,7 +1671,7 @@ def test_prompted_output_function_logfire_attributes(
 
     call_count = 0
 
-    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal call_count
         call_count += 1
         # Simulate the model returning JSON that will be parsed and used to call the function
@@ -1742,7 +1742,7 @@ def test_output_type_text_output_function_with_retry_logfire_attributes(
             raise ModelRetry('City not found, I only know Mexico City')
         return WeatherInfo(temperature=28.7, description='sunny')
 
-    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_tool(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
 
         if len(messages) == 1:

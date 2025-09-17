@@ -150,7 +150,7 @@ class GeminiModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -165,7 +165,7 @@ class GeminiModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -191,7 +191,7 @@ class GeminiModel(Model):
     @asynccontextmanager
     async def _make_request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         streamed: bool,
         model_settings: GeminiModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -311,7 +311,7 @@ class GeminiModel(Model):
         )
 
     async def _message_to_gemini_content(
-        self, messages: list[ModelMessage]
+        self, messages: Sequence[ModelMessage]
     ) -> tuple[list[_GeminiTextPart], list[_GeminiContent]]:
         sys_prompt_parts: list[_GeminiTextPart] = []
         contents: list[_GeminiContent] = []

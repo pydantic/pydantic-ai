@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -73,7 +73,7 @@ class DBOSModel(WrapperModel):
             **self.step_config,
         )
         async def wrapped_request_step(
-            messages: list[ModelMessage],
+            messages: Sequence[ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:
@@ -87,7 +87,7 @@ class DBOSModel(WrapperModel):
             **self.step_config,
         )
         async def wrapped_request_stream_step(
-            messages: list[ModelMessage],
+            messages: Sequence[ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
             run_context: RunContext[Any] | None = None,
@@ -109,7 +109,7 @@ class DBOSModel(WrapperModel):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -118,7 +118,7 @@ class DBOSModel(WrapperModel):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,

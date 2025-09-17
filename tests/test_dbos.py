@@ -4,7 +4,7 @@ import asyncio
 import os
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1056,7 +1056,7 @@ async def test_dbos_agent_override_deps_in_workflow(allow_model_requests: None, 
 async def test_dbos_model_stream_direct(allow_model_requests: None, dbos: DBOS):
     @DBOS.workflow()
     async def run_model_stream():
-        messages: list[ModelMessage] = [ModelRequest.user_text_prompt('What is the capital of Mexico?')]
+        messages: Sequence[ModelMessage] = [ModelRequest.user_text_prompt('What is the capital of Mexico?')]
         async with model_request_stream(complex_dbos_agent.model, messages) as stream:
             async for _ in stream:
                 pass
@@ -1205,7 +1205,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
     # Main loop for the agent, keep running until we get a final string output.
     @DBOS.workflow()
     async def hitl_main_loop(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
-        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        messages: Sequence[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         deferred_tool_results: DeferredToolResults | None = None
         while True:
             result = await hitl_dbos_agent.run(message_history=messages, deferred_tool_results=deferred_tool_results)
@@ -1335,7 +1335,7 @@ def test_dbos_agent_with_hitl_tool_sync(allow_model_requests: None, dbos: DBOS):
     # Main loop for the agent, keep running until we get a final string output.
     @DBOS.workflow()
     def hitl_main_loop_sync(prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
-        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        messages: Sequence[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         deferred_tool_results: DeferredToolResults | None = None
         while True:
             result = hitl_dbos_agent.run_sync(message_history=messages, deferred_tool_results=deferred_tool_results)

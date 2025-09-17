@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -161,7 +161,7 @@ class HuggingFaceModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -175,7 +175,7 @@ class HuggingFaceModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -189,7 +189,7 @@ class HuggingFaceModel(Model):
     @overload
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[True],
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -198,7 +198,7 @@ class HuggingFaceModel(Model):
     @overload
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[False],
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -206,7 +206,7 @@ class HuggingFaceModel(Model):
 
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: bool,
         model_settings: HuggingFaceModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -314,7 +314,7 @@ class HuggingFaceModel(Model):
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     async def _map_messages(
-        self, messages: list[ModelMessage]
+        self, messages: Sequence[ModelMessage]
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
         hf_messages: list[ChatCompletionInputMessage | ChatCompletionOutputMessage] = []

@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
@@ -160,7 +160,7 @@ class CohereModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -171,7 +171,7 @@ class CohereModel(Model):
 
     async def _chat(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: CohereModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> V2ChatResponse:
@@ -231,7 +231,7 @@ class CohereModel(Model):
             provider_details=provider_details,
         )
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[ChatMessageV2]:
+    def _map_messages(self, messages: Sequence[ModelMessage]) -> list[ChatMessageV2]:
         """Just maps a `pydantic_ai.Message` to a `cohere.ChatMessageV2`."""
         cohere_messages: list[ChatMessageV2] = []
         for message in messages:

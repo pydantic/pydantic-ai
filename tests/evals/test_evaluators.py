@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -120,7 +121,7 @@ async def test_llm_judge_serialization():
     class MyModel(Model):
         async def request(
             self,
-            messages: list[ModelMessage],
+            messages: Sequence[ModelMessage],
             model_settings: ModelSettings | None,
             model_request_parameters: ModelRequestParameters,
         ) -> ModelResponse:

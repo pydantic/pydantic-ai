@@ -4,6 +4,7 @@ In this scenario, a group of agents work together to find flights for a user.
 """
 
 import datetime
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -180,7 +181,7 @@ async def main():
         req_destination='ANC',
         req_date=datetime.date(2025, 1, 10),
     )
-    message_history: list[ModelMessage] | None = None
+    message_history: Sequence[ModelMessage] | None = None
     usage: RunUsage = RunUsage()
     # run the agent until a satisfactory flight is found
     while True:
@@ -213,7 +214,7 @@ async def main():
 
 
 async def find_seat(usage: RunUsage) -> SeatPreference:
-    message_history: list[ModelMessage] | None = None
+    message_history: Sequence[ModelMessage] | None = None
     while True:
         answer = Prompt.ask('What seat would you like?')
 

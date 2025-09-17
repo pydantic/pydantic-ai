@@ -1,6 +1,6 @@
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from typing import Annotated, Any, Literal
 
@@ -114,7 +114,7 @@ async def google_style_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     return f'{foo} {bar}'
 
 
-async def get_json_schema(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+async def get_json_schema(_messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(info.function_tools) == 1:
         r = info.function_tools[0]
         return ModelResponse(parts=[TextPart(pydantic_core.to_json(r).decode())])
@@ -828,7 +828,7 @@ def test_tool_name():
 
 
 def test_dynamic_tool_use_messages():
-    async def repeat_call_foobar(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def repeat_call_foobar(_messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if info.function_tools:
             tool = info.function_tools[0]
             return ModelResponse(parts=[ToolCallPart(tool.name, {'x': 42, 'y': 'a'})])
@@ -992,7 +992,7 @@ def test_json_schema_required_parameters():
 
 
 def test_call_tool_without_unrequired_parameters():
-    async def call_tools_first(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def call_tools_first(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
@@ -1308,7 +1308,7 @@ def test_tool_raises_call_deferred():
 
 
 def test_tool_raises_approval_required():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
@@ -1452,9 +1452,9 @@ def test_output_type_empty():
 
 
 def test_parallel_tool_return_with_deferred():
-    final_received_messages: list[ModelMessage] | None = None
+    final_received_messages: Sequence[ModelMessage] | None = None
 
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[
@@ -1812,7 +1812,7 @@ def test_parallel_tool_return_with_deferred():
 
 
 def test_deferred_tool_call_approved_fails():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
             parts=[
                 ToolCallPart('foo', {'x': 0}, tool_call_id='foo'),
@@ -1845,7 +1845,7 @@ def test_deferred_tool_call_approved_fails():
 
 
 async def test_approval_required_toolset():
-    def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
                 parts=[

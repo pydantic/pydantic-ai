@@ -115,7 +115,7 @@ def agent_to_a2a(
 
 
 @dataclass
-class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]):
+class AgentWorker(Worker[Sequence[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]):
     """A worker that uses an agent to execute tasks."""
 
     agent: AbstractAgent[AgentDepsT, WorkerOutputT]
@@ -196,8 +196,8 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
             json_schema = type_adapter.json_schema(mode='serialization')
             return DataPart(kind='data', data={'result': data}, metadata={'json_schema': json_schema})
 
-    def build_message_history(self, history: list[Message]) -> list[ModelMessage]:
-        model_messages: list[ModelMessage] = []
+    def build_message_history(self, history: list[Message]) -> Sequence[ModelMessage]:
+        model_messages: Sequence[ModelMessage] = []
         for message in history:
             if message['role'] == 'user':
                 model_messages.append(ModelRequest(parts=self._request_parts_from_a2a(message['parts'])))

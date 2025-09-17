@@ -9,7 +9,7 @@ from __future__ import annotations as _annotations
 import base64
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime
@@ -416,7 +416,7 @@ class Model(ABC):
     @abstractmethod
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -425,7 +425,7 @@ class Model(ABC):
 
     async def count_tokens(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
@@ -436,7 +436,7 @@ class Model(ABC):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -505,7 +505,7 @@ class Model(ABC):
         return None
 
     @staticmethod
-    def _get_instructions(messages: list[ModelMessage]) -> str | None:
+    def _get_instructions(messages: Sequence[ModelMessage]) -> str | None:
         """Get instructions from the first ModelRequest found when iterating messages in reverse.
 
         In the case that a "mock" request was generated to include a tool-return part for a result tool,

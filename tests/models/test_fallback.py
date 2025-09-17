@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import timezone
 from typing import Any
 
@@ -32,11 +32,11 @@ with try_import() as logfire_imports_successful:
 pytestmark = pytest.mark.anyio
 
 
-def success_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+def success_response(_model_messages: Sequence[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('success')])
 
 
-def failure_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+def failure_response(_model_messages: Sequence[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
 
 
@@ -405,12 +405,16 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     )
 
 
-async def success_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+async def success_response_stream(
+    _model_messages: Sequence[ModelMessage], _agent_info: AgentInfo
+) -> AsyncIterator[str]:
     yield 'hello '
     yield 'world'
 
 
-async def failure_response_stream(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> AsyncIterator[str]:
+async def failure_response_stream(
+    _model_messages: Sequence[ModelMessage], _agent_info: AgentInfo
+) -> AsyncIterator[str]:
     # Note: today we can only handle errors that are raised before the streaming begins
     raise ModelHTTPError(status_code=500, model_name='test-function-model', body={'error': 'test error'})
     yield 'uh oh... '
@@ -506,7 +510,7 @@ async def test_fallback_condition_override() -> None:
 class PotatoException(Exception): ...
 
 
-def potato_exception_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
+def potato_exception_response(_model_messages: Sequence[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     raise PotatoException()
 
 
@@ -522,7 +526,7 @@ async def test_fallback_condition_tuple() -> None:
 async def test_fallback_model_settings_merge():
     """Test that FallbackModel properly merges model settings from wrapped model and runtime settings."""
 
-    def return_settings(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def return_settings(_: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(to_json(info.model_settings).decode())])
 
     base_model = FunctionModel(return_settings, settings=ModelSettings(temperature=0.1, max_tokens=1024))
@@ -557,7 +561,7 @@ async def test_fallback_model_settings_merge():
 async def test_fallback_model_settings_merge_streaming():
     """Test that FallbackModel properly merges model settings in streaming mode."""
 
-    async def return_settings_stream(_: list[ModelMessage], info: AgentInfo):
+    async def return_settings_stream(_: Sequence[ModelMessage], info: AgentInfo):
         # Yield the merged settings as JSON to verify they were properly combined
         yield to_json(info.model_settings).decode()
 

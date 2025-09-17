@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import typing
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -259,7 +259,7 @@ class BedrockConverseModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -271,7 +271,7 @@ class BedrockConverseModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -341,7 +341,7 @@ class BedrockConverseModel(Model):
     @overload
     async def _messages_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[True],
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -351,7 +351,7 @@ class BedrockConverseModel(Model):
     @overload
     async def _messages_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[False],
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -360,7 +360,7 @@ class BedrockConverseModel(Model):
 
     async def _messages_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: bool,
         model_settings: BedrockModelSettings | None,
         model_request_parameters: ModelRequestParameters,
@@ -441,7 +441,7 @@ class BedrockConverseModel(Model):
         return tool_config
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage]
+        self, messages: Sequence[ModelMessage]
     ) -> tuple[list[SystemContentBlockTypeDef], list[MessageUnionTypeDef]]:
         """Maps a `pydantic_ai.Message` to the Bedrock `MessageUnionTypeDef`.
 

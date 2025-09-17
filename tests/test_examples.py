@@ -509,7 +509,7 @@ tool_responses: dict[tuple[str, str], str] = {
 
 
 async def model_logic(  # noqa: C901
-    messages: list[ModelMessage], info: AgentInfo
+    messages: Sequence[ModelMessage], info: AgentInfo
 ) -> ModelResponse:  # pragma: lax no cover
     m = messages[-1].parts[-1]
     if isinstance(m, UserPromptPart):
@@ -795,7 +795,7 @@ async def model_logic(  # noqa: C901
 
 
 async def stream_model_logic(  # noqa C901
-    messages: list[ModelMessage], info: AgentInfo
+    messages: Sequence[ModelMessage], info: AgentInfo
 ) -> AsyncIterator[str | DeltaToolCalls]:  # pragma: lax no cover
     async def stream_text_response(r: str) -> AsyncIterator[str]:
         if isinstance(r, str):
@@ -860,7 +860,7 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
     if isinstance(model, FallbackModel):
         # When a fallback model is encountered, replace any OpenAIModel with a model that will raise a ModelHTTPError.
         # Otherwise, do the usual inference.
-        def raise_http_error(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        def raise_http_error(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise ModelHTTPError(401, 'Invalid API Key')
 
         mock_fallback_models: list[Model] = []

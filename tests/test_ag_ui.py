@@ -6,7 +6,7 @@ from __future__ import annotations
 import contextlib
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -203,7 +203,7 @@ def create_input(
     )
 
 
-async def simple_stream(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
+async def simple_stream(messages: Sequence[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[str]:
     """A simple function that returns a text response without tool calls."""
     yield 'success '
     yield '(no tool calls)'
@@ -231,7 +231,7 @@ async def test_empty_messages() -> None:
     """Test handling of empty messages."""
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[str]:  # pragma: no cover
         raise NotImplementedError
         yield 'no messages'
@@ -315,7 +315,7 @@ async def test_tool_ag_ui() -> None:
     """Test AG-UI tool call."""
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First call - make a tool call
@@ -420,7 +420,7 @@ async def test_tool_ag_ui_multiple() -> None:
     run_count = 0
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         nonlocal run_count
         run_count += 1
@@ -562,7 +562,7 @@ async def test_tool_ag_ui_parts() -> None:
     """Test AG-UI tool call with streaming/parts (same as tool_call_with_args_streaming)."""
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First call - make a tool call with streaming args
@@ -673,7 +673,7 @@ async def test_tool_local_single_event() -> None:
     encoder = EventEncoder()
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First call - make a tool call
@@ -742,7 +742,7 @@ async def test_tool_local_multiple_events() -> None:
     """Test local tool call that returns multiple events."""
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First call - make a tool call
@@ -809,7 +809,7 @@ async def test_tool_local_parts() -> None:
     """Test local tool call with streaming/parts."""
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First call - make a tool call with streaming args
@@ -873,7 +873,7 @@ async def test_tool_local_parts() -> None:
 
 async def test_thinking() -> None:
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaThinkingCalls | str]:
         yield {0: DeltaThinkingPart(content='')}
         yield "Let's do some thinking"
@@ -939,7 +939,7 @@ async def test_tool_local_then_ag_ui() -> None:
     """Test mixed local and AG-UI tool calls."""
 
     async def stream_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             # First - call local tool (current_time)

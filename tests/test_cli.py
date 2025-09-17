@@ -1,6 +1,6 @@
 import sys
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from io import StringIO
 from typing import Any
 
@@ -202,7 +202,7 @@ def test_handle_slash_command_markdown():
     assert handle_slash_command('/markdown', [], False, Console(file=io), 'default') == (None, False)
     assert io.getvalue() == snapshot('No markdown output available.\n')
 
-    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('[hello](# hello)'), ToolCallPart('foo', '{}')])]
+    messages: Sequence[ModelMessage] = [ModelResponse(parts=[TextPart('[hello](# hello)'), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/markdown', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot("""\
@@ -235,13 +235,13 @@ def test_handle_slash_command_copy(mocker: MockerFixture):
     assert io.getvalue() == snapshot('No output available to copy.\n')
     assert len(mock_clipboard) == 0
 
-    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(''), ToolCallPart('foo', '{}')])]
+    messages: Sequence[ModelMessage] = [ModelResponse(parts=[TextPart(''), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot('No text content to copy.\n')
     assert len(mock_clipboard) == 0
 
-    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('hello'), ToolCallPart('foo', '{}')])]
+    messages: Sequence[ModelMessage] = [ModelResponse(parts=[TextPart('hello'), ToolCallPart('foo', '{}')])]
     io = StringIO()
     assert handle_slash_command('/cp', messages, True, Console(file=io), 'default') == (None, True)
     assert io.getvalue() == snapshot('Copied last output to clipboard.\n')
@@ -319,7 +319,7 @@ async def test_agent_to_cli_with_message_history(mocker: MockerFixture, env: Tes
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
 
     # Create some test message history - cast to the proper base type
-    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+    test_messages: Sequence[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
 
     await cli_agent.to_cli(message_history=test_messages)
     mock_run_chat.assert_awaited_once_with(
@@ -338,7 +338,7 @@ def test_agent_to_cli_sync_with_message_history(mocker: MockerFixture, env: Test
     mock_run_chat = mocker.patch('pydantic_ai._cli.run_chat')
 
     # Create some test message history - cast to the proper base type
-    test_messages: list[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
+    test_messages: Sequence[ModelMessage] = [ModelResponse(parts=[TextPart('Hello!')])]
 
     cli_agent.to_cli_sync(message_history=test_messages)
     mock_run_chat.assert_awaited_once_with(

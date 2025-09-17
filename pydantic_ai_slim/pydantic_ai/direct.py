@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 
 import queue
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -35,7 +35,7 @@ STREAM_INITIALIZATION_TIMEOUT = 30
 
 async def model_request(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -87,7 +87,7 @@ async def model_request(
 
 def model_request_sync(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -143,7 +143,7 @@ def model_request_sync(
 
 def model_request_stream(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,
@@ -199,7 +199,7 @@ def model_request_stream(
 
 def model_request_stream_sync(
     model: models.Model | models.KnownModelName | str,
-    messages: list[messages.ModelMessage],
+    messages: Sequence[messages.ModelMessage],
     *,
     model_settings: settings.ModelSettings | None = None,
     model_request_parameters: models.ModelRequestParameters | None = None,

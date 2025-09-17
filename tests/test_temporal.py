@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -1500,7 +1500,7 @@ async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
 class DirectStreamWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        messages: Sequence[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         async with model_request_stream(complex_temporal_agent.model, messages) as stream:
             async for _ in stream:
                 pass
@@ -1640,7 +1640,7 @@ class HitlAgentWorkflow:
 
     @workflow.run
     async def run(self, prompt: str) -> AgentRunResult[str | DeferredToolRequests]:
-        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        messages: list[ModelRequest] = [ModelRequest.user_text_prompt(prompt)]
         while True:
             result = await hitl_temporal_agent.run(
                 message_history=messages, deferred_tool_results=self._deferred_tool_results

@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import pytest
@@ -30,14 +30,14 @@ def received_messages() -> list[ModelMessage]:
 
 
 @pytest.fixture
-def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
-    def capture_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+def function_model(received_messages: Sequence[ModelMessage]) -> FunctionModel:
+    def capture_model_function(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Capture the messages that the provider actually receives
         received_messages.clear()
         received_messages.extend(messages)
         return ModelResponse(parts=[TextPart(content='Provider response')])
 
-    async def capture_model_stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    async def capture_model_stream_function(messages: Sequence[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
         received_messages.clear()
         received_messages.extend(messages)
         yield 'hello'
@@ -45,8 +45,8 @@ def function_model(received_messages: list[ModelMessage]) -> FunctionModel:
     return FunctionModel(capture_model_function, stream_function=capture_model_stream_function)
 
 
-async def test_history_processor_no_op(function_model: FunctionModel, received_messages: list[ModelMessage]):
-    def no_op_history_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+async def test_history_processor_no_op(function_model: FunctionModel, received_messages: Sequence[ModelMessage]):
+    def no_op_history_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return messages
 
     agent = Agent(function_model, history_processors=[no_op_history_processor])
@@ -84,11 +84,11 @@ async def test_history_processor_no_op(function_model: FunctionModel, received_m
 
 
 async def test_history_processor_run_replaces_message_history(
-    function_model: FunctionModel, received_messages: list[ModelMessage]
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
 ):
     """Test that the history processor replaces the message history in the state."""
 
-    def process_previous_answers(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def process_previous_answers(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Keep the last message (last question) and add a new system prompt
         return messages[-1:] + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
 
@@ -137,11 +137,11 @@ async def test_history_processor_run_replaces_message_history(
 
 
 async def test_history_processor_streaming_replaces_message_history(
-    function_model: FunctionModel, received_messages: list[ModelMessage]
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
 ):
     """Test that the history processor replaces the message history in the state."""
 
-    def process_previous_answers(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def process_previous_answers(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Keep the last message (last question) and add a new system prompt
         return messages[-1:] + [ModelRequest(parts=[SystemPromptPart(content='Processed answer')])]
 
@@ -192,11 +192,11 @@ async def test_history_processor_streaming_replaces_message_history(
 
 
 async def test_history_processor_messages_sent_to_provider(
-    function_model: FunctionModel, received_messages: list[ModelMessage]
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
 ):
     """Test what messages are actually sent to the provider after processing."""
 
-    def capture_messages_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def capture_messages_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Filter out ModelResponse messages
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
@@ -242,12 +242,12 @@ async def test_history_processor_messages_sent_to_provider(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_multiple_history_processors(function_model: FunctionModel, received_messages: list[ModelMessage]):
+async def test_multiple_history_processors(function_model: FunctionModel, received_messages: Sequence[ModelMessage]):
     """Test that multiple processors are applied in sequence."""
 
-    def first_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def first_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Add a prefix to user prompts
-        processed: list[ModelMessage] = []
+        processed: Sequence[ModelMessage] = []
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 new_parts: list[ModelRequestPart] = []
@@ -259,9 +259,9 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
                 processed.append(msg)
         return processed
 
-    def second_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def second_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Add another prefix to user prompts
-        processed: list[ModelMessage] = []
+        processed: Sequence[ModelMessage] = []
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 new_parts: list[ModelRequestPart] = []
@@ -275,7 +275,7 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
 
     agent = Agent(function_model, history_processors=[first_processor, second_processor])
 
-    message_history: list[ModelMessage] = [
+    message_history: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Question')]),
         ModelResponse(parts=[TextPart(content='Answer')]),
     ]
@@ -323,10 +323,10 @@ async def test_multiple_history_processors(function_model: FunctionModel, receiv
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_async_history_processor(function_model: FunctionModel, received_messages: list[ModelMessage]):
+async def test_async_history_processor(function_model: FunctionModel, received_messages: Sequence[ModelMessage]):
     """Test that async processors work."""
 
-    async def async_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+    async def async_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
     agent = Agent(function_model, history_processors=[async_processor])
@@ -384,10 +384,12 @@ async def test_async_history_processor(function_model: FunctionModel, received_m
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_on_streamed_run(function_model: FunctionModel, received_messages: list[ModelMessage]):
+async def test_history_processor_on_streamed_run(
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+):
     """Test that history processors work on streamed runs."""
 
-    async def async_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+    async def async_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
     message_history = [
@@ -452,13 +454,13 @@ async def test_history_processor_on_streamed_run(function_model: FunctionModel, 
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_with_context(function_model: FunctionModel, received_messages: list[ModelMessage]):
+async def test_history_processor_with_context(function_model: FunctionModel, received_messages: Sequence[ModelMessage]):
     """Test history processor that takes RunContext."""
 
-    def context_processor(ctx: RunContext[str], messages: list[ModelMessage]) -> list[ModelMessage]:
+    def context_processor(ctx: RunContext[str], messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Access deps from context
         prefix = ctx.deps
-        processed: list[ModelMessage] = []
+        processed: Sequence[ModelMessage] = []
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 new_parts: list[ModelRequestPart] = []
@@ -511,12 +513,12 @@ async def test_history_processor_with_context(function_model: FunctionModel, rec
 
 
 async def test_history_processor_with_context_async(
-    function_model: FunctionModel, received_messages: list[ModelMessage]
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
 ):
     """Test async history processor that takes RunContext."""
 
-    async def async_context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
-        return messages[-1:]  # Keep only the last message
+    async def async_context_processor(ctx: RunContext[Any], messages: Sequence[ModelMessage]) -> list[ModelMessage]:
+        return list(messages[-1:])  # Keep only the last message
 
     message_history = [
         ModelRequest(parts=[UserPromptPart(content='Question 1')]),
@@ -563,17 +565,19 @@ async def test_history_processor_with_context_async(
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_mixed_signatures(function_model: FunctionModel, received_messages: list[ModelMessage]):
+async def test_history_processor_mixed_signatures(
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+):
     """Test mixing processors with and without context."""
 
-    def simple_processor(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def simple_processor(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Filter out responses
         return [msg for msg in messages if isinstance(msg, ModelRequest)]
 
-    def context_processor(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+    def context_processor(ctx: RunContext[Any], messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         # Add prefix based on deps
         prefix = getattr(ctx.deps, 'prefix', 'DEFAULT')
-        processed: list[ModelMessage] = []
+        processed: Sequence[ModelMessage] = []
         for msg in messages:
             if isinstance(msg, ModelRequest):
                 new_parts: list[ModelRequestPart] = []
@@ -647,14 +651,16 @@ async def test_history_processor_mixed_signatures(function_model: FunctionModel,
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_replace_messages(function_model: FunctionModel, received_messages: list[ModelMessage]):
-    history: list[ModelMessage] = [
+async def test_history_processor_replace_messages(
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+):
+    history: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='Original message')]),
         ModelResponse(parts=[TextPart(content='Original response')]),
         ModelRequest(parts=[UserPromptPart(content='Original followup')]),
     ]
 
-    def return_new_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def return_new_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return [
             ModelRequest(parts=[UserPromptPart(content='Modified message')]),
         ]
@@ -698,8 +704,10 @@ async def test_history_processor_replace_messages(function_model: FunctionModel,
     assert result.new_messages() == result.all_messages()[-2:]
 
 
-async def test_history_processor_empty_history(function_model: FunctionModel, received_messages: list[ModelMessage]):
-    def return_new_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+async def test_history_processor_empty_history(
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
+):
+    def return_new_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return []
 
     agent = Agent(function_model, history_processors=[return_new_history])
@@ -709,9 +717,9 @@ async def test_history_processor_empty_history(function_model: FunctionModel, re
 
 
 async def test_history_processor_history_ending_in_response(
-    function_model: FunctionModel, received_messages: list[ModelMessage]
+    function_model: FunctionModel, received_messages: Sequence[ModelMessage]
 ):
-    def return_new_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+    def return_new_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
         return [ModelResponse(parts=[TextPart(content='Provider response')])]
 
     agent = Agent(function_model, history_processors=[return_new_history])

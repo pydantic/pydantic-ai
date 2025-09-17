@@ -2033,14 +2033,14 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     model = AnthropicModel('claude-3-5-sonnet-latest', provider='anthropic')
 
     # Test _map_message with empty string in user prompt
-    messages_empty_string: list[ModelMessage] = [
+    messages_empty_string: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='')], kind='request'),
     ]
     _, anthropic_messages = await model._map_message(messages_empty_string)  # type: ignore[attr-defined]
     assert anthropic_messages == snapshot([])  # Empty content should be filtered out
 
     # Test _map_message with list containing empty strings in user prompt
-    messages_mixed_content: list[ModelMessage] = [
+    messages_mixed_content: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['', 'Hello', '', 'World'])], kind='request'),
     ]
     _, anthropic_messages = await model._map_message(messages_mixed_content)  # type: ignore[attr-defined]
@@ -2049,7 +2049,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     )
 
     # Test _map_message with empty assistant response
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart(content='You are helpful')], kind='request'),
         ModelResponse(parts=[TextPart(content='')], kind='response'),  # Empty response
         ModelRequest(parts=[UserPromptPart(content='Hello')], kind='request'),
@@ -2059,7 +2059,7 @@ async def test_anthropic_empty_content_filtering(env: TestEnv):
     assert anthropic_messages == snapshot([{'role': 'user', 'content': [{'text': 'Hello', 'type': 'text'}]}])
 
     # Test with only empty assistant parts
-    messages_resp: list[ModelMessage] = [
+    messages_resp: Sequence[ModelMessage] = [
         ModelResponse(parts=[TextPart(content=''), TextPart(content='')], kind='response'),
     ]
     _, anthropic_messages = await model._map_message(messages_resp)  # type: ignore[attr-defined]
@@ -2555,7 +2555,7 @@ async def test_anthropic_unsupported_server_tool_name_error(anthropic_api_key: s
     model = AnthropicModel('claude-3-5-sonnet-latest', provider=AnthropicProvider(api_key=anthropic_api_key))
 
     # Create a message with an unsupported server tool name
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelResponse(
             parts=[
                 BuiltinToolReturnPart(

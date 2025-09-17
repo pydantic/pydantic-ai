@@ -375,7 +375,7 @@ class OpenAIChatModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -389,7 +389,7 @@ class OpenAIChatModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -404,7 +404,7 @@ class OpenAIChatModel(Model):
     @overload
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[True],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -413,7 +413,7 @@ class OpenAIChatModel(Model):
     @overload
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[False],
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -421,7 +421,7 @@ class OpenAIChatModel(Model):
 
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: bool,
         model_settings: OpenAIChatModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -621,7 +621,7 @@ class OpenAIChatModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    async def _map_messages(self, messages: Sequence[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -847,7 +847,7 @@ class OpenAIResponsesModel(Model):
 
     async def request(
         self,
-        messages: list[ModelRequest | ModelResponse],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -860,7 +860,7 @@ class OpenAIResponsesModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -953,7 +953,7 @@ class OpenAIResponsesModel(Model):
     @overload
     async def _responses_create(
         self,
-        messages: list[ModelRequest | ModelResponse],
+        messages: Sequence[ModelMessage],
         stream: Literal[False],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -962,7 +962,7 @@ class OpenAIResponsesModel(Model):
     @overload
     async def _responses_create(
         self,
-        messages: list[ModelRequest | ModelResponse],
+        messages: Sequence[ModelMessage],
         stream: Literal[True],
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -970,7 +970,7 @@ class OpenAIResponsesModel(Model):
 
     async def _responses_create(
         self,
-        messages: list[ModelRequest | ModelResponse],
+        messages: Sequence[ModelMessage],
         stream: bool,
         model_settings: OpenAIResponsesModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -1109,7 +1109,7 @@ class OpenAIResponsesModel(Model):
         }
 
     def _get_previous_response_id_and_new_messages(
-        self, messages: list[ModelMessage]
+        self, messages: Sequence[ModelMessage]
     ) -> tuple[str | None, list[ModelMessage]]:
         # When `openai_previous_response_id` is set to 'auto', the most recent
         # `provider_response_id` from the message history is selected and all
@@ -1117,7 +1117,7 @@ class OpenAIResponsesModel(Model):
         # server-side history for efficiency. The returned tuple contains the
         # `previous_response_id` (if found) and the trimmed list of messages.
         previous_response_id = None
-        trimmed_messages: list[ModelMessage] = []
+        trimmed_messages: Sequence[ModelMessage] = []
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system:
                 previous_response_id = m.provider_response_id
@@ -1131,7 +1131,7 @@ class OpenAIResponsesModel(Model):
             return None, messages
 
     async def _map_messages(  # noqa: C901
-        self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
+        self, messages: Sequence[ModelMessage], model_settings: OpenAIResponsesModelSettings
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
         openai_messages: list[responses.ResponseInputItemParam] = []

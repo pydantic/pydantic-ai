@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import datetime
 import json
 import re
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Sequence
 from copy import deepcopy
 from dataclasses import replace
 from datetime import timezone
@@ -140,7 +140,7 @@ async def test_streamed_structured_response():
 
 
 async def test_structured_response_iter():
-    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    async def text_stream(_messages: Sequence[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         assert agent_info.output_tools is not None
         assert len(agent_info.output_tools) == 1
         name = agent_info.output_tools[0].name
@@ -282,7 +282,7 @@ async def test_streamed_text_stream():
 async def test_plain_response():
     call_index = 0
 
-    async def text_stream(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
+    async def text_stream(_messages: Sequence[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
         nonlocal call_index
 
         call_index += 1
@@ -300,7 +300,7 @@ async def test_plain_response():
 
 async def test_call_tool():
     async def stream_structured_function(
-        messages: list[ModelMessage], agent_info: AgentInfo
+        messages: Sequence[ModelMessage], agent_info: AgentInfo
     ) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             assert agent_info.function_tools is not None
@@ -401,7 +401,9 @@ async def test_call_tool():
 
 
 async def test_call_tool_empty():
-    async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    async def stream_structured_function(
+        _messages: Sequence[ModelMessage], _: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls]:
         yield {}
 
     agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=tuple[str, int])
@@ -412,7 +414,9 @@ async def test_call_tool_empty():
 
 
 async def test_call_tool_wrong_name():
-    async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    async def stream_structured_function(
+        _messages: Sequence[ModelMessage], _: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls]:
         yield {0: DeltaToolCall(name='foobar', json_args='{}')}
 
     agent = Agent(
@@ -453,7 +457,7 @@ async def test_early_strategy_stops_after_first_final_result():
     """Test that 'early' strategy stops processing regular tools after first final result."""
     tool_called: list[str] = []
 
-    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    async def sf(_: Sequence[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
         yield {1: DeltaToolCall('final_result', '{"value": "final"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 1}')}
@@ -524,7 +528,7 @@ async def test_early_strategy_stops_after_first_final_result():
 async def test_early_strategy_uses_first_final_result():
     """Test that 'early' strategy uses the first final result and ignores subsequent ones."""
 
-    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    async def sf(_: Sequence[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
         yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
         yield {2: DeltaToolCall('final_result', '{"value": "second"}')}
@@ -575,7 +579,7 @@ async def test_exhaustive_strategy_executes_all_tools():
     """Test that 'exhaustive' strategy executes all tools while using first final result."""
     tool_called: list[str] = []
 
-    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    async def sf(_: Sequence[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
         yield {1: DeltaToolCall('final_result', '{"value": "first"}')}
         yield {2: DeltaToolCall('regular_tool', '{"x": 42}')}
@@ -654,7 +658,7 @@ async def test_early_strategy_with_final_result_in_middle():
     """Test that 'early' strategy stops at first final result, regardless of position."""
     tool_called: list[str] = []
 
-    async def sf(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    async def sf(_: Sequence[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         assert info.output_tools is not None
         yield {1: DeltaToolCall('regular_tool', '{"x": 1}')}
         yield {2: DeltaToolCall('final_result', '{"value": "final"}')}
@@ -958,7 +962,7 @@ async def test_stream_iter_structured_validator() -> None:
 async def test_unknown_tool_call_events():
     """Test that unknown tool calls emit both FunctionToolCallEvent and FunctionToolResultEvent during streaming."""
 
-    def call_mixed_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_mixed_tools(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         """Mock function that calls both known and unknown tools."""
         return ModelResponse(
             parts=[
@@ -1025,7 +1029,7 @@ async def test_unknown_tool_call_events():
 async def test_output_tool_validation_failure_events():
     """Test that output tools that fail validation emit events during streaming."""
 
-    def call_final_result_with_bad_data(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def call_final_result_with_bad_data(messages: Sequence[ModelMessage], info: AgentInfo) -> ModelResponse:
         """Mock function that calls final_result tool with invalid data."""
         assert info.output_tools is not None
         return ModelResponse(
@@ -1125,7 +1129,7 @@ async def test_iter_stream_output_tool_dont_hit_retry_limit():
         city: str
         country: str | None = None
 
-    async def text_stream(_messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+    async def text_stream(_messages: Sequence[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
         """Stream partial JSON data that will initially fail validation."""
         assert agent_info.output_tools is not None
         assert len(agent_info.output_tools) == 1
@@ -1211,7 +1215,7 @@ async def test_tool_raises_call_deferred():
 
 
 async def test_tool_raises_approval_required():
-    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+    async def llm(messages: Sequence[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) == 1:
             yield {0: DeltaToolCall(name='my_tool', json_args='{"x": 1}', tool_call_id='my_tool')}
         else:
