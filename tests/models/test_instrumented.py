@@ -16,6 +16,8 @@ from pydantic_ai._run_context import RunContext
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
@@ -1344,6 +1346,48 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                     'gen_ai.response.model': 'gpt-4o-2024-11-20',
                     'gen_ai.response.id': 'response_id',
                 },
+            }
+        ]
+    )
+
+
+def test_message_with_builtin_tool_calls():
+    messages: list[ModelMessage] = [
+        ModelResponse(
+            parts=[
+                TextPart('text1'),
+                BuiltinToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
+                BuiltinToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
+                TextPart('text2'),
+            ]
+        ),
+    ]
+    settings = InstrumentationSettings()
+    # Built-in tool calls are only included in v2-style messages, not v1-style events,
+    # as the spec does not yet allow tool results coming from the assistant,
+    # and Logfire has special handling for the `type='tool_call_response', 'builtin=True'` messages, but not events.
+    assert settings.messages_to_otel_messages(messages) == snapshot(
+        [
+            {
+                'role': 'assistant',
+                'parts': [
+                    {'type': 'text', 'content': 'text1'},
+                    {
+                        'type': 'tool_call',
+                        'id': 'tool_call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'arguments': {'code': '2 * 2'},
+                    },
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'tool_call_1',
+                        'name': 'code_execution',
+                        'builtin': True,
+                        'result': {'output': '4'},
+                    },
+                    {'type': 'text', 'content': 'text2'},
+                ],
             }
         ]
     )

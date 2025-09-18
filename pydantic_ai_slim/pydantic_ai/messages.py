@@ -711,14 +711,16 @@ class BaseToolReturnPart:
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         from .models.instrumented import InstrumentedModel
 
-        return [
-            _otel_messages.ToolCallResponsePart(
-                type='tool_call_response',
-                id=self.tool_call_id,
-                name=self.tool_name,
-                **({'result': InstrumentedModel.serialize_any(self.content)} if settings.include_content else {}),
-            )
-        ]
+        part = _otel_messages.ToolCallResponsePart(
+            type='tool_call_response',
+            id=self.tool_call_id,
+            name=self.tool_name,
+        )
+
+        if settings.include_content and self.content is not None:
+            part['result'] = InstrumentedModel.serialize_any(self.content)
+
+        return [part]
 
     def has_content(self) -> bool:
         """Return `True` if the tool return has content."""
@@ -823,14 +825,16 @@ class RetryPromptPart:
         if self.tool_name is None:
             return [_otel_messages.TextPart(type='text', content=self.model_response())]
         else:
-            return [
-                _otel_messages.ToolCallResponsePart(
-                    type='tool_call_response',
-                    id=self.tool_call_id,
-                    name=self.tool_name,
-                    **({'result': self.model_response()} if settings.include_content else {}),
-                )
-            ]
+            part = _otel_messages.ToolCallResponsePart(
+                type='tool_call_response',
+                id=self.tool_call_id,
+                name=self.tool_name,
+            )
+
+            if settings.include_content:
+                part['result'] = self.model_response()
+
+            return [part]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -1134,8 +1138,10 @@ class ModelResponse:
                         **({'content': part.content} if settings.include_content else {}),
                     )
                 )
-            elif isinstance(part, ToolCallPart):
+            elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+                if isinstance(part, BuiltinToolCallPart):
+                    call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
                     from .models.instrumented import InstrumentedModel
 
@@ -1145,6 +1151,23 @@ class ModelResponse:
                         call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
 
                 parts.append(call_part)
+            elif isinstance(part, BuiltinToolReturnPart):
+                return_part = _otel_messages.ToolCallResponsePart(
+                    type='tool_call_response',
+                    id=part.tool_call_id,
+                    name=part.tool_name,
+                    builtin=True,
+                )
+                if settings.include_content and part.content is not None:  # pragma: no branch
+                    from .models.instrumented import InstrumentedModel
+
+                    return_part['result'] = (
+                        part.content
+                        if isinstance(part.content, str)
+                        else {k: InstrumentedModel.serialize_any(v) for k, v in part.content.items()}
+                    )
+
+                parts.append(return_part)
         return parts
 
     @property
