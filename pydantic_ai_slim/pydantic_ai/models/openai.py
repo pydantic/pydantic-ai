@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Literal, cast, overload
 
 from pydantic import ValidationError
+from pydantic_core import to_json
 from typing_extensions import assert_never, deprecated
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
@@ -1555,9 +1556,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                 maybe_event = self._parts_manager.handle_tool_call_delta(
                     vendor_part_id=chunk.item_id,
-                    tool_name=None,
                     args=chunk.delta,
-                    tool_call_id=None,
                 )
                 if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
@@ -1586,7 +1585,22 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     pass
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    pass
+                    call_part, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
+
+                    args_json = call_part.args_as_json_str()
+                    # Drop the final `"}` so that we can add code deltas
+                    args_json_delta = args_json[:-2]
+                    assert args_json_delta.endswith('code":"')
+
+                    yield self._parts_manager.handle_builtin_tool_call_part(
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                    )
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        args=args_json_delta,
+                    )
+                    if maybe_event is not None:
+                        yield maybe_event
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1604,10 +1618,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             provider_name=self.provider_name,
                         )
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    call_part, return_part = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_builtin_tool_call_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=call_part
-                    )
+                    _, return_part = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
                     yield self._parts_manager.handle_builtin_tool_return_part(
                         vendor_part_id=f'{chunk.item.id}-return', part=return_part
                     )
@@ -1667,10 +1678,21 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDeltaEvent):
-                pass  # there's nothing we need to do here
+                json_args_delta = to_json(chunk.delta).decode()[1:-1]  # Drop the surrounding `"`
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args=json_args_delta,
+                )
+                if maybe_event is not None:
+                    yield maybe_event
 
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
-                pass  # there's nothing we need to do here
+                maybe_event = self._parts_manager.handle_tool_call_delta(
+                    vendor_part_id=f'{chunk.item_id}-call',
+                    args='"}',
+                )
+                if maybe_event is not None:
+                    yield maybe_event
 
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
                 pass  # there's nothing we need to do here
@@ -1782,8 +1804,8 @@ def _map_code_interpreter_tool_call(
             tool_name=CodeExecutionTool.kind,
             tool_call_id=item.id,
             args={
-                'code': item.code,
                 'container_id': item.container_id,
+                'code': item.code,
             },
             provider_name=provider_name,
         ),
