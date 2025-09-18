@@ -26,6 +26,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset
 
 from ._model import HatchetModel
+from ._run_context import HatchetRunContext
 from ._utils import TaskConfig
 
 
@@ -56,6 +57,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         name: str | None = None,
         mcp_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
+        run_context_type: type[HatchetRunContext[AgentDepsT]] = HatchetRunContext[AgentDepsT],
     ):
         """Wrap an agent to enable it with Hatchet durable tasks, by automatically offloading model requests, tool calls, and MCP server communication to Hatchet tasks.
 
@@ -67,6 +69,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             name: Optional unique agent name to use in the Hatchet tasks' names. If not provided, the agent's `name` will be used.
             mcp_task_config: The base Hatchet task config to use for MCP server tasks. If no config is provided, use the default settings.
             model_task_config: The Hatchet task config to use for model request tasks. If no config is provided, use the default settings.
+            run_context_type: The `HatchetRunContext` (sub)class that's used to serialize and deserialize the run context.
         """
         super().__init__(wrapped)
 
@@ -90,6 +93,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             hatchet=self._hatchet,
         )
         hatchet_agent_name = self._name
+        self.run_context_type: type[HatchetRunContext[AgentDepsT]] = run_context_type
 
         def hatchetify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             from ._toolset import hatchetize_toolset
@@ -99,6 +103,8 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 hatchet=hatchet,
                 task_name_prefix=hatchet_agent_name,
                 task_config=mcp_task_config or TaskConfig(),
+                deps_type=self.deps_type,
+                run_context_type=run_context_type,
             )
 
         self._toolsets = [toolset.visit_and_replace(hatchetify_toolset) for toolset in wrapped.toolsets]

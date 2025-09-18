@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import ToolsetTool
 
-from ._run_context import HatchetRunContext
+from ._run_context import HatchetRunContext, SerializedHatchetRunContext
 from ._toolset import HatchetWrapperToolset
 from ._utils import TaskConfig
 
@@ -23,7 +23,7 @@ T = TypeVar('T')
 class GetToolsInput(BaseModel, Generic[AgentDepsT]):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    serialized_run_context: Any
+    serialized_run_context: SerializedHatchetRunContext
     deps: AgentDepsT
 
 
@@ -34,7 +34,7 @@ class CallToolInput(BaseModel, Generic[AgentDepsT]):
     tool_args: dict[str, Any]
     tool: ToolsetTool[AgentDepsT]
 
-    serialized_run_context: Any
+    serialized_run_context: SerializedHatchetRunContext
     deps: AgentDepsT
 
 
@@ -63,7 +63,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
         self._hatchet = hatchet
         id_suffix = f'__{wrapped.id}' if wrapped.id else ''
         self._name = f'{task_name_prefix}__mcp_server{id_suffix}'
-        self.run_context_type = run_context_type
+        self.run_context_type: type[HatchetRunContext[AgentDepsT]] = run_context_type
 
         @hatchet.durable_task(
             name=f'{self._name}.get_tools',
@@ -84,7 +84,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
         )
         async def wrapped_get_tools_task(
             input: GetToolsInput[AgentDepsT],
-            ctx: DurableContext,
+            _ctx: DurableContext,
         ) -> dict[str, ToolsetTool[AgentDepsT]]:
             run_context = self.run_context_type.deserialize_run_context(input.serialized_run_context, deps=input.deps)
 
