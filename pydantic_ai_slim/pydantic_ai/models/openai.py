@@ -586,9 +586,12 @@ class OpenAIChatModel(Model):
                 'Streamed response ended without content or tool calls'
             )
 
+        # ChatCompletionChunk.model is required to be set, but Azure OpenAI omits it so we fall back to the model name set by the user.
+        model_name = first_chunk.model or self._model_name
+
         return OpenAIStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=first_chunk.model,
+            _model_name=model_name,
             _model_profile=self.profile,
             _response=peekable_response,
             _timestamp=number_to_datetime(first_chunk.created),
