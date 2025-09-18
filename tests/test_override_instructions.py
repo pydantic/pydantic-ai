@@ -10,10 +10,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
-    ModelResponse,
     SystemPromptPart,
-    TextPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
 
