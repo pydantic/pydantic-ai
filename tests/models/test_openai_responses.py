@@ -1971,3 +1971,94 @@ async def test_openai_responses_streaming_usage(allow_model_requests: None, open
     assert run.usage() == snapshot(
         RunUsage(input_tokens=53, output_tokens=469, details={'reasoning_tokens': 448}, requests=1)
     )
+
+
+async def test_openai_responses_non_reasoning_model_no_item_ids(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-4.1', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def get_meaning_of_life() -> int:
+        return 42
+
+    result = await agent.run('What is the meaning of life?')
+    messages = result.all_messages()
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='What is the meaning of life?',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_meaning_of_life',
+                        args='{}',
+                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I|fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=36, output_tokens=15, details={'reasoning_tokens': 0}),
+                model_name='gpt-4.1-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68cc4fa5603481958e2143685133fe530548824120ffcf74',
+                finish_reason='stop',
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='get_meaning_of_life',
+                        content=42,
+                        tool_call_id='call_3WCunBU7lCG1HHaLmnnRJn8I|fc_68cc4fa649ac8195b0c6c239cd2c14470548824120ffcf74',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content="""\
+The meaning of life, according to popular culture and famously in Douglas Adams' "The Hitchhiker's Guide to the Galaxy," is 42!
+
+If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.\
+""",
+                        id='msg_68cc4fa7693081a184ff6f32e5209ab00307c6d4d2ee5985',
+                    )
+                ],
+                usage=RequestUsage(input_tokens=61, output_tokens=56, details={'reasoning_tokens': 0}),
+                model_name='gpt-4.1-2025-04-14',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68cc4fa6a8a881a187b0fe1603057bff0307c6d4d2ee5985',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    _, openai_messages = await model._map_messages(messages, model_settings=model.settings or {})  # type: ignore[reportPrivateUsage]
+    assert openai_messages == snapshot(
+        [
+            {'role': 'user', 'content': 'What is the meaning of life?'},
+            {
+                'name': 'get_meaning_of_life',
+                'arguments': '{}',
+                'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I',
+                'type': 'function_call',
+            },
+            {'type': 'function_call_output', 'call_id': 'call_3WCunBU7lCG1HHaLmnnRJn8I', 'output': '42'},
+            {
+                'role': 'assistant',
+                'content': """\
+The meaning of life, according to popular culture and famously in Douglas Adams' "The Hitchhiker's Guide to the Galaxy," is 42!
+
+If you're looking for a deeper or philosophical answer, let me know your perspective or context, and I can elaborate further.\
+""",
+            },
+        ]
+    )

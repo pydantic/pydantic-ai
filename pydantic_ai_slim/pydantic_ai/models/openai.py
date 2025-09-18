@@ -195,7 +195,7 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     """
 
     openai_send_reasoning_ids: bool
-    """Whether to send reasoning IDs from the message history to the model. Enabled by default.
+    """Whether to send the unique IDs of reasoning, text, and function call parts from the message history to the model. Enabled by default for reasoning models.
 
     This can result in errors like `"Item 'rs_123' of type 'reasoning' was provided without its required following item."`
     if the message history you're sending does not match exactly what was received from the Responses API in a previous response,
@@ -1134,6 +1134,11 @@ class OpenAIResponsesModel(Model):
         self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
     ) -> tuple[str | NotGiven, list[responses.ResponseInputItemParam]]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.responses.ResponseInputParam`."""
+        profile = OpenAIModelProfile.from_profile(self.profile)
+        send_item_ids = model_settings.get(
+            'openai_send_reasoning_ids', profile.openai_supports_encrypted_reasoning_content
+        )
+
         openai_messages: list[responses.ResponseInputItemParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
@@ -1169,15 +1174,17 @@ class OpenAIResponsesModel(Model):
                     else:
                         assert_never(part)
             elif isinstance(message, ModelResponse):
+                send_item_ids = send_item_ids and message.provider_name == self.system
+
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        if item.id and message.provider_name == self.system:
+                        if item.id and send_item_ids:
                             if message_item is None or message_item['id'] != item.id:  # pragma: no branch
                                 message_item = responses.ResponseOutputMessageParam(
                                     role='assistant',
-                                    id=item.id or _utils.generate_tool_call_id(),
+                                    id=item.id,
                                     content=[],
                                     type='message',
                                     status='completed',
@@ -1195,23 +1202,28 @@ class OpenAIResponsesModel(Model):
                                 responses.EasyInputMessageParam(role='assistant', content=item.content)
                             )
                     elif isinstance(item, ToolCallPart):
-                        openai_messages.append(self._map_tool_call(item))
+                        call_id = _guard_tool_call_id(t=item)
+                        call_id, id = _split_combined_tool_call_id(call_id)
+
+                        param = responses.ResponseFunctionToolCallParam(
+                            name=item.tool_name,
+                            arguments=item.args_as_json_str(),
+                            call_id=call_id,
+                            type='function_call',
+                        )
+                        if id and send_item_ids:  # pragma: no branch
+                            param['id'] = id
+                        openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):
                         # We don't currently track built-in tool calls from OpenAI
                         pass
                     elif isinstance(item, ThinkingPart):
-                        if (
-                            item.id
-                            and message.provider_name == self.system
-                            and model_settings.get('openai_send_reasoning_ids', True)
-                        ):
+                        if item.id and send_item_ids:
                             signature: str | None = None
                             if (
                                 item.signature
                                 and item.provider_name == self.system
-                                and OpenAIModelProfile.from_profile(
-                                    self.profile
-                                ).openai_supports_encrypted_reasoning_content
+                                and profile.openai_supports_encrypted_reasoning_content
                             ):
                                 signature = item.signature
 
@@ -1234,7 +1246,7 @@ class OpenAIResponsesModel(Model):
                                     Summary(text=item.content, type='summary_text'),
                                 ]
                         else:
-                            start_tag, end_tag = self.profile.thinking_tags
+                            start_tag, end_tag = profile.thinking_tags
                             openai_messages.append(
                                 responses.EasyInputMessageParam(
                                     role='assistant', content='\n'.join([start_tag, item.content, end_tag])
@@ -1246,21 +1258,6 @@ class OpenAIResponsesModel(Model):
                 assert_never(message)
         instructions = self._get_instructions(messages) or NOT_GIVEN
         return instructions, openai_messages
-
-    @staticmethod
-    def _map_tool_call(t: ToolCallPart) -> responses.ResponseFunctionToolCallParam:
-        call_id = _guard_tool_call_id(t=t)
-        call_id, id = _split_combined_tool_call_id(call_id)
-
-        param = responses.ResponseFunctionToolCallParam(
-            name=t.tool_name,
-            arguments=t.args_as_json_str(),
-            call_id=call_id,
-            type='function_call',
-        )
-        if id:  # pragma: no branch
-            param['id'] = id
-        return param
 
     def _map_json_schema(self, o: OutputObjectDefinition) -> responses.ResponseFormatTextJSONSchemaConfigParam:
         response_format_param: responses.ResponseFormatTextJSONSchemaConfigParam = {
