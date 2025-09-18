@@ -32,7 +32,7 @@ class HatchetModel(WrapperModel):
         self._task_name_prefix = task_name_prefix
 
         @hatchet.task(
-            name=f'{self._task_name_prefix}__model.request',
+            name=f'{self._task_name_prefix}__model__request',
             description=self.task_config.description,
             input_validator=ModelInput,
             version=self.task_config.version,
