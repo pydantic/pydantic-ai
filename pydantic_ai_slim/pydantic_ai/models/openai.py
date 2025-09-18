@@ -1602,7 +1602,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=args_json_delta,
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 else:
                     warnings.warn(  # pragma: no cover
@@ -1632,7 +1632,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=f'{chunk.item.id}-call',
                         args=call_part.args,
                     )
-                    if maybe_event is not None:
+                    if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
 
                     yield self._parts_manager.handle_builtin_tool_return_part(
@@ -1691,7 +1691,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=f'{chunk.item_id}-call',
                     args=json_args_delta,
                 )
-                if maybe_event is not None:
+                if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallCodeDoneEvent):
@@ -1699,7 +1699,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     vendor_part_id=f'{chunk.item_id}-call',
                     args='"}',
                 )
-                if maybe_event is not None:
+                if maybe_event is not None:  # pragma: no branch
                     yield maybe_event
 
             elif isinstance(chunk, responses.ResponseCodeInterpreterCallCompletedEvent):
