@@ -353,8 +353,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
-
-        # Prompt overrides (experimental)
         self._override_instructions: ContextVar[_utils.Option[InstructionsInput]] = ContextVar(
             '_override_instructions', default=None
         )
