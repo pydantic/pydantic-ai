@@ -1,38 +1,37 @@
-from __future__ import annotations
-
-from typing import Any, Generic
+from typing import Any
 
 from hatchet_sdk import Context, Hatchet
 from hatchet_sdk.runnables.workflow import Standalone
-from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 
+from ._mcp_server import CallToolInput
+from ._run_context import HatchetRunContext
 from ._toolset import HatchetWrapperToolset
 from ._utils import TaskConfig
-
-
-class CallToolInput(BaseModel, Generic[AgentDepsT]):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    name: str
-    tool_args: dict[str, Any]
-    ctx: RunContext[AgentDepsT]
 
 
 class HatchetFunctionToolset(HatchetWrapperToolset[AgentDepsT]):
     """A wrapper for FunctionToolset that integrates with Hatchet, turning tool calls into Hatchet tasks."""
 
     def __init__(
-        self, wrapped: FunctionToolset[AgentDepsT], *, hatchet: Hatchet, task_name_prefix: str, task_config: TaskConfig
+        self,
+        wrapped: FunctionToolset[AgentDepsT],
+        *,
+        hatchet: Hatchet,
+        task_name_prefix: str,
+        task_config: TaskConfig,
+        deps_type: type[AgentDepsT],
+        run_context_type: type[HatchetRunContext[AgentDepsT]] = HatchetRunContext[AgentDepsT],
     ):
         super().__init__(wrapped)
         self._task_config = task_config
         self._task_name_prefix = task_name_prefix
         self._hatchet = hatchet
         self._tool_tasks: dict[str, Standalone[Any, Any]] = {}
+        self.run_context_type = run_context_type
 
         for tool_name, tool in wrapped.tools.items():
             task_name = f'{task_name_prefix}__function_tool__{tool_name}'
@@ -59,8 +58,12 @@ class HatchetFunctionToolset(HatchetWrapperToolset[AgentDepsT]):
                     input: CallToolInput[AgentDepsT],
                     _ctx: Context,
                 ) -> Any:
+                    run_context = self.run_context_type.deserialize_run_context(
+                        input.serialized_run_context, deps=input.deps
+                    )
+
                     return await super(HatchetFunctionToolset, self).call_tool(
-                        current_tool_name, input.tool_args, input.ctx, current_tool
+                        current_tool_name, input.tool_args, run_context, current_tool
                     )
 
                 return tool_task
@@ -86,10 +89,14 @@ class HatchetFunctionToolset(HatchetWrapperToolset[AgentDepsT]):
             )
 
         tool_task = self._tool_tasks[name]
+        serialized_run_context = self.run_context_type.serialize_run_context(ctx)
+
         return await tool_task.aio_run(
             CallToolInput(
                 name=name,
                 tool_args=tool_args,
-                ctx=ctx,
+                tool_def=tool.tool_def,
+                serialized_run_context=serialized_run_context,
+                deps=ctx.deps,
             )
         )

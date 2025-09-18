@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -44,7 +42,7 @@ class CallToolInput(BaseModel, Generic[AgentDepsT]):
 class CallToolOutput(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    result: ToolResult
+    result: 'ToolResult'
 
 
 class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
@@ -52,7 +50,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
 
     def __init__(
         self,
-        wrapped: MCPServer,
+        wrapped: 'MCPServer',
         *,
         hatchet: Hatchet,
         task_name_prefix: str,
@@ -158,7 +156,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
         tool_args: dict[str, Any],
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
-    ) -> ToolResult:
+    ) -> 'ToolResult':
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
 
         wrapped_tool_output = await self.hatchet_wrapped_call_tool_task.aio_run(
