@@ -1263,7 +1263,11 @@ def test_async_function_tool_consistent_with_schema():
 def test_tool_retries():
     prepare_tools_retries: list[int] = []
     prepare_retries: list[int] = []
+    prepare_max_retries: list[int] = []
+    prepare_last_attempt: list[bool] = []
     call_retries: list[int] = []
+    call_max_retries: list[int] = []
+    call_last_attempt: list[bool] = []
 
     async def prepare_tool_defs(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition] | None:
         nonlocal prepare_tools_retries
@@ -1276,20 +1280,30 @@ def test_tool_retries():
     async def prepare_tool_def(ctx: RunContext[None], tool_def: ToolDefinition) -> ToolDefinition | None:
         nonlocal prepare_retries
         prepare_retries.append(ctx.retry)
+        prepare_max_retries.append(ctx.max_retries)
+        prepare_last_attempt.append(ctx.last_attempt)
         return tool_def
 
     @agent.tool(retries=5, prepare=prepare_tool_def)
     def infinite_retry_tool(ctx: RunContext[None]) -> int:
         nonlocal call_retries
         call_retries.append(ctx.retry)
+        call_max_retries.append(ctx.max_retries)
+        call_last_attempt.append(ctx.last_attempt)
         raise ModelRetry('Please try again.')
 
     with pytest.raises(UnexpectedModelBehavior, match="Tool 'infinite_retry_tool' exceeded max retries count of 5"):
         agent.run_sync('Begin infinite retry loop!')
 
     assert prepare_tools_retries == snapshot([0, 1, 2, 3, 4, 5])
+
     assert prepare_retries == snapshot([0, 1, 2, 3, 4, 5])
+    assert prepare_max_retries == snapshot([5, 5, 5, 5, 5, 5])
+    assert prepare_last_attempt == snapshot([False, False, False, False, False, True])
+
     assert call_retries == snapshot([0, 1, 2, 3, 4, 5])
+    assert call_max_retries == snapshot([5, 5, 5, 5, 5, 5])
+    assert call_last_attempt == snapshot([False, False, False, False, False, True])
 
 
 def test_tool_raises_call_deferred():
@@ -2093,3 +2107,84 @@ def test_tool_metadata():
     toolset.add_function(standalone_func, metadata={'method': 'add_function'})
     standalone_tool_def = toolset.tools['standalone_func']
     assert standalone_tool_def.metadata == {'foo': 'bar', 'method': 'add_function'}
+
+
+def test_retry_tool_until_last_attempt():
+    model = TestModel()
+    agent = Agent(model, retries=2)
+
+    @agent.tool
+    def always_fail(ctx: RunContext[None]) -> str:
+        if ctx.last_attempt:
+            return 'I guess you never learn'
+        else:
+            raise ModelRetry('Please try again.')
+
+    result = agent.run_sync('Always fail!')
+    assert result.output == snapshot('{"always_fail":"I guess you never learn"}')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Always fail!',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=52, output_tokens=2),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please try again.',
+                        tool_name='always_fail',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=62, output_tokens=4),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    RetryPromptPart(
+                        content='Please try again.',
+                        tool_name='always_fail',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='always_fail', args={}, tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=72, output_tokens=6),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='always_fail',
+                        content='I guess you never learn',
+                        tool_call_id=IsStr(),
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='{"always_fail":"I guess you never learn"}')],
+                usage=RequestUsage(input_tokens=77, output_tokens=14),
+                model_name='test',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
