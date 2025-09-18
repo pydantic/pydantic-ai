@@ -692,7 +692,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: InstructionsInput | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent configuration.
+        """Context manager to temporarily override agent dependencies, model, toolsets, tools, and instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -702,9 +702,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
-            instructions: When set (including `None`), replace the effective aggregate of literal instructions and any
-                registered instruction functions. Accepts a literal string, an instructions function, or a sequence
-                mixing both. Passing `None` clears all instructions.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
         raise NotImplementedError
         yield

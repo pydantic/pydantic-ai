@@ -644,9 +644,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=instrumentation_settings,
         )
 
-        # Prepare start node configuration
-        system_prompts = self._system_prompts
-
         instructions_for_node, instructions_functions_for_node = self._instructions, self._instructions_functions
         if override_instructions := self._override_instructions.get():
             instructions_for_node, instructions_functions_for_node = self._instructions_literal_and_functions(
@@ -658,7 +655,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deferred_tool_results=deferred_tool_results,
             instructions=instructions_for_node,
             instructions_functions=instructions_functions_for_node,
-            system_prompts=system_prompts,
+            system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
         )
@@ -748,7 +745,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
         instructions: InstructionsInput | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent configuration.
+        """Context manager to temporarily override agent dependencies, model, toolsets, tools, and instructions.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -758,9 +755,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
-            instructions: When set (including `None`), replace the effective aggregate of literal instructions and any
-                registered instruction functions. Accepts a literal string, an instructions function, or a sequence
-                mixing both. Passing `None` clears all instructions.
+            instructions: The instructions to use instead of the instructions registered with the agent.
         """
         if _utils.is_set(deps):
             deps_token = self._override_deps.set(_utils.Some(deps))
