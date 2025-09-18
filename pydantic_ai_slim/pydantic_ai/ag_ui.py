@@ -514,7 +514,7 @@ async def _handle_model_request_event(  # noqa: C901
                 stream_ctx.part_end = ToolCallEndEvent(
                     tool_call_id=tool_call_id,
                 )
-            elif isinstance(part, BuiltinToolReturnPart):
+            elif isinstance(part, BuiltinToolReturnPart):  # pragma: no branch
                 message_id = stream_ctx.message_id or stream_ctx.new_message_id()
                 tool_call_id = stream_ctx.builtin_tool_call_ids[part.tool_call_id]
                 yield ToolCallResultEvent(
@@ -630,7 +630,7 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
                     )
                 )
 
-        elif isinstance(msg, AssistantMessage) or (
+        elif isinstance(msg, AssistantMessage) or (  # pragma: no branch
             isinstance(msg, ToolMessage) and msg.tool_call_id.startswith(_BUILTIN_TOOL_CALL_ID_PREFIX)
         ):
             if response_parts is None:

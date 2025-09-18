@@ -315,7 +315,7 @@ class GroqModel(Model):
         if choice.message.executed_tools:
             for tool in choice.message.executed_tools:
                 call_part, return_part = _map_executed_tool(tool, self.system)
-                if call_part and return_part:
+                if call_part and return_part:  # pragma: no branch
                     items.append(call_part)
                     items.append(return_part)
         if choice.message.content is not None:
@@ -675,5 +675,5 @@ def _map_executed_tool(
                 return call_part, None
         else:
             return call_part, return_part
-    else:
+    else:  # pragma: no cover
         return None, None

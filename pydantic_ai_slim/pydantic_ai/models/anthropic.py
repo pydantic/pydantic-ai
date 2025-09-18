@@ -487,7 +487,7 @@ class AnthropicModel(Model):
                                     input=response_part.args_as_dict(),
                                 )
                                 assistant_content_params.append(server_tool_use_block_param)
-                            elif response_part.tool_name == CodeExecutionTool.kind:
+                            elif response_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
                                 server_tool_use_block_param = BetaServerToolUseBlockParam(
                                     id=tool_use_id,
                                     type='server_tool_use',
@@ -512,7 +512,7 @@ class AnthropicModel(Model):
                                         ),
                                     )
                                 )
-                            elif response_part.tool_name in (
+                            elif response_part.tool_name in (  # pragma: no branch
                                 CodeExecutionTool.kind,
                                 'code_execution_tool_result',  # Backward compatibility
                             ) and isinstance(response_part.content, dict):

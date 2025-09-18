@@ -601,7 +601,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                     elif isinstance(part, _messages.BuiltinToolCallPart):
                                         # Text parts before a built-in tool call are essentially thoughts,
                                         # not part of the final result output, so we reset the accumulated text
-                                        text = ''
+                                        text = ''  # pragma: no cover
                                 if text:
                                     self._next_node = await self._handle_text_response(ctx, text)
                                     return

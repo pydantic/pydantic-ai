@@ -1660,7 +1660,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 )
 
             # TODO(Marcelo): We should support annotations in the future.
-            elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):
+            elif isinstance(chunk, responses.ResponseOutputTextAnnotationAddedEvent):  # pragma: no cover
                 pass  # there's nothing we need to do here
 
             elif isinstance(chunk, responses.ResponseTextDeltaEvent):

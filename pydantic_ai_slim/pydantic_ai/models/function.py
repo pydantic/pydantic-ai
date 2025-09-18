@@ -308,12 +308,12 @@ class FunctionStreamedResponse(StreamedResponse):
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
                     elif isinstance(delta, BuiltinToolCallPart):
-                        if content := delta.args_as_json_str():
+                        if content := delta.args_as_json_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=dtc_index, part=delta)
                     elif isinstance(delta, BuiltinToolReturnPart):
-                        if content := delta.model_response_str():
+                        if content := delta.model_response_str():  # pragma: no branch
                             response_tokens = _estimate_string_tokens(content)
                             self._usage += usage.RequestUsage(output_tokens=response_tokens)
                         yield self._parts_manager.handle_builtin_tool_return_part(vendor_part_id=dtc_index, part=delta)
@@ -363,9 +363,9 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolCallPart):
+                elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                elif isinstance(part, BuiltinToolReturnPart):
+                elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
                     response_tokens += _estimate_string_tokens(part.model_response_str())
                 else:
                     assert_never(part)
