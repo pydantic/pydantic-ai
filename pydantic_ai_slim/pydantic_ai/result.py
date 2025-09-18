@@ -208,7 +208,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     and event.part.content
                 ):
                     last_text_index = event.index
-                    yield event.part.content, event.index  # pragma: no cover
+                    yield event.part.content, event.index
                 elif (
                     isinstance(event, _messages.PartDeltaEvent)
                     and isinstance(event.delta, _messages.TextPartDelta)
