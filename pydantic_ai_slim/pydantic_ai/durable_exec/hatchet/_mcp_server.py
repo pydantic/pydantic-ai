@@ -8,7 +8,10 @@ from hatchet_sdk.runnables.workflow import Standalone
 from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets.abstract import ToolsetTool
+from pydantic_ai.toolsets.abstract import (
+    ToolDefinition,
+    ToolsetTool,
+)
 
 from ._run_context import HatchetRunContext, SerializedHatchetRunContext
 from ._toolset import HatchetWrapperToolset
@@ -32,7 +35,7 @@ class CallToolInput(BaseModel, Generic[AgentDepsT]):
 
     name: str
     tool_args: dict[str, Any]
-    tool: ToolsetTool[AgentDepsT]
+    tool_def: ToolDefinition
 
     serialized_run_context: SerializedHatchetRunContext
     deps: AgentDepsT
@@ -85,10 +88,12 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
         async def wrapped_get_tools_task(
             input: GetToolsInput[AgentDepsT],
             _ctx: DurableContext,
-        ) -> dict[str, ToolsetTool[AgentDepsT]]:
+        ) -> dict[str, ToolDefinition]:
             run_context = self.run_context_type.deserialize_run_context(input.serialized_run_context, deps=input.deps)
 
-            return await super(HatchetMCPServer, self).get_tools(run_context)
+            tools = await super(HatchetMCPServer, self).get_tools(run_context)
+
+            return {name: tool.tool_def for name, tool in tools.items()}
 
         self.hatchet_wrapped_get_tools_task = wrapped_get_tools_task
 
@@ -114,7 +119,9 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
             _ctx: DurableContext,
         ) -> CallToolOutput[AgentDepsT]:
             run_context = self.run_context_type.deserialize_run_context(input.serialized_run_context, deps=input.deps)
-            result = await super(HatchetMCPServer, self).call_tool(input.name, input.tool_args, run_context, input.tool)
+            tool = self.tool_for_tool_def(input.tool_def)
+
+            result = await super(HatchetMCPServer, self).call_tool(input.name, input.tool_args, run_context, tool)
 
             return CallToolOutput[AgentDepsT](result=result)
 
@@ -128,14 +135,20 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
             self.hatchet_wrapped_call_tool_task,
         ]
 
+    def tool_for_tool_def(self, tool_def: ToolDefinition) -> ToolsetTool[AgentDepsT]:
+        assert isinstance(self.wrapped, MCPServer)
+        return self.wrapped.tool_for_tool_def(tool_def)
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        return await self.hatchet_wrapped_get_tools_task.aio_run(
+        tool_defs = await self.hatchet_wrapped_get_tools_task.aio_run(
             GetToolsInput(
                 serialized_run_context=serialized_run_context,
                 deps=ctx.deps,
             )
         )
+
+        return {name: self.tool_for_tool_def(tool_def) for name, tool_def in tool_defs.items()}
 
     async def call_tool(
         self,
@@ -150,7 +163,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
             CallToolInput(
                 name=name,
                 tool_args=tool_args,
-                tool=tool,
+                tool_def=tool.tool_def,
                 serialized_run_context=serialized_run_context,
                 deps=ctx.deps,
             )
