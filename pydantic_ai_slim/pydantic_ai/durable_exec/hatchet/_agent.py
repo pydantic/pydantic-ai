@@ -3,8 +3,9 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any, Generic, overload
+from uuid import uuid4
 
-from hatchet_sdk import DurableContext, Hatchet
+from hatchet_sdk import DurableContext, Hatchet, TriggerWorkflowOptions
 from hatchet_sdk.runnables.workflow import BaseWorkflow
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Never
@@ -225,6 +226,8 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
+        agent_run_id = uuid4()
+
         """Run the agent with a user prompt in async mode."""
         result = await self.hatchet_wrapped_run_workflow.aio_run(
             RunAgentInput[RunOutputDataT, AgentDepsT](
@@ -241,7 +244,13 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
                 deprecated_kwargs=_deprecated_kwargs,
-            )
+            ),
+            options=TriggerWorkflowOptions(
+                additional_metadata={
+                    'hatchet__agent_name': self._name,
+                    'hatchet__agent_run_id': str(agent_run_id),
+                }
+            ),
         )
 
         if isinstance(result, dict):
