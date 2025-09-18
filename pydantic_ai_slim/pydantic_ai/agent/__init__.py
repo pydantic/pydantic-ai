@@ -361,6 +361,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
 
+    def _get_instructions_literal_and_functions(
+        self,
+    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
+        instructions, instructions_functions = self._instructions, self._instructions_functions
+        if override_instructions := self._override_instructions.get():
+            instructions, instructions_functions = self._instructions_literal_and_functions(override_instructions.value)
+        return instructions, instructions_functions
+
     def _instructions_literal_and_functions(
         self,
         instructions: InstructionsInput,
@@ -599,10 +607,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage_limits = usage_limits or _usage.UsageLimits()
 
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            literal, functions = self._instructions, self._instructions_functions
-            if override := self._override_instructions.get():
-                literal, functions = self._instructions_literal_and_functions(override.value)
-
+            literal, functions = self._get_instructions_literal_and_functions()
             parts = [
                 literal,
                 *[await func.run(run_context) for func in functions],
@@ -644,12 +649,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=instrumentation_settings,
         )
 
-        instructions_for_node, instructions_functions_for_node = self._instructions, self._instructions_functions
-        if override_instructions := self._override_instructions.get():
-            instructions_for_node, instructions_functions_for_node = self._instructions_literal_and_functions(
-                override_instructions.value
-            )
-
+        instructions_for_node, instructions_functions_for_node = self._get_instructions_literal_and_functions()
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
@@ -778,9 +778,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             tools_token = None
 
         if _utils.is_set(instructions):
-            ins_token = self._override_instructions.set(_utils.Some(instructions))
+            instructions_token = self._override_instructions.set(_utils.Some(instructions))
         else:
-            ins_token = None
+            instructions_token = None
 
         try:
             yield
@@ -793,8 +793,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_toolsets.reset(toolsets_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
-            if ins_token is not None:
-                self._override_instructions.reset(ins_token)
+            if instructions_token is not None:
+                self._override_instructions.reset(instructions_token)
 
     @overload
     def instructions(
