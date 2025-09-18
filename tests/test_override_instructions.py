@@ -6,7 +6,15 @@ from collections.abc import Sequence
 import pytest
 
 from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, SystemPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.test import TestModel
 
 
@@ -31,6 +39,12 @@ def test_override_instructions_basic():
     @agent.instructions
     def instr_fn() -> str:
         return 'SHOULD_BE_IGNORED'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
+
+    base_req = _first_request(base_messages)
+    assert base_req.instructions == 'SHOULD_BE_IGNORED'
 
     with agent.override(instructions='OVERRIDE'):
         with capture_run_messages() as messages:
@@ -83,6 +97,12 @@ def test_override_instructions_callable_replaces_functions():
 
     def override_fn() -> str:
         return 'OVERRIDE_FN'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
+
+    base_req = _first_request(base_messages)
+    assert 'BASE_FN' in base_req.instructions
 
     with agent.override(instructions=override_fn):
         with capture_run_messages() as messages:
@@ -204,6 +224,12 @@ def test_override_with_dynamic_prompts():
     @agent.instructions
     def dynamic_instr() -> str:
         return 'DYNAMIC_INSTR'
+
+    with capture_run_messages() as base_messages:
+        agent.run_sync('Hi', model=TestModel(custom_output_text='baseline'))
+
+    base_req = _first_request(base_messages)
+    assert base_req.instructions == 'DYNAMIC_INSTR'
 
     # Override should take precedence over dynamic instructions but leave system prompts intact
     with agent.override(instructions='OVERRIDE_INSTR'):
