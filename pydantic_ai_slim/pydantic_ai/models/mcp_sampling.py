@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -47,11 +47,11 @@ class MCPSamplingModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
-        system_prompt, sampling_messages = _mcp.map_from_pai_messages(messages)
+        system_prompt, sampling_messages = _mcp.map_from_pai_messages(list(messages))
         model_settings = cast(MCPSamplingModelSettings, model_settings or {})
 
         result = await self.session.create_message(
@@ -75,7 +75,7 @@ class MCPSamplingModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,

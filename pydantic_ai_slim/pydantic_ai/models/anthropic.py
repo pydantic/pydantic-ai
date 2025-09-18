@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import io
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -195,7 +195,7 @@ class AnthropicModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -209,7 +209,7 @@ class AnthropicModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -224,7 +224,7 @@ class AnthropicModel(Model):
     @overload
     async def _messages_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[True],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -234,7 +234,7 @@ class AnthropicModel(Model):
     @overload
     async def _messages_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[False],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -243,7 +243,7 @@ class AnthropicModel(Model):
 
     async def _messages_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: bool,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -400,7 +400,7 @@ class AnthropicModel(Model):
                 )
         return tools, extra_headers
 
-    async def _map_message(self, messages: list[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
+    async def _map_message(self, messages: Sequence[ModelMessage]) -> tuple[str, list[BetaMessageParam]]:  # noqa: C901
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []

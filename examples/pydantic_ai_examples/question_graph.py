@@ -44,7 +44,7 @@ class Ask(BaseNode[QuestionState]):
             'Ask a simple question with a single correct answer.',
             message_history=ctx.state.ask_agent_messages,
         )
-        ctx.state.ask_agent_messages += result.all_messages()
+        ctx.state.ask_agent_messages.extend(result.all_messages())
         ctx.state.question = result.output
         return Answer(result.output)
 
@@ -85,7 +85,7 @@ class Evaluate(BaseNode[QuestionState, None, str]):
             format_as_xml({'question': ctx.state.question, 'answer': self.answer}),
             message_history=ctx.state.evaluate_agent_messages,
         )
-        ctx.state.evaluate_agent_messages += result.all_messages()
+        ctx.state.evaluate_agent_messages.extend(result.all_messages())
         if result.output.correct:
             return End(result.output.comment)
         else:

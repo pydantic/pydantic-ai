@@ -115,7 +115,7 @@ def agent_to_a2a(
 
 
 @dataclass
-class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]):
+class AgentWorker(Worker[Sequence[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]):
     """A worker that uses an agent to execute tasks."""
 
     agent: AbstractAgent[AgentDepsT, WorkerOutputT]
@@ -135,8 +135,9 @@ class AgentWorker(Worker[list[ModelMessage]], Generic[WorkerOutputT, AgentDepsT]
         await self.storage.update_task(task['id'], state='working')
 
         # Load context - contains pydantic-ai message history from previous tasks in this conversation
-        message_history = await self.storage.load_context(task['context_id']) or []
-        message_history.extend(self.build_message_history(task.get('history', [])))
+        context_history = await self.storage.load_context(task['context_id']) or []
+        task_history = self.build_message_history(task.get('history', []))
+        message_history = list(context_history) + list(task_history)
 
         try:
             result = await self.agent.run(message_history=message_history)  # type: ignore

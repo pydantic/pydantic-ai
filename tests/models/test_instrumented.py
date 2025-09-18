@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
@@ -72,7 +72,7 @@ class MyModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -93,7 +93,7 @@ class MyModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext | None = None,
@@ -342,7 +342,7 @@ async def test_instrumented_model_not_recording():
         InstrumentationSettings(tracer_provider=NoOpTracerProvider(), event_logger_provider=NoOpEventLoggerProvider()),
     )
 
-    messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
+    messages: Sequence[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('system_prompt')])]
     await model.request(
         messages,
         model_settings=ModelSettings(temperature=1),
@@ -360,7 +360,7 @@ async def test_instrumented_model_not_recording():
 async def test_instrumented_model_stream(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart('user_prompt'),
@@ -460,7 +460,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
 async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
     model = InstrumentedModel(MyModel(), InstrumentationSettings(version=1, event_mode='logs'))
 
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelRequest(
             parts=[
                 UserPromptPart('user_prompt'),
@@ -1068,7 +1068,7 @@ def test_messages_to_otel_events_image_url(document_content: BinaryContent):
 
 
 def test_messages_to_otel_events_without_binary_content(document_content: BinaryContent):
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=['user_prompt6', document_content])]),
     ]
     settings = InstrumentationSettings(include_binary_content=False)
@@ -1096,7 +1096,7 @@ def test_messages_to_otel_events_without_binary_content(document_content: Binary
 
 
 def test_messages_without_content(document_content: BinaryContent):
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelRequest(parts=[SystemPromptPart('system_prompt')]),
         ModelResponse(parts=[TextPart('text1')]),
         ModelRequest(
@@ -1218,7 +1218,7 @@ def test_messages_without_content(document_content: BinaryContent):
 
 
 def test_message_with_thinking_parts():
-    messages: list[ModelMessage] = [
+    messages: Sequence[ModelMessage] = [
         ModelResponse(parts=[TextPart('text1'), ThinkingPart('thinking1'), TextPart('text2')]),
         ModelResponse(parts=[ThinkingPart('thinking2')]),
         ModelResponse(parts=[ThinkingPart('thinking3'), TextPart('text3')]),
@@ -1283,7 +1283,7 @@ def test_deprecated_event_mode_warning():
 async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch):
     model = InstrumentedModel(MyModel())
 
-    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')])]
+    messages: Sequence[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')])]
     monkeypatch.setattr(ModelResponse, 'cost', None)
 
     with warns(

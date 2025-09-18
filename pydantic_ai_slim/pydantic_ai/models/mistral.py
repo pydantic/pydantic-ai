@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
-from collections.abc import AsyncIterable, AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -179,7 +179,7 @@ class MistralModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -194,7 +194,7 @@ class MistralModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -209,7 +209,7 @@ class MistralModel(Model):
 
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: MistralModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> MistralChatCompletionResponse:
@@ -245,7 +245,7 @@ class MistralModel(Model):
 
     async def _stream_completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: MistralModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> MistralEventStreamAsync[MistralCompletionEvent]:
@@ -515,7 +515,7 @@ class MistralModel(Model):
             else:
                 assert_never(part)
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[MistralMessages]:
+    def _map_messages(self, messages: Sequence[ModelMessage]) -> list[MistralMessages]:
         """Just maps a `pydantic_ai.Message` to a `MistralMessage`."""
         mistral_messages: list[MistralMessages] = []
         for message in messages:

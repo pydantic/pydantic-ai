@@ -572,7 +572,7 @@ async def _handle_tool_result_event(
                 yield item
 
 
-def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
+def _messages_from_ag_ui(messages: list[Message]) -> Sequence[ModelMessage]:
     """Convert a AG-UI history to a Pydantic AI one."""
     result: list[ModelMessage] = []
     tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.

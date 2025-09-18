@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -27,7 +29,7 @@ def test_function_model_settings():
     """Test that FunctionModel correctly stores and returns settings."""
     settings = ModelSettings(max_tokens=200, temperature=0.7)
 
-    def simple_response(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    def simple_response(messages: Sequence[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('response')])  # pragma: no cover
 
     # Test with settings
@@ -76,7 +78,7 @@ def test_settings_merge_hierarchy():
     # Create a function that captures the merged settings
     captured_settings = None
 
-    def capture_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    def capture_settings(messages: Sequence[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
         nonlocal captured_settings
         captured_settings = agent_info.model_settings
         return ModelResponse(parts=[TextPart('captured')])
@@ -118,7 +120,7 @@ def test_none_settings_in_hierarchy():
     """Test that None settings at any level don't break the merge hierarchy."""
     captured_settings = None
 
-    def capture_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    def capture_settings(messages: Sequence[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
         nonlocal captured_settings
         captured_settings = agent_info.model_settings
         return ModelResponse(parts=[TextPart('captured')])
@@ -144,7 +146,7 @@ def test_empty_settings_objects():
     """Test that empty ModelSettings objects work correctly in the hierarchy."""
     captured_settings = None
 
-    def capture_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    def capture_settings(messages: Sequence[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
         nonlocal captured_settings
         captured_settings = agent_info.model_settings
         return ModelResponse(parts=[TextPart('captured')])

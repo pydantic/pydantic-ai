@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
-from collections.abc import AsyncIterable, AsyncIterator, Iterable
+from collections.abc import AsyncIterable, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -176,7 +176,7 @@ class GroqModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -211,7 +211,7 @@ class GroqModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -226,7 +226,7 @@ class GroqModel(Model):
     @overload
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[True],
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -236,7 +236,7 @@ class GroqModel(Model):
     @overload
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[False],
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -245,7 +245,7 @@ class GroqModel(Model):
 
     async def _completions_create(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: bool,
         model_settings: GroqModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -382,7 +382,7 @@ class GroqModel(Model):
                 )
         return tools
 
-    def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    def _map_messages(self, messages: Sequence[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `groq.types.ChatCompletionMessageParam`."""
         groq_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:

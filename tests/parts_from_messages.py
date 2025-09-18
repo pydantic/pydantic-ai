@@ -1,9 +1,10 @@
+from collections.abc import Sequence
 from typing import Any
 
 from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponsePart
 
 
-def part_types_from_messages(messages: list[ModelMessage]) -> list[Any]:
+def part_types_from_messages(messages: Sequence[ModelMessage]) -> list[Any]:
     """Utility function used when you are not interested in the content of the messages, but only that the part is there.
 
     As an example, the following messages:

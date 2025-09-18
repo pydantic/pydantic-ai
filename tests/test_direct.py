@@ -1,5 +1,6 @@
 import asyncio
 import re
+from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import timezone
 from unittest.mock import AsyncMock, patch
@@ -117,7 +118,7 @@ async def test_model_request_stream():
 
 def test_model_request_stream_sync_without_context_manager():
     """Test that accessing properties or iterating without context manager raises RuntimeError."""
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('x')]
+    messages: Sequence[ModelMessage] = [ModelRequest.user_text_prompt('x')]
 
     expected_error_msg = re.escape(
         'StreamedResponseSync must be used as a context manager. Use: `with model_request_stream_sync(...) as stream:`'
@@ -180,7 +181,7 @@ def test_model_request_stream_sync_timeout():
 
 def test_model_request_stream_sync_intermediate_get():
     """Test getting properties of StreamedResponse before consuming all events."""
-    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('x')]
+    messages: Sequence[ModelMessage] = [ModelRequest.user_text_prompt('x')]
 
     with model_request_stream_sync('test', messages) as stream:
         response = stream.get()

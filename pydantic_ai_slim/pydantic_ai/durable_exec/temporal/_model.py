@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,7 +29,7 @@ from ._run_context import TemporalRunContext
 @dataclass
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _RequestParams:
-    messages: list[ModelMessage]
+    messages: Sequence[ModelMessage]
     # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
     model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
@@ -121,7 +121,7 @@ class TemporalModel(WrapperModel):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -142,7 +142,7 @@ class TemporalModel(WrapperModel):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,

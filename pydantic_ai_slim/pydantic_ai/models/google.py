@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 import base64
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -213,7 +213,7 @@ class GoogleModel(Model):
 
     async def request(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
@@ -224,7 +224,7 @@ class GoogleModel(Model):
 
     async def count_tokens(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> usage.RequestUsage:
@@ -278,7 +278,7 @@ class GoogleModel(Model):
     @asynccontextmanager
     async def request_stream(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
@@ -330,7 +330,7 @@ class GoogleModel(Model):
     @overload
     async def _generate_content(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[False],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -339,7 +339,7 @@ class GoogleModel(Model):
     @overload
     async def _generate_content(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: Literal[True],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -347,7 +347,7 @@ class GoogleModel(Model):
 
     async def _generate_content(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         stream: bool,
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
@@ -358,7 +358,7 @@ class GoogleModel(Model):
 
     async def _build_content_and_config(
         self,
-        messages: list[ModelMessage],
+        messages: Sequence[ModelMessage],
         model_settings: GoogleModelSettings,
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
@@ -459,7 +459,9 @@ class GoogleModel(Model):
             _provider_name=self._provider.name,
         )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> tuple[ContentDict | None, list[ContentUnionDict]]:
+    async def _map_messages(
+        self, messages: Sequence[ModelMessage]
+    ) -> tuple[ContentDict | None, list[ContentUnionDict]]:
         contents: list[ContentUnionDict] = []
         system_parts: list[PartDict] = []
 

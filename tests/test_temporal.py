@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections.abc import AsyncIterable, AsyncIterator, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -1501,7 +1501,7 @@ async def test_temporal_agent_mcp_server_activity_disabled(client: Client):
 class DirectStreamWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
-        messages: list[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
+        messages: Sequence[ModelMessage] = [ModelRequest.user_text_prompt(prompt)]
         async with model_request_stream(complex_temporal_agent.model, messages) as stream:
             async for _ in stream:
                 pass
@@ -1938,7 +1938,7 @@ class CustomModelSettings(ModelSettings, total=False):
     custom_setting: str
 
 
-def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+def return_settings(messages: Sequence[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(str(agent_info.model_settings))])
 
 
