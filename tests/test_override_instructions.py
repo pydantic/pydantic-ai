@@ -39,6 +39,7 @@ def test_override_instructions_basic():
     req = _first_request(messages)
     assert req.instructions == 'OVERRIDE'
 
+
 def test_override_reset_after_context():
     """Test that instructions are reset after exiting the override context."""
     agent = Agent('test', instructions='ORIG')
@@ -145,6 +146,7 @@ async def test_override_concurrent_isolation():
     assert a == 'A'
     assert b == 'B'
 
+
 def test_override_replaces_instructions():
     """Test overriding instructions replaces the base instructions."""
     agent = Agent('test', instructions='ORIG_INSTR')
@@ -174,6 +176,7 @@ def test_override_nested_contexts():
 
     assert outer_req.instructions == 'OUTER'
     assert inner_req.instructions == 'INNER'
+
 
 @pytest.mark.anyio
 async def test_override_async_run():
