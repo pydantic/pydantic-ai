@@ -881,7 +881,7 @@ wheels = [
 
 [[package]]
 name = "dbos"
-version = "1.13.0"
+version = "1.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alembic" },
@@ -902,9 +902,9 @@ dependencies = [
     { name = "typer" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/d2/fa283887930293f079400b5525ceab7f0b0301910cf0070c1aebe621d85f/dbos-1.13.0.tar.gz", hash = "sha256:40fd2419bd4e72821fe1726e12ff7fae7b6e4b482971cc43cef08693468bac4c", size = 209587, upload-time = "2025-09-02T18:56:50.996Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/b7/2cfefeb96fe67481ec2cf009c427ccbb32c82e2026cf2c259acbe6b22045/dbos-1.14.0.tar.gz", hash = "sha256:16052bd8ad004c7dce6b9cd2c10b282c2c4bb3b1bd7c5f6714e4bc437b7ca6f4", size = 216135, upload-time = "2025-09-16T16:49:08.741Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1a/a0/5cd6f990c5835067fdb71a29e507ed13cbbd92fbf0c857450dfa134099c0/dbos-1.13.0-py3-none-any.whl", hash = "sha256:fec850e95a92997c7c0dc05ebd702dde941221465006957a314207bad7caf45f", size = 147294, upload-time = "2025-09-02T18:56:48.772Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/7f/2461485e608594a4c43e65dac7a5c6614256f2ca9aeeddcd080e4fb52939/dbos-1.14.0-py3-none-any.whl", hash = "sha256:544c99a641636f6b9f528f64ae92430c444bc68486fc2511ab5415f61304e2bb", size = 151550, upload-time = "2025-09-16T16:49:05.806Z" },
 ]
 
 [[package]]
@@ -3561,7 +3561,7 @@ requires-dist = [
     { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.39.0" },
     { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.18.0" },
-    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.13.0" },
+    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=1.14.0" },
     { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
