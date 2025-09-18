@@ -3542,3 +3542,100 @@ If you're looking for a deeper or philosophical answer, let me know your perspec
             },
         ]
     )
+
+
+async def test_openai_responses_code_execution_return_image(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel(
+        'gpt-5',
+        provider=OpenAIProvider(api_key=openai_api_key),
+        settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
+    )
+
+    ad_hoc_agent = Agent(
+        model=model,
+        builtin_tools=[CodeExecutionTool()],
+    )
+
+    result = await ad_hoc_agent.run('Create a chart of y=x^2 for x=-5 to 5')
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Create a chart of y=x^2 for x=-5 to 5',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cc849a4420819dbd821ade7e9b5d5a07865e46140d854a',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'container_id': 'cntr_68cc8499e0c48191841feeb7f14a9d2e066423ab27e58f8e',
+                            'code': """\
+# Create and display a chart of y = x^2 for x from -5 to 5\r
+import numpy as np\r
+import matplotlib.pyplot as plt\r
+\r
+# Generate data\r
+x = np.linspace(-5, 5, 1000)\r
+y = x**2\r
+\r
+# Plot\r
+plt.figure(figsize=(6, 4))\r
+plt.plot(x, y, color='royalblue', linewidth=2, label='y = x^2')\r
+plt.title('y = x^2 for x in [-5, 5]')\r
+plt.xlabel('x')\r
+plt.ylabel('y')\r
+plt.grid(True, linestyle='--', alpha=0.5)\r
+plt.legend()\r
+\r
+# Save and show\r
+outfile = '/mnt/data/y_equals_x_squared.png'\r
+plt.savefig(outfile, dpi=150, bbox_inches='tight')\r
+plt.show()\r
+\r
+outfile\
+""",
+                        },
+                        tool_call_id='ci_68cc84a053e4819d8645e13ae9f7612a07865e46140d854a',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'status': 'completed',
+                            'outputs': [
+                                {
+                                    'type': 'image',
+                                    'url': IsStr(),
+                                },
+                                {'logs': "'/mnt/data/y_equals_x_squared.png'", 'type': 'logs'},
+                            ],
+                        },
+                        tool_call_id='ci_68cc84a053e4819d8645e13ae9f7612a07865e46140d854a',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    TextPart(
+                        content=IsStr(),
+                        id='msg_68cc84a90fec819d8c303b35ee0d948c07865e46140d854a',
+                    ),
+                ],
+                usage=RequestUsage(input_tokens=2966, output_tokens=676, details={'reasoning_tokens': 448}),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68cc84978d4c819dad1933fa64334bcb07865e46140d854a',
+                finish_reason='stop',
+            ),
+        ]
+    )
