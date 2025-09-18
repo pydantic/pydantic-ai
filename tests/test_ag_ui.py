@@ -83,6 +83,12 @@ with contextlib.suppress(ImportError):
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not has_ag_ui, reason='ag-ui-protocol not installed'),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
