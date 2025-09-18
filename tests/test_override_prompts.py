@@ -24,41 +24,26 @@ def _system_prompt_texts(parts: Sequence[ModelRequestPart]) -> list[str]:
     return [p.content for p in parts if isinstance(p, SystemPromptPart)]
 
 
-def test_override_prompts_instructions_basic():
-    """Test that override_prompts can override instructions."""
+def test_override_instructions_basic():
+    """Test that override can override instructions."""
     agent = Agent('test')
 
     @agent.instructions
     def instr_fn() -> str:
         return 'SHOULD_BE_IGNORED'
 
-    with agent.override_prompts(instructions='OVERRIDE'):
+    with agent.override(instructions='OVERRIDE'):
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
     req = _first_request(messages)
     assert req.instructions == 'OVERRIDE'
 
+def test_override_reset_after_context():
+    """Test that instructions are reset after exiting the override context."""
+    agent = Agent('test', instructions='ORIG')
 
-def test_override_prompts_system_prompts_basic():
-    """Test that override_prompts can override system prompts."""
-    agent = Agent('test', system_prompt=('ORIG1', 'ORIG2'))
-
-    with agent.override_prompts(system_prompts=('NEW1', 'NEW2')):
-        with capture_run_messages() as messages:
-            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
-
-    req = _first_request(messages)
-    sys_texts = _system_prompt_texts(req.parts)
-    assert sys_texts[:2] == ['NEW1', 'NEW2']
-    assert 'ORIG1' not in sys_texts and 'ORIG2' not in sys_texts
-
-
-def test_override_prompts_reset_after_context():
-    """Test that prompts are reset after exiting the override context."""
-    agent = Agent('test', system_prompt=('ORIG',))
-
-    with agent.override_prompts(system_prompts=('NEW',)):
+    with agent.override(instructions='NEW'):
         with capture_run_messages() as messages_new:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
@@ -67,11 +52,11 @@ def test_override_prompts_reset_after_context():
 
     req_new = _first_request(messages_new)
     req_orig = _first_request(messages_orig)
-    assert _system_prompt_texts(req_new.parts)[:1] == ['NEW']
-    assert _system_prompt_texts(req_orig.parts)[:1] == ['ORIG']
+    assert req_new.instructions == 'NEW'
+    assert req_orig.instructions == 'ORIG'
 
 
-def test_override_prompts_none_clears_instructions():
+def test_override_none_clears_instructions():
     """Test that passing None for instructions clears all instructions."""
     agent = Agent('test', instructions='BASE')
 
@@ -79,7 +64,7 @@ def test_override_prompts_none_clears_instructions():
     def instr_fn() -> str:  # pragma: no cover - ignored under override
         return 'ALSO_BASE'
 
-    with agent.override_prompts(instructions=None):
+    with agent.override(instructions=None):
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
@@ -87,81 +72,115 @@ def test_override_prompts_none_clears_instructions():
     assert req.instructions is None
 
 
-@pytest.mark.anyio
-async def test_override_prompts_concurrent_isolation():
-    """Test that concurrent overrides are isolated from each other."""
-    agent = Agent('test', system_prompt=('ORIG',))
+def test_override_instructions_callable_replaces_functions():
+    """Override with a callable should replace existing instruction functions."""
+    agent = Agent('test')
 
-    async def run_with(instr: str, sys_p: tuple[str, ...]):
-        with agent.override_prompts(instructions=instr, system_prompts=sys_p):
+    @agent.instructions
+    def base_fn() -> str:
+        return 'BASE_FN'
+
+    def override_fn() -> str:
+        return 'OVERRIDE_FN'
+
+    with agent.override(instructions=override_fn):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = _first_request(messages)
+    assert req.instructions == 'OVERRIDE_FN'
+    assert 'BASE_FN' not in req.instructions
+
+
+@pytest.mark.anyio
+async def test_override_instructions_async_callable():
+    """Override with an async callable should be awaited."""
+    agent = Agent('test')
+
+    async def override_fn() -> str:
+        await asyncio.sleep(0)
+        return 'ASYNC_FN'
+
+    with agent.override(instructions=override_fn):
+        with capture_run_messages() as messages:
+            await agent.run('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = _first_request(messages)
+    assert req.instructions == 'ASYNC_FN'
+
+
+def test_override_instructions_sequence_mixed_types():
+    """Override can mix literal strings and functions."""
+    agent = Agent('test', instructions='BASE')
+
+    def override_fn() -> str:
+        return 'FUNC_PART'
+
+    with agent.override(instructions=['OVERRIDE1', override_fn, 'OVERRIDE2']):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
+
+    req = _first_request(messages)
+    assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART'
+    assert 'BASE' not in req.instructions
+
+
+@pytest.mark.anyio
+async def test_override_concurrent_isolation():
+    """Test that concurrent overrides are isolated from each other."""
+    agent = Agent('test', instructions='ORIG')
+
+    async def run_with(instr: str) -> str | None:
+        with agent.override(instructions=instr):
             with capture_run_messages() as messages:
                 await agent.run('Hi', model=TestModel(custom_output_text='ok'))
             req = _first_request(messages)
-            return req.instructions, _system_prompt_texts(req.parts)[: len(sys_p)]
+            return req.instructions
 
     a, b = await asyncio.gather(
-        run_with('A', ('SA',)),
-        run_with('B', ('SB1', 'SB2')),
+        run_with('A'),
+        run_with('B'),
     )
 
-    assert a == ('A', ['SA'])
-    assert b == ('B', ['SB1', 'SB2'])
+    assert a == 'A'
+    assert b == 'B'
 
+def test_override_replaces_instructions():
+    """Test overriding instructions replaces the base instructions."""
+    agent = Agent('test', instructions='ORIG_INSTR')
 
-def test_override_prompts_both_instructions_and_system():
-    """Test overriding both instructions and system prompts simultaneously."""
-    agent = Agent('test', instructions='ORIG_INSTR', system_prompt='ORIG_SYSTEM')
-
-    with agent.override_prompts(instructions='NEW_INSTR', system_prompts=('NEW_SYS1', 'NEW_SYS2')):
+    with agent.override(instructions='NEW_INSTR'):
         with capture_run_messages() as messages:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
     req = _first_request(messages)
     assert req.instructions == 'NEW_INSTR'
-    sys_texts = _system_prompt_texts(req.parts)
-    assert sys_texts[:2] == ['NEW_SYS1', 'NEW_SYS2']
 
 
-def test_override_prompts_nested_contexts():
+def test_override_nested_contexts():
     """Test nested override contexts."""
-    agent = Agent('test', system_prompt='ORIG')
+    agent = Agent('test', instructions='ORIG')
 
-    with agent.override_prompts(system_prompts=('OUTER',)):
+    with agent.override(instructions='OUTER'):
         with capture_run_messages() as outer_messages:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
-        with agent.override_prompts(system_prompts=('INNER',)):
+        with agent.override(instructions='INNER'):
             with capture_run_messages() as inner_messages:
                 agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
     outer_req = _first_request(outer_messages)
     inner_req = _first_request(inner_messages)
 
-    assert _system_prompt_texts(outer_req.parts)[:1] == ['OUTER']
-    assert _system_prompt_texts(inner_req.parts)[:1] == ['INNER']
-
-
-def test_override_prompts_empty_tuple_system():
-    """Test that empty tuple for system_prompts clears system prompts."""
-    agent = Agent('test', system_prompt=('ORIG1', 'ORIG2'))
-
-    with agent.override_prompts(system_prompts=()):
-        with capture_run_messages() as messages:
-            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
-
-    req = _first_request(messages)
-    sys_texts = _system_prompt_texts(req.parts)
-    # Should not have the original system prompts, but might have other parts
-    assert 'ORIG1' not in sys_texts
-    assert 'ORIG2' not in sys_texts
-
+    assert outer_req.instructions == 'OUTER'
+    assert inner_req.instructions == 'INNER'
 
 @pytest.mark.anyio
-async def test_override_prompts_async_run():
-    """Test override_prompts with async run method."""
+async def test_override_async_run():
+    """Test override with async run method."""
     agent = Agent('test', instructions='ORIG')
 
-    with agent.override_prompts(instructions='ASYNC_OVERRIDE'):
+    with agent.override(instructions='ASYNC_OVERRIDE'):
         with capture_run_messages() as messages:
             await agent.run('Hi', model=TestModel(custom_output_text='ok'))
 
@@ -169,8 +188,8 @@ async def test_override_prompts_async_run():
     assert req.instructions == 'ASYNC_OVERRIDE'
 
 
-def test_override_prompts_with_dynamic_prompts():
-    """Test override_prompts interacting with dynamic prompts."""
+def test_override_with_dynamic_prompts():
+    """Test override interacting with dynamic prompts."""
     agent = Agent('test')
 
     dynamic_value = 'DYNAMIC'
@@ -183,14 +202,13 @@ def test_override_prompts_with_dynamic_prompts():
     def dynamic_instr() -> str:
         return 'DYNAMIC_INSTR'
 
-    # Override should take precedence over dynamic prompts for instructions
-    # For system prompts, overrides are added in addition to dynamic prompts
-    with agent.override_prompts(instructions='OVERRIDE_INSTR', system_prompts=('OVERRIDE_SYS',)):
+    # Override should take precedence over dynamic instructions but leave system prompts intact
+    with agent.override(instructions='OVERRIDE_INSTR'):
         with capture_run_messages() as messages:
             agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
 
     req = _first_request(messages)
     assert req.instructions == 'OVERRIDE_INSTR'
     sys_texts = _system_prompt_texts(req.parts)
-    # The override system prompt should be present
-    assert 'OVERRIDE_SYS' in sys_texts
+    # The dynamic system prompt should still be present since overrides target instructions only
+    assert dynamic_value in sys_texts

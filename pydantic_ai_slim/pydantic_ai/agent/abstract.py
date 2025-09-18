@@ -14,6 +14,7 @@ from pydantic_graph._utils import get_event_loop
 
 from .. import (
     _agent_graph,
+    _system_prompt,
     _utils,
     exceptions,
     messages as _messages,
@@ -58,6 +59,14 @@ EventStreamHandler: TypeAlias = Callable[
     [RunContext[AgentDepsT], AsyncIterable[_messages.AgentStreamEvent]], Awaitable[None]
 ]
 """A function that receives agent [`RunContext`][pydantic_ai.tools.RunContext] and an async iterable of events from the model's streaming response and the agent's execution of tools."""
+
+
+InstructionsInput = (
+    str
+    | _system_prompt.SystemPromptFunc[AgentDepsT]
+    | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+    | None
+)
 
 
 class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
@@ -681,8 +690,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: InstructionsInput | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+        """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -692,24 +702,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
-        """
-        raise NotImplementedError
-        yield
-
-    @contextmanager
-    @abstractmethod
-    def override_prompts(
-        self,
-        *,
-        instructions: str | None | _utils.Unset = _utils.UNSET,
-        system_prompts: Sequence[str] | _utils.Unset = _utils.UNSET,
-    ) -> Iterator[None]:
-        """Context manager to temporarily override agent instructions and static system prompts.
-
-        Args:
             instructions: When set (including `None`), replace the effective aggregate of literal instructions and any
-                registered instruction functions with the provided string (or clear if `None`).
-            system_prompts: When set, replace the static system prompts tuple used by the agent.
+                registered instruction functions. Accepts a literal string, an instructions function, or a sequence
+                mixing both. Passing `None` clears all instructions.
         """
         raise NotImplementedError
         yield
