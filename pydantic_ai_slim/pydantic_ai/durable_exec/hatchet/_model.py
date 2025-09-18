@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from hatchet_sdk import DurableContext, Hatchet
+from hatchet_sdk import Context, Hatchet
 from pydantic import BaseModel, ConfigDict
 
 from pydantic_ai.messages import (
@@ -31,7 +31,7 @@ class HatchetModel(WrapperModel):
         self.hatchet = hatchet
         self._task_name_prefix = task_name_prefix
 
-        @hatchet.durable_task(
+        @hatchet.task(
             name=f'{self._task_name_prefix}__model.request',
             description=self.task_config.description,
             input_validator=ModelInput,
@@ -50,7 +50,7 @@ class HatchetModel(WrapperModel):
         )
         async def wrapped_request_task(
             input: ModelInput,
-            _ctx: DurableContext,
+            _ctx: Context,
         ) -> ModelResponse:
             return await super(HatchetModel, self).request(
                 input.messages, input.model_settings, input.model_request_parameters
