@@ -60,6 +60,8 @@ def hatchetize_toolset(
             hatchet=hatchet,
             task_name_prefix=task_name_prefix,
             task_config=task_config,
+            deps_type=deps_type,
+            run_context_type=run_context_type,
         )
 
     try:
