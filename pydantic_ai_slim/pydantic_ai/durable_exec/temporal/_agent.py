@@ -23,8 +23,8 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
-from pydantic_ai.agent.abstract import InstructionsInput
+from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, WrapperAgent
+from pydantic_ai.agent.abstract import Instructions, RunOutputDataT
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
@@ -750,7 +750,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: InstructionsInput | _utils.Unset = _utils.UNSET,
+        instructions: Instructions | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies, model, toolsets, tools, and instructions.
 

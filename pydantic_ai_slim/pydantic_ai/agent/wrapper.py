@@ -20,7 +20,7 @@ from ..tools import (
     ToolFuncEither,
 )
 from ..toolsets import AbstractToolset
-from .abstract import AbstractAgent, EventStreamHandler, InstructionsInput, RunOutputDataT
+from .abstract import AbstractAgent, EventStreamHandler, Instructions, RunOutputDataT
 
 
 class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
@@ -214,7 +214,7 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-        instructions: InstructionsInput | _utils.Unset = _utils.UNSET,
+        instructions: Instructions | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
         """Context manager to temporarily override agent dependencies, model, toolsets, tools, and instructions.
 
