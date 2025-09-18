@@ -1583,7 +1583,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk.item, responses.ResponseOutputMessage):
                     pass
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
-                    pass
+                    call_part, _ = _map_web_search_tool_call(chunk.item, self.provider_name)
+                    yield self._parts_manager.handle_builtin_tool_call_part(
+                        vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
+                    )
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
                     call_part, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
 
@@ -1624,9 +1627,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                 elif isinstance(chunk.item, responses.ResponseFunctionWebSearch):
                     call_part, return_part = _map_web_search_tool_call(chunk.item, self.provider_name)
-                    yield self._parts_manager.handle_builtin_tool_call_part(
-                        vendor_part_id=f'{chunk.item.id}-call', part=call_part
+
+                    maybe_event = self._parts_manager.handle_tool_call_delta(
+                        vendor_part_id=f'{chunk.item.id}-call',
+                        args=call_part.args,
                     )
+                    if maybe_event is not None:
+                        yield maybe_event
+
                     yield self._parts_manager.handle_builtin_tool_return_part(
                         vendor_part_id=f'{chunk.item.id}-return', part=return_part
                     )
@@ -1821,17 +1829,18 @@ def _map_code_interpreter_tool_call(
 def _map_web_search_tool_call(
     item: responses.ResponseFunctionWebSearch, provider_name: str
 ) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
-    action = item.action
-
-    args = action.model_dump(mode='json')
-    # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
-    sources = args.pop('sources', None)
+    args: dict[str, Any] | None = None
 
     result = {
         'status': item.status,
     }
-    if sources:
-        result['sources'] = sources
+
+    if action := item.action:
+        args = action.model_dump(mode='json')
+
+        # To prevent `Unknown parameter: 'input[2].action.sources'` for `ActionSearch`
+        if sources := args.pop('sources', None):
+            result['sources'] = sources
 
     return (
         BuiltinToolCallPart(

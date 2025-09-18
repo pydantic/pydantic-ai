@@ -993,9 +993,15 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                 index=1,
                 part=BuiltinToolCallPart(
                     tool_name='web_search',
-                    args={'query': 'weather: San Francisco, CA', 'type': 'search'},
                     tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                     provider_name='openai',
+                ),
+            ),
+            PartDeltaEvent(
+                index=1,
+                delta=ToolCallPartDelta(
+                    args_delta={'query': 'weather: San Francisco, CA', 'type': 'search'},
+                    tool_call_id='ws_00a60507bf41223d0068c9d30021d081a0962d80d50c12e317',
                 ),
             ),
             PartStartEvent(
