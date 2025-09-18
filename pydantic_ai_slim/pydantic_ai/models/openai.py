@@ -383,7 +383,7 @@ class OpenAIChatModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
-        model_response = self._process_response(response)
+        model_response = self._process_response(response, model_request_parameters)
         return model_response
 
     @asynccontextmanager
@@ -439,7 +439,7 @@ class OpenAIChatModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages = await self._map_messages(messages)
+        openai_messages = await self._map_messages(messages, model_request_parameters)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -491,7 +491,9 @@ class OpenAIChatModel(Model):
                 raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
             raise  # pragma: lax no cover
 
-    def _process_response(self, response: chat.ChatCompletion | str) -> ModelResponse:
+    def _process_response(
+        self, response: chat.ChatCompletion | str, model_request_parameters: ModelRequestParameters
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         # Although the OpenAI SDK claims to return a Pydantic model (`ChatCompletion`) from the chat completions function:
         # * it hasn't actually performed validation (presumably they're creating the model with `model_construct` or something?!)
@@ -542,10 +544,13 @@ class OpenAIChatModel(Model):
                 for lp in choice.logprobs.content
             ]
 
-        if choice.message.content is not None:
+        if (content := choice.message.content) is not None:
+            if response_prefix := model_request_parameters.response_prefix:
+                content = response_prefix + content
+
             items.extend(
                 (replace(part, id='content', provider_name=self.system) if isinstance(part, ThinkingPart) else part)
-                for part in split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags)
+                for part in split_content_into_text_and_thinking(content, self.profile.thinking_tags)
             )
         if choice.message.tool_calls is not None:
             for c in choice.message.tool_calls:
@@ -625,7 +630,9 @@ class OpenAIChatModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
-    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
+    async def _map_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+    ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
@@ -665,6 +672,11 @@ class OpenAIChatModel(Model):
                 assert_never(message)
         if instructions := self._get_instructions(messages):
             openai_messages.insert(0, chat.ChatCompletionSystemMessageParam(content=instructions, role='system'))
+
+        if response_prefix := model_request_parameters.response_prefix:
+            # TODO: Add prefix=True for DeepSeek?
+            openai_messages.append(chat.ChatCompletionAssistantMessageParam(role='assistant', content=response_prefix))
+
         return openai_messages
 
     @staticmethod
@@ -1350,6 +1362,8 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        response_prefix = self.model_request_parameters.response_prefix
+
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
@@ -1374,7 +1388,11 @@ class OpenAIStreamedResponse(StreamedResponse):
 
             # Handle the text part of the response
             content = choice.delta.content
-            if content is not None:
+            if content is not None or response_prefix:
+                if response_prefix:
+                    content = response_prefix + (content or '')
+                    response_prefix = None
+
                 maybe_event = self._parts_manager.handle_text_delta(
                     vendor_part_id='content',
                     content=content,

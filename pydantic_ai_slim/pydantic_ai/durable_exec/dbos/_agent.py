@@ -120,6 +120,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: bool = True,
             toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+            response_prefix: str | None = None,
             **_deprecated_kwargs: Never,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides():
@@ -136,6 +137,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     infer_name=infer_name,
                     toolsets=toolsets,
                     event_stream_handler=event_stream_handler,
+                    response_prefix=response_prefix,
                     **_deprecated_kwargs,
                 )
 
@@ -157,6 +159,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: bool = True,
             toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+            response_prefix: str | None = None,
             **_deprecated_kwargs: Never,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides():
@@ -173,6 +176,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     infer_name=infer_name,
                     toolsets=toolsets,
                     event_stream_handler=event_stream_handler,
+                    response_prefix=response_prefix,
                     **_deprecated_kwargs,
                 )
 
@@ -245,6 +249,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -263,6 +268,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     async def run(
@@ -280,6 +286,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -313,6 +320,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
+            response_prefix: Optional response prefix to use for this run.
 
         Returns:
             The result of the run.
@@ -330,6 +338,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
+            response_prefix=response_prefix,
             **_deprecated_kwargs,
         )
 
@@ -349,6 +358,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
     @overload
@@ -367,6 +377,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
     def run_sync(
@@ -384,6 +395,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -416,6 +428,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run.
+            response_prefix: Optional response prefix to use for this run.
 
         Returns:
             The result of the run.
@@ -433,6 +446,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
+            response_prefix=response_prefix,
             **_deprecated_kwargs,
         )
 
@@ -452,6 +466,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -470,6 +485,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -488,6 +504,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        response_prefix: str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -518,6 +535,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
+            response_prefix: Optional response prefix to use for this run.
 
         Returns:
             The result of the run.
@@ -542,6 +560,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             infer_name=infer_name,
             toolsets=toolsets,
             event_stream_handler=event_stream_handler,
+            response_prefix=response_prefix,
             **_deprecated_kwargs,
         ) as result:
             yield result
@@ -561,6 +580,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -579,6 +599,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -597,6 +618,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        response_prefix: str | None = None,
         **_deprecated_kwargs: Never,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -631,6 +653,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     system_prompts=(),
                     system_prompt_functions=[],
                     system_prompt_dynamic_functions={},
+                    response_prefix=None,
                 ),
                 ModelRequestNode(
                     request=ModelRequest(
@@ -640,7 +663,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                                 timestamp=datetime.datetime(...),
                             )
                         ]
-                    )
+                    ),
+                    response_prefix=None,
                 ),
                 CallToolsNode(
                     model_response=ModelResponse(
@@ -670,6 +694,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            response_prefix: Optional response prefix to use for this run.
 
         Returns:
             The result of the run.
@@ -692,6 +717,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
+                response_prefix=response_prefix,
                 **_deprecated_kwargs,
             ) as run:
                 yield run

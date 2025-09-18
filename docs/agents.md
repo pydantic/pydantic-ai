@@ -284,6 +284,7 @@ async def main():
             system_prompts=(),
             system_prompt_functions=[],
             system_prompt_dynamic_functions={},
+            response_prefix=None,
         ),
         ModelRequestNode(
             request=ModelRequest(
@@ -293,7 +294,8 @@ async def main():
                         timestamp=datetime.datetime(...),
                     )
                 ]
-            )
+            ),
+            response_prefix=None,
         ),
         CallToolsNode(
             model_response=ModelResponse(
@@ -346,6 +348,7 @@ async def main():
                 system_prompts=(),
                 system_prompt_functions=[],
                 system_prompt_dynamic_functions={},
+                response_prefix=None,
             ),
             ModelRequestNode(
                 request=ModelRequest(
@@ -355,7 +358,8 @@ async def main():
                             timestamp=datetime.datetime(...),
                         )
                     ]
-                )
+                ),
+                response_prefix=None,
             ),
             CallToolsNode(
                 model_response=ModelResponse(

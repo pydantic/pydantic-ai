@@ -176,6 +176,7 @@ async def test_instrumented_model(capfire: CaptureLogfire):
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'response_prefix': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -407,6 +408,7 @@ async def test_instrumented_model_stream(capfire: CaptureLogfire):
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'response_prefix': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -505,6 +507,7 @@ async def test_instrumented_model_stream_break(capfire: CaptureLogfire):
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'response_prefix': None,
                     },
                     'logfire.json_schema': {
                         'type': 'object',
@@ -623,6 +626,7 @@ async def test_instrumented_model_attributes_mode(capfire: CaptureLogfire, instr
                             'output_object': None,
                             'output_tools': [],
                             'allow_text_output': True,
+                            'response_prefix': None,
                         },
                         'gen_ai.request.temperature': 1,
                         'logfire.msg': 'chat gpt-4o',
@@ -749,6 +753,7 @@ Fix the errors and try again.\
                             'output_object': None,
                             'output_tools': [],
                             'allow_text_output': True,
+                            'response_prefix': None,
                         },
                         'gen_ai.request.temperature': 1,
                         'logfire.msg': 'chat gpt-4o',
@@ -1316,6 +1321,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'response_prefix': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat gpt-4o',

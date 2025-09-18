@@ -395,6 +395,7 @@ def test_logfire(
                         'output_tools': [],
                         'output_object': None,
                         'allow_text_output': True,
+                        'response_prefix': None,
                     }
                 )
             ),
@@ -785,6 +786,7 @@ def test_instructions_with_structured_output_exclude_content_v2(
                             }
                         ],
                         'allow_text_output': False,
+                        'response_prefix': None,
                     }
                 )
             ),
@@ -889,6 +891,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                         'output_object': None,
                         'output_tools': [],
                         'allow_text_output': True,
+                        'response_prefix': None,
                     },
                     'logfire.span_type': 'span',
                     'logfire.msg': 'chat test',

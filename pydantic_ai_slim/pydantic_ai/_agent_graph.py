@@ -163,6 +163,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     _: dataclasses.KW_ONLY
 
     deferred_tool_results: DeferredToolResults | None = None
+    response_prefix: str | None = None
 
     instructions: str | None = None
     instructions_functions: list[_system_prompt.SystemPromptRunner[DepsT]] = dataclasses.field(default_factory=list)
@@ -247,7 +248,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
         next_message.instructions = await ctx.deps.get_instructions(run_context)
 
-        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message)
+        return ModelRequestNode[DepsT, NodeRunEndT](request=next_message, response_prefix=self.response_prefix)
 
     async def _handle_deferred_tool_results(  # noqa: C901
         self,
@@ -348,6 +349,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
 async def _prepare_request_parameters(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+    response_prefix: str | None = None,
 ) -> models.ModelRequestParameters:
     """Build tools and create an agent model."""
     output_schema = ctx.deps.output_schema
@@ -373,6 +375,7 @@ async def _prepare_request_parameters(
         output_tools=output_tools,
         output_object=output_object,
         allow_text_output=allow_text_output,
+        response_prefix=response_prefix,
     )
 
 
@@ -381,6 +384,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
 
     request: _messages.ModelRequest
+    response_prefix: str | None = None
 
     _result: CallToolsNode[DepsT, NodeRunEndT] | None = field(repr=False, init=False, default=None)
     _did_stream: bool = field(repr=False, init=False, default=False)
@@ -469,7 +473,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # See `tests/test_tools.py::test_parallel_tool_return_with_deferred` for an example where this is necessary
         message_history = _clean_message_history(message_history)
 
-        model_request_parameters = await _prepare_request_parameters(ctx)
+        # TODO: Raise exception if response_prefix is not supported by the ctx.deps.model.profile
+
+        model_request_parameters = await _prepare_request_parameters(ctx, self.response_prefix)
         model_request_parameters = ctx.deps.model.customize_request_parameters(model_request_parameters)
 
         model_settings = ctx.deps.model_settings

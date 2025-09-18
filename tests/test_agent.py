@@ -4975,3 +4975,32 @@ async def test_consecutive_model_responses_in_history():
             ),
         ]
     )
+
+
+def test_response_prefix_validation():
+    """Test that response_prefix raises an error for unsupported models."""
+    # Test with a model that doesn't support response prefix
+    agent = Agent(TestModel())
+
+    with pytest.raises(UserError, match='Model test does not support response prefix'):
+        agent.run_sync('Hello', response_prefix='Assistant: ')
+
+
+def test_response_prefix_parameter_passed():
+    """Test that response_prefix parameter is accepted by run methods."""
+    # Test with a model that supports response prefix
+    from pydantic_ai.models.test import TestModel
+
+    # Create a mock model that supports response prefix
+    class MockResponsePrefixModel(TestModel):
+        @property
+        def profile(self):  # pyright: ignore[reportIncompatibleVariableOverride]
+            profile = super().profile
+            profile.supports_response_prefix = True
+            return profile
+
+    agent = Agent(MockResponsePrefixModel())
+
+    # This should not raise an error
+    result = agent.run_sync('Hello', response_prefix='Assistant: ')
+    assert result.output is not None

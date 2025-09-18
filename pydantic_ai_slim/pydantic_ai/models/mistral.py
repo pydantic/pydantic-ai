@@ -558,6 +558,8 @@ class MistralModel(Model):
                     # Insert a dummy assistant message
                     processed_messages.append(MistralAssistantMessage(content=[MistralTextChunk(text='OK')]))
 
+        # TODO: Insert response_prefix
+
         return processed_messages
 
     def _map_user_prompt(self, part: UserPromptPart) -> MistralUserMessage:
