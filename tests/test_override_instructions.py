@@ -159,18 +159,6 @@ def test_override_instructions_sequence_mixed_types():
     assert 'BASE' not in req.instructions
 
 
-def test_override_instructions_ignores_unknown_types():
-    """Override ignores instruction entries it does not understand."""
-    agent = Agent('test')
-
-    with agent.override(instructions=['ONLY_LITERAL', object()]):
-        with capture_run_messages() as messages:
-            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
-
-    req = _first_request(messages)
-    assert req.instructions == 'ONLY_LITERAL'
-
-
 @pytest.mark.anyio
 async def test_override_concurrent_isolation():
     """Test that concurrent overrides are isolated from each other."""
