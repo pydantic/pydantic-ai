@@ -1938,7 +1938,7 @@ class CustomModelSettings(ModelSettings, total=False):
     custom_setting: str
 
 
-def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+def return_settings(messages: Sequence[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(str(agent_info.model_settings))])
 
 
