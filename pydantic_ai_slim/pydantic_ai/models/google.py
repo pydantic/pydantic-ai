@@ -51,9 +51,12 @@ from . import (
 try:
     from google.genai import Client
     from google.genai.types import (
+        CodeExecutionResult,
+        CodeExecutionResultDict,
         ContentDict,
         ContentUnionDict,
         CountTokensConfigDict,
+        ExecutableCode,
         ExecutableCodeDict,
         FinishReason as GoogleFinishReason,
         FunctionCallDict,
@@ -64,6 +67,7 @@ try:
         GenerateContentResponse,
         GenerationConfigDict,
         GoogleSearchDict,
+        GroundingMetadata,
         HttpOptionsDict,
         MediaResolution,
         Part,
@@ -434,6 +438,7 @@ class GoogleModel(Model):
         usage = _metadata_as_usage(response)
         return _process_response_from_parts(
             parts,
+            candidate.grounding_metadata,
             response.model_version or self._model_name,
             self._provider.name,
             usage,
@@ -569,6 +574,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_name: str
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
+        code_execution_tool_call_id: str | None = None
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk)
 
@@ -582,6 +588,19 @@ class GeminiStreamedResponse(StreamedResponse):
                 self.provider_details = {'finish_reason': raw_finish_reason.value}
                 self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
+            # Google streams the grounding metadata (including the web search queries and results)
+            # _after_ the text that was generated using it, so it would show up out of order in the stream,
+            # and cause issues with the logic that doesn't consider text ahead of built-in tool calls as output.
+            # If that gets fixed (or we have a workaround), we can uncomment this:
+            # web_search_call, web_search_return = _map_grounding_metadata(
+            #     candidate.grounding_metadata, self.provider_name
+            # )
+            # if web_search_call and web_search_return:
+            #     yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=uuid4(), part=web_search_call)
+            #     yield self._parts_manager.handle_builtin_tool_return_part(
+            #         vendor_part_id=uuid4(), part=web_search_return
+            #     )
+
             if candidate.content is None or candidate.content.parts is None:
                 if candidate.finish_reason == 'STOP':  # pragma: no cover
                     # Normal completion - skip this chunk
@@ -590,6 +609,7 @@ class GeminiStreamedResponse(StreamedResponse):
                     raise UnexpectedModelBehavior('Safety settings triggered', str(chunk))
                 else:  # pragma: no cover
                     raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
+
             parts = candidate.content.parts or []
             for part in parts:
                 if part.thought_signature:
@@ -617,9 +637,21 @@ class GeminiStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif part.executable_code is not None:
-                    pass
+                    code_execution_tool_call_id = _utils.generate_tool_call_id()
+                    yield self._parts_manager.handle_builtin_tool_call_part(
+                        vendor_part_id=uuid4(),
+                        part=_map_executable_code(
+                            part.executable_code, self.provider_name, code_execution_tool_call_id
+                        ),
+                    )
                 elif part.code_execution_result is not None:
-                    pass
+                    assert code_execution_tool_call_id is not None
+                    yield self._parts_manager.handle_builtin_tool_return_part(
+                        vendor_part_id=uuid4(),
+                        part=_map_code_execution_result(
+                            part.code_execution_result, self.provider_name, code_execution_tool_call_id
+                        ),
+                    )
                 else:
                     assert part.function_response is not None, f'Unexpected part: {part}'  # pragma: no cover
 
@@ -639,7 +671,7 @@ class GeminiStreamedResponse(StreamedResponse):
         return self._timestamp
 
 
-def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict:
+def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict:  # noqa: C901
     parts: list[PartDict] = []
     thought_signature: bytes | None = None
     for item in m.parts:
@@ -663,12 +695,18 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                 part['thought'] = True
         elif isinstance(item, BuiltinToolCallPart):
             if item.provider_name == provider_name:
-                if item.tool_name == 'code_execution':  # pragma: no branch
-                    part['executable_code'] = cast(ExecutableCodeDict, item.args)
+                if item.tool_name == CodeExecutionTool.kind:
+                    part['executable_code'] = cast(ExecutableCodeDict, item.args_as_dict())
+                elif item.tool_name == WebSearchTool.kind:
+                    # Web search calls are not sent back
+                    pass
         elif isinstance(item, BuiltinToolReturnPart):
             if item.provider_name == provider_name:
-                if item.tool_name == 'code_execution':  # pragma: no branch
-                    part['code_execution_result'] = item.content
+                if item.tool_name == CodeExecutionTool.kind and isinstance(item.content, dict):
+                    part['code_execution_result'] = cast(CodeExecutionResultDict, item.content)  # pyright: ignore[reportUnknownMemberType]
+                elif item.tool_name == WebSearchTool.kind:
+                    # Web search results are not sent back
+                    pass
         else:
             assert_never(item)
 
@@ -679,6 +717,7 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
 
 def _process_response_from_parts(
     parts: list[Part],
+    grounding_metadata: GroundingMetadata | None,
     model_name: GoogleModelName,
     provider_name: str,
     usage: usage.RequestUsage,
@@ -687,7 +726,17 @@ def _process_response_from_parts(
     finish_reason: FinishReason | None = None,
 ) -> ModelResponse:
     items: list[ModelResponsePart] = []
+
+    # We don't currently turn `candidate.url_context_metadata` into BuiltinToolCallPart and BuiltinToolReturnPart for UrlContextTool.
+    # Please file an issue if you need this.
+
+    web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
+    if web_search_call and web_search_return:
+        items.append(web_search_call)
+        items.append(web_search_return)
+
     item: ModelResponsePart | None = None
+    code_execution_tool_call_id: str | None = None
     for part in parts:
         if part.thought_signature:
             signature = base64.b64encode(part.thought_signature).decode('utf-8')
@@ -698,16 +747,11 @@ def _process_response_from_parts(
             item.provider_name = provider_name
 
         if part.executable_code is not None:
-            item = BuiltinToolCallPart(
-                provider_name=provider_name, args=part.executable_code.model_dump(), tool_name='code_execution'
-            )
+            code_execution_tool_call_id = _utils.generate_tool_call_id()
+            item = _map_executable_code(part.executable_code, provider_name, code_execution_tool_call_id)
         elif part.code_execution_result is not None:
-            item = BuiltinToolReturnPart(
-                provider_name=provider_name,
-                tool_name='code_execution',
-                content=part.code_execution_result,
-                tool_call_id='not_provided',
-            )
+            assert code_execution_tool_call_id is not None
+            item = _map_code_execution_result(part.code_execution_result, provider_name, code_execution_tool_call_id)
         elif part.text is not None:
             if part.thought:
                 item = ThinkingPart(content=part.text)
@@ -799,3 +843,48 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
         cache_audio_read_tokens=cache_audio_read_tokens,
         details=details,
     )
+
+
+def _map_executable_code(executable_code: ExecutableCode, provider_name: str, tool_call_id: str) -> BuiltinToolCallPart:
+    return BuiltinToolCallPart(
+        provider_name=provider_name,
+        tool_name=CodeExecutionTool.kind,
+        args=executable_code.model_dump(mode='json'),
+        tool_call_id=tool_call_id,
+    )
+
+
+def _map_code_execution_result(
+    code_execution_result: CodeExecutionResult, provider_name: str, tool_call_id: str
+) -> BuiltinToolReturnPart:
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=CodeExecutionTool.kind,
+        content=code_execution_result.model_dump(mode='json'),
+        tool_call_id=tool_call_id,
+    )
+
+
+def _map_grounding_metadata(
+    grounding_metadata: GroundingMetadata | None, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart] | tuple[None, None]:
+    if grounding_metadata and (web_search_queries := grounding_metadata.web_search_queries):
+        tool_call_id = _utils.generate_tool_call_id()
+        return (
+            BuiltinToolCallPart(
+                provider_name=provider_name,
+                tool_name=WebSearchTool.kind,
+                tool_call_id=tool_call_id,
+                args={'queries': web_search_queries},
+            ),
+            BuiltinToolReturnPart(
+                provider_name=provider_name,
+                tool_name=WebSearchTool.kind,
+                tool_call_id=tool_call_id,
+                content=[chunk.web.model_dump(mode='json') for chunk in grounding_chunks if chunk.web]
+                if (grounding_chunks := grounding_metadata.grounding_chunks)
+                else None,
+            ),
+        )
+    else:
+        return None, None
