@@ -99,6 +99,7 @@ def test_override_instructions_callable_replaces_functions():
         agent.run_sync('Hello', model=TestModel(custom_output_text='baseline'))
 
     base_req = _first_request(base_messages)
+    assert base_req.instructions is not None
     assert 'BASE_FN' in base_req.instructions
 
     with agent.override(instructions=override_fn):
