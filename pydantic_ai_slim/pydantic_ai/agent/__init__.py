@@ -385,6 +385,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             elif callable(instruction):
                 func = cast(_system_prompt.SystemPromptFunc[AgentDepsT], instruction)
                 functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func))
+            else:  # pragma: no cover
+                raise ValueError(f'Invalid instruction: {instruction}')
 
         literal = '\n'.join(literal_parts).strip() or None
         return literal, functions
