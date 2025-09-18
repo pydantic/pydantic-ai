@@ -397,8 +397,11 @@ async def test_stream_text(allow_model_requests: None):
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
+    first_chunk = text_chunk('hello ')
+    # Test that we fall back to the model name set by the user if the model name is not set in the first chunk, like on Azure OpenAI.
+    first_chunk.model = ''
     stream = [
-        text_chunk('hello '),
+        first_chunk,
         text_chunk('world'),
         text_chunk('.', finish_reason='stop'),
     ]
@@ -418,7 +421,7 @@ async def test_stream_text_finish_reason(allow_model_requests: None):
                     ModelResponse(
                         parts=[TextPart(content='hello world.')],
                         usage=RequestUsage(input_tokens=6, output_tokens=3),
-                        model_name='gpt-4o-123',
+                        model_name='gpt-4o',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                         provider_details={'finish_reason': 'stop'},
