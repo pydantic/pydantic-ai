@@ -515,10 +515,9 @@ async def _handle_model_request_event(  # noqa: C901
                     tool_call_id=tool_call_id,
                 )
             elif isinstance(part, BuiltinToolReturnPart):  # pragma: no branch
-                message_id = stream_ctx.message_id or stream_ctx.new_message_id()
                 tool_call_id = stream_ctx.builtin_tool_call_ids[part.tool_call_id]
                 yield ToolCallResultEvent(
-                    message_id=message_id,
+                    message_id=stream_ctx.new_message_id(),
                     type=EventType.TOOL_CALL_RESULT,
                     role='tool',
                     tool_call_id=tool_call_id,
@@ -575,9 +574,8 @@ async def _handle_tool_result_event(
     if not isinstance(result, ToolReturnPart):
         return
 
-    message_id = stream_ctx.new_message_id()
     yield ToolCallResultEvent(
-        message_id=message_id,
+        message_id=stream_ctx.new_message_id(),
         type=EventType.TOOL_CALL_RESULT,
         role='tool',
         tool_call_id=result.tool_call_id,

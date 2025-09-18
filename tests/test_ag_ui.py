@@ -1570,43 +1570,40 @@ async def test_builtin_tool_call() -> None:
     )
     events = await run_and_collect_events(agent, run_input)
 
-    assert (
-        events
-        == snapshot(
-            [
-                {
-                    'type': 'RUN_STARTED',
-                    'threadId': (thread_id := IsSameStr()),
-                    'runId': (run_id := IsSameStr()),
-                },
-                {
-                    'type': 'TOOL_CALL_START',
-                    'toolCallId': 'pyd_ai_builtin|function|search_1',
-                    'toolCallName': 'web_search',
-                    'parentMessageId': (parent_message_id := IsSameStr()),
-                },
-                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '{"query":'},
-                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '"Hello world"}'},
-                {'type': 'TOOL_CALL_END', 'toolCallId': 'pyd_ai_builtin|function|search_1'},
-                {
-                    'type': 'TOOL_CALL_RESULT',
-                    'messageId': parent_message_id,  # TODO (DM): Is this right for built-in tool call results, or should it have a new message ID?
-                    'toolCallId': 'pyd_ai_builtin|function|search_1',
-                    'content': '{"results":[{"title":"\\"Hello, World!\\" program","url":"https://en.wikipedia.org/wiki/%22Hello,_World!%22_program"}]}',
-                    'role': 'tool',
-                },
-                {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
-                {
-                    'type': 'TEXT_MESSAGE_CONTENT',
-                    'messageId': message_id,
-                    'delta': 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". ',
-                },
-                {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
-                {
-                    'type': 'RUN_FINISHED',
-                    'threadId': thread_id,
-                    'runId': run_id,
-                },
-            ]
-        )
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'toolCallName': 'web_search',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '{"query":'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '"Hello world"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'pyd_ai_builtin|function|search_1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'content': '{"results":[{"title":"\\"Hello, World!\\" program","url":"https://en.wikipedia.org/wiki/%22Hello,_World!%22_program"}]}',
+                'role': 'tool',
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". ',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
     )
