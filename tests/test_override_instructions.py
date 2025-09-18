@@ -10,6 +10,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     SystemPromptPart,
 )
 from pydantic_ai.models.test import TestModel
@@ -27,6 +28,20 @@ def _first_request(messages: list[ModelMessage]) -> ModelRequest:
 def _system_prompt_texts(parts: Sequence[ModelRequestPart]) -> list[str]:
     """Helper to extract system prompt text content from message parts."""
     return [p.content for p in parts if isinstance(p, SystemPromptPart)]
+
+
+def test_first_request_skips_non_requests():
+    """Helper ignores non-request messages until it finds a request."""
+    response = ModelResponse(parts=())
+    request = ModelRequest(parts=())
+    assert _first_request([response, request]) is request
+
+
+def test_first_request_raises_without_model_request():
+    """Helper raises when no model request is present."""
+    response = ModelResponse(parts=())
+    with pytest.raises(AssertionError, match='no ModelRequest found'):
+        _first_request([response])
 
 
 def test_override_instructions_basic():
@@ -142,6 +157,18 @@ def test_override_instructions_sequence_mixed_types():
     req = _first_request(messages)
     assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART'
     assert 'BASE' not in req.instructions
+
+
+def test_override_instructions_ignores_unknown_types():
+    """Override ignores instruction entries it does not understand."""
+    agent = Agent('test')
+
+    with agent.override(instructions=['ONLY_LITERAL', object()]):
+        with capture_run_messages() as messages:
+            agent.run_sync('Hi', model=TestModel(custom_output_text='ok'))
+
+    req = _first_request(messages)
+    assert req.instructions == 'ONLY_LITERAL'
 
 
 @pytest.mark.anyio
