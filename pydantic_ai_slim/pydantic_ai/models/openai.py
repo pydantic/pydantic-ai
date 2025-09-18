@@ -586,7 +586,8 @@ class OpenAIChatModel(Model):
                 'Streamed response ended without content or tool calls'
             )
 
-        # ChatCompletionChunk.model is required to be set, but Azure OpenAI omits it so we fall back to the model name set by the user.
+        # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
+        # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
         model_name = first_chunk.model or self._model_name
 
         return OpenAIStreamedResponse(
@@ -1352,8 +1353,11 @@ class OpenAIStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage += _map_usage(chunk)
 
-            if chunk.id and self.provider_response_id is None:
+            if chunk.id:
                 self.provider_response_id = chunk.id
+
+            if chunk.model:
+                self._model_name = chunk.model
 
             try:
                 choice = chunk.choices[0]
