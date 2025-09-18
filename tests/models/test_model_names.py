@@ -39,13 +39,14 @@ def modify_response(response: dict[str, Any], filter_headers: list[str]) -> dict
 
 @pytest.fixture(scope='module')
 def vcr_config():  # pragma: lax no cover
-    if not os.getenv('CI'):
-        return {
-            'record_mode': 'rewrite',
-            'filter_headers': ['accept-encoding'],
-            'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
-        }
-    return {'record_mode': 'none'}
+    if os.getenv('CI') or not os.getenv('CEREBRAS_API_KEY'):
+        return {'record_mode': 'none'}
+
+    return {
+        'record_mode': 'rewrite',
+        'filter_headers': ['accept-encoding'],
+        'before_record_response': partial(modify_response, filter_headers=['cache-control', 'connection']),
+    }
 
 
 def test_known_model_names():  # pragma: lax no cover
@@ -128,7 +129,6 @@ class CerebrasModel(TypedDict):
 
 
 def get_cerebras_model_names():  # pragma: lax no cover
-    # Coverage seems to be misbehaving..?
     api_key = os.getenv('CEREBRAS_API_KEY', 'testing')
 
     response = httpx.get(
