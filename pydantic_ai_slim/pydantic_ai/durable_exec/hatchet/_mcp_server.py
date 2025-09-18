@@ -1,7 +1,7 @@
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from hatchet_sdk import DurableContext, Hatchet
+from hatchet_sdk import Context, Hatchet
 from hatchet_sdk.runnables.workflow import Standalone
 from pydantic import BaseModel, ConfigDict
 
@@ -66,7 +66,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
         self._name = f'{task_name_prefix}__mcp_server{id_suffix}'
         self.run_context_type: type[HatchetRunContext[AgentDepsT]] = run_context_type
 
-        @hatchet.durable_task(
+        @hatchet.task(
             name=f'{self._name}.get_tools',
             description=self._task_config.description,
             input_validator=GetToolsInput[AgentDepsT],
@@ -85,7 +85,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
         )
         async def wrapped_get_tools_task(
             input: GetToolsInput[AgentDepsT],
-            _ctx: DurableContext,
+            _ctx: Context,
         ) -> dict[str, ToolDefinition]:
             run_context = self.run_context_type.deserialize_run_context(input.serialized_run_context, deps=input.deps)
 
@@ -97,7 +97,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
 
         self.hatchet_wrapped_get_tools_task = wrapped_get_tools_task
 
-        @hatchet.durable_task(
+        @hatchet.task(
             name=f'{self._name}.call_tool',
             description=self._task_config.description,
             input_validator=CallToolInput[AgentDepsT],
@@ -116,7 +116,7 @@ class HatchetMCPServer(HatchetWrapperToolset[AgentDepsT], ABC):
         )
         async def wrapped_call_tool_task(
             input: CallToolInput[AgentDepsT],
-            _ctx: DurableContext,
+            _ctx: Context,
         ) -> CallToolOutput[AgentDepsT]:
             run_context = self.run_context_type.deserialize_run_context(input.serialized_run_context, deps=input.deps)
             tool = self.tool_for_tool_def(input.tool_def)
