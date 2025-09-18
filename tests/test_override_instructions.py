@@ -150,12 +150,15 @@ def test_override_instructions_sequence_mixed_types():
     def override_fn() -> str:
         return 'FUNC_PART'
 
-    with agent.override(instructions=['OVERRIDE1', override_fn, 'OVERRIDE2']):
+    def override_fn_2() -> str:
+        return 'FUNC_PART_2'
+
+    with agent.override(instructions=['OVERRIDE1', override_fn, 'OVERRIDE2', override_fn_2]):
         with capture_run_messages() as messages:
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
     req = _first_request(messages)
-    assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART'
+    assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
     assert 'BASE' not in req.instructions
 
 
