@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, context
 from typing import Any, overload
 
 from .. import (
+    _system_prompt,
     _utils,
     messages as _messages,
     models,
@@ -214,8 +215,13 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
         model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
         tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
+        instructions: str
+        | _system_prompt.SystemPromptFunc[AgentDepsT]
+        | Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]]
+        | None
+        | _utils.Unset = _utils.UNSET,
     ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+        """Context manager to temporarily override agent configuration.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
@@ -225,16 +231,15 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             model: The model to use instead of the model passed to the agent run.
             toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
             tools: The tools to use instead of the tools registered with the agent.
+            instructions: When set (including `None`), replace the effective aggregate of literal instructions and any
+                registered instruction functions. Accepts a literal string, an instructions function, or a sequence
+                mixing both. Passing `None` clears all instructions.
         """
-        with self.wrapped.override(deps=deps, model=model, toolsets=toolsets, tools=tools):
-            yield
-
-    @contextmanager
-    def override_prompts(
-        self,
-        *,
-        instructions: str | None | _utils.Unset = _utils.UNSET,
-        system_prompts: Sequence[str] | _utils.Unset = _utils.UNSET,
-    ) -> Iterator[None]:
-        with self.wrapped.override_prompts(instructions=instructions, system_prompts=system_prompts):
+        with self.wrapped.override(
+            deps=deps,
+            model=model,
+            toolsets=toolsets,
+            tools=tools,
+            instructions=instructions,
+        ):
             yield
