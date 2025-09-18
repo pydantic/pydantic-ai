@@ -2,8 +2,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
+
+
+class SerializedHatchetRunContext(BaseModel):
+    retries: dict[str, int] = Field(default_factory=dict)
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    tool_call_approved: bool = False
+    retry: int = 0
+    run_step: int = 0
 
 
 class HatchetRunContext(RunContext[AgentDepsT]):
@@ -34,18 +45,20 @@ class HatchetRunContext(RunContext[AgentDepsT]):
                 raise e
 
     @classmethod
-    def serialize_run_context(cls, ctx: RunContext[Any]) -> dict[str, Any]:
-        """Serialize the run context to a `dict[str, Any]`."""
-        return {
-            'retries': ctx.retries,
-            'tool_call_id': ctx.tool_call_id,
-            'tool_name': ctx.tool_name,
-            'tool_call_approved': ctx.tool_call_approved,
-            'retry': ctx.retry,
-            'run_step': ctx.run_step,
-        }
+    def serialize_run_context(cls, ctx: RunContext[Any]) -> SerializedHatchetRunContext:
+        """Serialize the run context to a `SerializedHatchetRunContext`."""
+        return SerializedHatchetRunContext(
+            retries=ctx.retries,
+            tool_call_id=ctx.tool_call_id,
+            tool_name=ctx.tool_name,
+            tool_call_approved=ctx.tool_call_approved,
+            retry=ctx.retry,
+            run_step=ctx.run_step,
+        )
 
     @classmethod
-    def deserialize_run_context(cls, ctx: dict[str, Any], deps: AgentDepsT) -> HatchetRunContext[AgentDepsT]:
-        """Deserialize the run context from a `dict[str, Any]`."""
-        return cls(**ctx, deps=deps)
+    def deserialize_run_context(
+        cls, ctx: SerializedHatchetRunContext, deps: AgentDepsT
+    ) -> HatchetRunContext[AgentDepsT]:
+        """Deserialize the run context from a `SerializedHatchetRunContext`."""
+        return cls(**ctx.model_dump(), deps=deps)
