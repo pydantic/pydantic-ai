@@ -377,7 +377,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if isinstance(instruction, str):
                 literal_parts.append(instruction)
             elif callable(instruction):
-                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](instruction))
+                func = cast(_system_prompt.SystemPromptFunc[AgentDepsT], instruction)
+                functions.append(_system_prompt.SystemPromptRunner[AgentDepsT](func))
 
         literal = '\n'.join(literal_parts).strip() or None
         return literal, functions
