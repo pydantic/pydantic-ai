@@ -578,7 +578,9 @@ class GeminiStreamedResponse(StreamedResponse):
         async for chunk in self._response:
             self._usage = _metadata_as_usage(chunk)
 
-            assert chunk.candidates is not None
+            if not chunk.candidates:
+                continue
+
             candidate = chunk.candidates[0]
 
             if chunk.response_id:  # pragma: no branch
@@ -610,7 +612,10 @@ class GeminiStreamedResponse(StreamedResponse):
                 else:  # pragma: no cover
                     raise UnexpectedModelBehavior('Content field missing from streaming Gemini response', str(chunk))
 
-            parts = candidate.content.parts or []
+            parts = candidate.content.parts
+            if not parts:
+                continue
+
             for part in parts:
                 if part.thought_signature:
                     signature = base64.b64encode(part.thought_signature).decode('utf-8')
