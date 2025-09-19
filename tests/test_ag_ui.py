@@ -18,11 +18,7 @@ from dirty_equals import IsStr
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.builtin_tools import WebSearchTool
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     ModelMessage,
@@ -35,6 +31,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.agent import Agent, AgentRunResult
+from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import (
     AgentInfo,
     BuiltinToolCallsReturns,

@@ -12,8 +12,7 @@ from logfire_api import DEFAULT_LOGFIRE_INSTANCE
 from opentelemetry._events import NoOpEventLoggerProvider
 from opentelemetry.trace import NoOpTracerProvider
 
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
@@ -37,6 +36,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai._run_context import RunContext
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings

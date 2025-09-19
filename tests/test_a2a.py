@@ -7,8 +7,8 @@ from asgi_lifespan import LifespanManager
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,

@@ -10,10 +10,10 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import Self
 
+from pydantic_ai import ToolCallPart
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai.exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset

@@ -13,10 +13,8 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
-from pydantic_ai.agent import AgentRun
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -27,12 +25,18 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     TextPart,
     TextPartDelta,
     ToolCallPart,
     ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
+    capture_run_messages,
 )
+from pydantic_ai.agent import AgentRun
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import PromptedOutput, TextOutput

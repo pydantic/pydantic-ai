@@ -7,9 +7,7 @@ import pytest
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     DocumentUrl,
     FinalResultEvent,
@@ -32,6 +30,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage

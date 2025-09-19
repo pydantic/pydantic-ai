@@ -16,23 +16,26 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     BinaryContent,
     DocumentUrl,
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     RetryPromptPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
     VideoUrl,
 )
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.gemini import (
     GeminiModel,

@@ -10,7 +10,7 @@ from typing import Any, Generic, TypeVar
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,

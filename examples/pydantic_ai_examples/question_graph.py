@@ -13,8 +13,7 @@ from pathlib import Path
 import logfire
 from groq import BaseModel
 
-from pydantic_ai import Agent, format_as_xml
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, ModelMessage, format_as_xml
 from pydantic_graph import (
     BaseNode,
     End,

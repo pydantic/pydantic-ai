@@ -12,10 +12,8 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelSettings, RunContext
-from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -23,15 +21,19 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     TextPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.direct import model_request_stream
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult

@@ -13,10 +13,7 @@ import anyio
 import anyio.to_thread
 from typing_extensions import ParamSpec, assert_never
 
-from pydantic_ai import _utils, usage
-from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     BuiltinToolCallPart,
@@ -37,7 +34,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
     VideoUrl,
+    _utils,
+    usage,
 )
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider

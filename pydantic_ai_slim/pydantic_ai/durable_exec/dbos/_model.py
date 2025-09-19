@@ -7,12 +7,12 @@ from typing import Any
 
 from dbos import DBOS
 
-from pydantic_ai.agent import EventStreamHandler
-from pydantic_ai.messages import (
+from pydantic_ai import (
     ModelMessage,
     ModelResponse,
     ModelResponseStreamEvent,
 )
+from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings

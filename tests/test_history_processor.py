@@ -4,9 +4,8 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent, capture_run_messages
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -14,7 +13,9 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     UserPromptPart,
+    capture_run_messages,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage

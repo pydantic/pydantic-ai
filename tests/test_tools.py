@@ -13,19 +13,22 @@ from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, RunContext, Tool, UserError
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    RunContext,
     TextPart,
+    Tool,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UserError,
     UserPromptPart,
 )
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput

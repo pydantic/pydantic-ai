@@ -15,18 +15,8 @@ from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 from typing_extensions import Self
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
-from pydantic_ai._output import (
-    NativeOutput,
-    NativeOutputSchema,
-    OutputSpec,
-    PromptedOutput,
-    TextOutput,
-    TextOutputSchema,
-    ToolOutputSchema,
-)
-from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
@@ -37,15 +27,30 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    ModelRetry,
     RetryPromptPart,
+    RunContext,
     SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
     UserPromptPart,
     VideoUrl,
+    capture_run_messages,
 )
+from pydantic_ai._output import (
+    NativeOutput,
+    NativeOutputSchema,
+    OutputSpec,
+    PromptedOutput,
+    TextOutput,
+    TextOutputSchema,
+    ToolOutputSchema,
+)
+from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
@@ -4586,7 +4591,7 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai.messages import ThinkingPart
+    from pydantic_ai import ThinkingPart
     from pydantic_ai.models.function import FunctionModel
 
     call_count = 0
