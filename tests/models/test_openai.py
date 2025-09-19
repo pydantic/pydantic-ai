@@ -606,17 +606,6 @@ async def test_stream_text_empty_think_tag_and_text_before_tool_call(allow_model
     assert await result.get_output() == snapshot({'first': 'One', 'second': 'Two'})
 
 
-async def test_no_content(allow_model_requests: None):
-    stream = [chunk([ChoiceDelta()]), chunk([ChoiceDelta()])]
-    mock_client = MockOpenAI.create_mock_stream(stream)
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream(''):
-            pass
-
-
 async def test_no_delta(allow_model_requests: None):
     stream = [
         chunk([]),

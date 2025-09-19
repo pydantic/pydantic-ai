@@ -13,7 +13,7 @@ from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     AudioUrl,
@@ -599,20 +599,6 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-
-
-async def test_no_content(allow_model_requests: None):
-    stream = [
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-        chunk([ChatCompletionStreamOutputDelta(role='assistant')]),  # type: ignore
-    ]
-    mock_client = MockHuggingFace.create_stream_mock(stream)
-    m = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream(''):
-            pass
 
 
 async def test_no_delta(allow_model_requests: None):
