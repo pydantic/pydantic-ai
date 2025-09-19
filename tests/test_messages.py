@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.messages import (
+from pydantic_ai import (
     AudioUrl,
     BinaryContent,
     DocumentUrl,

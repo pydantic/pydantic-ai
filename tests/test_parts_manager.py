@@ -6,9 +6,7 @@ from typing import Any
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import UnexpectedModelBehavior
-from pydantic_ai._parts_manager import ModelResponsePartsManager
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     PartDeltaEvent,
@@ -19,7 +17,9 @@ from pydantic_ai.messages import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolCallPartDelta,
+    UnexpectedModelBehavior,
 )
+from pydantic_ai._parts_manager import ModelResponsePartsManager
 
 from .conftest import IsStr
 

@@ -10,9 +10,17 @@ from inline_snapshot import snapshot
 from inline_snapshot.extra import warns
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, UsageLimitExceeded
+from pydantic_ai import (
+    Agent,
+    ModelRequest,
+    ModelResponse,
+    RunContext,
+    ToolCallPart,
+    ToolReturnPart,
+    UsageLimitExceeded,
+    UserPromptPart,
+)
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
