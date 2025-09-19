@@ -658,8 +658,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             span_attributes = {
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,
-            'logfire.msg': f'{agent_name} run',
-        }
+                'logfire.msg': f'{agent_name} run',
+            }
         run_span = tracer.start_span(
             span_name,
             attributes=span_attributes,
@@ -707,7 +707,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             }
         else:
             attrs = {
-                'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(state.message_history)),
+                'pydantic_ai.all_messages': json.dumps(
+                    settings.messages_to_otel_messages(state.message_history)
+                ),
                 **settings.system_instructions_attributes(self._instructions),
             }
 
