@@ -1,0 +1,85 @@
+# Outlines
+
+## Install
+
+To use [`OutlinesModel`][pydantic_ai.models.OutlinesModel], you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `outlines` optional group:
+```bash
+pip/uv-add "pydantic-ai-slim[outlines]"
+```
+
+As Outlines is a library allowing you to run model from various different providers, it does not include the necessary dependencies for any model, but instead requires you to install the optional group for the provider you want to use. To do so, you can install `pydantic-ai-slim` with an optional group composed of outlines, a dash, and the name of the model. For instance:
+
+```bash
+pip/uv-add "pydantic-ai-slim[outlines-transformers]"
+```
+
+Or
+
+```bash
+pip/uv-add "pydantic-ai-slim[outlines-mlxlm]"
+```
+
+There are 5 optional groups for the 5 models supported through Outlines:
+
+- `outlines-transformers`
+- `outlines-llamacpp`
+- `outlines-mlxlm`
+- `outlines-sglang`
+- `outlines-vllm-offline`
+
+## Model Initialization
+
+As Outlines is not an inference provider, but instead a library allowing you to run bith local and API-based models, instantiating the model is a bit different from the other models available on Pydantic AI.
+
+To initialize the `OutlinesModel` through the `__init__` method, the first argument you must provide has to be an `outlines.Model` or an `outlines.AsyncModel` instance.
+
+For instance:
+
+```python {test="skip_ci"}
+import outlines
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from pydantic_ai.models.outlines import OutlinesModel
+
+outlines_model = outlines.from_transformers(
+    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
+    AutoTokenizer.from_pretrained('erwanf/gpt2-mini')
+)
+model = OutlinesModel(outlines_model)
+```
+
+Alternatively, you can use some `OutlinesModel` class methods made to load a specific type of Outlines model directly. To do so, you must provide as argument the same arguments you would have given to the associated Outlines model loading function.
+
+For instance:
+
+```python {test="skip_ci"}
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+from pydantic_ai.models.outlines import OutlinesModel
+
+model = OutlinesModel.from_transformers(
+    AutoModelForCausalLM.from_pretrained('erwanf/gpt2-mini'),
+    AutoTokenizer.from_pretrained('erwanf/gpt2-mini')
+)
+```
+
+There are methods for the 5 Outlines models that are officially supported in the integration into Pydantic AI:
+- [`from_transformers`][pydantic_ai.models.OutlinesModel.from_transformers]
+- [`from_llamacpp`][pydantic_ai.models.OutlinesModel.from_llamacpp]
+- [`from_mlxlm`][pydantic_ai.models.OutlinesModel.from_mlxlm]
+- [`from_sglang`][pydantic_ai.models.OutlinesModel.from_sglang]
+- [`from_vllm_offline`][pydantic_ai.models.OutlinesModel.from_vllm_offline]
+
+As you already providing an Outlines model instance, there is no need to provide an `OutlinesProvider` yourself.
+
+## Running the model
+
+Once you have initialized an `OutlinesModel`, you can use it with an Agent as with all other Pydantic AI models.
+
+Outlines does not support tools yet, but support for that feature will be added in the near future.
+
+## Model Settings
+
+As Outlines can be used with various models that do not share the same model settings, the [OutlinesModelSettings][pydantic_ai.models.OutlinesModel.OutlinesModelSettings] class is a bit different from that of the other Pydantic AI models.
+
+There are no Outlines-specific settings added to the class, you are instead in charge of providing the settings needed for the model of your choice. The standard settings inherited from [ModelSettings][pydantic_ai.settings.ModelSettings] are mapped to the corresponding argument for your model when possible, otherwise they are ignored with a warning.
