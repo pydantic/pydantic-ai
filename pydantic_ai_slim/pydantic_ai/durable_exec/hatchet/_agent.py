@@ -226,10 +226,95 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         **_deprecated_kwargs: Never,
     ) -> AgentRunResult[Any]:
+        """Run the agent with a user prompt in async mode."""
         agent_run_id = uuid4()
 
-        """Run the agent with a user prompt in async mode."""
         result = await self.hatchet_wrapped_run_workflow.aio_run(
+            RunAgentInput[RunOutputDataT, AgentDepsT](
+                user_prompt=user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                deprecated_kwargs=_deprecated_kwargs,
+            ),
+            options=TriggerWorkflowOptions(
+                additional_metadata={
+                    'hatchet__agent_name': self._name,
+                    'hatchet__agent_run_id': str(agent_run_id),
+                }
+            ),
+        )
+
+        if isinstance(result, dict):
+            return TypeAdapter(AgentRunResult[Any]).validate_python(result)
+
+        return result
+
+    @overload
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> AgentRunResult[OutputDataT]: ...
+
+    @overload
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT],
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+    ) -> AgentRunResult[RunOutputDataT]: ...
+
+    def run_sync(
+        self,
+        user_prompt: str | Sequence[_messages.UserContent] | None = None,
+        *,
+        output_type: OutputSpec[RunOutputDataT] | None = None,
+        message_history: list[_messages.ModelMessage] | None = None,
+        deferred_tool_results: DeferredToolResults | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        deps: AgentDepsT = None,
+        model_settings: ModelSettings | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        usage: _usage.RunUsage | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        **_deprecated_kwargs: Never,
+    ) -> AgentRunResult[Any]:
+        """Run the agent with a user prompt in sync mode."""
+        agent_run_id = uuid4()
+
+        result = self.hatchet_wrapped_run_workflow.run(
             RunAgentInput[RunOutputDataT, AgentDepsT](
                 user_prompt=user_prompt,
                 output_type=output_type,
