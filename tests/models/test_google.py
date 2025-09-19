@@ -662,11 +662,15 @@ async def test_google_model_video_as_binary_content_input(
 
     result = await agent.run(['Explain me this video', video_content])
     assert result.output == snapshot("""\
-Okay, I can describe what is visible in the image.
+Okay! It looks like the image shows a camera monitor, likely used for professional or semi-professional video recording. \n\
 
-The image shows a camera setup in an outdoor setting. The camera is mounted on a tripod and has an external monitor attached to it. The monitor is displaying a scene that appears to be a desert landscape with rocky formations and mountains in the background. The foreground and background of the overall image, outside of the camera monitor, is also a blurry, desert landscape. The colors in the background are warm and suggest either sunrise, sunset, or reflected light off the rock formations.
+Here's what I can gather from the image:
 
-It looks like someone is either reviewing footage on the monitor, or using it as an aid for framing the shot.\
+*   **Camera Monitor:** The central element is a small screen attached to a camera rig (tripod and probably camera body). These monitors are used to provide a larger, clearer view of what the camera is recording, aiding in focus, composition, and exposure adjustments.
+*   **Scene on Monitor:** The screen shows an image of what appears to be a rocky mountain path or canyon with a snow capped mountain in the distance.
+*   **Background:** The background is blurred, likely the same scene as on the camera monitor.
+
+Let me know if you want me to focus on any specific aspect or detail!\
 """)
 
 
@@ -697,7 +701,7 @@ async def test_google_model_image_url_input(allow_model_requests: None, google_p
             ImageUrl(url='https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg'),
         ]
     )
-    assert result.output == snapshot('That is a potato.\n')
+    assert result.output == snapshot('That is a potato.')
 
 
 async def test_google_model_video_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -711,13 +715,15 @@ async def test_google_model_video_url_input(allow_model_requests: None, google_p
         ]
     )
     assert result.output == snapshot("""\
-Okay, based on the image, here's what I can infer:
+Certainly! Based on the image you sent, it appears to be a setup for filming or photography. \n\
 
-*   **A camera monitor is mounted on top of a camera.**
-*   **The monitor's screen is on, displaying a view of the rocky mountains.**
-*   **This setting suggests a professional video shoot.**
+Here's what I can observe:
 
-If you'd like a more detailed explanation, please provide additional information about the video.\
+*   **Camera Monitor:** There is a monitor mounted on a tripod, displaying a shot of a canyon or mountain landscape.
+*   **Camera/Recording Device:** Below the monitor, there is a camera or some other kind of recording device.
+*   **Landscape Backdrop:** In the background, there is a similar-looking landscape to what's being displayed on the screen.
+
+In summary, it looks like the image shows a camera setup, perhaps in the process of filming, with a monitor to review the footage.\
 """)
 
 
@@ -754,7 +760,7 @@ async def test_google_model_document_url_input(allow_model_requests: None, googl
     document_url = DocumentUrl(url='https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')
 
     result = await agent.run(['What is the main content on this document?', document_url])
-    assert result.output == snapshot('The document appears to be a "Dummy PDF file".\n')
+    assert result.output == snapshot('The document appears to be a dummy PDF file.\n')
 
 
 async def test_google_model_text_document_url_input(allow_model_requests: None, google_provider: GoogleProvider):
@@ -765,7 +771,7 @@ async def test_google_model_text_document_url_input(allow_model_requests: None, 
 
     result = await agent.run(['What is the main content on this document?', text_document_url])
     assert result.output == snapshot(
-        'The main content of the document is an example of a TXT file, specifically providing information about the placeholder names "John Doe" (and related variations) used for unidentified or anonymous individuals, particularly in legal contexts in the United States and Canada. It also explains alternative names used in other countries and some additional context and examples of when "John Doe" might be used. The document also includes attribution to Wikipedia for the example content and a link to the license under which it is shared.\n'
+        'The main content of the TXT file is an explanation of the placeholder name "John Doe" (and related variations) and its usage in legal contexts, popular culture, and other situations where the identity of a person is unknown or needs to be withheld. The document also includes the purpose of the file and other file type information.\n'
     )
 
 
