@@ -1161,11 +1161,7 @@ class ModelResponse:
                 if settings.include_content and part.content is not None:  # pragma: no branch
                     from .models.instrumented import InstrumentedModel
 
-                    return_part['result'] = (
-                        part.content
-                        if isinstance(part.content, str)
-                        else {k: InstrumentedModel.serialize_any(v) for k, v in part.content.items()}
-                    )
+                    return_part['result'] = InstrumentedModel.serialize_any(part.content)
 
                 parts.append(return_part)
         return parts
