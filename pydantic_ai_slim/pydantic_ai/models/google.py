@@ -51,6 +51,7 @@ from . import (
 try:
     from google.genai import Client
     from google.genai.types import (
+        BlobDict,
         CodeExecutionResult,
         CodeExecutionResultDict,
         ContentDict,
@@ -58,6 +59,7 @@ try:
         CountTokensConfigDict,
         ExecutableCode,
         ExecutableCodeDict,
+        FileDataDict,
         FinishReason as GoogleFinishReason,
         FunctionCallDict,
         FunctionCallingConfigDict,
@@ -79,6 +81,7 @@ try:
         ToolDict,
         ToolListUnionDict,
         UrlContextDict,
+        VideoMetadataDict,
     )
 
     from ..providers.google import GoogleProvider
@@ -525,17 +528,17 @@ class GoogleModel(Model):
                 if isinstance(item, str):
                     content.append({'text': item})
                 elif isinstance(item, BinaryContent):
-                    # NOTE: The type from Google GenAI is incorrect, it should be `str`, not `bytes`.
-                    base64_encoded = base64.b64encode(item.data).decode('utf-8')
-                    inline_data_dict = {'inline_data': {'data': base64_encoded, 'mime_type': item.media_type}}
+                    inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
+                    part_dict: PartDict = {'inline_data': inline_data_dict}
                     if item.vendor_metadata:
-                        inline_data_dict['video_metadata'] = item.vendor_metadata
-                    content.append(inline_data_dict)  # type: ignore
+                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                    content.append(part_dict)
                 elif isinstance(item, VideoUrl) and item.is_youtube:
-                    file_data_dict = {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
+                    file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
+                    part_dict: PartDict = {'file_data': file_data_dict}
                     if item.vendor_metadata:  # pragma: no branch
-                        file_data_dict['video_metadata'] = item.vendor_metadata
-                    content.append(file_data_dict)  # type: ignore
+                        part_dict['video_metadata'] = cast(VideoMetadataDict, item.vendor_metadata)
+                    content.append(part_dict)
                 elif isinstance(item, FileUrl):
                     if item.force_download or (
                         # google-gla does not support passing file urls directly, except for youtube videos
@@ -543,13 +546,15 @@ class GoogleModel(Model):
                         self.system == 'google-gla'
                         and not item.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
                     ):
-                        downloaded_item = await download_item(item, data_format='base64')
-                        inline_data = {'data': downloaded_item['data'], 'mime_type': downloaded_item['data_type']}
-                        content.append({'inline_data': inline_data})  # type: ignore
+                        downloaded_item = await download_item(item, data_format='bytes')
+                        inline_data: BlobDict = {
+                            'data': downloaded_item['data'],
+                            'mime_type': downloaded_item['data_type'],
+                        }
+                        content.append({'inline_data': inline_data})
                     else:
-                        content.append(
-                            {'file_data': {'file_uri': item.url, 'mime_type': item.media_type}}
-                        )  # pragma: lax no cover
+                        file_data_dict: FileDataDict = {'file_uri': item.url, 'mime_type': item.media_type}
+                        content.append({'file_data': file_data_dict})  # pragma: lax no cover
                 else:
                     assert_never(item)
         return content
@@ -827,7 +832,7 @@ def _metadata_as_usage(response: GenerateContentResponse) -> usage.RequestUsage:
         if not metadata_details:
             continue
         for detail in metadata_details:
-            if not detail.modality or not detail.token_count:  # pragma: no cover
+            if not detail.modality or not detail.token_count:
                 continue
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
             if detail.modality != 'AUDIO':
