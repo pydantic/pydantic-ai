@@ -158,7 +158,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             yield
 
     @property
-    def workflows(self) -> Sequence[BaseWorkflow[Any]]:
+    def workflows(self) -> list[BaseWorkflow[Any]]:
         workflows: list[BaseWorkflow[Any]] = [
             self.hatchet_wrapped_run_workflow,
             self._model.hatchet_wrapped_request_task,
