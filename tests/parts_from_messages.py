@@ -1,6 +1,6 @@
 from typing import Any
 
-from pydantic_ai.messages import ModelMessage, ModelRequestPart, ModelResponsePart
+from pydantic_ai import ModelMessage, ModelRequestPart, ModelResponsePart
 
 
 def part_types_from_messages(messages: list[ModelMessage]) -> list[Any]:
