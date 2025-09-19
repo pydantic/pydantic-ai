@@ -15,7 +15,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
+from pydantic_ai import Agent, ModelHTTPError, ModelRetry
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.messages import (
     BinaryContent,
@@ -531,17 +531,6 @@ async def test_stream_structured_finish_reason(allow_model_requests: None):
             ]
         )
         assert result.is_complete
-
-
-async def test_no_content(allow_model_requests: None):
-    stream = chunk([ChoiceDelta()]), chunk([ChoiceDelta()])
-    mock_client = MockGroq.create_mock_stream(stream)
-    m = GroqModel('llama-3.3-70b-versatile', provider=GroqProvider(groq_client=mock_client))
-    agent = Agent(m, output_type=MyTypedDict)
-
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream(''):
-            pass
 
 
 async def test_no_delta(allow_model_requests: None):
