@@ -579,7 +579,7 @@ class GeminiStreamedResponse(StreamedResponse):
             self._usage = _metadata_as_usage(chunk)
 
             if not chunk.candidates:
-                continue
+                continue  # pragma: no cover
 
             candidate = chunk.candidates[0]
 
@@ -614,7 +614,7 @@ class GeminiStreamedResponse(StreamedResponse):
 
             parts = candidate.content.parts
             if not parts:
-                continue
+                continue  # pragma: no cover
 
             for part in parts:
                 if part.thought_signature:
