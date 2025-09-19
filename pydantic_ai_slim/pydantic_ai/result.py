@@ -15,7 +15,6 @@ from ._output import (
     OutputSchema,
     OutputValidator,
     OutputValidatorFunc,
-    PlainTextOutputSchema,
     TextOutputSchema,
     ToolOutputSchema,
 )
@@ -95,7 +94,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 Debouncing is particularly important for long structured responses to reduce the overhead of
                 performing validation as each token is received.
         """
-        if not isinstance(self._output_schema, PlainTextOutputSchema):
+        if not isinstance(self._output_schema, TextOutputSchema):
             raise exceptions.UserError('stream_text() can only be used with text responses')
 
         if delta:
@@ -162,7 +161,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
                 )
             return cast(OutputDataT, deferred_tool_requests)
-        elif isinstance(self._output_schema, TextOutputSchema):
+        elif text_processor := self._output_schema.text_processor:
             text = ''
             for part in message.parts:
                 if isinstance(part, _messages.TextPart):
@@ -172,7 +171,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     # not part of the final result output, so we reset the accumulated text
                     text = ''
 
-            result_data = await self._output_schema.process(
+            result_data = await text_processor.process(
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
             )
             for validator in self._output_validators:

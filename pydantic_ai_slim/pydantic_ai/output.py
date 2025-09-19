@@ -36,7 +36,10 @@ OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
 
 OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text']
-"""All output modes."""
+"""All output modes.
+
+`tool_or_text` is deprecated and no longer in use.
+"""
 StructuredOutputMode = Literal['tool', 'native', 'prompted']
 """Output modes that can be used for structured output. Used by ModelProfile.default_structured_output_mode"""
 

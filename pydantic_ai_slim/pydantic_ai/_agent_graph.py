@@ -355,9 +355,6 @@ async def _prepare_request_parameters(
     if isinstance(output_schema, _output.NativeOutputSchema):
         output_object = output_schema.object_def
 
-    # ToolOrTextOutputSchema, NativeOutputSchema, and PromptedOutputSchema all inherit from TextOutputSchema
-    allow_text_output = isinstance(output_schema, _output.TextOutputSchema)
-
     function_tools: list[ToolDefinition] = []
     output_tools: list[ToolDefinition] = []
     for tool_def in ctx.deps.tool_manager.tool_defs:
@@ -372,7 +369,7 @@ async def _prepare_request_parameters(
         output_mode=output_schema.mode,
         output_tools=output_tools,
         output_object=output_object,
-        allow_text_output=allow_text_output,
+        allow_text_output=output_schema.allows_text,
     )
 
 
@@ -599,7 +596,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         # when the model has already returned text along side tool calls
                         # in this scenario, if text responses are allowed, we return text from the most recent model
                         # response, if any
-                        if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
+                        if ctx.deps.output_schema.allows_text:
                             for message in reversed(ctx.state.message_history):
                                 if isinstance(message, _messages.ModelResponse):
                                     text = ''
@@ -684,8 +681,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         output_schema = ctx.deps.output_schema
         run_context = build_run_context(ctx)
 
-        if isinstance(output_schema, _output.TextOutputSchema):
-            result_data = await output_schema.process(text, run_context)
+        if text_processor := output_schema.text_processor:
+            result_data = await text_processor.process(text, run_context)
         else:
             m = _messages.RetryPromptPart(
                 content='Plain text responses are not permitted, please include your response in a tool call',

@@ -1604,7 +1604,7 @@ def test_text_output_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
 ) -> None:
-    """Test logfire attributes for TextOutput functions (PlainTextOutputProcessor)."""
+    """Test logfire attributes for TextOutput functions (TextOutputProcessor)."""
 
     def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Return a plain text response (not a tool call)
