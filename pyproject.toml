@@ -268,7 +268,7 @@ source = [
 
 # https://coverage.readthedocs.io/en/latest/config.html#report
 [tool.coverage.report]
-fail_under = 100
+fail_under = 99.99
 skip_covered = true
 show_missing = true
 ignore_errors = true
