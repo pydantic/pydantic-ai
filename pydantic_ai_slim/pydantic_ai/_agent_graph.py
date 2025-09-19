@@ -555,6 +555,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         text += part.content
                     elif isinstance(part, _messages.ToolCallPart):
                         tool_calls.append(part)
+                    elif isinstance(part, _messages.FilePart):
+                        files.append(part)
                     elif isinstance(part, _messages.BuiltinToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
@@ -566,8 +568,6 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         invisible_parts = True
-                    elif isinstance(part, _messages.FilePart):
-                        files.append(part)
                     else:
                         assert_never(part)
 
@@ -586,7 +586,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         # TODO (DouweM): Handle file as output
                         self._next_node = await self._handle_text_response(ctx, 'A file was returned.')
                     elif invisible_parts:
-                        # handle responses with only thinking or built-in tool parts.
+                        # handle responses with only "invisible" thinking or built-in tool parts that don't constitute output.
                         # this can happen with models that support thinking mode when they don't provide
                         # actionable output alongside their thinking content. so we tell the model to try again.
                         m = _messages.RetryPromptPart(

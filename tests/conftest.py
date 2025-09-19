@@ -27,7 +27,18 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
-__all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'
+__all__ = (
+    'IsDatetime',
+    'IsFloat',
+    'IsNow',
+    'IsStr',
+    'IsBytes',
+    'IsInt',
+    'IsInstance',
+    'TestEnv',
+    'ClientWithHandler',
+    'try_import',
+)
 
 # Configure VCR logger to WARNING as it is too verbose by default
 # specifically, it logs every request and response including binary
@@ -51,8 +62,9 @@ if TYPE_CHECKING:
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
     def IsStr(*args: Any, **kwargs: Any) -> str: ...
     def IsSameStr(*args: Any, **kwargs: Any) -> str: ...
+    def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
 else:
-    from dirty_equals import IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsNow as _IsNow, IsStr
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines

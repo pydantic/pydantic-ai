@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    Image,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -47,7 +48,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
-from ..conftest import IsDatetime, IsInstance, IsStr, try_import
+from ..conftest import IsBytes, IsDatetime, IsInstance, IsStr, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -2595,7 +2596,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
-    assert result.output == snapshot('Here you go: ')
+    assert result.output == snapshot("Here's an image of an axolotl for you! ")
     assert messages == snapshot(
         [
             ModelRequest(
@@ -2608,18 +2609,18 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ),
             ModelResponse(
                 parts=[
-                    TextPart(content='Here you go: '),
+                    TextPart(content="Here's an image of an axolotl for you! "),
                     FilePart(
-                        content=BinaryContent(
-                            data=IsInstance(bytes),
+                        content=Image(
+                            data=IsBytes(),
                             media_type='image/png',
-                            identifier=IsStr(),
+                            identifier='8a7952',
                         )
                     ),
                 ],
                 usage=RequestUsage(
                     input_tokens=10,
-                    output_tokens=1295,
+                    output_tokens=1304,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
                 ),
                 model_name='gemini-2.5-flash-image-preview',
@@ -2632,8 +2633,8 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
         ]
     )
 
-    result = await agent.run('Now give it a sombrero.')
-    assert result.output == snapshot('A file was returned.')
+    result = await agent.run('Now give it a sombrero.', message_history=messages)
+    assert result.output == snapshot("Certainly! Here's your axolotl with a sombrero: ")
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -2646,18 +2647,19 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
             ),
             ModelResponse(
                 parts=[
+                    TextPart(content="Certainly! Here's your axolotl with a sombrero: "),
                     FilePart(
-                        content=BinaryContent(
-                            data=IsInstance(bytes),
+                        content=Image(
+                            data=IsBytes(),
                             media_type='image/png',
-                            identifier=IsStr(),
+                            identifier='7d173c',
                         )
-                    )
+                    ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=7,
-                    output_tokens=1290,
-                    details={'text_prompt_tokens': 7, 'image_candidates_tokens': 1290},
+                    input_tokens=1322,
+                    output_tokens=1304,
+                    details={'text_prompt_tokens': 32, 'image_prompt_tokens': 1290, 'image_candidates_tokens': 1290},
                 ),
                 model_name='gemini-2.5-flash-image-preview',
                 timestamp=IsDatetime(),
@@ -2696,8 +2698,8 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
                         content='Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
                     ),
                     FilePart(
-                        content=BinaryContent(
-                            data=IsInstance(bytes),
+                        content=Image(
+                            data=IsBytes(),
                             media_type='image/png',
                             identifier=IsStr(),
                         )

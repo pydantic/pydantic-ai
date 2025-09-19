@@ -22,6 +22,7 @@ from ..messages import (
     FilePart,
     FileUrl,
     FinishReason,
+    Image,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -719,12 +720,9 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                     # Web search results are not sent back
                     pass
         elif isinstance(item, FilePart):
-            if isinstance(item, BinaryContent):
-                inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
-                part['inline_data'] = inline_data_dict
-            else:
-                # TODO (DouweM): Support ImageUrl etc
-                pass
+            content = item.content
+            inline_data_dict: BlobDict = {'data': content.data, 'mime_type': content.media_type}
+            part['inline_data'] = inline_data_dict
         else:
             assert_never(item)
 
@@ -784,7 +782,11 @@ def _process_response_from_parts(
             data = inline_data.data
             mime_type = inline_data.mime_type
             assert data and mime_type, 'Inline data must have data and mime type'
-            item = FilePart(content=BinaryContent(data=data, media_type=mime_type))
+            if mime_type.startswith('image/'):
+                content = Image(data=data, media_type=mime_type)
+            else:
+                content = BinaryContent(data=data, media_type=mime_type)
+            item = FilePart(content=content)
         else:  # pragma: no cover
             raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 

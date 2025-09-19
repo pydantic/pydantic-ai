@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime
 from mimetypes import guess_type
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast, overload
+from typing import TYPE_CHECKING, Annotated, Any, Literal, Self, TypeAlias, cast, overload
 
 import pydantic
 import pydantic_core
@@ -491,6 +491,20 @@ class BinaryContent:
         self.vendor_metadata = vendor_metadata
         self.kind = kind
 
+    @classmethod
+    def from_data_uri(cls, data_uri: str) -> Self:
+        """Create a `BinaryContent` from a data URI."""
+        prefix = 'data:'
+        if not data_uri.startswith(prefix):
+            raise ValueError('Data URI must start with "data:"')
+        media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
+        return cls(data=base64.b64decode(data), media_type=media_type)
+
+    @property
+    def data_uri(self) -> str:
+        """Convert the `BinaryContent` to a data URI."""
+        return f'data:{self.media_type};base64,{base64.b64encode(self.data).decode()}'
+
     @property
     def is_audio(self) -> bool:
         """Return `True` if the media type is an audio type."""
@@ -527,6 +541,25 @@ class BinaryContent:
             raise ValueError(f'Unknown media type: {self.media_type}') from e
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+class Image(BinaryContent):
+    """Binary content that's guaranteed to be an image."""
+
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: str,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        # TODO (DouweM): Should an `Image` survive a serialization roundtrip, or is it OK if it becomes a `BinaryContent`? Probably give these classes a common abstract ancestor.
+        kind: Literal['binary'] = 'binary',
+    ):
+        super().__init__(data=data, media_type=media_type, identifier=identifier, vendor_metadata=vendor_metadata)
+
+        if not self.is_image:
+            raise ValueError('`Image` must be have a media type that starts with "image/"')
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -933,7 +966,7 @@ class ThinkingPart:
 class FilePart:
     """A file response from a model."""
 
-    content: BinaryContent | FileUrl  # TODO (DouweM): All of MultiModalContent?
+    content: BinaryContent
     """The file content of the response."""
 
     _: KW_ONLY
@@ -947,6 +980,10 @@ class FilePart:
 
     part_kind: Literal['file'] = 'file'
     """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the file content is non-empty."""
+        return bool(self.content)
 
     # TODO (DouweM): OTel
 

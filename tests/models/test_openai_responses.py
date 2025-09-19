@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
     FinalResultEvent,
+    Image,
     ImageUrl,
     ModelRequest,
     ModelResponse,
@@ -39,7 +40,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsInstance, IsStr, TestEnv, try_import
+from ..conftest import IsBytes, IsDatetime, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
@@ -2481,11 +2482,7 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content="""\
-**Considering numeric results**
-
-I think we need to provide the user with a numeric result, and maybe clarify if they intended to include parentheses. It's important to keep the response concise while also informing them about the order of operations. This way, the user understands the reasoning behind the result. It's all about being clear and precise, so they have all the information they need!\
-""",
+                        content=IsStr(),
                         id='rs_68cdba63843881a3a9c585d83e4df9f309b7445677780c8f',
                         signature='gAAAAABozbpoJefk0Fp1xqQzY6ego00t7KnH2ohbIw-rR9ZgaEAQs3n0Fubka6xbgRxzb1og6Xup1BuT8hQKMS-NHFxYsYXw4b6KeSbCd5oySVO53bsITEVk0A6tgjGssDJc1xSct1ORo-nCNV24MCNZvL9MKFeGQHP-jRypOZ9Vhepje87kFWTpw9lP9j54fZJdRIBGA9G_goI9m1cPztFUufcUxtLsgorsM053oxh8yWiEccAbvBaGXRlPWSoZYktbKrWeBVwiRt2ul-jRV43Z3chB32bEM1l9sIWG1xnvLE3OY6HuAy5s3bB-bnk78dibx5yx_iA36zGOvRkfiF0okXZoYiMNzJz3U7rTSsKlYoMtCKgnYGFdrh0D8RPj4VtxnRr-zAMJSSZQCm7ZipNSMS0PpN1wri14KktSkIGZGLhPBJpzPf9AjzaBBi2ZcUM347BtOfEohPdLBn8R6Cz-WxmoA-jH9qsyO-bPzwtRkv28H5G6836IxU2a402Hl0ZQ0Q-kPb5iqhvNmyvEQr6sEY_FN6ogkxwS-UEdDs0QlvJmgGfOfhMpdxfi5hr-PtElPg7j5_OwA7pXtuEI8mADy2VEqicuZzIpo6d-P72-Wd8sapjo-bC3DLcJVudFF09bJA0UirrxwC-zJZlmOLZKG8OqXKBE4GLfiLn48bYa5FC8a_QznrX8iAV6qPoqyqXANXuBtBClmzTHQU5A3lUgwSgtJo6X_0wZqw0O4lQ1iQQrkt7ZLeT7Ef6QVLyh9ZVaMZqVGrmHbphZK5N1u8b4woZYJKe0J57SrNihO8Slu8jZ71dmXjB4NAPjm0ZN6pVaZNLUajSxolJfmkBuF1BCcMYMVJyvV7Kk9guTCtntLZjN4XVOJWRU8Db5BjL17ciWWHGPlQBMxMdYFZOinwCHLIRrtdVxz4Na2BODjl0-taYJHbKd-_5up5nysUPc4imgNawbN2mNwjhdc1Qv919Q9Cz-he9i3j6lKYnEkgJvKF2RDY6-XAI=',
                         provider_name='openai',
@@ -3426,12 +3423,9 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
     )
 
     result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
-    assert result.output == snapshot("""\
-Here's the chart of y = x^2 for x from -5 to 5.
-
-Download the image: [y_equals_x_squared.png](sandbox:/mnt/data/y_equals_x_squared.png)\
-""")
-    assert result.all_messages() == snapshot(
+    assert result.output == snapshot(IsStr())
+    messages = result.all_messages()
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -3445,73 +3439,225 @@ Download the image: [y_equals_x_squared.png](sandbox:/mnt/data/y_equals_x_square
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_68cdbdbf1d8881a09bf277b3b9d44ad70dbe8533c6078510',
+                        id='rs_68cdc38812288190889becf32c2934990187028ba77f15f7',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
                         args={
-                            'container_id': 'cntr_68cdbdbe063c8191af49ce89afa31212058dc53483a314bd',
+                            'container_id': 'cntr_68cdc387531c81938b4bee78c36acb820dbd09bdba403548',
                             'code': """\
 import numpy as np\r
 import matplotlib.pyplot as plt\r
 \r
 # Data\r
-x = np.linspace(-5, 5, 501)\r
+x = np.arange(-5, 6, 1)\r
 y = x**2\r
 \r
 # Plot\r
-plt.figure(figsize=(6,4), dpi=150)\r
-plt.plot(x, y, label='y = x^2', color='royalblue', linewidth=2)\r
-plt.scatter(np.arange(-5, 6), np.arange(-5, 6)**2, color='crimson', s=20, zorder=3, label='integer points')\r
-plt.title('Parabola: y = x^2 for x ∈ [-5, 5]')\r
+plt.figure(figsize=(6, 4))\r
+plt.plot(x, y, marker='o')\r
+plt.title('y = x^2 for x = -5 to 5')\r
 plt.xlabel('x')\r
 plt.ylabel('y')\r
-plt.grid(True, linestyle='--', alpha=0.5)\r
-plt.legend()\r
+plt.grid(True, linestyle='--', alpha=0.6)\r
+plt.xticks(x)\r
 plt.tight_layout()\r
 \r
-# Save figure\r
-output_path = '/mnt/data/y_equals_x_squared.png'\r
-plt.savefig(output_path, bbox_inches='tight')\r
-output_path\
+# Save and show\r
+plt.savefig('/mnt/data/y_equals_x_squared.png', dpi=200)\r
+plt.show()\r
+\r
+'/mnt/data/y_equals_x_squared.png'\
 """,
                         },
-                        tool_call_id='ci_68cdbdc3e7b081a09aeed222c12fdb780dbe8533c6078510',
+                        tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
                         content={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
-                        tool_call_id='ci_68cdbdc3e7b081a09aeed222c12fdb780dbe8533c6078510',
+                        tool_call_id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=ImageUrl(
-                            url=IsStr(regex=r'^data:image/png;base64,.*'),
-                            identifier='4384d3',
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='653a61',
                         ),
-                        id='ci_68cdbdc3e7b081a09aeed222c12fdb780dbe8533c6078510',
+                        id='ci_68cdc39029a481909399d54b0a3637a10187028ba77f15f7',
                     ),
                     TextPart(
-                        content="""\
-Here's the chart of y = x^2 for x from -5 to 5.
-
-Download the image: [y_equals_x_squared.png](sandbox:/mnt/data/y_equals_x_squared.png)\
-""",
-                        id='msg_68cdbdcddac081a0ba9c8b2d51e093ef0dbe8533c6078510',
+                        content=IsStr(),
+                        id='msg_68cdc398d3bc8190bbcf78c0293a4ca60187028ba77f15f7',
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2687, cache_read_tokens=1920, output_tokens=699, details={'reasoning_tokens': 448}
+                    input_tokens=2973, cache_read_tokens=1920, output_tokens=707, details={'reasoning_tokens': 512}
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68cdbdba3dd081a08e8bab4fbaa58e900dbe8533c6078510',
+                provider_response_id='resp_68cdc382bc98819083a5b47ec92e077b0187028ba77f15f7',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run('Style it more futuristically.', message_history=messages)
+    assert result.output == snapshot("""\
+I gave the chart a neon, futuristic look with a dark theme, glowing curve, and cyber-style markers and grid.
+
+Download the image: [y_equals_x_squared_futuristic.png](sandbox:/mnt/data/y_equals_x_squared_futuristic.png)
+
+If you want different colors or a holographic gradient background, tell me your preferred palette.\
+""")
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Style it more futuristically.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdc39f6aa48190b5aece25d55f80720187028ba77f15f7',
+                        signature='gAAAAABozcPV8NxzVAMDdbpqK7_ltYa5_uAVsbnSW9OMWGRwlnwasaLvuaC4XlgGmC2MHbiPrccJ8zYuu0QoQm7jB6KgimG9Ax3vwoFGqMnfVjMAzoy_oJVadn0Odh3sKGifc11yVMmIkvrl0OcPYwJFlxlt2JhPkKotUDHY0P2LziSsMnQB_KaVdyYQxfcVbwrJJnB9wm2QbA3zNZogWepoXGrHXL1mBRR3J7DLdKGfMF_7gQC5fgEtb3G4Xhvk8_XNgCCZel48bqgzWvNUyaVPb4TpbibAuZnKnCNsFll6a9htGu9Ljol004p_aboehEyIp6zAm_1xyTDiJdcmfPfUiNgDLzWSKf-TwGFd-jRoJ3Aiw1_QY-xi1ozFu2oIeXb2oaZJL4h3ENrrMgYod3Wiprr99FfZw9IRN4ApagGJBnWYqW0O75d-e8jUMJS8zFJH0jtCl0jvuuGmM5vBAV4EpRLTcNGOZyoRpfqHwWfZYIi_u_ajs_A6NdqhzYvxYE-FAE1aJ89HxhnQNjRqkQFQnB8sYeoPOLBKIKAWYi3RziNE8klgSPC250QotupFaskTgPVkzbYe9ZtRZ9IHPeWdEHikb2RP-o1LVVO_zFMJdC6l4TwEToqRG8LaZOgSfkxS8eylTw7ROI2p8IBSmMkbkjvEkpmIic0FSx23Ew_Q-Y6DPa9isxGZcMMS0kOPKSPSML2MGoVq5L3-zIVj6ZBcFOMSaV5ytTlH-tKqBP9fejMyujwQFl5iXawuSjVjpnd2VL83o-xKbm6lEgsyXY1vynlS2hT52OYUY3MMvGSCeW5d7xwsVReO0O1EJqKS0lLh8thEMpJvar9dMgg-9ZCgZ1wGkJlpANf2moQlOWXKPXcbBa2kU0OW2WEffr4ecqg1QwPoMFLmR4HDL-KknuWjutF5bo8FW0CAWmxObxiHeDWIJYpS4KIIwp9DoLdJDWlg8FpD6WbBjKQN6xYmewHaTLWbZQw8zMGBcnhAkkyVopjrbM_6rvrH4ew05mPjPRrq9ODdHBqDYEn1kWj9MBDR-nhhLrci_6GImd64HZXYo0OufgcbxNu5mcAOsN3ww13ui8CTQVsPJO20XHc4jfwZ2Yr4iEIYLGdp0Xgv8EjIkJNA1xPeWn9COgCRrRSVLoF6qsgZwt9IRRGGEbH6kvznO_Y7BTTqufsORG6WNKc_8DDlrczoZVy0d6rI1zgqjXSeMuEP9LBG-bJKAvoAGDPXod8ShlqGX3Eb9CmBTZtTOJZYdgAlsZHx9BZ6zHlrJDjSDhc8xvdUAn9G3JvTI3b5JWSNX0eEerZ4c0FVqlpR-mSG201qnFghtoGHTLJhlIf9Ir8Daio_AYxUTRarQbcKnJuyKHPOz1u0PX2zS0xegO-IZhFbzNaB8qwQgeBiHfP-1dP9mkttqIRMt-hMt9NMHXoGIvFxgQ-xUVw7GRWx-ffKY7nPAbZD8kwVP3i4jTVj8phhwQcDy9UmbaPjm4LBgJkfdwNfSpm3g_ePK4aLa_l7iF2WSSfy2wObb7VatDzYDcNRG0ZTMGsiHy8yzZAcec18rG7uE6QCKx32G8NI5YvcN1kbnrZEuoKTBuSb2B_ZAhvED9HxbG8mH4ZEHHioVuH3_-b2TesVUAbORab_-rG9CU6qyy_eAqP54FYiXXSWtBWNo4baVdqCzgSCiNxgpxx64WPw8y2M1bOMoV6KPGwDOjcNwbO9nQwztqTWPW0Ot_Llf0HV0p-RPC1Uy8uBB5flhJ3p5uqxCPV3kDRzXgjh28EaBEkaSw_6SZkJNvwbD_7VihlHGaO89TwlqSIYUT_gc72NZKRrj4f-Y-0NwxjaSVVGuWCoeG-TMjG6uXpSozo2J47_x_a0lr4KCT8NDYlksajyuPUbYhC7jhQ9uJakmAc7ay_VHn_LYlAWRdAA7wYvqw7aYIuSIYg2OfL6NlggCpBnhsUPEXmMRHcfj1Ctc1aeUjBcpLFVmTZ82lB0FdcKRe3bBsKRckbdKalehoK0NJtrWqNQQH7xPrS-r7or_oOWhA4EDIkRUOG9eZhdsvTXBUamxGwutJ97SdDkgppVC4M7DMK2ZGGBzQsE-JMilERvFQ8JqwVWPxExWmE_-H2-bYe-T-CguCin-mTqhLYswHVtXjtruoHBmDs2SdnkD3intwSpqxsltscCfRaoRYWTCTbchCdbctSEIc39ECpc5tL1Gnav0bwSkMYkxyaRVBiYBbmIG9JftkKIYtdZ_Ddjmq8k29QflqrcigahsVLZPye3dxVTuviqbQjRd2SPMv8RxgSebgm5RZZIpP4WposryghYZFvuA1WImRzsImnAJI9J-8dv6IhHpHsWOw9K-Neg8GlnDU1mGHUElMUbqHiLojmXqPGfhBI3iSR0Ugs7ErpeRUrSk3il2o3rysG1Fn7ePuP5qNJUt2NyBUxf3TExMOwG_zqvpIPr2V_ARr3PsfeD0IcY83Bh428S8KPzc7ASOjT9dGQtVVrdjSxHi8o5ANxGx6z3bHC5dJvDCXg8a7FIJHAd5CUqJxrBi-K4p21jf1BNqgO5JAJO1JrvtdTk4GOVe8YEfhxmGWW9oeuRg8crsIWCCCoxr2XJKgPCj2TTPkBDZ1O3Yw3_nuWaBU5sB09uEB5lTKMd0OfSHbPF4c50RWAFgQB-tHjIUss3oEcAUaZHC77r6sIYoAEBlU8Dgly983fFD0HCqtpIpKS_B_K1fTXYpWRM3uUZpPKEgbfw1Kiqp5cweKTeRKNvjlau6VxhPyVi66xPdHUCC_BcX1eeFe-zcxe6fczcJWqGZGtYyVS_S_GlWZcdA6AHvGU6c4KjG0oU_9q-pdHSRtpnrhqFu2L884m64A_HsFU71Dj34AxhmXO1Am-zSL3j9nEPPUe6lJSGyhHU9k8ApDadWagvlODdXYWaWiMCXGXcYtl_iUAm24IJozlLJ1IW9HW6RoTfKrxwQwND3pX9CLNewuPV776pVtRjvUMbLaYg8nzOu1eNT2IW9dUdzc7wqOjiT1gHuVd6RzJyTCWJb9yPwDTkB_NKkjfUPmJ9Id924xtxy6H0eDYRq-SqsSSEklr6KJc88PV35QqvaMUW1dt_tGynHgYy9PXlWXQLKw-Xphku3FS_R4BLUhJbXDsMOQq332yhizP3qQ7vjEmPm8KB4DMIWBNn_D9xFuDuTCMNPAA9AGYWgC39-L4wPbpBHpqWjDwMzijFpm0CEViPD9ghyyV8syT1uLscxJVVDlBx90u_qWLSzMnFrVWmZ60OyWa9EqG44ZU8ELLHlEDRO_yHuTVpSafCLeDe5baOG2mI6tZnDBmm_ysbYdaC2N_zNBK9rhx7g7BNLQPevl0vtZm7GVLYXiVaO5ZinHxeTyJ6dRU5b0HmSw8r7EpdgORfjUuMkUfWPwhXgTU8SbvjTZg1gJowyNDYCvacrgnmnpBG9BgNjsfWlGTwz19AcEP_GjCWRWoE-uE_5fIyq5eFEefCBUKU0Ejs0IB-Re5h8bbdc6bNV3Tnx4UfGDU6FbQrJmPzrw5wp_wCeVYjtNGRbO2MKr_m52km5xMpVMMHtthVbQ9Zsa9F9zB6Dkr-R4F7o0dITMhG3qaREHKc8mXIGoHND-WSGPZLntB43JmRIWwjlJNstv7VlVc-dU89oh6Z1biH9B88SENI1ao2wMQV-BB17E6cmfzm1JsSR-HkzSf3yoUJWwvIu4CaR4jeMZohuoNqfGvQWIJSfyyUNzq5uY5__04QUmNcRVspOTH4EOHAoXLfCV3VI7fodj4FppiIuIXKwS3N03-Qt4sQ__XQWuyDdORvhRJeCvYcK5kkyOQILcABxDItxLmk8AgdT0Hz0BAo_u1U71srS-T8a8O0-fXWsJAHxDg_rJn0LUm6zq2vXNl8zmOKwEayyb0YySbMRxI-LwLyOXGRDyAVvm_7KKJu1HHqMntLyY2G1xowFpwMVLYXlGxDbsSpE-g5kFnHWhj13FiekLxaFgMRNsMA-r5_rWbEjRa6H328FKsUJcYe9qsp2LlzdJmYZDTIMgzxupFwQ-R5F6QjWOudMBsRszb4YqnOPJ8P9YnY2WYd0B7srb5Gh7T6r6mcCl-HAb2z9QDeXOc2Lu7ujuSvGj7_Gk7PkZH-LzoAEaGG9Z-7IVJlV_hOBPif3GlJUSUhTlIwWxn75gOyoOFuMak-rQqkb0SaL5anfXS_NUTVgSh5G5JQIoykLxbVlGiyeq0M_oEvTw2wMZcWT2hhaudcQ6L912pntcD-WF2tfppgp6sN5-cq-D8Y39N5Txvs-wo-H7-vYKPozTNUKCfnzgXfvt5fOi3RBR4MZU3eHT8OZ7d1d3otho_4GVMNIFa6mxjW1BC_J42Hn27-vrNDLZI_BXdF1t2CCq9VeRwxIW1R9vadd04HzAXyhap95BAYacmbULR6BkX97TvY3hv5cMiaQFkzxg-tf-nGC_VCknvwKxu4ocoB14p9w5TPSKcJz4J26XvyQbi6AdaXbOk625ajB_clv3VJvXYz7DgvWZd408tMykYQLMEyv5lnS7qwQokeM4ilIXwM7EugiakhfefTM9ZdxaWVcvQdqGerx98wlhifCSv0FqFRpJdkqgHmV1qzrAjPDEKT5HJOjsvs5hb7gKBqHR-bYlgS94pvDUpPArQXYcGYGum6vFsCAJypefMTF3D7Zhu4hhWQQv-DzSmfcZOxSeVJFrgVeqJnIbZPtd59HCBXNIRXJa42wUYE4szNli8wKWX0rYSIhiX-ig2YYZz3ZoBE1KDOpzheuk9OMYg7tQG2UlmVq27ggaKJ2gEGuVv-GI7uD7vKxPQ97QwCf38gWKU95CjMEBm_EvmLs9eubNpSpz8Yoek8hWWgrCXUSwRsYnF-lGdG0nIkCClvzqqAGOjyPxG4qfrCXJ-4rVc4DQiJUj71_I0EAhOgxb5WYBt4a7C1aUxC__qeOTAecof-UjzNlUPTo91JgOh5xvZkRkgGFNsq1OFqOcRrrKV8U8brizYkIhDjzjwCIzScSYvEfY4S6st-oJBv5fwTqwICSs59hf6WR8GXsPFR4v3UtF0Rkt-Nrek-X6V7BCui1M5HeFRN7lcTYs1Qw2bIwu4Td5PIkZ16oHdCk9u5pEZce-n_MIwj2Yoq_Lq1BBY9f1rpG9IuaycwabFnd2MOj89-xdgC197DAij5WjZjXahooyAl0Mt3p9MrHCit7LYbxqd_dGBOmg9YRfGPhsoZ17oAmHyg_gvpooOsu21T_06ynhvySjOG0yUcphquvtHJWqQdcT6BBX0X-kGE4nA41VdMhepLhDRDXtR4HJ1m_dPFpkHeAAFIefjt5Kb782TDLFE3KuHFWqSU2K2UmlY12P21dpRvyUNz8ss_AA3rl5jFpcnC2IyJNDIZbqdJPd2z0SNlwNyBq7Vl6poenR-j2X3xzIGlCDQ9zRgs50wdWtZ3ZRWLVWMrVkhkddoVKuh1W9rlwsvxmlZbOeRk_Uh0BymAa0-4-n0jI4_-O8jqpL-YzL1Y191brY4ywLUrQXpln41UK76pxc34FojI1Nymw523SNYxAHSlpj01gNmcjPrBTFxQ9SDY7AlrSFwJia_KvWnsZ53qt6fiDHV7p62KzlG_rpz_dQSQoj-z1hZBoUxi4nqzeCIzPcB_3JqeqD6x1O-Vh3uk-6NxN_qCE8cRsizB5vV-Ur-4tqau6LIrdfIB3Db12vpgiCmD_BD4xCxOijDn-97edRZw__xYfhx9_MBEB6gYl1ZBtLJfxDN54N5UION2tiZ2U8THD_h4d8-c26H7NQv44kYppbaseMckhpVOBDh52P5gxWFwp4VGqAIkZ7KU10qAD6M3GTFx7vGth8cT8YS1s2gPDW-WcVQGlAF94gT-FE6vzAjxwRJ4m7B1rJZfYReDvMrAoLroayOVmfB8pOKVQLQEF5dUmlzAIIpeh1NAiTg4n3FXW7OXQhzhU8bmo0e2FuSEOUVimGw9Nk_Wor3kQFp-9kj_iazSC4p5VURnyY_lAirPfyw4nskpZzCjSg_EAU8Au5vvOqrdDEPjrbeT8ks0wi2rsB0AxQxhgf6jUWzp0apeZOIl9dJFH_OnyJfvwrV4YHpee3174WKYhOJIOy2-8FJbMw1MpQtVV49yWmZsIyjRNj2uLbqY7jWBo2UEeOVW5n1tdk5zAVF-RFPKyh9150MnJz_RQtgoNdUD4iLBwlHYHVGLyH4a3GJmOJP6ZC-A-8RiUjvhu5co0yC8M83aVFjLe-yob3sNgJQgdVJnEOfPz4-1DVORoDgIRrRBcZQZqvkZwADFUkyy9jy5oXdEJ5XzthnizbrOZkHk6sQsNXrP4Uadqo9w99uy7TUh62l5AMWBFcaaQhuAuFkUZCavIqoO-2k4oXIDoTeBYzbyo_HH6caMk0D0_zgEg_5i-NhT3EUPdoCBNmjbOKmN2wzf6kqEyc8-nunjfq6HOjC6B6SE6VgOVJgBrhB4cBto4CxO45eqeuCi_WCjRtSS43Bh0QFZi6xK8rRjItyQRIfBpomETElbng3mAmBLPNb_7CzfsBdhBhJQLKu9KZ__uL3YVGtrCaLcOsfwP7BXRNQJH0yN_JWfMZH3y3B8z1O__xGhR63ugExWJZyUn55KAEiODbX35_PcftWXjslq-wzsK4J2fO_HFNU8Pi4egk6ibvCUDFRUelukaAy_YHdb0VTSB6XCymTo96jK0HGjG8FaVwvQaesaUE-e0_JpdMXN3KstKFeTlDUx1o3Ny93-VxLB5rkOSd6cRjEnFRA7Q6HnturEjwPAeJjR2Ll5dsisVrdjqHMbSfSObkpd2dZ0T3LP4-_ug7qRJF60DJTjTPpx7YxeARzuwiu02TlVW0J0PrdXT8EpISHneKc1VWhtRcdD0R0spuAMzJLwELaOemihL1TJSIMBqFikbpulZCZ1k1kA_5D7I5c7pOF1g4uYBW-gJNTenfC9wYmDJAOCcnwk1W4=',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='code_execution',
+                        args={
+                            'container_id': 'cntr_68cdc387531c81938b4bee78c36acb820dbd09bdba403548',
+                            'code': """\
+import numpy as np\r
+import matplotlib.pyplot as plt\r
+import matplotlib.patheffects as pe\r
+\r
+# Data\r
+x_smooth = np.linspace(-5, 5, 501)\r
+y_smooth = x_smooth**2\r
+x_int = np.arange(-5, 6, 1)\r
+y_int = x_int**2\r
+\r
+# Futuristic styling parameters\r
+bg_color = '#0b0f14'          # deep space blue-black\r
+grid_color = '#00bcd4'        # cyan\r
+neon_cyan = '#00e5ff'\r
+neon_magenta = '#ff2bd6'\r
+accent = '#8a2be2'            # electric purple\r
+\r
+plt.style.use('dark_background')\r
+plt.rcParams.update({\r
+    'font.family': 'DejaVu Sans Mono',\r
+    'axes.edgecolor': neon_cyan,\r
+    'xtick.color': '#a7ffff',\r
+    'ytick.color': '#a7ffff',\r
+    'axes.labelcolor': '#a7ffff'\r
+})\r
+\r
+fig, ax = plt.subplots(figsize=(8, 5), dpi=200)\r
+fig.patch.set_facecolor(bg_color)\r
+ax.set_facecolor(bg_color)\r
+\r
+# Neon glow effect: draw the curve multiple times with increasing linewidth and decreasing alpha\r
+for lw, alpha in [(12, 0.06), (9, 0.09), (6, 0.14), (4, 0.22)]:\r
+    ax.plot(x_smooth, y_smooth, color=neon_cyan, linewidth=lw, alpha=alpha, solid_capstyle='round')\r
+\r
+# Main crisp curve\r
+ax.plot(x_smooth, y_smooth, color=neon_cyan, linewidth=2.5)\r
+\r
+# Glowing integer markers\r
+ax.scatter(x_int, y_int, s=220, color=neon_magenta, alpha=0.10, zorder=3)\r
+ax.scatter(x_int, y_int, s=60, color=neon_magenta, edgecolor='white', linewidth=0.6, zorder=4)\r
+\r
+# Grid and spines\r
+ax.grid(True, which='major', linestyle=':', linewidth=0.8, color=grid_color, alpha=0.25)\r
+for spine in ax.spines.values():\r
+    spine.set_linewidth(1.2)\r
+\r
+# Labels and title with subtle glow\r
+title_text = ax.set_title('y = x^2  •  x ∈ [-5, 5]', fontsize=16, color=neon_cyan, pad=12)\r
+title_text.set_path_effects([pe.withStroke(linewidth=3, foreground=accent, alpha=0.35)])\r
+\r
+ax.set_xlabel('x', fontsize=12)\r
+ax.set_ylabel('y', fontsize=12)\r
+\r
+# Ticks\r
+ax.set_xticks(x_int)\r
+ax.set_yticks(range(0, 26, 5))\r
+\r
+# Subtle techy footer\r
+footer = ax.text(0.98, -0.15, 'generated • neon-grid',\r
+                 transform=ax.transAxes, ha='right', va='top',\r
+                 color='#7fdfff', fontsize=9, alpha=0.6)\r
+footer.set_path_effects([pe.withStroke(linewidth=2, foreground=bg_color, alpha=0.9)])\r
+\r
+plt.tight_layout()\r
+\r
+# Save and show\r
+out_path = '/mnt/data/y_equals_x_squared_futuristic.png'\r
+plt.savefig(out_path, facecolor=fig.get_facecolor(), dpi=200, bbox_inches='tight')\r
+plt.show()\r
+\r
+out_path\
+""",
+                        },
+                        tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='code_execution',
+                        content={
+                            'status': 'completed',
+                            'logs': [
+                                """\
+/tmp/ipykernel_11/962152713.py:40: UserWarning: You passed a edgecolor/edgecolors ('white') for an unfilled marker ('x').  Matplotlib is ignoring the edgecolor in favor of the facecolor.  This behavior may change in the future.
+  ax.scatter(x_int, y_int, s=60, color=neon_magenta, edgecolor='white', linewidth=0.6, zorder=4)
+""",
+                                "'/mnt/data/y_equals_x_squared_futuristic.png'",
+                            ],
+                        },
+                        tool_call_id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=Image(
+                            data=IsBytes(),
+                            media_type='image/png',
+                            identifier='81863d',
+                        ),
+                        id='ci_68cdc3be6f3481908f64d8f0a71dc6bb0187028ba77f15f7',
+                    ),
+                    TextPart(
+                        content="""\
+I gave the chart a neon, futuristic look with a dark theme, glowing curve, and cyber-style markers and grid.
+
+Download the image: [y_equals_x_squared_futuristic.png](sandbox:/mnt/data/y_equals_x_squared_futuristic.png)
+
+If you want different colors or a holographic gradient background, tell me your preferred palette.\
+""",
+                        id='msg_68cdc3d0303c8190b2a86413acbedbe60187028ba77f15f7',
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=4614, cache_read_tokens=1792, output_tokens=1844, details={'reasoning_tokens': 1024}
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68cdc39da72481909e0512fef9d646240187028ba77f15f7',
                 finish_reason='stop',
             ),
         ]
@@ -3546,37 +3692,37 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_68cdb23163dc8195ac0d368c999c7997068fb3b2873504d1',
+                        id='rs_68cdc3d72da88191a5af3bc08ac54aad08537600f5445fc6',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='image_generation',
-                        tool_call_id='ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1',
+                        tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
                         content={'status': 'completed'},
-                        tool_call_id='ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1',
+                        tool_call_id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryContent(
-                            data=IsInstance(bytes),
+                        content=Image(
+                            data=IsBytes(),
                             media_type='image/png',
-                            identifier='956da5',
+                            identifier='68b13f',
                         ),
-                        id='ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1',
+                        id='ig_68cdc3ed36dc8191b543d16151961f8e08537600f5445fc6',
                     ),
-                    TextPart(content='', id='msg_68cdb29b1ce88195a2e41cb5ccbc2a72068fb3b2873504d1'),
+                    TextPart(content='', id='msg_68cdc42eae2c81918eeacdbceb60d7fa08537600f5445fc6'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2356,
-                    cache_read_tokens=1280,
-                    output_tokens=682,
-                    details={'reasoning_tokens': 512},
+                    input_tokens=2746,
+                    cache_read_tokens=1664,
+                    output_tokens=1106,
+                    details={'reasoning_tokens': 960},
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -3588,7 +3734,7 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
         ]
     )
 
-    result = await agent.run('Now give it a sombrero.')
+    result = await agent.run('Now give it a sombrero.', message_history=messages)
     assert result.output == snapshot('A file was returned.')
     assert result.new_messages() == snapshot(
         [
@@ -3604,37 +3750,37 @@ async def test_openai_responses_image_generation_tool(allow_model_requests: None
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_68cdb29f1bb0819493600a31f7fcd9320f985a8a9de1b3a1',
+                        id='rs_68cdc4311c948191a7fb4cb3e04f12f508537600f5445fc6',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='image_generation',
-                        tool_call_id='ig_68cdb2b243a481949fed4ec4e79303b10f985a8a9de1b3a1',
+                        tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='image_generation',
                         content={'status': 'completed'},
-                        tool_call_id='ig_68cdb2b243a481949fed4ec4e79303b10f985a8a9de1b3a1',
+                        tool_call_id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     FilePart(
-                        content=BinaryContent(
-                            data=IsInstance(bytes),
+                        content=Image(
+                            data=IsBytes(),
                             media_type='image/png',
-                            identifier='ea32d0',
+                            identifier='2b4fea',
                         ),
-                        id='ig_68cdb2b243a481949fed4ec4e79303b10f985a8a9de1b3a1',
+                        id='ig_68cdc46a3bc881919771488b1795a68908537600f5445fc6',
                     ),
-                    TextPart(content='', id='msg_68cdb2cf4bd881949d64cd6f590f331b0f985a8a9de1b3a1'),
+                    TextPart(content='', id='msg_68cdc4c5951c8191ace8044f1e89571508537600f5445fc6'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=3299,
-                    cache_read_tokens=2304,
-                    output_tokens=1625,
-                    details={'reasoning_tokens': 1472},
+                    input_tokens=2804,
+                    cache_read_tokens=1280,
+                    output_tokens=792,
+                    details={'reasoning_tokens': 576},
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
