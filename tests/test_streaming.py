@@ -432,15 +432,7 @@ async def test_empty_response():
                 model_name='function::stream_structured_function',
                 timestamp=IsDatetime(),
             ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Responses without text or tool calls are not permitted.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
+            ModelRequest(parts=[]),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),

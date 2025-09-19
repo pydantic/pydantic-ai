@@ -547,7 +547,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
-                thinking_parts: list[_messages.ThinkingPart] = []
+                invisible_parts: bool = False
 
                 for part in self.model_response.parts:
                     if isinstance(part, _messages.TextPart):
@@ -558,11 +558,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
                         text = ''
+                        invisible_parts = True
                         yield _messages.BuiltinToolCallEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.BuiltinToolReturnPart):
+                        invisible_parts = True
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
-                        thinking_parts.append(part)
+                        invisible_parts = True
                     else:
                         assert_never(part)
 
@@ -577,18 +579,21 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif text:
                         # No events are emitted during the handling of text responses, so we don't need to yield anything
                         self._next_node = await self._handle_text_response(ctx, text)
+                    elif invisible_parts:
+                        # handle responses with only thinking or built-in tool parts.
+                        # this can happen with models that support thinking mode when they don't provide
+                        # actionable output alongside their thinking content. so we tell the model to try again.
+                        m = _messages.RetryPromptPart(
+                            content='Responses without text or tool calls are not permitted.',
+                        )
+                        raise ToolRetryError(m)
                     else:
-                        if thinking_parts:
-                            # handle thinking-only responses (responses that contain only ThinkingPart instances)
-                            # this can happen with models that support thinking mode when they don't provide
-                            # actionable output alongside their thinking content. so we tell the model to try again.
-                            pass
-                        elif isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
-                            # we got an empty response with no tool calls, text, or thinking
-                            # this sometimes happens with anthropic (and perhaps other models)
-                            # when the model has already returned text along side tool calls
-                            # in this scenario, if text responses are allowed, we return text from the most recent model
-                            # response, if any
+                        # we got an empty response with no tool calls, text, thinking, or built-in tool calls.
+                        # this sometimes happens with anthropic (and perhaps other models)
+                        # when the model has already returned text along side tool calls
+                        # in this scenario, if text responses are allowed, we return text from the most recent model
+                        # response, if any
+                        if isinstance(ctx.deps.output_schema, _output.TextOutputSchema):
                             for message in reversed(ctx.state.message_history):
                                 if isinstance(message, _messages.ModelResponse):
                                     text = ''
@@ -603,10 +608,12 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                                         self._next_node = await self._handle_text_response(ctx, text)
                                         return
 
-                        m = _messages.RetryPromptPart(
-                            content='Responses without text or tool calls are not permitted.',
-                        )
-                        raise ToolRetryError(m)
+                        # Go back to the model request node with an empty request, which means we'll essentially
+                        # resubmit the most recent request that resulted in an empty response,
+                        # as the empty response and request will not create any items in the API payload,
+                        # in the hope the model will return a non-empty response this time.
+                        ctx.state.increment_retries(ctx.deps.max_result_retries)
+                        self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
                 except ToolRetryError as e:
                     ctx.state.increment_retries(ctx.deps.max_result_retries, e)
                     self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))

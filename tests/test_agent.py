@@ -2195,18 +2195,10 @@ def test_empty_response():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Responses without text or tool calls are not permitted.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
+            ModelRequest(parts=[]),
             ModelResponse(
                 parts=[TextPart(content='ok here is text')],
-                usage=RequestUsage(input_tokens=69, output_tokens=4),
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
@@ -2240,18 +2232,10 @@ def test_empty_response_without_recovery():
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
-            ModelRequest(
-                parts=[
-                    RetryPromptPart(
-                        content='Responses without text or tool calls are not permitted.',
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                    )
-                ]
-            ),
+            ModelRequest(parts=[]),
             ModelResponse(
                 parts=[],
-                usage=RequestUsage(input_tokens=69),
+                usage=RequestUsage(input_tokens=51),
                 model_name='function:llm:',
                 timestamp=IsDatetime(),
             ),
