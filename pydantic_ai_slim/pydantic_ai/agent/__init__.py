@@ -658,9 +658,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             span_attributes = {
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,
-                'logfire.msg': f'{agent_name} run',
-            }
-        
+            'logfire.msg': f'{agent_name} run',
+        }
         run_span = tracer.start_span(
             span_name,
             attributes=span_attributes,
