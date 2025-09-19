@@ -15,6 +15,7 @@ from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai import Agent, ModelHTTPError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.builtin_tools import WebSearchTool
+from pydantic_ai.exceptions import StreamCancelled
 from pydantic_ai.messages import (
     AudioUrl,
     BinaryContent,
@@ -2913,6 +2914,75 @@ async def test_openai_model_cerebras_provider_harmony(allow_model_requests: None
 
     result = await agent.run('What is the capital of France?')
     assert result.output == snapshot('The capital of France is **Paris**.')
+
+
+async def test_stream_cancellation(allow_model_requests: None):
+    """Test that stream cancellation works correctly with mocked responses."""
+    # Create a simple stream
+    stream = [
+        text_chunk('Hello '),
+        text_chunk('world'),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello') as result:
+        # Cancel immediately and then try to iterate
+        await result.cancel()
+
+        # Now try to iterate - this should raise StreamCancelled
+        with pytest.raises(StreamCancelled):
+            async for content in result.stream_text(delta=True):
+                pytest.fail(f'Should not receive content after cancellation: {content}')
+
+
+async def test_multiple_cancel_calls(allow_model_requests: None):
+    """Test that multiple cancel calls are safe."""
+    stream = [
+        text_chunk('Hello '),
+        text_chunk('world '),
+        text_chunk('from '),
+        text_chunk('AI!'),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Hello world') as result:
+        # Call cancel multiple times - should be safe
+        await result.cancel()
+        await result.cancel()
+        await result.cancel()
+
+        # Try to iterate - should raise StreamCancelled
+        with pytest.raises(StreamCancelled):
+            async for content in result.stream_text(delta=True):
+                pytest.fail(f'Should not receive content after cancellation: {content}')
+
+
+async def test_stream_cancellation_immediate(allow_model_requests: None):
+    """Test immediate cancellation before iteration."""
+    stream = [
+        text_chunk('This should '),
+        text_chunk('not be '),
+        text_chunk('processed.'),
+        chunk([]),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    m = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    async with agent.run_stream('Tell me a story') as result:
+        # Cancel immediately before any iteration
+        await result.cancel()
+
+        # Try to iterate - should raise StreamCancelled immediately
+        with pytest.raises(StreamCancelled):
+            async for content in result.stream_text(delta=True):
+                pytest.fail(f'Should not receive any content after immediate cancellation: {content}')
 
 
 def test_deprecated_openai_model(openai_api_key: str):

@@ -54,6 +54,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     _agent_stream_iterator: AsyncIterator[ModelResponseStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
+    _cancelled: bool = field(default=False, init=False)
 
     def __post_init__(self):
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
@@ -122,6 +123,19 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._raw_stream_response.timestamp
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        This will close the underlying network connection and cause any active iteration
+        over the stream to raise a StreamCancelled exception.
+
+        Subsequent calls to cancel() are safe and will not raise additional exceptions.
+        """
+        if not self._cancelled:
+            self._cancelled = True
+            # Cancel the underlying stream response
+            await self._raw_stream_response.cancel()
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
@@ -245,8 +259,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:
         """Stream [`ModelResponseStreamEvent`][pydantic_ai.messages.ModelResponseStreamEvent]s."""
         if self._agent_stream_iterator is None:
-            self._agent_stream_iterator = _get_usage_checking_stream_response(
-                self._raw_stream_response, self._usage_limits, self.usage
+            self._agent_stream_iterator = _get_cancellation_aware_stream_response(
+                self._raw_stream_response, self._usage_limits, self.usage, lambda: self._cancelled
             )
 
         return self._agent_stream_iterator
@@ -466,6 +480,18 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        This will close the underlying network connection and cause any active iteration
+        over the stream to raise a StreamCancelled exception.
+
+        Subsequent calls to cancel() are safe and will not raise additional exceptions.
+        """
+        if self._stream_response is not None:
+            await self._stream_response.cancel()
+        # If there's no stream response, this is a no-op (already completed)
+
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate and return it."""
         if self._run_result is not None:
@@ -542,21 +568,27 @@ class FinalResult(Generic[OutputDataT]):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-def _get_usage_checking_stream_response(
+def _get_cancellation_aware_stream_response(
     stream_response: models.StreamedResponse,
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
+    is_cancelled: Callable[[], bool],
 ) -> AsyncIterator[ModelResponseStreamEvent]:
-    if limits is not None and limits.has_token_limits():
+    """Create an iterator that checks for cancellation and usage limits."""
 
-        async def _usage_checking_iterator():
-            async for item in stream_response:
+    async def _cancellation_aware_iterator():
+        async for item in stream_response:
+            # Check for cancellation first
+            if is_cancelled():
+                raise exceptions.StreamCancelled()
+
+            # Then check usage limits if needed
+            if limits is not None and limits.has_token_limits():
                 limits.check_tokens(get_usage())
-                yield item
 
-        return _usage_checking_iterator()
-    else:
-        return aiter(stream_response)
+            yield item
+
+    return _cancellation_aware_iterator()
 
 
 def _get_deferred_tool_requests(
