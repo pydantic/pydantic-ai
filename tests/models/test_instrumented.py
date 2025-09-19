@@ -1359,6 +1359,22 @@ def test_message_with_builtin_tool_calls():
                 BuiltinToolCallPart('code_execution', {'code': '2 * 2'}, tool_call_id='tool_call_1'),
                 BuiltinToolReturnPart('code_execution', {'output': '4'}, tool_call_id='tool_call_1'),
                 TextPart('text2'),
+                BuiltinToolCallPart(
+                    'web_search',
+                    '{"query": "weather: San Francisco, CA", "type": "search"}',
+                    tool_call_id='tool_call_2',
+                ),
+                BuiltinToolReturnPart(
+                    'web_search',
+                    [
+                        {
+                            'url': 'https://www.weather.com/weather/today/l/USCA0987:1:US',
+                            'title': 'Weather in San Francisco',
+                        }
+                    ],
+                    tool_call_id='tool_call_2',
+                ),
+                TextPart('text3'),
             ]
         ),
     ]
@@ -1387,6 +1403,26 @@ def test_message_with_builtin_tool_calls():
                         'result': {'output': '4'},
                     },
                     {'type': 'text', 'content': 'text2'},
+                    {
+                        'type': 'tool_call',
+                        'id': 'tool_call_2',
+                        'name': 'web_search',
+                        'builtin': True,
+                        'arguments': '{"query": "weather: San Francisco, CA", "type": "search"}',
+                    },
+                    {
+                        'type': 'tool_call_response',
+                        'id': 'tool_call_2',
+                        'name': 'web_search',
+                        'builtin': True,
+                        'result': [
+                            {
+                                'url': 'https://www.weather.com/weather/today/l/USCA0987:1:US',
+                                'title': 'Weather in San Francisco',
+                            }
+                        ],
+                    },
+                    {'type': 'text', 'content': 'text3'},
                 ],
             }
         ]
