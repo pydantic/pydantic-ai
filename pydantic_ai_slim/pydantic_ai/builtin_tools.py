@@ -133,3 +133,17 @@ class UrlContextTool(AbstractBuiltinTool):
 
     kind: str = 'url_context'
     """The kind of tool."""
+
+
+class ImageGenerationTool(AbstractBuiltinTool):
+    """A builtin tool that allows your agent to generate images.
+
+    Supported by:
+
+    * OpenAI Responses
+    """
+
+    # TODO (DouweM): Add parameters from https://platform.openai.com/docs/guides/image-generation#customize-image-output
+
+    kind: str = 'image_generation'
+    """The kind of tool."""

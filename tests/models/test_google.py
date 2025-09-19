@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -1322,71 +1323,8 @@ print(f"Today in Utrecht is {formatted_date}.")
     )
 
     result = await agent.run('What day is tomorrow?', message_history=result.all_messages())
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(
-                parts=[
-                    SystemPromptPart(content='You are a helpful chatbot.', timestamp=IsDatetime()),
-                    UserPromptPart(content='What day is today in Utrecht?', timestamp=IsDatetime()),
-                ]
-            ),
-            ModelResponse(
-                parts=[
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-from datetime import datetime
-import pytz
-
-# Get the current time in UTC
-utc_now = datetime.now(pytz.utc)
-
-# Get the timezone for Utrecht (which is in the Netherlands, using Europe/Amsterdam)
-utrecht_tz = pytz.timezone('Europe/Amsterdam')
-
-# Convert the current UTC time to Utrecht's local time
-utrecht_now = utc_now.astimezone(utrecht_tz)
-
-# Format the date to be easily readable (e.g., "Tuesday, May 21, 2024")
-formatted_date = utrecht_now.strftime("%A, %B %d, %Y")
-
-print(f"Today in Utrecht is {formatted_date}.")
-""",
-                            'language': 'PYTHON',
-                        },
-                        tool_call_id=IsStr(),
-                        provider_name='google-gla',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outcome': 'OUTCOME_OK',
-                            'output': 'Today in Utrecht is Tuesday, September 16, 2025.\n',
-                        },
-                        tool_call_id=IsStr(),
-                        timestamp=IsDatetime(),
-                        provider_name='google-gla',
-                    ),
-                    TextPart(content='Today in Utrecht is Tuesday, September 16, 2025.'),
-                ],
-                usage=RequestUsage(
-                    input_tokens=15,
-                    output_tokens=660,
-                    details={
-                        'thoughts_tokens': 483,
-                        'tool_use_prompt_tokens': 675,
-                        'text_prompt_tokens': 15,
-                        'text_tool_use_prompt_tokens': 675,
-                    },
-                ),
-                model_name='gemini-2.5-pro',
-                timestamp=IsDatetime(),
-                provider_name='google-gla',
-                provider_details={'finish_reason': 'STOP'},
-                provider_response_id=IsStr(),
-                finish_reason='stop',
-            ),
             ModelRequest(parts=[UserPromptPart(content='What day is tomorrow?', timestamp=IsDatetime())]),
             ModelResponse(
                 parts=[
@@ -2646,3 +2584,136 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
     agent = Agent(m, output_type=PromptedOutput(CityLocation), builtin_tools=[UrlContextTool()])
     result = await agent.run('What is the largest city in Mexico?')
     assert result.output == snapshot(CityLocation(city='Mexico City', country='Mexico'))
+
+
+async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(m)
+
+    # TODO (DouweM): Add output_type=ImageUrl or output_type=BinaryContent or output_type=list[ImageUrl, str] for a mix?
+
+    result = await agent.run('Generate an image of an axolotl.')
+    messages = result.all_messages()
+
+    assert result.output == snapshot('Here you go: ')
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(content='Here you go: '),
+                    FilePart(
+                        content=BinaryContent(
+                            data=IsInstance(bytes),
+                            media_type='image/png',
+                            identifier=IsStr(),
+                        )
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=10,
+                    output_tokens=1295,
+                    details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
+                ),
+                model_name='gemini-2.5-flash-image-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run('Now give it a sombrero.')
+    assert result.output == snapshot('A file was returned.')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Now give it a sombrero.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    FilePart(
+                        content=BinaryContent(
+                            data=IsInstance(bytes),
+                            media_type='image/png',
+                            identifier=IsStr(),
+                        )
+                    )
+                ],
+                usage=RequestUsage(
+                    input_tokens=7,
+                    output_tokens=1290,
+                    details={'text_prompt_tokens': 7, 'image_candidates_tokens': 1290},
+                ),
+                model_name='gemini-2.5-flash-image-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_google_image_generation_with_text(allow_model_requests: None, google_provider: GoogleProvider):
+    m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
+    agent = Agent(m)
+
+    result = await agent.run('Generate an illustrated two-sentence story about an axolotl.')
+    messages = result.all_messages()
+
+    assert result.output == snapshot(
+        'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+    )
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an illustrated two-sentence story about an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    TextPart(
+                        content='Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
+                    ),
+                    FilePart(
+                        content=BinaryContent(
+                            data=IsInstance(bytes),
+                            media_type='image/png',
+                            identifier=IsStr(),
+                        )
+                    ),
+                ],
+                usage=RequestUsage(
+                    input_tokens=14,
+                    output_tokens=1335,
+                    details={'text_prompt_tokens': 14, 'image_candidates_tokens': 1290},
+                ),
+                model_name='gemini-2.5-flash-image-preview',
+                timestamp=IsDatetime(),
+                provider_name='google-gla',
+                provider_details={'finish_reason': 'STOP'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )

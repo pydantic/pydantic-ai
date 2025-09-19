@@ -457,7 +457,7 @@ class BinaryContent:
     """The media type of the binary data."""
 
     identifier: str
-    """Identifier for the binary content, such as a unique ID. generating one from the data if not explicitly set
+    """Identifier for the binary content, such as a unique ID.
     This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
     and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
 
@@ -930,6 +930,30 @@ class ThinkingPart:
 
 
 @dataclass(repr=False)
+class FilePart:
+    """A file response from a model."""
+
+    content: BinaryContent | FileUrl  # TODO (DouweM): All of MultiModalContent?
+    """The file content of the response."""
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the file part."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+    """
+
+    part_kind: Literal['file'] = 'file'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    # TODO (DouweM): OTel
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class BaseToolCallPart:
     """A tool call from a model."""
 
@@ -1011,7 +1035,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""

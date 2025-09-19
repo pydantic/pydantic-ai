@@ -19,6 +19,7 @@ from ..messages import (
     BinaryContent,
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
+    FilePart,
     FileUrl,
     FinishReason,
     ModelMessage,
@@ -717,6 +718,13 @@ def _content_model_response(m: ModelResponse, provider_name: str) -> ContentDict
                 elif item.tool_name == WebSearchTool.kind:
                     # Web search results are not sent back
                     pass
+        elif isinstance(item, FilePart):
+            if isinstance(item, BinaryContent):
+                inline_data_dict: BlobDict = {'data': item.data, 'mime_type': item.media_type}
+                part['inline_data'] = inline_data_dict
+            else:
+                # TODO (DouweM): Support ImageUrl etc
+                pass
         else:
             assert_never(item)
 
@@ -772,10 +780,13 @@ def _process_response_from_parts(
             item = ToolCallPart(tool_name=part.function_call.name, args=part.function_call.args)
             if part.function_call.id is not None:
                 item.tool_call_id = part.function_call.id  # pragma: no cover
+        elif inline_data := part.inline_data:
+            data = inline_data.data
+            mime_type = inline_data.mime_type
+            assert data and mime_type, 'Inline data must have data and mime type'
+            item = FilePart(content=BinaryContent(data=data, media_type=mime_type))
         else:  # pragma: no cover
-            raise UnexpectedModelBehavior(
-                f'Unsupported response from Gemini, expected all parts to be function calls, text, or thoughts, got: {part!r}'
-            )
+            raise UnexpectedModelBehavior(f'Unsupported response from Gemini: {part!r}')
 
         items.append(item)
     return ModelResponse(

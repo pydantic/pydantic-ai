@@ -547,6 +547,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             async def _run_stream() -> AsyncIterator[_messages.HandleResponseEvent]:  # noqa: C901
                 text = ''
                 tool_calls: list[_messages.ToolCallPart] = []
+                files: list[_messages.FilePart] = []
                 invisible_parts: bool = False
 
                 for part in self.model_response.parts:
@@ -565,6 +566,8 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         yield _messages.BuiltinToolResultEvent(part)  # pyright: ignore[reportDeprecated]
                     elif isinstance(part, _messages.ThinkingPart):
                         invisible_parts = True
+                    elif isinstance(part, _messages.FilePart):
+                        files.append(part)
                     else:
                         assert_never(part)
 
@@ -579,6 +582,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                     elif text:
                         # No events are emitted during the handling of text responses, so we don't need to yield anything
                         self._next_node = await self._handle_text_response(ctx, text)
+                    elif files:
+                        # TODO (DouweM): Handle file as output
+                        self._next_node = await self._handle_text_response(ctx, 'A file was returned.')
                     elif invisible_parts:
                         # handle responses with only thinking or built-in tool parts.
                         # this can happen with models that support thinking mode when they don't provide

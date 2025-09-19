@@ -17,7 +17,7 @@ from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
-from ..builtin_tools import CodeExecutionTool, WebSearchTool
+from ..builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool
 from ..exceptions import UserError
 from ..messages import (
     AudioUrl,
@@ -25,6 +25,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FinishReason,
     ImageUrl,
     ModelMessage,
@@ -929,18 +930,23 @@ class OpenAIResponsesModel(Model):
                     ToolCallPart(item.name, item.arguments, tool_call_id=_combine_tool_call_ids(item.call_id, item.id))
                 )
             elif isinstance(item, responses.ResponseCodeInterpreterToolCall):
-                call_part, return_part = _map_code_interpreter_tool_call(item, self.system)
+                call_part, return_part, file_parts = _map_code_interpreter_tool_call(item, self.system)
                 items.append(call_part)
                 items.append(return_part)
+                if file_parts:
+                    items.extend(file_parts)
             elif isinstance(item, responses.ResponseFunctionWebSearch):
                 call_part, return_part = _map_web_search_tool_call(item, self.system)
                 items.append(call_part)
                 items.append(return_part)
+            elif isinstance(item, responses.response_output_item.ImageGenerationCall):
+                call_part, return_part, file_part = _map_image_generation_tool_call(item, self.system)
+                items.append(call_part)
+                items.append(return_part)
+                if file_part:
+                    items.append(file_part)
             elif isinstance(item, responses.ResponseComputerToolCall):  # pragma: no cover
                 # Pydantic AI doesn't yet support the ComputerUse built-in tool
-                pass
-            elif isinstance(item, responses.response_output_item.ImageGenerationCall):  # pragma: no cover
-                # Pydantic AI doesn't yet support the ImageGeneration built-in tool
                 pass
             elif isinstance(item, responses.ResponseCustomToolCall):  # pragma: no cover
                 # Support is being implemented in https://github.com/pydantic/pydantic-ai/pull/2572
@@ -1141,8 +1147,10 @@ class OpenAIResponsesModel(Model):
                         type='approximate', **tool.user_location
                     )
                 tools.append(web_search_tool)
-            elif isinstance(tool, CodeExecutionTool):  # pragma: no branch
+            elif isinstance(tool, CodeExecutionTool):
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
+            elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+                tools.append({'type': 'image_generation'})
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
@@ -1269,7 +1277,7 @@ class OpenAIResponsesModel(Model):
                             param['id'] = id
                         openai_messages.append(param)
                     elif isinstance(item, BuiltinToolCallPart):
-                        if item.provider_name == self.system:
+                        if item.provider_name == self.system and send_item_ids:
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and item.tool_call_id
@@ -1280,7 +1288,7 @@ class OpenAIResponsesModel(Model):
                                     id=item.tool_call_id,
                                     code=args.get('code'),
                                     container_id=container_id,
-                                    outputs=None,
+                                    outputs=None,  # These can be read server-side
                                     status='completed',
                                     type='code_interpreter_call',
                                 )
@@ -1289,7 +1297,7 @@ class OpenAIResponsesModel(Model):
                                 item.tool_name == WebSearchTool.kind
                                 and item.tool_call_id
                                 and (args := item.args_as_dict())
-                            ):  # pragma: no branch
+                            ):
                                 web_search_item = responses.ResponseFunctionWebSearchParam(
                                     id=item.tool_call_id,
                                     action=cast(responses.response_function_web_search_param.Action, args),
@@ -1297,8 +1305,18 @@ class OpenAIResponsesModel(Model):
                                     type='web_search_call',
                                 )
                                 openai_messages.append(web_search_item)
+                            elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:  # pragma: no branch
+                                # The cast is necessary because of https://github.com/openai/openai-python/issues/2648
+                                image_generation_item = cast(
+                                    responses.response_input_item_param.ImageGenerationCall,
+                                    {
+                                        'id': item.tool_call_id,
+                                        'type': 'image_generation_call',
+                                    },
+                                )
+                                openai_messages.append(image_generation_item)
                     elif isinstance(item, BuiltinToolReturnPart):
-                        if item.provider_name == self.system:
+                        if item.provider_name == self.system and send_item_ids:
                             if (
                                 item.tool_name == CodeExecutionTool.kind
                                 and code_interpreter_item is not None
@@ -1306,7 +1324,6 @@ class OpenAIResponsesModel(Model):
                                 and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
                                 and (status := content.get('status'))
                             ):
-                                code_interpreter_item['outputs'] = content.get('outputs')
                                 code_interpreter_item['status'] = status
                             elif (
                                 item.tool_name == WebSearchTool.kind
@@ -1314,8 +1331,15 @@ class OpenAIResponsesModel(Model):
                                 and isinstance(item.content, dict)  # pyright: ignore[reportUnknownMemberType]
                                 and (content := cast(dict[str, Any], item.content))  # pyright: ignore[reportUnknownMemberType]
                                 and (status := content.get('status'))
-                            ):  # pragma: no branch
+                            ):
                                 web_search_item['status'] = status
+                            elif item.tool_name == ImageGenerationTool.kind:  # pragma: no branch
+                                # Image generation result does not need to be sent back, just the `id` off of `BuiltinToolCallPart`.
+                                pass
+                    elif isinstance(item, FilePart):
+                        # This was generated by the `ImageGenerationTool` or `CodeExecutionTool`,
+                        # and does not need to be sent back separately from the corresponding `BuiltinToolReturnPart`
+                        pass
                     elif isinstance(item, ThinkingPart):
                         if item.id and send_item_ids:
                             signature: str | None = None
@@ -1588,7 +1612,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         vendor_part_id=f'{chunk.item.id}-call', part=replace(call_part, args=None)
                     )
                 elif isinstance(chunk.item, responses.ResponseCodeInterpreterToolCall):
-                    call_part, _ = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
+                    call_part, _, file_parts = _map_code_interpreter_tool_call(chunk.item, self.provider_name)
+                    # TODO (DouweM): Handle file parts
 
                     args_json = call_part.args_as_json_str()
                     # Drop the final `"}` so that we can add code deltas
@@ -1604,6 +1629,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
+                elif isinstance(chunk.item, responses.ImageGenerationCall):
+                    # TODO (DouweM): Handle image generation result
+                    pass
+
                 else:
                     warnings.warn(  # pragma: no cover
                         f'Handling of this item type is not yet implemented. Please report on our GitHub: {chunk}',
@@ -1800,12 +1829,27 @@ def _split_combined_tool_call_id(combined_id: str) -> tuple[str, str | None]:
 
 def _map_code_interpreter_tool_call(
     item: responses.ResponseCodeInterpreterToolCall, provider_name: str
-) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart]:
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, list[FilePart]]:
     result: dict[str, Any] = {
         'status': item.status,
     }
+
+    file_parts: list[FilePart] = []
+    logs: list[str] = []
     if item.outputs:
-        result['outputs'] = [output.model_dump(mode='json') for output in item.outputs]
+        for output in item.outputs:
+            if isinstance(output, responses.response_code_interpreter_tool_call.OutputImage):
+                file_parts.append(
+                    FilePart(
+                        content=ImageUrl(url=output.url),
+                        id=item.id,
+                    )
+                )
+            elif isinstance(output, responses.response_code_interpreter_tool_call.OutputLogs):
+                logs.append(output.logs)
+
+    if logs:
+        result['logs'] = logs
 
     return (
         BuiltinToolCallPart(
@@ -1823,6 +1867,7 @@ def _map_code_interpreter_tool_call(
             content=result,
             provider_name=provider_name,
         ),
+        file_parts,
     )
 
 
@@ -1855,4 +1900,49 @@ def _map_web_search_tool_call(
             content=result,
             provider_name=provider_name,
         ),
+    )
+
+
+def _map_image_generation_tool_call(
+    item: responses.response_output_item.ImageGenerationCall, provider_name: str
+) -> tuple[BuiltinToolCallPart, BuiltinToolReturnPart, FilePart | None]:
+    file_part: FilePart | None = None
+    if item.result:
+        # TODO (DouweM): Include additional attributes not currently on types
+        # background: opaque
+        # id: ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1
+        # output_format: png
+        # quality: high
+        # revised_prompt: Photorealistic image of a cute axolotl (Ambystoma mexicanum) underwater. Pale pink body with soft
+        #   freckling, smooth skin, small dark bead-like eyes, and vivid feathery external gills in rosy red. The axolotl faces
+        #   the viewer with a gentle, curious expression, slightly hovering above smooth river stones. Clear, shallow freshwater
+        #   scene with soft green aquatic plants (anubias, java fern) in the background, faint sunlit caustic patterns on the
+        #   sand and stones. Soft diffused lighting, shallow depth of field, crisp detail on the face and gills, subtle rim
+        #   light outlining the body. Clean composition, natural color palette, high resolution, 3:2 aspect ratio.
+        # size: 1024x1536
+        # TODO (DouweM): Store as ImageUrl with data URI?
+        file_content = BinaryContent(
+            data=base64.b64decode(item.result),
+            media_type='image/png',
+        )
+        file_part = FilePart(
+            content=file_content,
+            id=item.id,
+        )
+
+    return (
+        BuiltinToolCallPart(
+            tool_name=ImageGenerationTool.kind,
+            tool_call_id=item.id,
+            provider_name=provider_name,
+        ),
+        BuiltinToolReturnPart(
+            tool_name=ImageGenerationTool.kind,
+            tool_call_id=item.id,
+            content={
+                'status': item.status,
+            },
+            provider_name=provider_name,
+        ),
+        file_part,
     )

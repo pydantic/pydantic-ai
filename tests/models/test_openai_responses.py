@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from typing_extensions import TypedDict
 
 from pydantic_ai.agent import Agent
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.builtin_tools import CodeExecutionTool, ImageGenerationTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.messages import (
     BinaryContent,
@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
+    FilePart,
     FinalResultEvent,
     ImageUrl,
     ModelRequest,
@@ -38,7 +39,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage
 
-from ..conftest import IsDatetime, IsStr, TestEnv, try_import
+from ..conftest import IsDatetime, IsInstance, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
@@ -2441,13 +2442,13 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
     )
     agent = Agent(model=m, builtin_tools=[CodeExecutionTool()])
 
-    result = await agent.run(user_prompt="what's 123456 to the power of 123?")
+    result = await agent.run(user_prompt='what is 65465-6544 * 65464-6+1.02255')
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content="what's 123456 to the power of 123?",
+                        content='what is 65465-6544 * 65464-6+1.02255',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -2456,110 +2457,71 @@ async def test_openai_responses_thinking_with_code_execution_tool(allow_model_re
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_0cccbe0ca95f935e0068c4986ab048819f9c0f1478f3a295c2',
-                        signature=IsStr(),
+                        id='rs_68cdba57390881a3b7ef1d2de5c8499709b7445677780c8f',
+                        signature='gAAAAABozbpoKwjspVdWvC2skgCFSKx1Fiw9QGDrOxixFaC8O5gPVmC35FfE2jaedsn0zsHctrsl2LvPt7ELnOB3N20bvDGcDHkYzjSOLpf1jl2IAtQrkPWuLPOb6h8mIPL-Z1wNrngsmuoaKP0rrAcGwDwKzq8hxpLQbjvpRib-bbaVQ0SX7KHDpbOuEam3bIEiNSCNsA1Ot54R091vvwInnCCDMWVj-9u2fn7xtNzRGjHorkAt9mOhOBIVgZNZHnWb4RQ-PaYccgi44-gtwOK_2rhI9Qo0JiCBJ9PDdblms0EzBE7vfAWrCvnb_jKiEmKf2x9BBv3GMydsgnTCJdbBf6UVaMUnth1GvnDuJBdV12ecNT2LhOF2JNs3QjlbdDx661cnNoCDpNhXpdH3bL0Gncl7VApVY3iT2vRw4AJCU9U4xVdHeWb5GYz-sgkTgjbgEGg_RiU42taKsdm6B2gvc5_Pqf4g6WTdq-BNCwOjXQ4DatQBiJkgV5kyg4PqUqr35AD05wiSwz6reIsdnxDEqtWv4gBJWfGj4I96YqkL9YEuIBKORJ7ArZnjE5PSv6TIhqW-X9mmQTGkXl8emxpbdsNfow3QEd_l8rQEo4fHiFOGwU-uuPCikx7v6vDsE-w_fiZTFkM0X4iwFb6NXvOxKSdigfUgDfeCySwfmxtMx67QuoRA4xbfSHI9cctr-guZwMIIsMmKnTT-qGp-0F4UiyRQdgz2pF1bRUjkPml2rsleHQISztdSsiOGC2jozXNHwmf1b5z6KxymO8gvlImvLZ4tgseYpnAP8p_QZzMjIU7Y7Z2NQMDASr9hvv3tVjVCphqz1RH-h4gifjZJexwK9BR9O98u63X03f01NqgimS_dZHZUeC9voUb7_khNizA9-dS-fpYUduqvxZt-KZ7Q9gx7kFIH3wJvF-Gef55lwy4JNb8svu1wSna3EaQWTBeZOPHD3qbMXWVT5Yf5yrz7KvSemiWKqofYIInNaRLTtXLAOqq4VXP3dmgyEmAZIUfbh3IZtQ1uYwaV2hQoF-0YgM7JLPNDBwX8cRZtlyzFstnDsL_QLArf0bA8FMFNPuqPfyKFvXcGTgzquaUzngzNaoGo7k6kPHWLoSsWbvY3WvzYg4CO04sphuuSHh9TZRBy6LXCdxaMHIZDY_qVB1Cf-_dmDW6Eqr9_xodcTMBqs6RHlttLwFMMiul4aE_hUgNFlzOX7oVbisIS2Sm36GTuKE4zrbkvsA==',
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
                         args={
+                            'container_id': 'cntr_68cdba56addc81918f656db25fd0a6800d6da575ea4fee9b',
                             'code': """\
-n = pow(123456, 123)
-len_str = len(str(n))
-len_str, str(n)[:50], str(n)[-50:]\
+# compute the value
+65465 - 6544 * 65464 - 6 + 1.02255
 """,
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
                         },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
+                        tool_call_id='ci_68cdba5af39881a393a01eebb253854e09b7445677780c8f',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="""\
-(627,
- '18030210630404480750814092786593857280734268863855',
- '29749134489643622579100908331839817426366854332416')\
-""",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c4986ed690819f9dbd272c4c70a011',
+                        content={'status': 'completed', 'logs': ['-428330955.97745']},
+                        tool_call_id='ci_68cdba5af39881a393a01eebb253854e09b7445677780c8f',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_0cccbe0ca95f935e0068c498746e68819fbcaef179058df3cc',
-                        signature=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-str_n = str(n)
-str_n[:200]\
+                        content="""\
+**Considering numeric results**
+
+I think we need to provide the user with a numeric result, and maybe clarify if they intended to include parentheses. It's important to keep the response concise while also informing them about the order of operations. This way, the user understands the reasoning behind the result. It's all about being clear and precise, so they have all the information they need!\
 """,
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'18030210630404480750814092786593857280734268863855968048844015985795850236081373250219782696986322573087163043641979475893207435038036769764981462654292660266470727587426920177774391231319751632369022'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49877936c819fbcd8ce718f5bc31a',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    ThinkingPart(
-                        content='',
-                        id='rs_0cccbe0ca95f935e0068c49877a260819faa558e81b74d00a3',
-                        signature=IsStr(),
+                        id='rs_68cdba63843881a3a9c585d83e4df9f309b7445677780c8f',
+                        signature='gAAAAABozbpoJefk0Fp1xqQzY6ego00t7KnH2ohbIw-rR9ZgaEAQs3n0Fubka6xbgRxzb1og6Xup1BuT8hQKMS-NHFxYsYXw4b6KeSbCd5oySVO53bsITEVk0A6tgjGssDJc1xSct1ORo-nCNV24MCNZvL9MKFeGQHP-jRypOZ9Vhepje87kFWTpw9lP9j54fZJdRIBGA9G_goI9m1cPztFUufcUxtLsgorsM053oxh8yWiEccAbvBaGXRlPWSoZYktbKrWeBVwiRt2ul-jRV43Z3chB32bEM1l9sIWG1xnvLE3OY6HuAy5s3bB-bnk78dibx5yx_iA36zGOvRkfiF0okXZoYiMNzJz3U7rTSsKlYoMtCKgnYGFdrh0D8RPj4VtxnRr-zAMJSSZQCm7ZipNSMS0PpN1wri14KktSkIGZGLhPBJpzPf9AjzaBBi2ZcUM347BtOfEohPdLBn8R6Cz-WxmoA-jH9qsyO-bPzwtRkv28H5G6836IxU2a402Hl0ZQ0Q-kPb5iqhvNmyvEQr6sEY_FN6ogkxwS-UEdDs0QlvJmgGfOfhMpdxfi5hr-PtElPg7j5_OwA7pXtuEI8mADy2VEqicuZzIpo6d-P72-Wd8sapjo-bC3DLcJVudFF09bJA0UirrxwC-zJZlmOLZKG8OqXKBE4GLfiLn48bYa5FC8a_QznrX8iAV6qPoqyqXANXuBtBClmzTHQU5A3lUgwSgtJo6X_0wZqw0O4lQ1iQQrkt7ZLeT7Ef6QVLyh9ZVaMZqVGrmHbphZK5N1u8b4woZYJKe0J57SrNihO8Slu8jZ71dmXjB4NAPjm0ZN6pVaZNLUajSxolJfmkBuF1BCcMYMVJyvV7Kk9guTCtntLZjN4XVOJWRU8Db5BjL17ciWWHGPlQBMxMdYFZOinwCHLIRrtdVxz4Na2BODjl0-taYJHbKd-_5up5nysUPc4imgNawbN2mNwjhdc1Qv919Q9Cz-he9i3j6lKYnEkgJvKF2RDY6-XAI=',
                         provider_name='openai',
                     ),
                     TextPart(
                         content="""\
-123456^123 equals:
-1803021063040448075081409278659385728073426886385596804884401598579585023608137325021978269698632257308716304364197947589320743503803676976498146265429266026647072758742692017777439123131975163236902290188202654590011462134235078832526827852273018210815142998256983234516628795109978467862737585124291404312560193679040132194219142159564780429384029784135632838235232349153620928650701305446902198201185265537637166663065255873102180259349606640396746581577358565927727487182715643033427374054356948524185042601095118624154879402247254855530736695404690558487305849085262939429771481280865270916688165704128104324472168440830911119701969936\
+Using standard order of operations (multiplication before addition/subtraction):
+
+65465 - 6544 * 65464 - 6 + 1.02255 = -428,330,955.97745
+
+If you intended different grouping with parentheses, let me know.\
 """,
-                        id='msg_0cccbe0ca95f935e0068c49877dd4c819fb0949326ca53a0cb',
+                        id='msg_68cdba6652ac81a3a58625883261465809b7445677780c8f',
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=2629, cache_read_tokens=2304, output_tokens=354, details={'reasoning_tokens': 128}
+                    input_tokens=1493, cache_read_tokens=1280, output_tokens=125, details={'reasoning_tokens': 64}
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_0cccbe0ca95f935e0068c498673f08819f9ca3a5ffea0f8f34',
+                provider_response_id='resp_68cdba511c7081a389e67b16621029c609b7445677780c8f',
                 finish_reason='stop',
             ),
         ]
     )
 
     messages = result.all_messages()
-    result = await agent.run(user_prompt='how about to the power of 124?', message_history=messages)
+    result = await agent.run(user_prompt='how about 2 to the power of 8?', message_history=messages)
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
                 parts=[
                     UserPromptPart(
-                        content='how about to the power of 124?',
+                        content='how about 2 to the power of 8?',
                         timestamp=IsDatetime(),
                     )
                 ]
@@ -2567,116 +2529,23 @@ str_n[:200]\
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content=IsStr(),
-                        id='rs_0cccbe0ca95f935e0068c4987dfd64819fbd3984a1d0b6ae8a',
-                        signature=IsStr(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': """\
-n = pow(123456, 124)
-str_n = str(n)
-len(str_n)\
-""",
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={'outputs': [dict(logs='632', type='logs')], 'status': 'completed'},
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498806d50819f81b64eebd0a9afb5',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': 'str_n[:200]',
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c49880a0fc819f9b7df3346d75008a',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={
-                            'code': 'str_n[-200:]',
-                            'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'67296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498829764819fa5d652f285f51fb4',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    BuiltinToolCallPart(
-                        tool_name='code_execution',
-                        args={'code': 'str_n', 'container_id': 'cntr_68c4986a2df48191acf927f03b5ab8150130cf654974eafb'},
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
-                        provider_name='openai',
-                    ),
-                    BuiltinToolReturnPart(
-                        tool_name='code_execution',
-                        content={
-                            'outputs': [
-                                dict(
-                                    logs="'22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696'",
-                                    type='logs',
-                                )
-                            ],
-                            'status': 'completed',
-                        },
-                        tool_call_id='ci_0cccbe0ca95f935e0068c498850e30819f925c0f879f69541b',
-                        timestamp=IsDatetime(),
-                        provider_name='openai',
-                    ),
-                    TextPart(
                         content="""\
-123456^124 equals:
-22259376835872155755725046390617312444503298968562023914380868375424124867456620159791334926391434395830488007158642181758718171000558674481055514534483546658574101450333778574673152438538112575257499957691072558869631827866367698332298176634455912721514439215697282609503998798205923943259906494776122169432383635142770936484489945914800519238574614164957266189867725276688514819945285124592421478579353115389025899375605896015758767296874992296948890272517148532094528812086889630338972525614076265743359820638354575643811422961497469318295177638226345664642985187040350404616587909147553443069125481739015616500189546368462749696\
+**Calculating a power of two**
+
+I need to answer the question simply: 2 raised to the power of 8 equals 256. It's straightforward, and I want to keep it concise for clarity. I know users appreciate quick answers, so I'll just present the number without any extra elaboration. 256 is the answer, and it's important to communicate it efficiently!\
 """,
-                        id='msg_0cccbe0ca95f935e0068c49886b928819f942185e7cf43c579',
+                        id='rs_68cdba6c100481a394047de63f3e175009b7445677780c8f',
+                        signature='gAAAAABozbpuOXVfjIYw7Gw6uSeadpkyaqMU1Frav7mTaf9LP8p8YuC8CWR9fYa02yZ5oYr1mqmYraD8ViOE33zqO2HBCdiWpOkVdNX-s4SGuPPB7ewyM7bDD4XbaSzo-Q5I6MgZmvVGWDGodqa3MfSKKNcGyD4aEfryQRLi4ObvHE5yuOqRo8FzGXMqe_pFdnvJXXD7njyfUofhWNvQPsLVLQFA_g_e7WKXtJJf_2JY183oi7-jNQ6rD9wGhM81HWSv0sTSBIHMpcE44rvlVQMFuh_rOPVUHUhT7vED7fYtrMoaPl46yDBc148T3MfXTnS-zm163zBOa34Yy_VXjyXw04a8Ig32y72bJY7-PRpZdBaeqD3BLvXfMuY4C911Z7FSxVze36mUxVO62g0uqV4PRw9qFA9mG37KF2j0ZsRzfyAClK1tu5omrYpenVKuRlrOO6JFtgyyE9OtLJxqvRNRKgULe2-cOQlo5S74t9lSMgcSGQFqF4JKG0A4XbzlliIcvC3puEzObHz-jArn_2BVUL_OPqx9ohJ9ZxAkXYgf0IRNYiKF4fOwKufYa5scL1kx2VAmsmEv5Yp5YcWlriB9L9Mpg3IguNBmq9DeJPiEQBtlnuOpSNEaNMTZQl4jTHVLgA5eRoCSbDdqGtQWgQB5wa7eH085HktejdxFeG7g-Fc1neHocRoGARxwhwcTT0U-re2ooJp99c0ujZtym-LiflSQUICi59VMAO8dNBE3CqXhG6S_ZicUmAvguo1iGKaKElMBv1Tv5qWcs41eAQkhRPBXQXoBD6MtBLBK1M-7jhidVrco0uTFhHBUTqx3jTGzE15YUJAwR69WvIOuZOvJdcBNObYWF9k84j0bZjJfRRbJG0C7XbU=',
+                        provider_name='openai',
                     ),
+                    TextPart(content='256', id='msg_68cdba6e02c881a3802ed88715e0be4709b7445677780c8f'),
                 ],
-                usage=RequestUsage(
-                    input_tokens=5973, cache_read_tokens=5120, output_tokens=221, details={'reasoning_tokens': 0}
-                ),
+                usage=RequestUsage(input_tokens=793, output_tokens=7, details={'reasoning_tokens': 0}),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_0cccbe0ca95f935e0068c4987bea4c819fbd0d975202557b61',
+                provider_response_id='resp_68cdba6a610481a3b4533f345bea8a7b09b7445677780c8f',
                 finish_reason='stop',
             ),
         ]
@@ -3551,12 +3420,17 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    ad_hoc_agent = Agent(
+    agent = Agent(
         model=model,
         builtin_tools=[CodeExecutionTool()],
     )
 
-    result = await ad_hoc_agent.run('Create a chart of y=x^2 for x=-5 to 5')
+    result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
+    assert result.output == snapshot("""\
+Here's the chart of y = x^2 for x from -5 to 5.
+
+Download the image: [y_equals_x_squared.png](sandbox:/mnt/data/y_equals_x_squared.png)\
+""")
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -3571,70 +3445,202 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
                 parts=[
                     ThinkingPart(
                         content='',
-                        id='rs_68cc849a4420819dbd821ade7e9b5d5a07865e46140d854a',
+                        id='rs_68cdbdbf1d8881a09bf277b3b9d44ad70dbe8533c6078510',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     BuiltinToolCallPart(
                         tool_name='code_execution',
                         args={
-                            'container_id': 'cntr_68cc8499e0c48191841feeb7f14a9d2e066423ab27e58f8e',
+                            'container_id': 'cntr_68cdbdbe063c8191af49ce89afa31212058dc53483a314bd',
                             'code': """\
-# Create and display a chart of y = x^2 for x from -5 to 5\r
 import numpy as np\r
 import matplotlib.pyplot as plt\r
 \r
-# Generate data\r
-x = np.linspace(-5, 5, 1000)\r
+# Data\r
+x = np.linspace(-5, 5, 501)\r
 y = x**2\r
 \r
 # Plot\r
-plt.figure(figsize=(6, 4))\r
-plt.plot(x, y, color='royalblue', linewidth=2, label='y = x^2')\r
-plt.title('y = x^2 for x in [-5, 5]')\r
+plt.figure(figsize=(6,4), dpi=150)\r
+plt.plot(x, y, label='y = x^2', color='royalblue', linewidth=2)\r
+plt.scatter(np.arange(-5, 6), np.arange(-5, 6)**2, color='crimson', s=20, zorder=3, label='integer points')\r
+plt.title('Parabola: y = x^2 for x ∈ [-5, 5]')\r
 plt.xlabel('x')\r
 plt.ylabel('y')\r
 plt.grid(True, linestyle='--', alpha=0.5)\r
 plt.legend()\r
+plt.tight_layout()\r
 \r
-# Save and show\r
-outfile = '/mnt/data/y_equals_x_squared.png'\r
-plt.savefig(outfile, dpi=150, bbox_inches='tight')\r
-plt.show()\r
-\r
-outfile\
+# Save figure\r
+output_path = '/mnt/data/y_equals_x_squared.png'\r
+plt.savefig(output_path, bbox_inches='tight')\r
+output_path\
 """,
                         },
-                        tool_call_id='ci_68cc84a053e4819d8645e13ae9f7612a07865e46140d854a',
+                        tool_call_id='ci_68cdbdc3e7b081a09aeed222c12fdb780dbe8533c6078510',
                         provider_name='openai',
                     ),
                     BuiltinToolReturnPart(
                         tool_name='code_execution',
-                        content={
-                            'status': 'completed',
-                            'outputs': [
-                                {
-                                    'type': 'image',
-                                    'url': IsStr(),
-                                },
-                                {'logs': "'/mnt/data/y_equals_x_squared.png'", 'type': 'logs'},
-                            ],
-                        },
-                        tool_call_id='ci_68cc84a053e4819d8645e13ae9f7612a07865e46140d854a',
+                        content={'status': 'completed', 'logs': ["'/mnt/data/y_equals_x_squared.png'"]},
+                        tool_call_id='ci_68cdbdc3e7b081a09aeed222c12fdb780dbe8533c6078510',
                         timestamp=IsDatetime(),
                         provider_name='openai',
                     ),
+                    FilePart(
+                        content=ImageUrl(
+                            url=IsStr(regex=r'^data:image/png;base64,.*'),
+                            identifier='4384d3',
+                        ),
+                        id='ci_68cdbdc3e7b081a09aeed222c12fdb780dbe8533c6078510',
+                    ),
                     TextPart(
-                        content=IsStr(),
-                        id='msg_68cc84a90fec819d8c303b35ee0d948c07865e46140d854a',
+                        content="""\
+Here's the chart of y = x^2 for x from -5 to 5.
+
+Download the image: [y_equals_x_squared.png](sandbox:/mnt/data/y_equals_x_squared.png)\
+""",
+                        id='msg_68cdbdcddac081a0ba9c8b2d51e093ef0dbe8533c6078510',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=2966, output_tokens=676, details={'reasoning_tokens': 448}),
+                usage=RequestUsage(
+                    input_tokens=2687, cache_read_tokens=1920, output_tokens=699, details={'reasoning_tokens': 448}
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_details={'finish_reason': 'completed'},
-                provider_response_id='resp_68cc84978d4c819dad1933fa64334bcb07865e46140d854a',
+                provider_response_id='resp_68cdbdba3dd081a08e8bab4fbaa58e900dbe8533c6078510',
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+
+async def test_openai_responses_image_generation_tool(allow_model_requests: None, openai_api_key: str):
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+
+    agent = Agent(
+        model=model,
+        builtin_tools=[ImageGenerationTool()],
+    )
+
+    # TODO (DouweM): Add output_type=ImageUrl or output_type=BinaryContent or output_type=list[ImageUrl, str] for a mix?
+
+    result = await agent.run('Generate an image of an axolotl.')
+    messages = result.all_messages()
+
+    assert result.output == snapshot('A file was returned.')
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Generate an image of an axolotl.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdb23163dc8195ac0d368c999c7997068fb3b2873504d1',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryContent(
+                            data=IsInstance(bytes),
+                            media_type='image/png',
+                            identifier='956da5',
+                        ),
+                        id='ig_68cdb23d333c8195b4447241a396de6e068fb3b2873504d1',
+                    ),
+                    TextPart(content='', id='msg_68cdb29b1ce88195a2e41cb5ccbc2a72068fb3b2873504d1'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=2356,
+                    cache_read_tokens=1280,
+                    output_tokens=682,
+                    details={'reasoning_tokens': 512},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
+                finish_reason='stop',
+            ),
+        ]
+    )
+
+    result = await agent.run('Now give it a sombrero.')
+    assert result.output == snapshot('A file was returned.')
+    assert result.new_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Now give it a sombrero.',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    ThinkingPart(
+                        content='',
+                        id='rs_68cdb29f1bb0819493600a31f7fcd9320f985a8a9de1b3a1',
+                        signature=IsStr(),
+                        provider_name='openai',
+                    ),
+                    BuiltinToolCallPart(
+                        tool_name='image_generation',
+                        tool_call_id='ig_68cdb2b243a481949fed4ec4e79303b10f985a8a9de1b3a1',
+                        provider_name='openai',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='image_generation',
+                        content={'status': 'completed'},
+                        tool_call_id='ig_68cdb2b243a481949fed4ec4e79303b10f985a8a9de1b3a1',
+                        timestamp=IsDatetime(),
+                        provider_name='openai',
+                    ),
+                    FilePart(
+                        content=BinaryContent(
+                            data=IsInstance(bytes),
+                            media_type='image/png',
+                            identifier='ea32d0',
+                        ),
+                        id='ig_68cdb2b243a481949fed4ec4e79303b10f985a8a9de1b3a1',
+                    ),
+                    TextPart(content='', id='msg_68cdb2cf4bd881949d64cd6f590f331b0f985a8a9de1b3a1'),
+                ],
+                usage=RequestUsage(
+                    input_tokens=3299,
+                    cache_read_tokens=2304,
+                    output_tokens=1625,
+                    details={'reasoning_tokens': 1472},
+                ),
+                model_name='gpt-5-2025-08-07',
+                timestamp=IsDatetime(),
+                provider_name='openai',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id=IsStr(),
                 finish_reason='stop',
             ),
         ]
