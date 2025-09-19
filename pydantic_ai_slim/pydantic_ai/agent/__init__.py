@@ -644,13 +644,26 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         )
 
         agent_name = self.name or 'agent'
-        run_span = tracer.start_span(
-            'agent run',
-            attributes={
+        # For version 3, use the new span name format and add the gen_ai.agent.name attribute
+        if instrumentation_settings and instrumentation_settings.version >= 3:
+            span_name = f'invoke_agent {agent_name}'
+            span_attributes = {
+                'gen_ai.agent.name': agent_name,
+                'agent_name': agent_name,  # Keep the old attribute for backward compatibility
+                'model_name': model_used.model_name if model_used else 'no-model',
+                'logfire.msg': f'{agent_name} run',
+            }
+        else:
+            span_name = 'agent run'
+            span_attributes = {
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,
                 'logfire.msg': f'{agent_name} run',
-            },
+            }
+        
+        run_span = tracer.start_span(
+            span_name,
+            attributes=span_attributes,
         )
 
         try:
