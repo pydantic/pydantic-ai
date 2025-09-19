@@ -2218,7 +2218,7 @@ def test_empty_response_without_recovery():
     def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[])
 
-    agent = Agent(FunctionModel(llm))
+    agent = Agent(FunctionModel(llm), output_type=tuple[str, int])
 
     with capture_run_messages() as messages:
         with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
