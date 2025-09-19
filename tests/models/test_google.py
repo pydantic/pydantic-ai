@@ -2589,14 +2589,18 @@ async def test_google_builtin_tools_with_other_tools(allow_model_requests: None,
 
 async def test_google_image_generation(allow_model_requests: None, google_provider: GoogleProvider):
     m = GoogleModel('gemini-2.5-flash-image-preview', provider=google_provider)
-    agent = Agent(m)
-
-    # TODO (DouweM): Add output_type=ImageUrl or output_type=BinaryContent or output_type=list[ImageUrl, str] for a mix?
+    agent = Agent(m, output_type=Image)
 
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
 
-    assert result.output == snapshot("Here's an image of an axolotl for you! ")
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='8a7952',
+        )
+    )
     assert messages == snapshot(
         [
             ModelRequest(
@@ -2634,7 +2638,13 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
     )
 
     result = await agent.run('Now give it a sombrero.', message_history=messages)
-    assert result.output == snapshot("Certainly! Here's your axolotl with a sombrero: ")
+    assert result.output == snapshot(
+        Image(
+            data=IsBytes(),
+            media_type='image/png',
+            identifier='7d173c',
+        )
+    )
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -2679,6 +2689,7 @@ async def test_google_image_generation_with_text(allow_model_requests: None, goo
     result = await agent.run('Generate an illustrated two-sentence story about an axolotl.')
     messages = result.all_messages()
 
+    # TODO (DouweM): Add a way to get `list[str, Image]` as output?
     assert result.output == snapshot(
         'Once upon a time, in a hidden underwater cave, lived a curious axolotl named Pip who loved to explore. One day, while venturing further than usual, Pip discovered a shimmering, ancient coin that granted wishes! '
     )

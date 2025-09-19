@@ -35,7 +35,7 @@ T_co = TypeVar('T_co', covariant=True)
 OutputDataT = TypeVar('OutputDataT', default=str, covariant=True)
 """Covariant type variable for the output data type of a run."""
 
-OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text']
+OutputMode = Literal['text', 'tool', 'native', 'prompted', 'tool_or_text', 'image']
 """All output modes.
 
 `tool_or_text` is deprecated and no longer in use.

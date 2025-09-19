@@ -14,6 +14,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         json_schema_transformer=GoogleJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
+        supports_image_output='image-preview' in model_name,
     )
 
 

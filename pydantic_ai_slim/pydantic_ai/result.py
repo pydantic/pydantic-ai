@@ -16,7 +16,6 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
-    ToolOutputSchema,
 )
 from ._run_context import AgentDepsT, RunContext
 from ._tool_manager import ToolManager
@@ -139,7 +138,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         output_tool_name = final_result_event.tool_name
 
-        if isinstance(self._output_schema, ToolOutputSchema) and output_tool_name is not None:
+        if self._output_schema.toolset and output_tool_name is not None:
             tool_call = next(
                 (
                     part

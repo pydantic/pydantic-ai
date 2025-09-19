@@ -198,7 +198,8 @@ class OutputValidator(Generic[AgentDepsT, OutputDataT_inv]):
 class BaseOutputSchema(ABC, Generic[OutputDataT]):
     text_processor: BaseOutputProcessor[OutputDataT] | None = None
     toolset: OutputToolset[Any] | None = None
-    allows_deferred_tools: bool
+    allows_deferred_tools: bool = False
+    allows_image: bool = False
 
     @abstractmethod
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
@@ -251,20 +252,21 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
         outputs = _flatten_output_spec(output_spec)
 
         allows_deferred_tools = DeferredToolRequests in outputs
-        outputs = [output for output in outputs if output is not DeferredToolRequests]
-        if len(outputs) == 0 and allows_deferred_tools:
-            raise UserError('At least one output type must be provided other than `DeferredToolRequests`.')
+        if allows_deferred_tools:
+            outputs = [output for output in outputs if output is not DeferredToolRequests]
+            if len(outputs) == 0:
+                raise UserError('At least one output type must be provided other than `DeferredToolRequests`.')
 
-        # allows_image = _messages.Image in outputs
-        # outputs = [output for output in outputs if output is not _messages.Image]
+        allows_image = _messages.Image in outputs
+        if allows_image:
+            outputs = [output for output in outputs if output is not _messages.Image]
 
-        # TODO (DouweM): What if Image is the only output type?
-        # TODO (DouweM): What if the model doesn't support image output?
         # TODO (DouweM): What if the model outputs a mix of text, tool calls, and images?
-        # We always prefer output tool calls over images, but would we want to support? `list[str, Image]`?
-        # What about other types in the list? Would those become output tools for individual types, or for `list[T]` since `list` implies multiple? But then why would `str` in the list mean "plain text output" rather than a tool that returns `list[str]`?
+        # We always prefer output tool calls over images, but would we want to support a mix of text and images, e.g. `list[str, Image]`?
+        # What about other types in the list? Would those become output tools for individual types, or for `list[T]` since `list` implies multiple?
+        # But then why would `str` in the list mean "plain text output" rather than a tool that returns `list[str]`?
         # Easier: just support `Image` at top level, require user to parse text out of model response.
-        # Could you use a tool that calls a model that returns an Image as an output function, to allow that alongside other output types?
+        # Could you use a function that calls a model that returns an Image as an output function, to allow that alongside other output types?
         # ImageOutputSchema? TextOutputSchema with allows_image=True?
         # TODO (DouweM): Does OpenAI support image_generation tool + native output?
         # TODO (DouweM): Does Google support image + native output?
@@ -282,6 +284,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     strict=output.strict,
                 ),
                 allows_deferred_tools=allows_deferred_tools,
+                allows_image=allows_image,
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):
             if len(outputs) > 1:
@@ -295,6 +298,7 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
                     description=output.description,
                 ),
                 allows_deferred_tools=allows_deferred_tools,
+                allows_image=allows_image,
             )
 
         text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
@@ -333,24 +337,35 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
             if toolset:
                 return ToolOutputSchema(
                     toolset=toolset,
-                    allows_deferred_tools=allows_deferred_tools,
                     text_processor=text_processor,
+                    allows_deferred_tools=allows_deferred_tools,
+                    allows_image=allows_image,
                 )
             else:
-                return TextOutputSchema(text_processor=text_processor, allows_deferred_tools=allows_deferred_tools)
+                return TextOutputSchema(
+                    text_processor=text_processor,
+                    allows_deferred_tools=allows_deferred_tools,
+                    allows_image=allows_image,
+                )
 
         if len(tool_outputs) > 0:
-            return ToolOutputSchema(toolset=toolset, allows_deferred_tools=allows_deferred_tools)
+            return ToolOutputSchema(
+                toolset=toolset, allows_deferred_tools=allows_deferred_tools, allows_image=allows_image
+            )
 
         if len(other_outputs) > 0:
             schema = OutputSchemaWithoutMode(
                 processor=cls._build_processor(other_outputs, name=name, description=description, strict=strict),
                 toolset=toolset,
                 allows_deferred_tools=allows_deferred_tools,
+                allows_image=allows_image,
             )
             if default_mode:
                 schema = schema.with_default_mode(default_mode)
             return schema
+
+        if allows_image:
+            return ImageOutputSchema(allows_deferred_tools=allows_deferred_tools)
 
         raise UserError('At least one output type must be provided.')
 
@@ -372,10 +387,10 @@ class OutputSchema(BaseOutputSchema[OutputDataT], ABC):
     def mode(self) -> OutputMode:
         raise NotImplementedError()
 
-    @abstractmethod
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""
-        raise NotImplementedError()
+        if self.allows_image and not profile.supports_image_output:
+            raise UserError('Image output is not supported by the model.')
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         return self
@@ -390,40 +405,88 @@ class OutputSchemaWithoutMode(BaseOutputSchema[OutputDataT]):
         processor: BaseObjectOutputProcessor[OutputDataT],
         toolset: OutputToolset[Any] | None,
         allows_deferred_tools: bool,
+        allows_image: bool,
     ):
         # We set a toolset here as they're checked for name conflicts with other toolsets in the Agent constructor.
         # At that point we may not know yet what output mode we're going to use if no model was provided or it was deferred until agent.run time,
         # but we cover ourselves just in case we end up using the tool output mode.
-        super().__init__(allows_deferred_tools=allows_deferred_tools, toolset=toolset, text_processor=processor)
+        super().__init__(
+            allows_deferred_tools=allows_deferred_tools,
+            toolset=toolset,
+            text_processor=processor,
+            allows_image=allows_image,
+        )
         self.processor = processor
 
     def with_default_mode(self, mode: StructuredOutputMode) -> OutputSchema[OutputDataT]:
         if mode == 'native':
-            return NativeOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
+            return NativeOutputSchema(
+                processor=self.processor,
+                allows_deferred_tools=self.allows_deferred_tools,
+                allows_image=self.allows_image,
+            )
         elif mode == 'prompted':
-            return PromptedOutputSchema(processor=self.processor, allows_deferred_tools=self.allows_deferred_tools)
+            return PromptedOutputSchema(
+                processor=self.processor,
+                allows_deferred_tools=self.allows_deferred_tools,
+                allows_image=self.allows_image,
+            )
         elif mode == 'tool':
-            return ToolOutputSchema(toolset=self.toolset, allows_deferred_tools=self.allows_deferred_tools)
+            return ToolOutputSchema(
+                toolset=self.toolset, allows_deferred_tools=self.allows_deferred_tools, allows_image=self.allows_image
+            )
         else:
             assert_never(mode)
 
 
+@dataclass(init=False)
 class TextOutputSchema(OutputSchema[OutputDataT]):
+    def __init__(
+        self,
+        *,
+        text_processor: TextOutputProcessor[OutputDataT],
+        allows_deferred_tools: bool,
+        allows_image: bool,
+    ):
+        super().__init__(
+            text_processor=text_processor,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+        )
+
     @property
     def mode(self) -> OutputMode:
         return 'text'
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""
-        pass
+        super().raise_if_unsupported(profile)
+
+
+class ImageOutputSchema(OutputSchema[OutputDataT]):
+    def __init__(self, *, allows_deferred_tools: bool):
+        super().__init__(allows_deferred_tools=allows_deferred_tools, allows_image=True)
+
+    @property
+    def mode(self) -> OutputMode:
+        return 'image'
+
+    def raise_if_unsupported(self, profile: ModelProfile) -> None:
+        """Raise an error if the mode is not supported by the model."""
+        # This already raises if image output is not supported by the model.
+        super().raise_if_unsupported(profile)
 
 
 @dataclass(init=False)
 class StructuredTextOutputSchema(OutputSchema[OutputDataT], ABC):
     processor: BaseObjectOutputProcessor[OutputDataT]
 
-    def __init__(self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool):
-        super().__init__(text_processor=processor, allows_deferred_tools=allows_deferred_tools)
+    def __init__(
+        self, *, processor: BaseObjectOutputProcessor[OutputDataT], allows_deferred_tools: bool, allows_image: bool
+    ):
+        super().__init__(
+            text_processor=processor, allows_deferred_tools=allows_deferred_tools, allows_image=allows_image
+        )
         self.processor = processor
 
     @property
@@ -452,8 +515,13 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
         template: str | None = None,
         processor: BaseObjectOutputProcessor[OutputDataT],
         allows_deferred_tools: bool,
+        allows_image: bool,
     ):
-        super().__init__(processor=PromptedOutputProcessor(processor), allows_deferred_tools=allows_deferred_tools)
+        super().__init__(
+            processor=PromptedOutputProcessor(processor),
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+        )
         self.template = template
 
     @property
@@ -462,7 +530,7 @@ class PromptedOutputSchema(StructuredTextOutputSchema[OutputDataT]):
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""
-        pass
+        super().raise_if_unsupported(profile)
 
     def instructions(self, default_template: str) -> str:
         """Get instructions to tell model to output JSON matching the schema."""
@@ -487,10 +555,16 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
         self,
         *,
         toolset: OutputToolset[Any] | None,
-        allows_deferred_tools: bool,
         text_processor: BaseOutputProcessor[OutputDataT] | None = None,
+        allows_deferred_tools: bool,
+        allows_image: bool,
     ):
-        super().__init__(toolset=toolset, allows_deferred_tools=allows_deferred_tools, text_processor=text_processor)
+        super().__init__(
+            toolset=toolset,
+            allows_deferred_tools=allows_deferred_tools,
+            text_processor=text_processor,
+            allows_image=allows_image,
+        )
 
     @property
     def mode(self) -> OutputMode:
@@ -498,6 +572,7 @@ class ToolOutputSchema(OutputSchema[OutputDataT]):
 
     def raise_if_unsupported(self, profile: ModelProfile) -> None:
         """Raise an error if the mode is not supported by the model."""
+        super().raise_if_unsupported(profile)
         if not profile.supports_tools:
             raise UserError('Output tools are not supported by the model.')
 
@@ -819,7 +894,7 @@ class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
 
 
 @dataclass(init=False)
-class TextFunctionOutputProcessor(BaseOutputProcessor[OutputDataT]):
+class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
     _function_schema: _function_schema.FunctionSchema
     _str_argument_name: str
 
@@ -849,7 +924,7 @@ class TextFunctionOutputProcessor(BaseOutputProcessor[OutputDataT]):
         args = {self._str_argument_name: data}
         data = await execute_traced_output_function(self._function_schema, run_context, args, wrap_validation_errors)
 
-        return cast(OutputDataT, data)
+        return await super().process(data, run_context, allow_partial, wrap_validation_errors)
 
 
 @dataclass(init=False)
