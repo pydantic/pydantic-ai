@@ -1141,6 +1141,7 @@ class OpenAIResponsesModel(Model):
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
+        has_image_generating_tool = False
         for tool in model_request_parameters.builtin_tools:
             if isinstance(tool, WebSearchTool):
                 web_search_tool = responses.WebSearchToolParam(
@@ -1152,13 +1153,18 @@ class OpenAIResponsesModel(Model):
                     )
                 tools.append(web_search_tool)
             elif isinstance(tool, CodeExecutionTool):
+                has_image_generating_tool = True
                 tools.append({'type': 'code_interpreter', 'container': {'type': 'auto'}})
             elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
+                has_image_generating_tool = True
                 tools.append({'type': 'image_generation'})
             else:
                 raise UserError(  # pragma: no cover
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIResponsesModel`. If it should be, please file an issue.'
                 )
+
+        if not has_image_generating_tool and model_request_parameters.allow_image_output:
+            tools.append({'type': 'image_generation'})
         return tools
 
     def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:

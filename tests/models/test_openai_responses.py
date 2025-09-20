@@ -3415,11 +3415,7 @@ async def test_openai_responses_code_execution_return_image(allow_model_requests
         settings=OpenAIResponsesModelSettings(openai_include_code_execution_outputs=True),
     )
 
-    agent = Agent(
-        model=model,
-        builtin_tools=[CodeExecutionTool()],
-        output_type=Image,
-    )
+    agent = Agent(model=model, builtin_tools=[CodeExecutionTool()], output_type=Image)
 
     result = await agent.run('Create a chart of y=x^2 for x=-5 to 5')
     assert result.output == snapshot(
@@ -3672,7 +3668,7 @@ If you want different colors or a holographic gradient background, tell me your 
 async def test_openai_responses_image_generation_tool(allow_model_requests: None, openai_api_key: str):
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
 
-    agent = Agent(model=model, builtin_tools=[ImageGenerationTool()], output_type=Image)
+    agent = Agent(model=model, output_type=Image)
 
     result = await agent.run('Generate an image of an axolotl.')
     messages = result.all_messages()
@@ -3872,7 +3868,7 @@ async def test_openai_responses_image_generation_tool_without_image_output(
                 parts=[
                     RetryPromptPart(
                         content="The response didn't contain text, tool calls, or images.",
-                        tool_call_id='pyd_ai_285e67082c3c4afbaa2d995f9db770c6',
+                        tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )
                 ]

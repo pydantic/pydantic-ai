@@ -4635,7 +4635,7 @@ async def test_thinking_only_response_retry():
             ModelRequest(
                 parts=[
                     RetryPromptPart(
-                        content='Responses without text or tool calls are not permitted.',
+                        content="The response didn't contain text, tool calls, or images.",
                         tool_call_id=IsStr(),
                         timestamp=IsDatetime(),
                     )

@@ -370,6 +370,7 @@ async def _prepare_request_parameters(
         output_tools=output_tools,
         output_object=output_object,
         allow_text_output=output_schema.allows_text,
+        allow_image_output=output_schema.allows_image,
     )
 
 
@@ -691,7 +692,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         text: str,
-        text_processor: _output.BaseOutputProcessor[OutputDataT],
+        text_processor: _output.BaseOutputProcessor[NodeRunEndT],
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | End[result.FinalResult[NodeRunEndT]]:
         run_context = build_run_context(ctx)
 
