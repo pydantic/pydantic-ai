@@ -1341,6 +1341,52 @@ def test_output_type_function_with_retry_logfire_attributes(
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
+def test_logfire_v3_agent_and_tool_attributes(
+    get_logfire_summary: Callable[[], LogfireSummary],
+    include_content: bool,
+) -> None:
+    # Simple tool to exercise tool span
+    from pydantic_ai import Agent
+    from pydantic_ai.models.test import TestModel
+
+    instrumentation_settings = InstrumentationSettings(version=3, include_content=include_content)
+    my_agent = Agent(model=TestModel(), instrument=instrumentation_settings, name='my_agent')
+
+    @my_agent.tool_plain
+    async def my_ret(x: int) -> str:
+        return str(x + 1)
+
+    result = my_agent.run_sync('Hello')
+    assert result.output in ('{"my_ret":"1"}', '{"my_ret": "1"}')
+
+    summary = get_logfire_summary()
+
+    # Agent run span should include both new and legacy agent name attributes
+    agent_attrs = next(
+        attrs for attrs in summary.attributes.values() if attrs.get('agent_name') == 'my_agent'
+    )
+    assert agent_attrs['agent_name'] == 'my_agent'
+    assert agent_attrs.get('gen_ai.agent.name') == 'my_agent'
+
+    # Tool span should use new attribute names when include_content is True
+    tool_attrs = next(
+        attrs for attrs in summary.attributes.values() if attrs.get('gen_ai.tool.name') == 'my_ret'
+    )
+
+    # Span display message reflects the execute_tool naming under v3
+    assert tool_attrs['logfire.msg'] == 'execute_tool my_ret: my_ret'
+
+    if include_content:
+        assert tool_attrs.get('gen_ai.tool.call.arguments') == '{"x":0}'
+        assert tool_attrs.get('gen_ai.tool.call.result') == '1'
+        # Legacy keys should not be present under v3
+        assert 'tool_arguments' not in tool_attrs
+        assert 'tool_response' not in tool_attrs
+    else:
+        # No arguments/result recorded
+        assert 'gen_ai.tool.call.arguments' not in tool_attrs
+        assert 'gen_ai.tool.call.result' not in tool_attrs
+@pytest.mark.parametrize('include_content', [True, False])
 def test_output_type_function_with_custom_tool_name_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
