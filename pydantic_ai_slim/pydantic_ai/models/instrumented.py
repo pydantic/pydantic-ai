@@ -89,7 +89,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3] = 1
+    version: Literal[1, 2, 3] = 2
 
     def __init__(
         self,

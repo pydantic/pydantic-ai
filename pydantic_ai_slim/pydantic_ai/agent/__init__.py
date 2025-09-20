@@ -706,12 +706,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 )
             }
         else:
-        attrs = {
-            'pydantic_ai.all_messages': json.dumps(
-                settings.messages_to_otel_messages(state.message_history)
-            ),
-            **settings.system_instructions_attributes(self._instructions),
-        }
+            attrs = {
+                'pydantic_ai.all_messages': json.dumps(
+                    settings.messages_to_otel_messages(state.message_history)
+                ),
+                **settings.system_instructions_attributes(self._instructions),
+            }
 
         return {
             **usage.opentelemetry_attributes(),

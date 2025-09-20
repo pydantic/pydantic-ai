@@ -240,7 +240,8 @@ class ToolManager(Generic[AgentDepsT]):
             except ToolRetryError as e:
                 part = e.tool_retry
                 if include_content and span.is_recording():
-                    span.set_attribute('tool_response', part.model_response())
+                    result_attr = 'gen_ai.tool.call.result' if version >= 3 else 'tool_response'
+                    span.set_attribute(result_attr, part.model_response())
                 raise e
 
             if include_content and span.is_recording():
