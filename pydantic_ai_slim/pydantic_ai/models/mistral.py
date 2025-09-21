@@ -38,7 +38,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from . import (
@@ -185,6 +185,7 @@ class MistralModel(Model):
     ) -> ModelResponse:
         """Make a non-streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         response = await self._completions_create(
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )
@@ -201,6 +202,7 @@ class MistralModel(Model):
     ) -> AsyncIterator[StreamedResponse]:
         """Make a streaming request to the model from Pydantic AI call."""
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         response = await self._stream_completions_create(
             messages, cast(MistralModelSettings, model_settings or {}), model_request_parameters
         )

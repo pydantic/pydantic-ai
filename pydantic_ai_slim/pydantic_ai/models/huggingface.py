@@ -38,7 +38,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfile, ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -166,6 +166,7 @@ class HuggingFaceModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         response = await self._completions_create(
             messages, False, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
@@ -181,6 +182,7 @@ class HuggingFaceModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         response = await self._completions_create(
             messages, True, cast(HuggingFaceModelSettings, model_settings or {}), model_request_parameters
         )
