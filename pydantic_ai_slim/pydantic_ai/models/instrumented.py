@@ -29,7 +29,7 @@ from ..messages import (
     ModelResponse,
     SystemPromptPart,
 )
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from . import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from .wrapper import WrapperModel
 
@@ -352,6 +352,7 @@ class InstrumentedModel(WrapperModel):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        model_settings = merge_model_settings(self.settings, model_settings)
         with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response = await super().request(messages, model_settings, model_request_parameters)
             finish(response)
@@ -365,6 +366,7 @@ class InstrumentedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings = merge_model_settings(self.settings, model_settings)
         with self._instrument(messages, model_settings, model_request_parameters) as finish:
             response_stream: StreamedResponse | None = None
             try:

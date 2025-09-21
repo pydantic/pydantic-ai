@@ -1,14 +1,25 @@
 import asyncio
 import re
-from contextlib import contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
 from datetime import timezone
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import (
-    Agent,
+from pydantic_ai import Agent
+from pydantic_ai._run_context import RunContext
+from pydantic_ai.direct import (
+    StreamedResponseSync,
+    _prepare_model,  # pyright: ignore[reportPrivateUsage]
+    model_request,
+    model_request_stream,
+    model_request_stream_sync,
+    model_request_sync,
+)
+from pydantic_ai.messages import (
     FinalResultEvent,
     ModelMessage,
     ModelRequest,
@@ -19,23 +30,48 @@ from pydantic_ai import (
     TextPartDelta,
     ToolCallPart,
 )
-from pydantic_ai.direct import (
-    StreamedResponseSync,
-    _prepare_model,  # pyright: ignore[reportPrivateUsage]
-    model_request,
-    model_request_stream,
-    model_request_stream_sync,
-    model_request_sync,
-)
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsNow, IsStr
 
 pytestmark = pytest.mark.anyio
+
+
+class RecordingTestModel(TestModel):
+    def __init__(self, *, settings: ModelSettings | None = None):
+        super().__init__(settings=settings)
+        self.recorded_model_settings: ModelSettings | None = None
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.recorded_model_settings = model_settings
+        return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        self.recorded_model_settings = model_settings
+        async with super().request_stream(
+            messages,
+            model_settings,
+            model_request_parameters,
+            run_context=run_context,
+        ) as stream:
+            yield stream
 
 
 async def test_model_request():
@@ -48,6 +84,41 @@ async def test_model_request():
             usage=RequestUsage(input_tokens=51, output_tokens=4),
         )
     )
+
+
+async def test_model_request_merges_model_settings_from_instance():
+    base_settings: ModelSettings = {'temperature': 0.3, 'seed': 7}
+    override_settings: ModelSettings = {'temperature': 0.9, 'max_tokens': 20}
+    model = RecordingTestModel(settings=base_settings)
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('x')],
+        model_settings=override_settings,
+        instrument=False,
+    )
+
+    assert model.recorded_model_settings == {'temperature': 0.9, 'seed': 7, 'max_tokens': 20}
+
+
+async def test_model_request_string_model_uses_override_settings(monkeypatch: pytest.MonkeyPatch):
+    override_settings: ModelSettings = {'temperature': 0.2, 'max_tokens': 5}
+    recording_model = RecordingTestModel()
+
+    def fake_infer_model(model_identifier: object) -> RecordingTestModel:
+        assert model_identifier == 'test'
+        return recording_model
+
+    monkeypatch.setattr('pydantic_ai.direct.models.infer_model', fake_infer_model)
+
+    await model_request(
+        'test',
+        [ModelRequest.user_text_prompt('x')],
+        model_settings=override_settings,
+        instrument=False,
+    )
+
+    assert recording_model.recorded_model_settings == override_settings
 
 
 async def test_model_request_tool_call():
@@ -113,6 +184,22 @@ async def test_model_request_stream():
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='calls)')),
         ]
     )
+
+
+async def test_model_request_stream_merges_model_settings_from_instance():
+    base_settings: ModelSettings = {'temperature': 0.1, 'seed': 42}
+    override_settings: ModelSettings = {'temperature': 0.5, 'max_tokens': 100}
+    model = RecordingTestModel(settings=base_settings)
+
+    async with model_request_stream(
+        model,
+        [ModelRequest.user_text_prompt('x')],
+        model_settings=override_settings,
+        instrument=False,
+    ) as stream:
+        _ = [chunk async for chunk in stream]
+
+    assert model.recorded_model_settings == {'temperature': 0.5, 'seed': 42, 'max_tokens': 100}
 
 
 def test_model_request_stream_sync_without_context_manager():

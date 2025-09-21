@@ -43,7 +43,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
-from pydantic_ai.settings import ModelSettings
+from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import ToolDefinition
 
 if TYPE_CHECKING:
@@ -264,6 +264,7 @@ class BedrockConverseModel(Model):
         model_settings: ModelSettings | None,
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
+        model_settings = merge_model_settings(self.settings, model_settings)
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, False, settings, model_request_parameters)
         model_response = await self._process_response(response)
@@ -277,6 +278,7 @@ class BedrockConverseModel(Model):
         model_request_parameters: ModelRequestParameters,
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
+        model_settings = merge_model_settings(self.settings, model_settings)
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
         yield BedrockStreamedResponse(
