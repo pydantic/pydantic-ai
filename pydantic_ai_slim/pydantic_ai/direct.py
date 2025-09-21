@@ -78,9 +78,15 @@ async def model_request(
         The model response and token usage associated with the request.
     """
     model_instance = _prepare_model(model, instrument)
+
+    merged_model_settings = settings.merge_model_settings(
+        base=model_instance.settings,
+        overrides=model_settings,
+    )
+
     return await model_instance.request(
         messages,
-        model_settings,
+        merged_model_settings,
         model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
     )
 
@@ -190,9 +196,15 @@ def model_request_stream(
         A [stream response][pydantic_ai.models.StreamedResponse] async context manager.
     """
     model_instance = _prepare_model(model, instrument)
+
+    merged_model_settings = settings.merge_model_settings(
+        base=model_instance.settings,
+        overrides=model_settings,
+    )
+
     return model_instance.request_stream(
         messages,
-        model_settings,
+        merged_model_settings,
         model_instance.customize_request_parameters(model_request_parameters or models.ModelRequestParameters()),
     )
 
