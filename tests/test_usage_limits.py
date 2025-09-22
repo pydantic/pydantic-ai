@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import operator
 import re
@@ -316,3 +317,67 @@ def test_deprecated_usage_limits():
         snapshot(['DeprecationWarning: `response_tokens_limit` is deprecated, use `output_tokens_limit` instead'])
     ):
         assert UsageLimits(output_tokens_limit=100).response_tokens_limit == 100  # type: ignore
+
+
+async def test_parallel_tool_calls_limit_enforced():
+    """Parallel tool calls must not exceed the limit and should raise immediately."""
+    executed_tools: list[str] = []
+
+    model_call_count = 0
+
+    def test_model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal model_call_count
+        model_call_count += 1
+
+        if model_call_count == 1:
+            # First response: 5 parallel tool calls
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_a', {}, 'call_1'),
+                    ToolCallPart('tool_b', {}, 'call_2'),
+                    ToolCallPart('tool_c', {}, 'call_3'),
+                    ToolCallPart('tool_a', {}, 'call_4'),
+                    ToolCallPart('tool_b', {}, 'call_5'),
+                ]
+            )
+        else:
+            assert model_call_count == 2
+            # Second response: 3 parallel tool calls (should exceed limit)
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('tool_c', {}, 'call_6'),
+                    ToolCallPart('tool_a', {}, 'call_7'),
+                    ToolCallPart('tool_b', {}, 'call_8'),
+                ]
+            )
+
+    test_model = FunctionModel(test_model_function)
+    agent = Agent(test_model)
+
+    @agent.tool_plain
+    async def tool_a() -> str:
+        await asyncio.sleep(0.01)
+        executed_tools.append('a')
+        return 'result a'
+
+    @agent.tool_plain
+    async def tool_b() -> str:
+        await asyncio.sleep(0.01)
+        executed_tools.append('b')
+        return 'result b'
+
+    @agent.tool_plain
+    async def tool_c() -> str:
+        await asyncio.sleep(0.01)
+        executed_tools.append('c')
+        return 'result c'
+
+    # Run with tool call limit of 6; expecting an error once the limit is reached
+    with pytest.raises(
+        UsageLimitExceeded,
+        match=r'The next tool call would exceed the tool_calls_limit of 6 \(tool_calls=(6)\)',
+    ):
+        await agent.run('Use tools', usage_limits=UsageLimits(tool_calls_limit=6))
+
+    # Only 6 tool calls should have actually executed
+    assert len(executed_tools) == 6
