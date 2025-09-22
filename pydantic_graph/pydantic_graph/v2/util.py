@@ -1,8 +1,8 @@
 import inspect
 from dataclasses import dataclass
-from typing import Any, Generic, TypeAliasType, cast, get_args, get_origin
+from typing import Any, Generic, cast, get_args, get_origin
 
-from typing_extensions import TypeVar
+from typing_extensions import TypeAliasType, TypeVar
 
 T = TypeVar('T', infer_variance=True)
 

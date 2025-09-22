@@ -1,18 +1,26 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, Callable, overload
+from typing import Any, Generic, overload
 
 from pydantic import TypeAdapter
 from pydantic_core import to_json
+from typing_extensions import TypeVar
+
+from pydantic_ai import Agent, models
 from pydantic_graph.v2.id_types import NodeId
 from pydantic_graph.v2.step import StepContext
 from pydantic_graph.v2.util import TypeOrTypeExpression, unpack_type_expression
 
-from pydantic_ai import Agent, models
+InputT = TypeVar('InputT', infer_variance=True)
+OutputT = TypeVar('OutputT', infer_variance=True)
+IntermediateT = TypeVar('IntermediateT', infer_variance=True)
+StopT = TypeVar('StopT', infer_variance=True)
+ResumeT = TypeVar('ResumeT', infer_variance=True)
 
 
 @dataclass(init=False)
-class Prompt[InputT, OutputT]:
+class Prompt(Generic[InputT, OutputT]):
     input_type: type[InputT]
     output_type: type[Any]
     output_selector: Callable[[InputT, Any], OutputT] | None
@@ -29,7 +37,7 @@ class Prompt[InputT, OutputT]:
         model: models.Model | models.KnownModelName | str = 'openai:gpt-4o',
     ) -> None: ...
     @overload
-    def __init__[IntermediateT](
+    def __init__(
         self,
         *,
         input_type: TypeOrTypeExpression[InputT],
@@ -82,7 +90,7 @@ class Prompt[InputT, OutputT]:
 
 
 @dataclass
-class Interruption[StopT, ResumeT]:
+class Interruption(Generic[StopT, ResumeT]):
     value: StopT
     next_node: (
         NodeId  # This is the node this walk should resume from after the interruption

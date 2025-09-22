@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Literal, assert_never
+from typing import Any, Literal
+
+from typing_extensions import assert_never
 
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.graph import Graph

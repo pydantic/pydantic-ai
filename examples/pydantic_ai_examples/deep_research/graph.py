@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Never, Protocol, overload
+from typing import Any, Generic, Protocol, overload
+
+from typing_extensions import Never, TypeAliasType, TypeVar
 
 from .nodes import Node, NodeId, TypeUnion
 
+T = TypeVar('T', infer_variance=True)
+StateT = TypeVar('StateT', infer_variance=True)
+InputT = TypeVar('InputT', infer_variance=True)
+OutputT = TypeVar('OutputT', infer_variance=True)
+StopT = TypeVar('StopT', infer_variance=True)
+ResumeT = TypeVar('ResumeT', infer_variance=True)
+SourceT = TypeVar('SourceT', infer_variance=True)
+EndT = TypeVar('EndT', infer_variance=True)
 
-class Routing[T]:
+
+class Routing(Generic[T]):
     """This is an auxiliary class that is purposely not a dataclass, and should not be instantiated.
 
     It should only be used for its `__class_getitem__` method.
@@ -18,7 +29,7 @@ class Routing[T]:
 
 
 @dataclass
-class CallNode[StateT, InputT, OutputT](Node[StateT, InputT, OutputT]):
+class CallNode(Node[StateT, InputT, OutputT]):
     id: NodeId
     call: Callable[[StateT, InputT], Awaitable[OutputT]]
 
@@ -27,45 +38,45 @@ class CallNode[StateT, InputT, OutputT](Node[StateT, InputT, OutputT]):
 
 
 @dataclass
-class Interruption[StopT, ResumeT]:
+class Interruption(Generic[StopT, ResumeT]):
     value: StopT
     next_node: Node[Any, ResumeT, Any]
 
 
-class EmptyNodeFunction[OutputT](Protocol):
+class EmptyNodeFunction(Protocol[OutputT]):
     def __call__(self) -> OutputT:
         raise NotImplementedError
 
 
-class StateNodeFunction[StateT, OutputT](Protocol):
+class StateNodeFunction(Protocol[StateT, OutputT]):
     def __call__(self, state: StateT) -> OutputT:
         raise NotImplementedError
 
 
-class InputNodeFunction[InputT, OutputT](Protocol):
+class InputNodeFunction(Protocol[InputT, OutputT]):
     def __call__(self, inputs: InputT) -> OutputT:
         raise NotImplementedError
 
 
-class FullNodeFunction[StateT, InputT, OutputT](Protocol):
+class FullNodeFunction(Protocol[StateT, InputT, OutputT]):
     def __call__(self, state: StateT, inputs: InputT) -> OutputT:
         raise NotImplementedError
 
 
 @overload
-def graph_node[OutputT](
+def graph_node(
     fn: EmptyNodeFunction[OutputT],
 ) -> Node[Any, object, OutputT]: ...
 @overload
-def graph_node[InputT, OutputT](
+def graph_node(
     fn: InputNodeFunction[InputT, OutputT],
 ) -> Node[Any, InputT, OutputT]: ...
 @overload
-def graph_node[StateT, OutputT](
+def graph_node(
     fn: StateNodeFunction[StateT, OutputT],
 ) -> Node[StateT, object, OutputT]: ...
 @overload
-def graph_node[StateT, InputT, OutputT](
+def graph_node(
     fn: FullNodeFunction[StateT, InputT, OutputT],
 ) -> Node[StateT, InputT, OutputT]: ...
 
@@ -88,27 +99,38 @@ def graph_node(fn: Callable[..., Any]) -> Node[Any, Any, Any]:
         return CallNode(id=node_id, call=lambda state, inputs: fn())
 
 
-class EdgeStart[GraphStateT, NodeInputT, NodeOutputT](Protocol):
+GraphStateT = TypeVar('GraphStateT', infer_variance=True)
+NodeInputT = TypeVar('NodeInputT', infer_variance=True)
+NodeOutputT = TypeVar('NodeOutputT', infer_variance=True)
+
+
+class EdgeStart(Protocol[GraphStateT, NodeInputT, NodeOutputT]):
     _make_covariant: Callable[[NodeInputT], NodeInputT]
     _make_invariant: Callable[[NodeOutputT], NodeOutputT]
 
     @staticmethod
-    def __call__[SourceT](
+    def __call__(
         source: type[SourceT],
     ) -> DecisionBranch[SourceT, GraphStateT, NodeInputT, SourceT]:
         raise NotImplementedError
 
 
-class Decision[SourceT, EndT]:
+S = TypeVar('S', infer_variance=True)
+E = TypeVar('E', infer_variance=True)
+S2 = TypeVar('S2', infer_variance=True)
+E2 = TypeVar('E2', infer_variance=True)
+
+
+class Decision(Generic[SourceT, EndT]):
     _force_source_invariant: Callable[[SourceT], SourceT]
     _force_end_covariant: Callable[[], EndT]
 
-    def branch[S, E, S2, E2](
+    def branch(
         self: Decision[S, E], edge: Decision[S2, E2]
     ) -> Decision[S | S2, E | E2]:
         raise NotImplementedError
 
-    def otherwise[E2](self, edge: Decision[Any, E2]) -> Decision[Any, EndT | E2]:
+    def otherwise(self, edge: Decision[Any, E2]) -> Decision[Any, EndT | E2]:
         raise NotImplementedError
 
 
@@ -117,7 +139,7 @@ def decision() -> Decision[Never, Never]:
 
 
 @dataclass
-class GraphBuilder[StateT, InputT, OutputT]:
+class GraphBuilder(Generic[StateT, InputT, OutputT]):
     # TODO: Should get the following values from __class_getitem__ somehow;
     #   this would make it possible to use typeforms without type errors
     state_type: type[StateT] = field(init=False)
@@ -136,12 +158,12 @@ class GraphBuilder[StateT, InputT, OutputT]:
     #     tuple[Node[StateT, Any, Any], Router[StateT, OutputT, Any, Any]]
     # ] = field(init=False, default_factory=list)
 
-    def start_edge[NodeInputT, NodeOutputT](
+    def start_edge(
         self, node: Node[StateT, NodeInputT, NodeOutputT]
     ) -> EdgeStart[StateT, NodeInputT, NodeOutputT]:
         raise NotImplementedError
 
-    def handle[SourceT](
+    def handle(
         self,
         source: type[TypeUnion[SourceT]] | type[SourceT],
         # condition: Callable[[Any], bool] | None = None,
@@ -154,7 +176,7 @@ class GraphBuilder[StateT, InputT, OutputT]:
     ) -> DecisionBranch[Any, StateT, object, Any]:
         raise NotImplementedError
 
-    def add_edges[T](
+    def add_edges(
         self, start: EdgeStart[StateT, Any, T], decision: Decision[T, OutputT]
     ) -> None:
         raise NotImplementedError
@@ -194,8 +216,12 @@ class GraphBuilder[StateT, InputT, OutputT]:
         )
 
 
+_InputT = TypeVar('_InputT', infer_variance=True)
+_OutputT = TypeVar('_OutputT', infer_variance=True)
+
+
 @dataclass
-class Graph[StateT, InputT, OutputT]:
+class Graph(Generic[StateT, InputT, OutputT]):
     nodes: dict[NodeId, Node[StateT, Any, Any]]
 
     # TODO: May need to tweak the following to actually work at runtime...
@@ -204,12 +230,12 @@ class Graph[StateT, InputT, OutputT]:
     # routed_edges: list[tuple[NodeId, Router[StateT, OutputT, Any, Any]]]
 
     @staticmethod
-    def builder[S, I, O](
+    def builder(
         state_type: type[S],
-        input_type: type[I],
-        output_type: type[TypeUnion[O]] | type[O],
+        input_type: type[_InputT],
+        output_type: type[TypeUnion[_OutputT]] | type[_OutputT],
         # start_at: Node[S, I, Any] | Router[S, O, I, I],
-    ) -> GraphBuilder[S, I, O]:
+    ) -> GraphBuilder[S, _InputT, _OutputT]:
         raise NotImplementedError
 
 
@@ -225,7 +251,7 @@ class Graph[StateT, InputT, OutputT]:
 #         raise NotImplementedError
 
 
-class TransformContext[StateT, InputT, OutputT]:
+class TransformContext(Generic[StateT, InputT, OutputT]):
     """The main reason this is not a dataclass is that we need it to be covariant in its type parameters."""
 
     def __init__(self, state: StateT, inputs: InputT, output: OutputT):
@@ -249,18 +275,28 @@ class TransformContext[StateT, InputT, OutputT]:
         return f'{self.__class__.__name__}(state={self.state}, inputs={self.inputs}, output={self.output})'
 
 
-class _Transform[StateT, InputT, OutputT, T](Protocol):
+class _Transform(Protocol[StateT, InputT, OutputT, T]):
     def __call__(self, ctx: TransformContext[StateT, InputT, OutputT]) -> T:
         raise NotImplementedError
 
 
-type TransformFunction[StateT, SourceInputT, SourceOutputT, DestinationInputT] = (
-    _Transform[StateT, SourceInputT, SourceOutputT, DestinationInputT]
+SourceInputT = TypeVar('SourceInputT')
+SourceOutputT = TypeVar('SourceOutputT')
+DestinationInputT = TypeVar('DestinationInputT')
+
+TransformFunction = TypeAliasType(
+    'TransformFunction',
+    _Transform[StateT, SourceInputT, SourceOutputT, DestinationInputT],
+    type_params=(StateT, SourceInputT, SourceOutputT, DestinationInputT),
 )
 
 
+EdgeInputT = TypeVar('EdgeInputT', infer_variance=True)
+EdgeOutputT = TypeVar('EdgeOutputT', infer_variance=True)
+
+
 @dataclass
-class DecisionBranch[SourceT, GraphStateT, EdgeInputT, EdgeOutputT]:
+class DecisionBranch(Generic[SourceT, GraphStateT, EdgeInputT, EdgeOutputT]):
     _source_type: type[SourceT]
     _is_instance: Callable[[Any], bool]
     _transforms: tuple[TransformFunction[GraphStateT, EdgeInputT, Any, Any], ...] = (
@@ -284,13 +320,13 @@ class DecisionBranch[SourceT, GraphStateT, EdgeInputT, EdgeOutputT]:
     ) -> Decision[SourceT, Never]:
         raise NotImplementedError
 
-    def route_to_parallel[T](
+    def route_to_parallel(
         self: DecisionBranch[SourceT, GraphStateT, EdgeInputT, Sequence[T]],
         node: Node[GraphStateT, T, Any],
     ) -> Decision[SourceT, Never]:
         raise NotImplementedError
 
-    def transform[T](
+    def transform(
         self,
         call: _Transform[GraphStateT, EdgeInputT, EdgeOutputT, T],
     ) -> DecisionBranch[SourceT, GraphStateT, EdgeInputT, T]:

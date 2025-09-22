@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import secrets
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Generic, Self, overload
+from typing import TYPE_CHECKING, Any, Generic, overload
 
-from typing_extensions import TypeVar
+from typing_extensions import Self, TypeAliasType, TypeVar
 
 from pydantic_graph.v2.id_types import ForkId, NodeId
 from pydantic_graph.v2.step import StepFunction
@@ -53,7 +53,7 @@ class DestinationMarker:
     destination_id: NodeId
 
 
-type PathItem = TransformMarker | SpreadMarker | BroadcastMarker | LabelMarker | DestinationMarker
+PathItem = TypeAliasType('PathItem', TransformMarker | SpreadMarker | BroadcastMarker | LabelMarker | DestinationMarker)
 
 
 @dataclass
@@ -66,7 +66,7 @@ class Path:
     def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
         """Returns the last fork or spread marker in the path, if any."""
         for item in reversed(self.items):
-            if isinstance(item, (BroadcastMarker, SpreadMarker)):
+            if isinstance(item, BroadcastMarker | SpreadMarker):
                 return item
         return None
 
@@ -85,7 +85,7 @@ class PathBuilder(Generic[StateT, OutputT]):
     def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
         """Returns the last fork or spread marker in the path, if any."""
         for item in reversed(self.working_items):
-            if isinstance(item, (BroadcastMarker, SpreadMarker)):
+            if isinstance(item, BroadcastMarker | SpreadMarker):
                 return item
         return None
 

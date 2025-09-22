@@ -1,16 +1,22 @@
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any, NewType, cast, get_args, get_origin
+from typing import Any, Generic, NewType, cast, get_args, get_origin
 
 from pydantic import TypeAdapter
 from pydantic_core import to_json
+from typing_extensions import TypeVar
 
 from pydantic_ai import Agent, models
 
 NodeId = NewType('NodeId', str)
 
+T = TypeVar('T', infer_variance=True)
+StateT = TypeVar('StateT', infer_variance=True)
+InputT = TypeVar('InputT', infer_variance=True)
+OutputT = TypeVar('OutputT', infer_variance=True)
 
-class Node[StateT, InputT, OutputT]:
+
+class Node(Generic[StateT, InputT, OutputT]):
     id: NodeId
     _output_type: OutputT
 
@@ -18,12 +24,12 @@ class Node[StateT, InputT, OutputT]:
         raise NotImplementedError
 
 
-class TypeUnion[T]:
+class TypeUnion(Generic[T]):
     pass
 
 
 @dataclass(init=False)
-class Prompt[InputT, OutputT](Node[Any, InputT, OutputT]):
+class Prompt(Node[Any, InputT, OutputT]):
     input_type: type[InputT]
     output_type: type[TypeUnion[OutputT]] | type[OutputT]
     prompt: str

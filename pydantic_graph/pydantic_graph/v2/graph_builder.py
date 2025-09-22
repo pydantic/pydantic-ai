@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Never, overload
+from typing import Any, Generic, overload
 
-from typing_extensions import TypeAliasType, TypeVar
+from typing_extensions import Never, TypeAliasType, TypeVar
 
 from pydantic_graph.v2.decision import Decision, DecisionBranchBuilder
 from pydantic_graph.v2.graph import Graph
@@ -227,13 +227,13 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
 
             _handle_path(edge.path)
 
-    def add_edge[T](self, source: Source[T], destination: Destination[T], *, label: str | None = None) -> None:
+    def add_edge(self, source: Source[T], destination: Destination[T], *, label: str | None = None) -> None:
         builder = self.edge_from(source)
         if label is not None:
             builder = builder.label(label)
         self.add(builder.to(destination))
 
-    def add_spreading_edge[T](
+    def add_spreading_edge(
         self,
         source: Source[Iterable[T]],
         spread_to: Destination[T],
@@ -252,13 +252,13 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
     # TODO(P2): Support adding subgraphs ... not sure exactly what that looks like yet..
     #  probably similar to a step, but with some tweaks
 
-    def edge_from[SourceOutputT](self, *sources: Source[SourceOutputT]) -> EdgePathBuilder[StateT, SourceOutputT]:
+    def edge_from(self, *sources: Source[SourceOutputT]) -> EdgePathBuilder[StateT, SourceOutputT]:
         return EdgePathBuilder[StateT, SourceOutputT](sources=sources, path_builder=PathBuilder(working_items=[]))
 
     def decision(self, *, note: str | None = None) -> Decision[StateT, Never]:
         return Decision(id=NodeId(self._get_new_decision_id()), branches=[], note=note)
 
-    def match[SourceT](
+    def match(
         self,
         source: TypeOrTypeExpression[SourceT],
         *,

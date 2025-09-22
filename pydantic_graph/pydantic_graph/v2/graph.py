@@ -5,9 +5,9 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, assert_never, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_args, get_origin
 
-from typing_extensions import Literal, TypeVar
+from typing_extensions import TypeVar, assert_never
 
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
@@ -216,7 +216,7 @@ class GraphRun(Generic[StateT, OutputT]):
         fork_stack = task.fork_stack
 
         node = self._graph.nodes[node_id]
-        if isinstance(node, (StartNode, Fork)):
+        if isinstance(node, StartNode | Fork):
             return self._handle_edges(node, inputs, fork_stack)
         elif isinstance(node, Step):
             step_context = StepContext[StateT, Any](state, inputs)
