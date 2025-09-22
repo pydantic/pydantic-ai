@@ -230,7 +230,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         # Build the run context after `ctx.deps.prompt` has been updated
         run_context = build_run_context(ctx)
 
-        parts: list[_messages.ModelRequestPart] = []
         if messages:
             await self._reevaluate_dynamic_prompts(messages, run_context)
 
