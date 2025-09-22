@@ -1119,7 +1119,8 @@ async def _process_message_history(
 
         if is_async_callable(processor):
             if takes_ctx:
-                messages = await processor(run_context, messages)
+                async_processor_with_ctx = cast(_HistoryProcessorAsyncWithCtx[DepsT], processor)
+                messages = await async_processor_with_ctx(run_context, messages)
             else:
                 async_processor = cast(_HistoryProcessorAsync, processor)
                 messages = await async_processor(messages)

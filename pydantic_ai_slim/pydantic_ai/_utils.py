@@ -5,6 +5,7 @@ import functools
 import inspect
 import re
 import time
+import types
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, suppress
@@ -14,12 +15,21 @@ from functools import partial
 from types import GenericAlias
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeGuard, TypeVar, get_args, get_origin, overload
 
+__all__ = [
+    'guard_tool_call_id',
+    'now_utc',
+    'number_to_datetime',
+    'PeekableAsyncStream',
+    'Unset',
+]
+
+from typing import Literal
+
 from anyio.to_thread import run_sync
 from pydantic import BaseModel, TypeAdapter
 from pydantic.json_schema import JsonSchemaValue
 from typing_extensions import (
     ParamSpec,
-    TypeIs,
     is_typeddict,
 )
 from typing_inspection import typing_objects
@@ -47,21 +57,24 @@ async def run_in_executor(func: Callable[_P, _R], *args: _P.args, **kwargs: _P.k
     return await run_sync(wrapped_func)
 
 
+def _is_class_type(obj: Any) -> TypeGuard[type[Any]]:
+    return isinstance(obj, type) and not isinstance(obj, GenericAlias)
+
+
 def is_model_like(type_: Any) -> bool:
     """Check if something is a pydantic model, dataclass or typedict.
 
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
+    if not _is_class_type(type_):
+        return False
+
     return (
-        isinstance(type_, type)
-        and not isinstance(type_, GenericAlias)
-        and (
-            issubclass(type_, BaseModel)
-            or is_dataclass(type_)  # pyright: ignore[reportUnknownArgumentType]
-            or is_typeddict(type_)  # pyright: ignore[reportUnknownArgumentType]
-            or getattr(type_, '__is_model_like__', False)  # pyright: ignore[reportUnknownArgumentType]
-        )
+        issubclass(type_, BaseModel)
+        or is_dataclass(type_)
+        or is_typeddict(type_)
+        or getattr(type_, '__is_model_like__', False)
     )
 
 
@@ -311,7 +324,7 @@ class PeekableAsyncStream(Generic[T]):
 
 
 def get_traceparent(x: AgentRun | AgentRunResult | GraphRun | GraphRunResult) -> str:
-    return x._traceparent(required=False) or ''  # type: ignore[reportPrivateUsage]
+    return x._traceparent(required=False) or ''  # pyright: ignore[reportPrivateUsage]
 
 
 def dataclasses_no_defaults_repr(self: Any) -> str:
@@ -333,14 +346,14 @@ AwaitableCallable = Callable[..., Awaitable[T]]
 
 
 @overload
-def is_async_callable(obj: AwaitableCallable[T]) -> TypeIs[AwaitableCallable[T]]: ...
+def is_async_callable(obj: AwaitableCallable[T]) -> Literal[True]: ...
 
 
 @overload
-def is_async_callable(obj: Any) -> TypeIs[AwaitableCallable[Any]]: ...
+def is_async_callable(obj: Any) -> bool: ...
 
 
-def is_async_callable(obj: Any) -> Any:
+def is_async_callable(obj: Any) -> bool:
     """Correctly check if a callable is async.
 
     This function was copied from Starlette:
@@ -349,7 +362,23 @@ def is_async_callable(obj: Any) -> Any:
     while isinstance(obj, functools.partial):
         obj = obj.func
 
-    return inspect.iscoroutinefunction(obj) or (callable(obj) and inspect.iscoroutinefunction(obj.__call__))  # type: ignore
+    # Case 1: Direct check if obj itself is a coroutine function
+    if inspect.iscoroutinefunction(obj):
+        return True
+
+    # Case 2: If obj is callable, check its __call__ method
+    if callable(obj):
+        call_method = getattr(obj, '__call__', None)
+        if call_method is None:
+            return False
+
+        if isinstance(call_method, types.MethodType):
+            call_method = call_method.__func__
+
+        if isinstance(call_method, types.FunctionType) and inspect.iscoroutinefunction(call_method):
+            return True
+
+    return False
 
 
 def _update_mapped_json_schema_refs(s: dict[str, Any], name_mapping: dict[str, str]) -> None:

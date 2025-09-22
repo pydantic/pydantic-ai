@@ -6,6 +6,7 @@ for building interactive AI applications with streaming event-based communicatio
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
@@ -24,7 +25,6 @@ from typing import (
 
 from pydantic import BaseModel, ValidationError
 
-from . import _utils
 from ._agent_graph import CallToolsNode, ModelRequestNode
 from .agent import AbstractAgent, AgentRun, AgentRunResult
 from .exceptions import UserError
@@ -378,10 +378,9 @@ async def run_ag_ui(
                 yield encoder.encode(event)
 
         if on_complete is not None and run.result is not None:
-            if _utils.is_async_callable(on_complete):
-                await on_complete(run.result)
-            else:
-                await _utils.run_in_executor(on_complete, run.result)
+            result = on_complete(run.result)
+            if asyncio.iscoroutine(result):
+                await result
     except _RunError as e:
         yield encoder.encode(
             RunErrorEvent(message=e.message, code=e.code),
