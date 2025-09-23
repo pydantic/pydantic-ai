@@ -235,10 +235,10 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 if reducer is None:
                     join_node = self.graph.nodes[result.join_id]
                     assert isinstance(join_node, Join)
-                    reducer = join_node.create_reducer(StepContext(None, None, result.inputs))
+                    reducer = join_node.create_reducer(StepContext(self.state, self.deps, result.inputs))
                     self._active_reducers[(result.join_id, fork_run_id)] = reducer
                 else:
-                    reducer.reduce(StepContext(None, None, result.inputs))
+                    reducer.reduce(StepContext(self.state, self.deps, result.inputs))
             else:
                 for new_task in result:
                     _start_task(new_task)
@@ -258,7 +258,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 ):
                     reducer = self._active_reducers.pop((join_id, fork_run_id))
 
-                    output = reducer.finalize(StepContext(None, None, None))
+                    output = reducer.finalize(StepContext(self.state, self.deps, None))
                     join_node = self.graph.nodes[join_id]
                     assert isinstance(join_node, Join)  # We could drop this but if it fails it means there is a bug.
                     new_tasks = self._handle_edges(join_node, output, fork_stack)
