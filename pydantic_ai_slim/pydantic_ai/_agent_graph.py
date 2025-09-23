@@ -1055,6 +1055,7 @@ def build_agent_graph(
 
     g.add(
         g.edge_from(g.start_node).to(NodeStep(UserPromptNode[DepsT, OutputT])),
+        g.node(UserPromptNode[DepsT, OutputT]),
         g.node(ModelRequestNode[DepsT, OutputT]),
         g.node(CallToolsNode[DepsT, OutputT]),
     )

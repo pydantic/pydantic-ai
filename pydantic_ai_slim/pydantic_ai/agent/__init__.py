@@ -651,7 +651,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
-        start_node = _agent_graph.UserPromptNode[AgentDepsT](
+        user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             instructions=self._instructions,
             instructions_functions=self._instructions_functions,
@@ -675,9 +675,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 async with graph.iter(
                     state=state,
                     deps=graph_deps,
-                    inputs=start_node,
+                    inputs=user_prompt_node,
                     span=use_span(run_span) if run_span.is_recording() else None,
                 ) as graph_run:
+                    # Perform the first step from the special `StartNode` to the `UserPromptNode`
+                    await graph_run.next()
+
                     agent_run = AgentRun(graph_run)
                     yield agent_run
                     if (final_result := agent_run.result) is not None and run_span.is_recording():

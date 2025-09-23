@@ -198,8 +198,8 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         return await self.__anext__()
 
     @property
-    def next_step(self) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None:
-        return self._next
+    def next_task(self) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask]:
+        return self._next or [self._first_task]
 
     @property
     def output(self) -> OutputT | None:

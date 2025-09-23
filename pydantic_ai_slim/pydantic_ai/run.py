@@ -114,10 +114,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
         """
-        next_step = self._graph_run.next_step
-        if next_step is None:
-            raise exceptions.AgentRunError(f'Unexpected node type: {type(next_step)}')  # pragma: no cover
-        return self._next_step_to_node(next_step)
+        next_task = self._graph_run.next_task
+        return self._next_task_to_node(next_task)
 
     @property
     def result(self) -> AgentRunResult[OutputDataT] | None:
@@ -147,19 +145,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node."""
-        next_step = await self._graph_run.__anext__()
-        # if (
-        #     isinstance(next_step, Sequence)
-        #     and len(next_step) == 1
-        #     and (first_task := next_step[0])
-        #     and isinstance(first_task, GraphTask)
-        #     and first_task.node_id == self._graph_run.graph.start_node.id
-        # ):
-        #     next_step = await self._graph_run.__anext__()
+        next_task = await self._graph_run.__anext__()
+        return self._next_task_to_node(next_task)
 
-        return self._next_step_to_node(next_step)
-
-    def _next_step_to_node(
+    def _next_task_to_node(
         self, next_task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTask]
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         if isinstance(next_task, Sequence) and len(next_task) == 1:
@@ -173,8 +162,9 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 ] = first_task.inputs  # type: ignore[reportUnknownMemberType]
                 if _agent_graph.is_agent_node(node=next_base_node):
                     return next_base_node
-        assert isinstance(next_task, EndMarker), f'Unexpected node type: {type(next_task)}'
-        return End(next_task.value)
+        if isinstance(next_task, EndMarker):
+            return End(next_task.value)
+        raise exceptions.AgentRunError(f'Unexpected node: {next_task}')  # pragma: no cover
 
     async def next(
         self,
@@ -246,8 +236,8 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        next_step = await self._graph_run.next([GraphTask(NodeStep(type(node)).id, inputs=node, fork_stack=())])
-        return self._next_step_to_node(next_step)
+        next_task = await self._graph_run.next([GraphTask(NodeStep(type(node)).id, inputs=node, fork_stack=())])
+        return self._next_task_to_node(next_task)
 
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
