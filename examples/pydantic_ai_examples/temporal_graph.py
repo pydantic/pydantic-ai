@@ -6,7 +6,6 @@ import random
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
-from types import NoneType
 from typing import Annotated, Any, Generic, Literal
 
 from temporalio import activity, workflow
@@ -47,8 +46,6 @@ class WorkflowResult:
 
 g = GraphBuilder(
     state_type=GraphState,
-    deps_type=NoneType,
-    input_type=NoneType,
     output_type=MyContainer[Any],
 )
 
@@ -247,11 +244,7 @@ class MyWorkflow:
     @workflow.run
     async def run(self) -> WorkflowResult:
         state = GraphState(workflow=self)
-        _ = await graph.run(
-            state=state,
-            deps=None,
-            inputs=None,
-        )
+        _ = await graph.run(state=state)
         assert state.type_name is not None, 'graph run did not produce a type name'
         assert state.container is not None, 'graph run did not produce a container'
         return WorkflowResult(state.type_name, state.container)
@@ -261,11 +254,7 @@ async def main():
     print(graph)
     print('----------')
     state = GraphState()
-    _ = await graph.run(
-        state=state,
-        deps=None,
-        inputs=None,
-    )
+    _ = await graph.run(state=state)
     print(state)
 
 

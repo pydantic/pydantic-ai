@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections import defaultdict
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Generic, cast, get_origin, get_type_hints, overload
 
@@ -86,7 +86,7 @@ def join(
     )
 
 
-@dataclass
+@dataclass(init=False)
 class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     """A graph builder."""
 
@@ -97,14 +97,33 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
     parallel: bool = True  # if False, allow direct state modification and don't copy state sent to steps, but disallow parallel node execution
 
-    _nodes: dict[NodeId, AnyNode] = field(init=False, default_factory=dict)
-    _edges_by_source: dict[NodeId, list[Path]] = field(init=False, default_factory=lambda: defaultdict(list))
-    _decision_index: int = field(init=False, default=1)
+    _nodes: dict[NodeId, AnyNode]
+    _edges_by_source: dict[NodeId, list[Path]]
+    _decision_index: int
 
     Source = TypeAliasType('Source', SourceNode[StateT, DepsT, OutputT], type_params=(OutputT,))
     Destination = TypeAliasType('Destination', DestinationNode[StateT, DepsT, InputT], type_params=(InputT,))
 
-    def __post_init__(self):
+    def __init__(
+        self,
+        *,
+        state_type: TypeOrTypeExpression[StateT] = NoneType,
+        deps_type: TypeOrTypeExpression[DepsT] = NoneType,
+        input_type: TypeOrTypeExpression[GraphInputT] = NoneType,
+        output_type: TypeOrTypeExpression[GraphOutputT] = NoneType,
+        parallel: bool = True,
+    ):
+        self.state_type = state_type
+        self.deps_type = deps_type
+        self.input_type = input_type
+        self.output_type = output_type
+
+        self.parallel = parallel
+
+        self._nodes = {}
+        self._edges_by_source = defaultdict(list)
+        self._decision_index = 1
+
         self._start_node = StartNode[GraphInputT]()
         self._end_node = EndNode[GraphOutputT]()
 

@@ -69,7 +69,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             raise RuntimeError(f'Node {join_id} is not a join node or did not have a dominating fork (this is a bug)')
         return result
 
-    async def run(self, *, state: StateT, deps: DepsT, inputs: InputT) -> OutputT:
+    async def run(self, *, state: StateT = None, deps: DepsT = None, inputs: InputT = None) -> OutputT:
         async with self.iter(state=state, deps=deps, inputs=inputs) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
             # which I'm less confident will be implemented correctly if not used on the critical path. We can change it
@@ -84,7 +84,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
 
     @asynccontextmanager
     async def iter(
-        self, *, state: StateT, deps: DepsT, inputs: InputT
+        self, *, state: StateT = None, deps: DepsT = None, inputs: InputT = None
     ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
         yield GraphRun[StateT, DepsT, OutputT](
             graph=self,
