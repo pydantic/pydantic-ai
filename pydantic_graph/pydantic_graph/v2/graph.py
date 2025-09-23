@@ -165,31 +165,36 @@ class GraphRun(Generic[StateT, OutputT]):
 
         _start_task(self._first_task)
 
+        def _handle_result(result: EndMarker[OutputT] | JoinItem | Sequence[GraphTask]) -> bool:
+            if isinstance(result, EndMarker):
+                for t in pending:
+                    t.cancel()
+                return True
+
+            if isinstance(result, JoinItem):
+                parent_fork_id = self._graph.get_parent_fork(result.join_id).fork_id
+                fork_run_id = [x.node_run_id for x in result.fork_stack[::-1] if x.fork_id == parent_fork_id][0]
+                reducer = self._active_reducers.get((result.join_id, fork_run_id))
+                if reducer is None:
+                    join_node = self._graph.nodes[result.join_id]
+                    assert isinstance(join_node, Join)
+                    reducer = join_node.create_reducer(StepContext(None, result.inputs))
+                    self._active_reducers[(result.join_id, fork_run_id)] = reducer
+                else:
+                    reducer.reduce(StepContext(None, result.inputs))
+            else:
+                for new_task in result:
+                    _start_task(new_task)
+            return False
+
         while pending:
             done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
-                result = task.result()
+                task_result = task.result()
                 source_task = tasks_by_id.pop(TaskId(task.get_name()))
-                result = yield result
-                if isinstance(result, EndMarker):
-                    for t in pending:
-                        t.cancel()
+                maybe_overridden_result = yield task_result
+                if _handle_result(maybe_overridden_result):
                     return
-
-                if isinstance(result, JoinItem):
-                    parent_fork_id = self._graph.get_parent_fork(result.join_id).fork_id
-                    fork_run_id = [x.node_run_id for x in result.fork_stack[::-1] if x.fork_id == parent_fork_id][0]
-                    reducer = self._active_reducers.get((result.join_id, fork_run_id))
-                    if reducer is None:
-                        join_node = self._graph.nodes[result.join_id]
-                        assert isinstance(join_node, Join)
-                        reducer = join_node.create_reducer(StepContext(None, result.inputs))
-                        self._active_reducers[(result.join_id, fork_run_id)] = reducer
-                    else:
-                        reducer.reduce(StepContext(None, result.inputs))
-                else:
-                    for new_task in result:
-                        _start_task(new_task)
 
                 for join_id, fork_run_id, fork_stack in self._get_completed_fork_runs(
                     source_task, tasks_by_id.values()
@@ -200,8 +205,9 @@ class GraphRun(Generic[StateT, OutputT]):
                     join_node = self._graph.nodes[join_id]
                     assert isinstance(join_node, Join)  # We could drop this but if it fails it means there is a bug.
                     new_tasks = self._handle_edges(join_node, output, fork_stack)
-                    for new_task in new_tasks:
-                        _start_task(new_task)
+                    maybe_overridden_result = yield new_tasks  # Need to give an opportunity to override these
+                    if _handle_result(maybe_overridden_result):
+                        return
 
         raise RuntimeError(
             'Graph run completed, but no result was produced. This is either a bug in the graph or a bug in the graph runner.'
