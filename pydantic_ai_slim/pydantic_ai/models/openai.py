@@ -755,7 +755,7 @@ class OpenAIChatModel(Model):
                 elif isinstance(item, ImageUrl):
                     image_url_kwargs: dict[str, Any] = {'url': item.url}
                     if item.vendor_metadata:
-                        image_url_kwargs['detail'] = item.vendor_metadata.get('detail', default='auto')
+                        image_url_kwargs['detail'] = item.vendor_metadata.get('detail', 'auto')
                     image_url = ImageURL(**image_url_kwargs)
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
@@ -763,7 +763,7 @@ class OpenAIChatModel(Model):
                     if item.is_image:
                         image_url_kwargs = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
                         if item.vendor_metadata:
-                            image_url_kwargs['detail'] = item.vendor_metadata.get('detail', default='auto')
+                            image_url_kwargs['detail'] = item.vendor_metadata.get('detail', 'auto')
                         image_url = ImageURL(**image_url_kwargs)
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
@@ -1393,7 +1393,7 @@ class OpenAIResponsesModel(Model):
                         if item.vendor_metadata:
                             detail = cast(
                                 Literal['auto', 'low', 'high'],
-                                item.vendor_metadata.get('detail', default='auto'),
+                                item.vendor_metadata.get('detail', 'auto'),
                             )
                         content.append(
                             responses.ResponseInputImageParam(
@@ -1420,9 +1420,7 @@ class OpenAIResponsesModel(Model):
                 elif isinstance(item, ImageUrl):
                     detail: Literal['auto', 'low', 'high'] = 'auto'
                     if item.vendor_metadata:
-                        detail = cast(
-                            Literal['auto', 'low', 'high'], item.vendor_metadata.get('detail', default='auto')
-                        )
+                        detail = cast(Literal['auto', 'low', 'high'], item.vendor_metadata.get('detail', 'auto'))
                     content.append(
                         responses.ResponseInputImageParam(
                             image_url=item.url,
