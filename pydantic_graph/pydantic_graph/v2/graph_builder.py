@@ -96,6 +96,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     output_type: TypeOrTypeExpression[GraphOutputT]
 
     parallel: bool = True  # if False, allow direct state modification and don't copy state sent to steps, but disallow parallel node execution
+    auto_instrument: bool = True
 
     _nodes: dict[NodeId, AnyNode]
     _edges_by_source: dict[NodeId, list[Path]]
@@ -112,6 +113,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         input_type: TypeOrTypeExpression[GraphInputT] = NoneType,
         output_type: TypeOrTypeExpression[GraphOutputT] = NoneType,
         parallel: bool = True,
+        auto_instrument: bool = True,
     ):
         self.state_type = state_type
         self.deps_type = deps_type
@@ -119,6 +121,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         self.output_type = output_type
 
         self.parallel = parallel
+        self.auto_instrument = auto_instrument
 
         self._nodes = {}
         self._edges_by_source = defaultdict(list)
@@ -355,7 +358,11 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         existing = self._nodes.get(node.id)
         if existing is None:
             self._nodes[node.id] = node
-        elif isinstance(existing, NodeStep) and isinstance(node, NodeStep) and existing.node_type is node.node_type:
+        elif (
+            isinstance(existing, NodeStep)
+            and isinstance(node, NodeStep)
+            and (get_origin(existing.node_type) or existing.node_type) is (get_origin(node.node_type) or node.node_type)
+        ):
             pass
         elif existing is not node:
             raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
@@ -457,6 +464,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             nodes=nodes,
             edges_by_source=edges_by_source,
             parent_forks=parent_forks,
+            auto_instrument=self.auto_instrument,
         )
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, get_origin, overload
 
 from typing_extensions import TypeVar
 
@@ -121,17 +121,17 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
         user_label: str | None = None,
         activity: bool = False,
     ):
-        async def _call(ctx: StepContext[StateT, DepsT, Any]) -> BaseNode[StateT, DepsT, Any] | End[Any]:
-            node = ctx.inputs
-            if not isinstance(node, node_type):
-                raise ValueError(f'Node {node} is not of type {node_type}')
-            node = cast(BaseNode[StateT, DepsT, Any], node)
-            return await node.run(GraphRunContext(state=ctx.state, deps=ctx.deps))
-
         super().__init__(
             id=id or NodeId(node_type.get_node_id()),
-            call=_call,
+            call=self._call,
             user_label=user_label,
             activity=activity,
         )
-        self.node_type = node_type
+        self.node_type = get_origin(node_type) or node_type
+
+    async def _call(self, ctx: StepContext[StateT, DepsT, Any]) -> BaseNode[StateT, DepsT, Any] | End[Any]:
+        node = ctx.inputs
+        if not isinstance(node, self.node_type):
+            raise ValueError(f'Node {node} is not of type {self.node_type}')
+        node = cast(BaseNode[StateT, DepsT, Any], node)
+        return await node.run(GraphRunContext(state=ctx.state, deps=ctx.deps))

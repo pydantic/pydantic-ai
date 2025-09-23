@@ -1,12 +1,14 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, overload
 
-from pydantic_graph import End, GraphRun, GraphRunContext
+from pydantic_graph import BaseNode, End, GraphRunContext
+from pydantic_graph.v2.graph import EndMarker, GraphRun, GraphTask, JoinItem
+from pydantic_graph.v2.step import NodeStep
 
 from . import (
     _agent_graph,
@@ -112,12 +114,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         This is the next node that will be used during async iteration, or if a node is not passed to `self.next(...)`.
         """
-        next_node = self._graph_run.next_node
-        if isinstance(next_node, End):
-            return next_node
-        if _agent_graph.is_agent_node(next_node):
-            return next_node
-        raise exceptions.AgentRunError(f'Unexpected node type: {type(next_node)}')  # pragma: no cover
+        next_step = self._graph_run.next_step
+        if next_step is None:
+            raise exceptions.AgentRunError(f'Unexpected node type: {type(next_step)}')  # pragma: no cover
+        return self._next_step_to_node(next_step)
 
     @property
     def result(self) -> AgentRunResult[OutputDataT] | None:
@@ -126,13 +126,13 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         Once the run returns an [`End`][pydantic_graph.nodes.End] node, `result` is populated
         with an [`AgentRunResult`][pydantic_ai.agent.AgentRunResult].
         """
-        graph_run_result = self._graph_run.result
-        if graph_run_result is None:
+        graph_run_output = self._graph_run.output
+        if graph_run_output is None:
             return None
         return AgentRunResult(
-            graph_run_result.output.output,
-            graph_run_result.output.tool_name,
-            graph_run_result.state,
+            graph_run_output.output,
+            graph_run_output.tool_name,
+            self._graph_run.state,
             self._graph_run.deps.new_message_index,
             self._traceparent(required=False),
         )
@@ -147,11 +147,34 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
     ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
         """Advance to the next node automatically based on the last returned node."""
-        next_node = await self._graph_run.__anext__()
-        if _agent_graph.is_agent_node(node=next_node):
-            return next_node
-        assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
-        return next_node
+        next_step = await self._graph_run.__anext__()
+        # if (
+        #     isinstance(next_step, Sequence)
+        #     and len(next_step) == 1
+        #     and (first_task := next_step[0])
+        #     and isinstance(first_task, GraphTask)
+        #     and first_task.node_id == self._graph_run.graph.start_node.id
+        # ):
+        #     next_step = await self._graph_run.__anext__()
+
+        return self._next_step_to_node(next_step)
+
+    def _next_step_to_node(
+        self, next_task: EndMarker[FinalResult[OutputDataT]] | JoinItem | Sequence[GraphTask]
+    ) -> _agent_graph.AgentNode[AgentDepsT, OutputDataT] | End[FinalResult[OutputDataT]]:
+        if isinstance(next_task, Sequence) and len(next_task) == 1:
+            first_task = next_task[0]
+            next_node = self._graph_run.graph.nodes[first_task.node_id]
+            if isinstance(next_node, NodeStep) and isinstance(first_task.inputs, BaseNode):
+                next_base_node: BaseNode[
+                    _agent_graph.GraphAgentState,
+                    _agent_graph.GraphAgentDeps[AgentDepsT, OutputDataT],
+                    FinalResult[OutputDataT],
+                ] = first_task.inputs  # type: ignore[reportUnknownMemberType]
+                if _agent_graph.is_agent_node(node=next_base_node):
+                    return next_base_node
+        assert isinstance(next_task, EndMarker), f'Unexpected node type: {type(next_task)}'
+        return End(next_task.value)
 
     async def next(
         self,
@@ -223,18 +246,15 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         """
         # Note: It might be nice to expose a synchronous interface for iteration, but we shouldn't do it
         # on this class, or else IDEs won't warn you if you accidentally use `for` instead of `async for` to iterate.
-        next_node = await self._graph_run.next(node)
-        if _agent_graph.is_agent_node(next_node):
-            return next_node
-        assert isinstance(next_node, End), f'Unexpected node type: {type(next_node)}'
-        return next_node
+        next_step = await self._graph_run.next([GraphTask(NodeStep(type(node)).id, inputs=node, fork_stack=())])
+        return self._next_step_to_node(next_step)
 
     def usage(self) -> _usage.RunUsage:
         """Get usage statistics for the run so far, including token usage, model requests, and so on."""
         return self._graph_run.state.usage
 
     def __repr__(self) -> str:  # pragma: no cover
-        result = self._graph_run.result
+        result = self._graph_run.output
         result_repr = '<run not finished>' if result is None else repr(result.output)
         return f'<{type(self).__name__} result={result_repr} usage={self.usage()}>'
 

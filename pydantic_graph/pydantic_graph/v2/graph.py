@@ -1,14 +1,16 @@
-from __future__ import annotations
+from __future__ import annotations as _annotations
 
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_args, get_origin, overload
 
 from typing_extensions import TypeVar, assert_never
 
+from pydantic_graph import exceptions
+from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span
 from pydantic_graph.nodes import BaseNode, End
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
@@ -59,6 +61,8 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     input_type: type[InputT]
     output_type: type[OutputT]
 
+    auto_instrument: bool
+
     nodes: dict[NodeId, AnyNode]
     edges_by_source: dict[NodeId, list[Path]]
     parent_forks: dict[JoinId, ParentFork[NodeId]]
@@ -69,8 +73,15 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             raise RuntimeError(f'Node {join_id} is not a join node or did not have a dominating fork (this is a bug)')
         return result
 
-    async def run(self, *, state: StateT = None, deps: DepsT = None, inputs: InputT = None) -> OutputT:
-        async with self.iter(state=state, deps=deps, inputs=inputs) as graph_run:
+    async def run(
+        self,
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        inputs: InputT = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
+    ) -> OutputT:
+        async with self.iter(state=state, deps=deps, inputs=inputs, span=span) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
             # which I'm less confident will be implemented correctly if not used on the critical path. We can change it
             # once we have tests, etc.
@@ -84,14 +95,28 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
 
     @asynccontextmanager
     async def iter(
-        self, *, state: StateT = None, deps: DepsT = None, inputs: InputT = None
+        self,
+        *,
+        state: StateT = None,
+        deps: DepsT = None,
+        inputs: InputT = None,
+        span: AbstractContextManager[AbstractSpan] | None = None,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
-        yield GraphRun[StateT, DepsT, OutputT](
-            graph=self,
-            state=state,
-            deps=deps,
-            inputs=inputs,
-        )
+        with ExitStack() as stack:
+            entered_span: AbstractSpan | None = None
+            if span is None:
+                if self.auto_instrument:
+                    entered_span = stack.enter_context(logfire_span('run graph {graph.name}', graph=self))
+            else:
+                entered_span = stack.enter_context(span)
+            traceparent = None if entered_span is None else get_traceparent(entered_span)
+            yield GraphRun[StateT, DepsT, OutputT](
+                graph=self,
+                state=state,
+                deps=deps,
+                inputs=inputs,
+                traceparent=traceparent,
+            )
 
     def render(self, *, title: str | None = None, direction: StateDiagramDirection | None = None) -> str:
         from pydantic_graph.v2.mermaid import build_mermaid_graph
@@ -127,10 +152,13 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         state: StateT,
         deps: DepsT,
         inputs: InputT,
+        traceparent: str | None,
     ):
-        self._graph = graph
-        self._state = state
-        self._deps = deps
+        self.graph = graph
+        self.state = state
+        self.deps = deps
+        self.inputs = inputs
+
         self._active_reducers: dict[tuple[JoinId, NodeRunId], Reducer[Any, Any, Any, Any]] = {}
 
         self._next: EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None = None
@@ -139,6 +167,17 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, NodeRunId(run_id), 0),)
         self._first_task = GraphTask(node_id=StartNode.id, inputs=inputs, fork_stack=initial_fork_stack)
         self._iterator = self._iter_graph()
+
+        self.__traceparent = traceparent
+
+    @overload
+    def _traceparent(self, *, required: Literal[False]) -> str | None: ...
+    @overload
+    def _traceparent(self) -> str: ...
+    def _traceparent(self, *, required: bool = True) -> str | None:
+        if self.__traceparent is None and required:  # pragma: no cover
+            raise exceptions.GraphRuntimeError('No span was created for this graph run')
+        return self.__traceparent
 
     def __aiter__(self) -> AsyncIterator[EndMarker[OutputT] | JoinItem | Sequence[GraphTask]]:
         return self
@@ -157,6 +196,16 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         if value is not None:
             self._next = value
         return await self.__anext__()
+
+    @property
+    def next_step(self) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None:
+        return self._next
+
+    @property
+    def output(self) -> OutputT | None:
+        if isinstance(self._next, EndMarker):
+            return self._next.value
+        return None
 
     async def _iter_graph(
         self,
@@ -180,11 +229,11 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                 return True
 
             if isinstance(result, JoinItem):
-                parent_fork_id = self._graph.get_parent_fork(result.join_id).fork_id
+                parent_fork_id = self.graph.get_parent_fork(result.join_id).fork_id
                 fork_run_id = [x.node_run_id for x in result.fork_stack[::-1] if x.fork_id == parent_fork_id][0]
                 reducer = self._active_reducers.get((result.join_id, fork_run_id))
                 if reducer is None:
-                    join_node = self._graph.nodes[result.join_id]
+                    join_node = self.graph.nodes[result.join_id]
                     assert isinstance(join_node, Join)
                     reducer = join_node.create_reducer(StepContext(None, None, result.inputs))
                     self._active_reducers[(result.join_id, fork_run_id)] = reducer
@@ -210,7 +259,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
                     reducer = self._active_reducers.pop((join_id, fork_run_id))
 
                     output = reducer.finalize(StepContext(None, None, None))
-                    join_node = self._graph.nodes[join_id]
+                    join_node = self.graph.nodes[join_id]
                     assert isinstance(join_node, Join)  # We could drop this but if it fails it means there is a bug.
                     new_tasks = self._handle_edges(join_node, output, fork_stack)
                     maybe_overridden_result = yield new_tasks  # Need to give an opportunity to override these
@@ -225,14 +274,14 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self,
         task: GraphTask,
     ) -> Sequence[GraphTask] | JoinItem | EndMarker[OutputT]:
-        state = self._state
-        deps = self._deps
+        state = self.state
+        deps = self.deps
 
         node_id = task.node_id
         inputs = task.inputs
         fork_stack = task.fork_stack
 
-        node = self._graph.nodes[node_id]
+        node = self.graph.nodes[node_id]
         if isinstance(node, StartNode | Fork):
             return self._handle_edges(node, inputs, fork_stack)
         elif isinstance(node, Step):
@@ -330,7 +379,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         elif isinstance(item, BroadcastMarker):
             return [GraphTask(item.fork_id, inputs, fork_stack)]
         elif isinstance(item, TransformMarker):
-            inputs = item.transform(StepContext(self._state, self._deps, inputs))
+            inputs = item.transform(StepContext(self.state, self.deps, inputs))
             return self._handle_path(path.next_path, inputs, fork_stack)
         elif isinstance(item, LabelMarker):
             return self._handle_path(path.next_path, inputs, fork_stack)
@@ -338,7 +387,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
             assert_never(item)
 
     def _handle_edges(self, node: AnyNode, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
-        edges = self._graph.edges_by_source.get(node.id, [])
+        edges = self.graph.edges_by_source.get(node.id, [])
         assert len(edges) == 1 or isinstance(node, Fork)  # this should have already been ensured during graph building
 
         new_tasks: list[GraphTask] = []
@@ -349,7 +398,7 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
     def _is_fork_run_completed(self, tasks: Iterable[GraphTask], join_id: JoinId, fork_run_id: NodeRunId) -> bool:
         # Check if any of the tasks in the graph have this fork_run_id in their fork_stack
         # If this is the case, then the fork run is not yet completed
-        parent_fork = self._graph.get_parent_fork(join_id)
+        parent_fork = self.graph.get_parent_fork(join_id)
         for t in tasks:
             if fork_run_id in {x.node_run_id for x in t.fork_stack}:
                 if t.node_id in parent_fork.intermediate_nodes:
