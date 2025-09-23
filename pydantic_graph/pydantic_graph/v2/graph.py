@@ -193,6 +193,10 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         self, value: EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None = None
     ) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask]:
         """Allows for sending a value to the iterator, which is useful for resuming the iteration."""
+        if self._next is None:
+            # Prevent `TypeError: can't send non-None value to a just-started async generator`
+            # if `next` is called before the `first_node` has run.
+            await self.__anext__()
         if value is not None:
             self._next = value
         return await self.__anext__()

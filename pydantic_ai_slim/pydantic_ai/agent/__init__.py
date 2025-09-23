@@ -678,9 +678,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     inputs=user_prompt_node,
                     span=use_span(run_span) if run_span.is_recording() else None,
                 ) as graph_run:
-                    # Perform the first step from the special `StartNode` to the `UserPromptNode`
-                    await graph_run.next()
-
                     agent_run = AgentRun(graph_run)
                     yield agent_run
                     if (final_result := agent_run.result) is not None and run_span.is_recording():
