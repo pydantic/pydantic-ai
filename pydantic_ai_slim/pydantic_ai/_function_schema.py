@@ -252,8 +252,7 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
     except StopIteration:
         return False
     else:
-        # Builtin functions are not allowed so no need to check for them
-
+        # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
         if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
             call_func = getattr(type(callable_obj), '__call__', None)
             if call_func is not None:

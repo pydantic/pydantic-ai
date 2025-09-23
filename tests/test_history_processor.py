@@ -759,3 +759,44 @@ async def test_callable_class_history_processor_no_op(
         ]
     )
     assert result.new_messages() == result.all_messages()[-2:]
+
+
+async def test_callable_class_history_processor_with_ctx_no_op(
+    function_model: FunctionModel, received_messages: list[ModelMessage]
+):
+    class NoOpHistoryProcessorWithCtx:
+        def __call__(self, _: RunContext, messages: list[ModelMessage]) -> list[ModelMessage]:
+            return messages
+
+    agent = Agent(function_model, history_processors=[NoOpHistoryProcessorWithCtx()])
+
+    message_history = [
+        ModelRequest(parts=[UserPromptPart(content='Previous question')]),
+        ModelResponse(parts=[TextPart(content='Previous answer')]),
+    ]
+
+    with capture_run_messages() as captured_messages:
+        result = await agent.run('New question', message_history=message_history)
+
+    assert received_messages == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
+            ModelRequest(parts=[UserPromptPart(content='New question', timestamp=IsDatetime())]),
+        ]
+    )
+    assert captured_messages == result.all_messages()
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(parts=[UserPromptPart(content='Previous question', timestamp=IsDatetime())]),
+            ModelResponse(parts=[TextPart(content='Previous answer')], timestamp=IsDatetime()),
+            ModelRequest(parts=[UserPromptPart(content='New question', timestamp=IsDatetime())]),
+            ModelResponse(
+                parts=[TextPart(content='Provider response')],
+                usage=RequestUsage(input_tokens=54, output_tokens=4),
+                model_name='function:capture_model_function:capture_model_stream_function',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+    assert result.new_messages() == result.all_messages()[-2:]
