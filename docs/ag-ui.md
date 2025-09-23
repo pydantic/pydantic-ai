@@ -213,9 +213,8 @@ which allows for custom events and state updates.
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, RunContext, ToolReturn
 from pydantic_ai.ag_ui import StateDeps
-from pydantic_ai.messages import ToolReturn
 
 
 class DocumentState(BaseModel):

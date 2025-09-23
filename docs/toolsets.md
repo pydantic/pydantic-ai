@@ -490,8 +490,12 @@ print(repr(result.output))
 Next, let's define a function that represents a hypothetical "run agent" API endpoint that can be called by the frontend and takes a list of messages to send to the model, a list of frontend tool definitions, and optional deferred tool results. This is where `ExternalToolset`, `DeferredToolRequests`, and `DeferredToolResults` come in:
 
 ```python {title="deferred_toolset_api.py" requires="deferred_toolset_agent.py"}
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    ModelMessage,
+    ToolDefinition,
+)
 from pydantic_ai.toolsets import ExternalToolset
 
 from deferred_toolset_agent import PersonalizedGreeting, agent
@@ -522,10 +526,12 @@ Now, imagine that the code below is implemented on the frontend, and `run_agent`
 from pydantic_ai import (
     DeferredToolRequests,
     DeferredToolResults,
+    ModelMessage,
+    ModelRequest,
     ModelRetry,
     ToolDefinition,
+    UserPromptPart,
 )
-from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 
 from deferred_toolset_api import run_agent
 
