@@ -6,10 +6,9 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import Self, TypeVar
 
-from pydantic_graph.nodes import BaseNode
 from pydantic_graph.v2.id_types import ForkId, NodeId
 from pydantic_graph.v2.paths import Path, PathBuilder
-from pydantic_graph.v2.step import NodeStep, StepFunction
+from pydantic_graph.v2.step import StepFunction
 from pydantic_graph.v2.util import TypeOrTypeExpression
 
 if TYPE_CHECKING:
@@ -71,13 +70,10 @@ class DecisionBranchBuilder(Generic[StateT, OutputT, BranchSourceT, DecisionHand
 
     def to(
         self,
-        destination: DestinationNode[StateT, OutputT] | type[BaseNode[StateT, None, Any]],
+        destination: DestinationNode[StateT, OutputT],
         /,
         *extra_destinations: DestinationNode[StateT, OutputT],
     ) -> DecisionBranch[BranchSourceT]:
-        if isinstance(destination, type):
-            destination = NodeStep(destination)
-
         return DecisionBranch(
             source=self.source, matches=self.matches, path=self.path_builder.to(destination, *extra_destinations)
         )

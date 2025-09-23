@@ -293,12 +293,13 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
 
     def match_node(
         self,
-        source: TypeOrTypeExpression[SourceNodeT],
+        source: type[SourceNodeT],
         *,
         matches: Callable[[Any], bool] | None = None,
     ) -> DecisionBranch[SourceNodeT]:
         """Like match, but for BaseNode subclasses."""
-        return None  # TODO: Need to implement this
+        path = Path(items=[DestinationMarker(NodeStep(source).id)])
+        return DecisionBranch(source=source, matches=matches, path=path)
 
     def node(
         self,
