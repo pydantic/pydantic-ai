@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Generic
+from typing import Any, Generic
 
 from typing_extensions import TypeVar
 
+from pydantic_graph.nodes import BaseNode
 from pydantic_graph.v2.id_types import ForkId, NodeId
 
+StateT = TypeVar('StateT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 InputT = TypeVar('InputT', infer_variance=True)
 
@@ -39,3 +41,9 @@ class Fork(Generic[InputT, OutputT]):
 
     def _force_variance(self, inputs: InputT) -> OutputT:
         raise RuntimeError('This method should never be called, it is just defined for typing purposes.')
+
+
+@dataclass
+class WrappedBaseNode(Generic[StateT]):
+    node_type: type[BaseNode[StateT, None, Any]]
+    id: NodeId

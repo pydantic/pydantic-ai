@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Protocol
+from typing import TYPE_CHECKING, Any, Generic, Protocol, overload
 
 from typing_extensions import TypeVar
 
+from pydantic_graph.nodes import BaseNode, End, GraphRunContext
 from pydantic_graph.v2.id_types import NodeId
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -77,3 +78,23 @@ class Step(Generic[StateT, InputT, OutputT]):
     @property
     def label(self) -> str | None:
         return self.user_label
+
+    @overload
+    def as_node(self, inputs: None = None) -> StepNode[StateT]: ...
+
+    @overload
+    def as_node(self, inputs: InputT) -> StepNode[StateT]: ...
+
+    def as_node(self, inputs: InputT | None = None) -> StepNode[StateT]:
+        return StepNode(self, inputs)
+
+
+@dataclass
+class StepNode(BaseNode[StateT, None, Any]):
+    step: Step[StateT, Any, Any]
+    inputs: Any
+
+    async def run(self, ctx: GraphRunContext[StateT, None]) -> BaseNode[StateT, None, Any] | End[Any]:
+        raise NotImplementedError(
+            'StepNode is not meant to be run directly, it is meant to be used in `BaseNode` subclasses to transitioned to v2-style steps.'
+        )

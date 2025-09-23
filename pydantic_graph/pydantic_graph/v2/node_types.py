@@ -6,7 +6,7 @@ from typing_extensions import TypeAliasType, TypeVar
 
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.join import Join
-from pydantic_graph.v2.node import EndNode, Fork, StartNode
+from pydantic_graph.v2.node import EndNode, Fork, StartNode, WrappedBaseNode
 from pydantic_graph.v2.step import Step
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -15,7 +15,7 @@ OutputT = TypeVar('OutputT', infer_variance=True)
 
 MiddleNode = TypeAliasType(
     'MiddleNode',
-    Step[StateT, InputT, OutputT] | Join[StateT, InputT, OutputT] | Fork[InputT, OutputT],
+    Step[StateT, InputT, OutputT] | Join[StateT, InputT, OutputT] | Fork[InputT, OutputT] | WrappedBaseNode[StateT],
     type_params=(StateT, InputT, OutputT),
 )
 SourceNode = TypeAliasType(

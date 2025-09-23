@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import inspect
 from collections import defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Generic, overload
+from types import NoneType
+from typing import Any, Generic, cast, get_origin, get_type_hints, overload
 
 from typing_extensions import Never, TypeAliasType, TypeVar
 
+from pydantic_graph import _utils, exceptions
+from pydantic_graph.nodes import BaseNode, End
 from pydantic_graph.v2.decision import Decision, DecisionBranchBuilder
 from pydantic_graph.v2.graph import Graph
 from pydantic_graph.v2.id_types import ForkId, JoinId, NodeId
@@ -15,8 +19,10 @@ from pydantic_graph.v2.node import (
     EndNode,
     Fork,
     StartNode,
+    WrappedBaseNode,
 )
 from pydantic_graph.v2.node_types import (
+    AnyDestinationNode,
     AnyNode,
     DestinationNode,
     SourceNode,
@@ -31,7 +37,7 @@ from pydantic_graph.v2.paths import (
     PathBuilder,
     SpreadMarker,
 )
-from pydantic_graph.v2.step import Step, StepFunction
+from pydantic_graph.v2.step import Step, StepFunction, StepNode
 from pydantic_graph.v2.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -42,44 +48,6 @@ SourceOutputT = TypeVar('SourceOutputT', infer_variance=True)
 GraphInputT = TypeVar('GraphInputT', infer_variance=True)
 GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
 T = TypeVar('T', infer_variance=True)
-
-
-# Node building:
-@overload
-def step(
-    *,
-    node_id: str | None = None,
-    label: str | None = None,
-    activity: bool = False,
-) -> Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]: ...
-@overload
-def step(
-    call: StepFunction[StateT, InputT, OutputT],
-    *,
-    node_id: str | None = None,
-    label: str | None = None,
-    activity: bool = False,
-) -> Step[StateT, InputT, OutputT]: ...
-def step(
-    call: StepFunction[StateT, InputT, OutputT] | None = None,
-    *,
-    node_id: str | None = None,
-    label: str | None = None,
-    activity: bool = False,
-) -> Step[StateT, InputT, OutputT] | Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]:
-    """Get a Step instance from a step function."""
-    if call is None:
-
-        def decorator(
-            func: StepFunction[StateT, InputT, OutputT],
-        ) -> Step[StateT, InputT, OutputT]:
-            return step(call=func, node_id=node_id, label=label, activity=activity)
-
-        return decorator
-
-    node_id = node_id or get_callable_name(call)
-
-    return Step[StateT, InputT, OutputT](id=NodeId(node_id), call=call, user_label=label, activity=activity)
 
 
 @overload
@@ -148,6 +116,60 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
         return self._end_node
 
     @overload
+    def _step(
+        self,
+        *,
+        node_id: str | None = None,
+        label: str | None = None,
+        activity: bool = False,
+    ) -> Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]: ...
+    @overload
+    def _step(
+        self,
+        call: StepFunction[StateT, InputT, OutputT],
+        *,
+        node_id: str | None = None,
+        label: str | None = None,
+        activity: bool = False,
+    ) -> Step[StateT, InputT, OutputT]: ...
+    def _step(
+        self,
+        call: StepFunction[StateT, InputT, OutputT] | None = None,
+        *,
+        node_id: str | None = None,
+        label: str | None = None,
+        activity: bool = False,
+    ) -> (
+        Step[StateT, InputT, OutputT] | Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]
+    ):
+        """Get a Step instance from a step function."""
+        if call is None:
+
+            def decorator(
+                func: StepFunction[StateT, InputT, OutputT],
+            ) -> Step[StateT, InputT, OutputT]:
+                return self._step(call=func, node_id=node_id, label=label, activity=activity)
+
+            return decorator
+
+        node_id = node_id or get_callable_name(call)
+
+        step = Step[StateT, InputT, OutputT](id=NodeId(node_id), call=call, user_label=label, activity=activity)
+
+        parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
+        type_hints = get_type_hints(call, localns=parent_namespace, include_extras=True)
+        try:
+            return_hint = type_hints['return']
+        except KeyError:
+            pass
+        else:
+            edge = self._edge_from_return_hint(step, return_hint)
+            if edge is not None:
+                self.add(edge)
+
+        return step
+
+    @overload
     def step(
         self,
         *,
@@ -175,9 +197,9 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
         Step[StateT, InputT, OutputT] | Callable[[StepFunction[StateT, InputT, OutputT]], Step[StateT, InputT, OutputT]]
     ):
         if call is None:
-            return step(node_id=node_id, label=label, activity=activity)
+            return self._step(node_id=node_id, label=label, activity=activity)
         else:
-            return step(call=call, node_id=node_id, label=label, activity=activity)
+            return self._step(call=call, node_id=node_id, label=label, activity=activity)
 
     @overload
     def join(
@@ -269,11 +291,34 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
         new_path_builder = PathBuilder[StateT, SourceT](working_items=[])
         return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
 
+    def base_node(self, node_type: type[BaseNode[StateT, None, Any]]) -> EdgePath[StateT]:
+        parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
+        type_hints = get_type_hints(node_type.run, localns=parent_namespace, include_extras=True)
+        try:
+            return_hint = type_hints['return']
+        except KeyError as e:
+            raise exceptions.GraphSetupError(
+                f'Node {node_type} is missing a return type hint on its `run` method'
+            ) from e
+
+        node = WrappedBaseNode(node_type=node_type, id=NodeId(node_type.get_node_id()))
+
+        edge = self._edge_from_return_hint(node, return_hint)
+        if not edge:
+            raise exceptions.GraphSetupError(f'Node {node_type} is missing a return type hint on its `run` method')
+        return edge
+
     # Helpers
     def _insert_node(self, node: AnyNode) -> None:
         existing = self._nodes.get(node.id)
         if existing is None:
             self._nodes[node.id] = node
+        elif (
+            isinstance(existing, WrappedBaseNode)
+            and isinstance(node, WrappedBaseNode)
+            and existing.node_type is node.node_type
+        ):
+            pass
         elif existing is not node:
             raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
 
@@ -310,6 +355,40 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
             node_id = f'{prefix}_{index}'
             index += 1
         return node_id
+
+    def _edge_from_return_hint(
+        self, node: SourceNode[StateT, Any], return_hint: TypeOrTypeExpression[Any]
+    ) -> EdgePath[StateT] | None:
+        destinations: list[AnyDestinationNode] = []
+        for return_type in _utils.get_union_args(return_hint):
+            return_type, annotations = _utils.unpack_annotated(return_type)
+            # edge = next((a for a in annotations if isinstance(a, Edge)), Edge(None))
+            return_type_origin = get_origin(return_type) or return_type
+            if return_type_origin is End:
+                destinations.append(self.end_node)
+            elif return_type_origin is BaseNode:
+                raise exceptions.GraphSetupError(f'Node {node} returned a plain BaseNode')
+            elif return_type_origin is StepNode:
+                step = cast(Step[StateT, Any, Any] | None, next((a for a in annotations if isinstance(a, Step)), None))  # pyright: ignore[reportUnknownArgumentType]
+                if step is None:
+                    raise exceptions.GraphSetupError(
+                        f'Node {node} returned a StepNode but no Step was found in the annotations'
+                    )
+                destinations.append(step)
+            elif inspect.isclass(return_type_origin) and issubclass(return_type_origin, BaseNode):
+                destinations.append(WrappedBaseNode(node_type=return_type, id=NodeId(return_type.get_node_id())))
+
+        if not destinations:
+            return None
+
+        edge = self.edge_from(node)
+        if len(destinations) == 1:
+            return edge.to(destinations[0], fork_id=self._get_new_broadcast_id(node.id))
+        else:
+            decision = self.decision()
+            for destination in destinations:
+                decision = decision.branch(self.match(NoneType).to(destination))
+            return edge.to(decision)
 
     # Graph building
     def build(self) -> Graph[StateT, GraphInputT, GraphOutputT]:

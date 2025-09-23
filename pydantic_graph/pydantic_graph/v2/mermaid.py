@@ -10,7 +10,7 @@ from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.graph import Graph
 from pydantic_graph.v2.id_types import NodeId
 from pydantic_graph.v2.join import Join
-from pydantic_graph.v2.node import EndNode, Fork, StartNode
+from pydantic_graph.v2.node import EndNode, Fork, StartNode, WrappedBaseNode
 from pydantic_graph.v2.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker
 from pydantic_graph.v2.step import Step
 
@@ -27,7 +27,7 @@ StateDiagramDirection = Literal['TB', 'LR', 'RL', 'BT']
 - `'BT'`: Bottom to top
 """
 
-NodeKind = Literal['broadcast', 'spread', 'join', 'start', 'end', 'step', 'decision']
+NodeKind = Literal['broadcast', 'spread', 'join', 'start', 'end', 'step', 'decision', 'base_node']
 
 
 @dataclass
@@ -86,6 +86,8 @@ def build_mermaid_graph(graph: Graph[Any, Any, Any]) -> MermaidGraph:  # noqa C9
         elif isinstance(node, Decision):
             kind = 'decision'
             note = node.note
+        elif isinstance(node, WrappedBaseNode):
+            kind = 'base_node'
         else:
             assert_never(node)
 

@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import timedelta
 from types import NoneType
-from typing import Any, Generic, Literal
+from typing import Annotated, Any, Generic, Literal
 
 from temporalio import activity, workflow
 from temporalio.client import Client
@@ -16,9 +16,10 @@ from temporalio.worker import Worker
 from typing_extensions import TypeVar
 
 with workflow.unsafe.imports_passed_through():
+    from pydantic_graph.nodes import BaseNode, End, GraphRunContext
     from pydantic_graph.v2.graph_builder import GraphBuilder
     from pydantic_graph.v2.join import NullReducer
-    from pydantic_graph.v2.step import StepContext
+    from pydantic_graph.v2.step import StepContext, StepNode
     from pydantic_graph.v2.util import TypeExpression
 
 T = TypeVar('T', infer_variance=True)
@@ -44,7 +45,9 @@ class WorkflowResult:
     container: MyContainer[Any]
 
 
-g = GraphBuilder(state_type=GraphState, input_type=NoneType, output_type=NoneType)
+g = GraphBuilder(
+    state_type=GraphState, input_type=NoneType, output_type=MyContainer[Any]
+)
 
 
 @activity.defn
@@ -68,14 +71,46 @@ async def choose_type(
     return 'int' if chosen_type is int else 'str'
 
 
+class ChooseTypeNode(BaseNode[GraphState, None, MyContainer[Any]]):
+    async def run(
+        self, ctx: GraphRunContext[GraphState, None]
+    ) -> Annotated[StepNode[GraphState], choose_type]:
+        # Node to Step
+        return choose_type.as_node()
+
+
+@g.step
+async def begin(ctx: StepContext[GraphState, None]) -> ChooseTypeNode:
+    # Step to Node
+    return ChooseTypeNode()
+
+
 @g.step
 async def handle_int(ctx: StepContext[object, object]) -> None:
     pass
 
 
 @g.step
-async def handle_str(ctx: StepContext[object, object]) -> None:
+async def handle_str(ctx: StepContext[object, str]) -> None:
+    print(f'handle_str {ctx.inputs}')
     pass
+
+
+@dataclass
+class HandleStrNode(BaseNode[GraphState, None, Any]):
+    inputs: str
+
+    async def run(
+        self, ctx: GraphRunContext[GraphState, None]
+    ) -> Annotated[StepNode[GraphState], handle_str]:
+        # Node to Step with input
+        return handle_str.as_node(self.inputs)
+
+
+@g.step
+async def handle_str_no_inputs(ctx: StepContext[object, object]) -> HandleStrNode:
+    # Step to Node with input
+    return HandleStrNode('hello')
 
 
 @g.step
@@ -149,15 +184,44 @@ async def handle_field_3_item(ctx: StepContext[GraphState, int | str]) -> None:
     await asyncio.sleep(0.25)
 
 
+@dataclass
+class ReturnContainerNode(BaseNode[GraphState, None, MyContainer[Any]]):
+    container: MyContainer[Any]
+
+    async def run(
+        self, ctx: GraphRunContext[GraphState, None]
+    ) -> End[MyContainer[Any]]:
+        # Node to End
+        return End(self.container)
+
+
+@dataclass
+class ForwardContainerNode(BaseNode[GraphState, None, MyContainer[Any]]):
+    container: MyContainer[Any]
+
+    async def run(self, ctx: GraphRunContext[GraphState, None]) -> ReturnContainerNode:
+        # Node to Node
+        return ReturnContainerNode(self.container)
+
+
+@g.step
+async def return_container(ctx: StepContext[GraphState, None]) -> ForwardContainerNode:
+    assert ctx.state.container is not None
+    # Step to Node
+    return ForwardContainerNode(ctx.state.container)
+
+
 handle_join = g.join(NullReducer, node_id='handle_join')
 
 g.add(
-    g.edge_from(g.start_node).label('begin').to(choose_type),
+    g.edge_from(g.start_node).label('begin').to(begin),
+    g.base_node(ChooseTypeNode),  # TODO (DouweM): Move to decorator
     g.edge_from(choose_type).to(
         g.decision()
-        .branch(g.match(TypeExpression[Literal['str']]).to(handle_str))
+        .branch(g.match(TypeExpression[Literal['str']]).to(handle_str_no_inputs))
         .branch(g.match(TypeExpression[Literal['int']]).to(handle_int))
     ),
+    g.base_node(HandleStrNode),
     g.edge_from(handle_int).to(handle_int_1, handle_int_2, handle_int_3),
     g.edge_from(handle_str).to(
         lambda e: [
@@ -171,7 +235,9 @@ g.add(
     g.edge_from(
         handle_int_1, handle_int_2, handle_str_1, handle_str_2, handle_field_3_item
     ).to(handle_join),
-    g.edge_from(handle_join).to(g.end_node),
+    g.edge_from(handle_join).to(return_container),
+    g.base_node(ForwardContainerNode),
+    g.base_node(ReturnContainerNode),
 )
 
 graph = g.build()
@@ -226,5 +292,5 @@ async def main_temporal():
 
 
 if __name__ == '__main__':
-    # asyncio.run(main())
-    asyncio.run(main_temporal())
+    asyncio.run(main())
+    # asyncio.run(main_temporal())

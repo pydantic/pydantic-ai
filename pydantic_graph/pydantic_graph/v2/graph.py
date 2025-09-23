@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_args, get_ori
 
 from typing_extensions import TypeVar, assert_never
 
+from pydantic_graph import GraphRunContext
+from pydantic_graph.nodes import BaseNode, End
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
 from pydantic_graph.v2.join import Join, Reducer
@@ -16,11 +18,12 @@ from pydantic_graph.v2.node import (
     EndNode,
     Fork,
     StartNode,
+    WrappedBaseNode,
 )
 from pydantic_graph.v2.node_types import AnyNode
 from pydantic_graph.v2.parent_forks import ParentFork
 from pydantic_graph.v2.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker, TransformMarker
-from pydantic_graph.v2.step import Step, StepContext
+from pydantic_graph.v2.step import Step, StepContext, StepNode
 from pydantic_graph.v2.util import unpack_type_expression
 
 if TYPE_CHECKING:
@@ -228,6 +231,17 @@ class GraphRun(Generic[StateT, OutputT]):
             return self._handle_decision(node, inputs, fork_stack)
         elif isinstance(node, EndNode):
             return EndMarker(inputs)
+        elif isinstance(node, WrappedBaseNode):
+            base_node = cast(BaseNode[StateT, Any], inputs)
+            next_node = await base_node.run(GraphRunContext(state=state, deps=None))
+            if isinstance(next_node, StepNode):
+                return [GraphTask(next_node.step.id, next_node.inputs, fork_stack)]
+            elif isinstance(next_node, BaseNode):
+                return [GraphTask(NodeId(next_node.__class__.get_node_id()), next_node, fork_stack)]
+            elif isinstance(next_node, End):
+                return EndMarker(next_node.data)
+            else:
+                assert_never(next_node)
         else:
             assert_never(node)
 
