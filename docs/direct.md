@@ -16,8 +16,7 @@ The following functions are available:
 Here's a simple example demonstrating how to use the direct API to make a basic request:
 
 ```python title="direct_basic.py"
-from pydantic_ai import ModelRequest
-from pydantic_ai.direct import model_request_sync
+from pydantic_ai import ModelRequest, model_request_sync
 
 # Make a synchronous request to the model
 model_response = model_request_sync(
@@ -44,8 +43,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from pydantic_ai import ModelRequest, ToolDefinition
-from pydantic_ai.direct import model_request
+from pydantic_ai import ModelRequest, ToolDefinition, model_request
 from pydantic_ai.models import ModelRequestParameters
 
 
@@ -109,8 +107,7 @@ As with [agents][pydantic_ai.Agent], you can enable OpenTelemetry/Logfire instru
 ```python {title="direct_instrumented.py" hl_lines="1 6 7"}
 import logfire
 
-from pydantic_ai import ModelRequest
-from pydantic_ai.direct import model_request_sync
+from pydantic_ai import ModelRequest, model_request_sync
 
 logfire.configure()
 logfire.instrument_pydantic_ai()
@@ -132,8 +129,7 @@ You can also enable OpenTelemetry on a per call basis:
 ```python {title="direct_instrumented.py" hl_lines="1 6 12"}
 import logfire
 
-from pydantic_ai import ModelRequest
-from pydantic_ai.direct import model_request_sync
+from pydantic_ai import ModelRequest, model_request_sync
 
 logfire.configure()
 
