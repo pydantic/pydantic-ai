@@ -19,7 +19,6 @@ from pydantic_graph.v2.node import (
     EndNode,
     Fork,
     StartNode,
-    WrappedBaseNode,
 )
 from pydantic_graph.v2.node_types import (
     AnyDestinationNode,
@@ -37,7 +36,7 @@ from pydantic_graph.v2.paths import (
     PathBuilder,
     SpreadMarker,
 )
-from pydantic_graph.v2.step import Step, StepFunction, StepNode
+from pydantic_graph.v2.step import NodeStep, Step, StepFunction, StepNode
 from pydantic_graph.v2.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -291,7 +290,10 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
         new_path_builder = PathBuilder[StateT, SourceT](working_items=[])
         return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
 
-    def base_node(self, node_type: type[BaseNode[StateT, None, Any]]) -> EdgePath[StateT]:
+    def node(
+        self,
+        node_type: type[BaseNode[StateT, None, GraphOutputT]],
+    ) -> EdgePath[StateT]:
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
         type_hints = get_type_hints(node_type.run, localns=parent_namespace, include_extras=True)
         try:
@@ -301,11 +303,12 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
                 f'Node {node_type} is missing a return type hint on its `run` method'
             ) from e
 
-        node = WrappedBaseNode(node_type=node_type, id=NodeId(node_type.get_node_id()))
+        node = NodeStep(node_type)
 
         edge = self._edge_from_return_hint(node, return_hint)
         if not edge:
             raise exceptions.GraphSetupError(f'Node {node_type} is missing a return type hint on its `run` method')
+
         return edge
 
     # Helpers
@@ -313,11 +316,7 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
         existing = self._nodes.get(node.id)
         if existing is None:
             self._nodes[node.id] = node
-        elif (
-            isinstance(existing, WrappedBaseNode)
-            and isinstance(node, WrappedBaseNode)
-            and existing.node_type is node.node_type
-        ):
+        elif isinstance(existing, NodeStep) and isinstance(node, NodeStep) and existing.node_type is node.node_type:
             pass
         elif existing is not node:
             raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
@@ -360,13 +359,15 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
         self, node: SourceNode[StateT, Any], return_hint: TypeOrTypeExpression[Any]
     ) -> EdgePath[StateT] | None:
         destinations: list[AnyDestinationNode] = []
-        for return_type in _utils.get_union_args(return_hint):
+        union_args = _utils.get_union_args(return_hint)
+        for return_type in union_args:
             return_type, annotations = _utils.unpack_annotated(return_type)
             # edge = next((a for a in annotations if isinstance(a, Edge)), Edge(None))
             return_type_origin = get_origin(return_type) or return_type
             if return_type_origin is End:
                 destinations.append(self.end_node)
             elif return_type_origin is BaseNode:
+                # TODO (DouweM): Enumerate all subclasses
                 raise exceptions.GraphSetupError(f'Node {node} returned a plain BaseNode')
             elif return_type_origin is StepNode:
                 step = cast(Step[StateT, Any, Any] | None, next((a for a in annotations if isinstance(a, Step)), None))  # pyright: ignore[reportUnknownArgumentType]
@@ -376,17 +377,19 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
                     )
                 destinations.append(step)
             elif inspect.isclass(return_type_origin) and issubclass(return_type_origin, BaseNode):
-                destinations.append(WrappedBaseNode(node_type=return_type, id=NodeId(return_type.get_node_id())))
+                destinations.append(NodeStep(return_type))
 
-        if not destinations:
+        if len(destinations) < len(union_args):
+            # Only build edges if all the return types are nodes
             return None
 
         edge = self.edge_from(node)
         if len(destinations) == 1:
-            return edge.to(destinations[0], fork_id=self._get_new_broadcast_id(node.id))
+            return edge.to(destinations[0])
         else:
             decision = self.decision()
             for destination in destinations:
+                # We don't actually use this decision mechanism, but we need to build the edges for parent-fork finding
                 decision = decision.branch(self.match(NoneType).to(destination))
             return edge.to(decision)
 

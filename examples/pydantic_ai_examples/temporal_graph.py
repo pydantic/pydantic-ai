@@ -56,36 +56,6 @@ async def get_random_number() -> float:
 
 
 @g.step
-async def choose_type(
-    ctx: StepContext[GraphState, object],
-) -> Literal['int', 'str']:
-    if workflow.in_workflow():
-        random_number = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
-            get_random_number, start_to_close_timeout=timedelta(seconds=1)
-        )
-    else:
-        random_number = await get_random_number()
-    chosen_type = int if random_number < 0.5 else str
-    ctx.state.type_name = chosen_type.__name__
-    ctx.state.container = MyContainer(field_1=None, field_2=None, field_3=None)
-    return 'int' if chosen_type is int else 'str'
-
-
-class ChooseTypeNode(BaseNode[GraphState, None, MyContainer[Any]]):
-    async def run(
-        self, ctx: GraphRunContext[GraphState, None]
-    ) -> Annotated[StepNode[GraphState], choose_type]:
-        # Node to Step
-        return choose_type.as_node()
-
-
-@g.step
-async def begin(ctx: StepContext[GraphState, None]) -> ChooseTypeNode:
-    # Step to Node
-    return ChooseTypeNode()
-
-
-@g.step
 async def handle_int(ctx: StepContext[object, object]) -> None:
     pass
 
@@ -108,9 +78,33 @@ class HandleStrNode(BaseNode[GraphState, None, Any]):
 
 
 @g.step
-async def handle_str_no_inputs(ctx: StepContext[object, object]) -> HandleStrNode:
-    # Step to Node with input
-    return HandleStrNode('hello')
+async def choose_type(
+    ctx: StepContext[GraphState, object],
+) -> Literal['int'] | HandleStrNode:
+    if workflow.in_workflow():
+        random_number = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
+            get_random_number, start_to_close_timeout=timedelta(seconds=1)
+        )
+    else:
+        random_number = await get_random_number()
+    chosen_type = int if random_number < 0.5 else str
+    ctx.state.type_name = chosen_type.__name__
+    ctx.state.container = MyContainer(field_1=None, field_2=None, field_3=None)
+    return 'int' if chosen_type is int else HandleStrNode('hello')
+
+
+class ChooseTypeNode(BaseNode[GraphState, None, MyContainer[Any]]):
+    async def run(
+        self, ctx: GraphRunContext[GraphState, None]
+    ) -> Annotated[StepNode[GraphState], choose_type]:
+        # Node to Step
+        return choose_type.as_node()
+
+
+@g.step
+async def begin(ctx: StepContext[GraphState, None]) -> ChooseTypeNode:
+    # Step to Node
+    return ChooseTypeNode()
 
 
 @g.step
@@ -214,14 +208,16 @@ async def return_container(ctx: StepContext[GraphState, None]) -> ForwardContain
 handle_join = g.join(NullReducer, node_id='handle_join')
 
 g.add(
+    g.node(ChooseTypeNode),
+    g.node(HandleStrNode),
+    g.node(ReturnContainerNode),
+    g.node(ForwardContainerNode),
     g.edge_from(g.start_node).label('begin').to(begin),
-    g.base_node(ChooseTypeNode),  # TODO (DouweM): Move to decorator
     g.edge_from(choose_type).to(
         g.decision()
-        .branch(g.match(TypeExpression[Literal['str']]).to(handle_str_no_inputs))
         .branch(g.match(TypeExpression[Literal['int']]).to(handle_int))
+        .branch(g.match(HandleStrNode).to(HandleStrNode))
     ),
-    g.base_node(HandleStrNode),
     g.edge_from(handle_int).to(handle_int_1, handle_int_2, handle_int_3),
     g.edge_from(handle_str).to(
         lambda e: [
@@ -236,8 +232,6 @@ g.add(
         handle_int_1, handle_int_2, handle_str_1, handle_str_2, handle_field_3_item
     ).to(handle_join),
     g.edge_from(handle_join).to(return_container),
-    g.base_node(ForwardContainerNode),
-    g.base_node(ReturnContainerNode),
 )
 
 graph = g.build()

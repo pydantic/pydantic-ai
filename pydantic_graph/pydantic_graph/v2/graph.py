@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_args, get_ori
 
 from typing_extensions import TypeVar, assert_never
 
-from pydantic_graph import GraphRunContext
 from pydantic_graph.nodes import BaseNode, End
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
@@ -18,12 +17,11 @@ from pydantic_graph.v2.node import (
     EndNode,
     Fork,
     StartNode,
-    WrappedBaseNode,
 )
 from pydantic_graph.v2.node_types import AnyNode
 from pydantic_graph.v2.parent_forks import ParentFork
 from pydantic_graph.v2.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker, TransformMarker
-from pydantic_graph.v2.step import Step, StepContext, StepNode
+from pydantic_graph.v2.step import NodeStep, Step, StepContext, StepNode
 from pydantic_graph.v2.util import unpack_type_expression
 
 if TYPE_CHECKING:
@@ -224,24 +222,16 @@ class GraphRun(Generic[StateT, OutputT]):
         elif isinstance(node, Step):
             step_context = StepContext[StateT, Any](state, inputs)
             output = await node.call(step_context)
-            return self._handle_edges(node, output, fork_stack)
+            if isinstance(node, NodeStep):
+                return self._handle_node(node, output, fork_stack)
+            else:
+                return self._handle_edges(node, output, fork_stack)
         elif isinstance(node, Join):
             return JoinItem(node_id, inputs, fork_stack)
         elif isinstance(node, Decision):
             return self._handle_decision(node, inputs, fork_stack)
         elif isinstance(node, EndNode):
             return EndMarker(inputs)
-        elif isinstance(node, WrappedBaseNode):
-            base_node = cast(BaseNode[StateT, Any], inputs)
-            next_node = await base_node.run(GraphRunContext(state=state, deps=None))
-            if isinstance(next_node, StepNode):
-                return [GraphTask(next_node.step.id, next_node.inputs, fork_stack)]
-            elif isinstance(next_node, BaseNode):
-                return [GraphTask(NodeId(next_node.__class__.get_node_id()), next_node, fork_stack)]
-            elif isinstance(next_node, End):
-                return EndMarker(next_node.data)
-            else:
-                assert_never(next_node)
         else:
             assert_never(node)
 
@@ -269,6 +259,19 @@ class GraphRun(Generic[StateT, OutputT]):
                 return self._handle_path(branch.path, inputs, fork_stack)
 
         raise RuntimeError(f'No branch matched inputs {inputs} for decision node {decision}.')
+
+    def _handle_node(
+        self, node_step: NodeStep[StateT], next_node: BaseNode[StateT, None, Any] | End[Any], fork_stack: ForkStack
+    ) -> Sequence[GraphTask] | EndMarker[OutputT]:
+        if isinstance(next_node, StepNode):
+            return [GraphTask(next_node.step.id, next_node.inputs, fork_stack)]
+        elif isinstance(next_node, BaseNode):
+            node_step = NodeStep(next_node.__class__)
+            return [GraphTask(node_step.id, next_node, fork_stack)]
+        elif isinstance(next_node, End):
+            return EndMarker(next_node.data)
+        else:
+            assert_never(next_node)
 
     def _get_completed_fork_runs(
         self,

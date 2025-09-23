@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Protocol, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, overload
 
 from typing_extensions import TypeVar
 
@@ -91,10 +91,40 @@ class Step(Generic[StateT, InputT, OutputT]):
 
 @dataclass
 class StepNode(BaseNode[StateT, None, Any]):
+    """A `BaseNode` that represents a `Step` plus bound inputs."""
+
     step: Step[StateT, Any, Any]
     inputs: Any
 
     async def run(self, ctx: GraphRunContext[StateT, None]) -> BaseNode[StateT, None, Any] | End[Any]:
         raise NotImplementedError(
-            'StepNode is not meant to be run directly, it is meant to be used in `BaseNode` subclasses to transitioned to v2-style steps.'
+            '`StepNode` is not meant to be run directly, it is meant to be used in `BaseNode` subclasses to indicate a transition to v2-style steps.'
         )
+
+
+@dataclass
+class NodeStep(Step[StateT, Any, BaseNode[StateT, None, Any] | End[Any]]):
+    """A `Step` that represents a `BaseNode` type."""
+
+    def __init__(
+        self,
+        node_type: type[BaseNode[StateT, None, Any]],
+        *,
+        id: NodeId | None = None,
+        user_label: str | None = None,
+        activity: bool = False,
+    ):
+        async def _call(ctx: StepContext[StateT, Any]) -> BaseNode[StateT, None, Any] | End[Any]:
+            node = ctx.inputs
+            if not isinstance(node, node_type):
+                raise ValueError(f'Node {node} is not of type {node_type}')
+            node = cast(BaseNode[StateT, None, Any], node)
+            return await node.run(GraphRunContext(state=ctx.state, deps=None))
+
+        super().__init__(
+            id=id or NodeId(node_type.get_node_id()),
+            call=_call,
+            user_label=user_label,
+            activity=activity,
+        )
+        self.node_type = node_type
