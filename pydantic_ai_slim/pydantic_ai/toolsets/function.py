@@ -148,8 +148,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
 
         Example:
         ```python
-        from pydantic_ai import Agent, RunContext
-        from pydantic_ai.toolsets.function import FunctionToolset
+        from pydantic_ai import Agent, FunctionToolset, RunContext
 
         toolset = FunctionToolset()
 

@@ -15,9 +15,12 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    ExternalToolset,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    PrefixedToolset,
     RetryPromptPart,
     RunContext,
     TextPart,
@@ -33,9 +36,6 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets.external import ExternalToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsStr

@@ -15,9 +15,11 @@ from pydantic import BaseModel
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    ExternalToolset,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    FunctionToolset,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -38,7 +40,6 @@ from pydantic_ai.models import Model, cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.usage import RequestUsage
 
 try:

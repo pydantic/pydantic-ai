@@ -8,6 +8,7 @@ from dbos import DBOS, DBOSConfiguredInstance
 from typing_extensions import Never
 
 from pydantic_ai import (
+    AbstractToolset,
     _utils,
     messages as _messages,
     models,
@@ -26,7 +27,6 @@ from pydantic_ai.tools import (
     Tool,
     ToolFuncEither,
 )
-from pydantic_ai.toolsets import AbstractToolset
 
 from ._model import DBOSModel
 from ._utils import StepConfig

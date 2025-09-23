@@ -7,9 +7,8 @@ from typing import TYPE_CHECKING, Any
 from dbos import DBOS
 from typing_extensions import Self
 
+from pydantic_ai import AbstractToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
-from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._utils import StepConfig
 

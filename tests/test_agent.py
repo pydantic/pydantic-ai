@@ -16,11 +16,14 @@ from pydantic_core import to_json
 from typing_extensions import Self
 
 from pydantic_ai import (
+    AbstractToolset,
     Agent,
     AgentStreamEvent,
     AudioUrl,
     BinaryContent,
+    CombinedToolset,
     DocumentUrl,
+    FunctionToolset,
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -28,6 +31,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
+    PrefixedToolset,
     RetryPromptPart,
     RunContext,
     SystemPromptPart,
@@ -57,10 +61,6 @@ from pydantic_ai.output import StructuredDict, ToolOutput
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets.abstract import AbstractToolset
-from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv

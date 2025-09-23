@@ -81,6 +81,20 @@ from .messages import (
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .toolsets import (
+    AbstractToolset,
+    ApprovalRequiredToolset,
+    CombinedToolset,
+    ExternalToolset,
+    FilteredToolset,
+    FunctionToolset,
+    PrefixedToolset,
+    PreparedToolset,
+    RenamedToolset,
+    ToolsetFunc,
+    ToolsetTool,
+    WrapperToolset,
+)
 from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
@@ -165,6 +179,19 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    # toolsets
+    'AbstractToolset',
+    'ApprovalRequiredToolset',
+    'CombinedToolset',
+    'ExternalToolset',
+    'FilteredToolset',
+    'FunctionToolset',
+    'PrefixedToolset',
+    'PreparedToolset',
+    'RenamedToolset',
+    'ToolsetFunc',
+    'ToolsetTool',
+    'WrapperToolset',
     # builtin_tools
     'WebSearchTool',
     'WebSearchUserLocation',

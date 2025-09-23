@@ -71,8 +71,8 @@ except ImportError:  # pragma: lax no cover
 
 from inline_snapshot import snapshot
 
+from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 
 pytestmark = [
     pytest.mark.anyio,

@@ -4,8 +4,8 @@ from typing import Any, Protocol
 
 from pydantic.json_schema import JsonSchemaValue
 
+from pydantic_ai import FunctionToolset
 from pydantic_ai.tools import Tool
-from pydantic_ai.toolsets.function import FunctionToolset
 
 
 class LangChainTool(Protocol):

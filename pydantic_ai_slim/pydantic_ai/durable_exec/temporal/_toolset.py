@@ -6,10 +6,8 @@ from typing import Any, Literal
 
 from temporalio.workflow import ActivityConfig
 
+from pydantic_ai import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai.toolsets.abstract import AbstractToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._run_context import TemporalRunContext
 

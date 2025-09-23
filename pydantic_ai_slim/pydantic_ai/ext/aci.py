@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from pydantic_ai import FunctionToolset
 from pydantic_ai.tools import Tool
-from pydantic_ai.toolsets.function import FunctionToolset
 
 try:
     from aci import ACI
