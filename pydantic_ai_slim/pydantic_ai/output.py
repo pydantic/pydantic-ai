@@ -11,7 +11,7 @@ from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils
 from .messages import ToolCallPart
-from .tools import DeferredToolRequests, RunContext, ToolDefinition
+from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
 
 __all__ = (
     # classes
@@ -20,6 +20,7 @@ __all__ = (
     'PromptedOutput',
     'TextOutput',
     'StructuredDict',
+    'OutputObjectDefinition',
     # types
     'OutputDataT',
     'OutputMode',
@@ -240,6 +241,16 @@ class PromptedOutput(Generic[OutputDataT]):
         self.name = name
         self.description = description
         self.template = template
+
+
+@dataclass
+class OutputObjectDefinition:
+    """Definition of an output object used for structured output generation."""
+
+    json_schema: ObjectJsonSchema
+    name: str | None = None
+    description: str | None = None
+    strict: bool | None = None
 
 
 @dataclass
