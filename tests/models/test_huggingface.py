@@ -33,7 +33,6 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
-    UnexpectedModelBehavior,
     UserPromptPart,
     VideoUrl,
 )

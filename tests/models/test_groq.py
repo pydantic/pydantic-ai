@@ -36,7 +36,6 @@ from pydantic_ai import (
     ThinkingPartDelta,
     ToolCallPart,
     ToolReturnPart,
-    UnexpectedModelBehavior,
     UserPromptPart,
 )
 from pydantic_ai.builtin_tools import WebSearchTool
