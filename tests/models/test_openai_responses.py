@@ -78,7 +78,7 @@ async def test_openai_responses_model_simple_response(allow_model_requests: None
     assert result.output == snapshot('The capital of France is Paris.')
 
 
-async def test_openai_responses_image_detail_setting(allow_model_requests: None):
+async def test_openai_responses_image_detail_vendor_metadata(allow_model_requests: None):
     c = response_message(
         [
             ResponseOutputMessage(
@@ -92,10 +92,10 @@ async def test_openai_responses_image_detail_setting(allow_model_requests: None)
     )
     mock_client = MockOpenAIResponses.create_mock(c)
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model, model_settings=OpenAIResponsesModelSettings(openai_image_detail='high'))
+    agent = Agent(model=model)
 
-    image_url = ImageUrl('https://example.com/image.png')
-    binary_image = BinaryContent(b'\x89PNG', media_type='image/png')
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'})
 
     result = await agent.run(['Describe these inputs.', image_url, binary_image])
     assert result.output == 'done'

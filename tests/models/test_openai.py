@@ -172,16 +172,16 @@ async def test_request_simple_usage(allow_model_requests: None):
     )
 
 
-async def test_openai_chat_image_detail_setting(allow_model_requests: None):
+async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='done', role='assistant'),
     )
     mock_client = MockOpenAI.create_mock(c)
     model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model, model_settings=OpenAIChatModelSettings(openai_image_detail='high'))
+    agent = Agent(model)
 
-    image_url = ImageUrl('https://example.com/image.png')
-    binary_image = BinaryContent(b'\x89PNG', media_type='image/png')
+    image_url = ImageUrl('https://example.com/image.png', vendor_metadata={'detail': 'high'})
+    binary_image = BinaryContent(b'\x89PNG', media_type='image/png', vendor_metadata={'detail': 'high'})
 
     await agent.run(['Describe these inputs.', image_url, binary_image])
 

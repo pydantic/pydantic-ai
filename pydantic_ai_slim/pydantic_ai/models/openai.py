@@ -151,13 +151,6 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     See [OpenAI's safety best practices](https://platform.openai.com/docs/guides/safety-best-practices#end-user-ids) for more details.
     """
 
-    openai_image_detail: Literal['auto', 'low', 'high']
-    """Controls how the OpenAI API processes vision inputs.
-
-    The default value is `'auto'`. Set to `'high'` to force the API to use high-detail processing
-    for image inputs if a model or provider requires it.
-    """
-
     openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
     """The service tier to use for the model request.
 
@@ -459,7 +452,7 @@ class OpenAIChatModel(Model):
         else:
             tool_choice = 'auto'
 
-        openai_messages = await self._map_messages(messages, model_settings)
+        openai_messages = await self._map_messages(messages)
 
         response_format: chat.completion_create_params.ResponseFormat | None = None
         if model_request_parameters.output_mode == 'native':
@@ -645,14 +638,12 @@ class OpenAIChatModel(Model):
                     f'`{tool.__class__.__name__}` is not supported by `OpenAIChatModel`. If it should be, please file an issue.'
                 )
 
-    async def _map_messages(
-        self, messages: list[ModelMessage], model_settings: OpenAIChatModelSettings
-    ) -> list[chat.ChatCompletionMessageParam]:
+    async def _map_messages(self, messages: list[ModelMessage]) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
         openai_messages: list[chat.ChatCompletionMessageParam] = []
         for message in messages:
             if isinstance(message, ModelRequest):
-                async for item in self._map_user_message(message, model_settings):
+                async for item in self._map_user_message(message):
                     openai_messages.append(item)
             elif isinstance(message, ModelResponse):
                 texts: list[str] = []
@@ -721,9 +712,7 @@ class OpenAIChatModel(Model):
             tool_param['function']['strict'] = f.strict
         return tool_param
 
-    async def _map_user_message(
-        self, message: ModelRequest, model_settings: OpenAIChatModelSettings
-    ) -> AsyncIterable[chat.ChatCompletionMessageParam]:
+    async def _map_user_message(self, message: ModelRequest) -> AsyncIterable[chat.ChatCompletionMessageParam]:
         for part in message.parts:
             if isinstance(part, SystemPromptPart):
                 system_prompt_role = OpenAIModelProfile.from_profile(self.profile).openai_system_prompt_role
@@ -734,7 +723,7 @@ class OpenAIChatModel(Model):
                 else:
                     yield chat.ChatCompletionSystemMessageParam(role='system', content=part.content)
             elif isinstance(part, UserPromptPart):
-                yield await self._map_user_prompt(part, model_settings)
+                yield await self._map_user_prompt(part)
             elif isinstance(part, ToolReturnPart):
                 yield chat.ChatCompletionToolMessageParam(
                     role='tool',
@@ -754,10 +743,7 @@ class OpenAIChatModel(Model):
                 assert_never(part)
 
     @staticmethod
-    async def _map_user_prompt(
-        part: UserPromptPart, model_settings: OpenAIChatModelSettings
-    ) -> chat.ChatCompletionUserMessageParam:
-        image_detail = model_settings.get('openai_image_detail')
+    async def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -768,16 +754,16 @@ class OpenAIChatModel(Model):
                     content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
                 elif isinstance(item, ImageUrl):
                     image_url_kwargs: dict[str, Any] = {'url': item.url}
-                    if image_detail is not None:
-                        image_url_kwargs['detail'] = image_detail
+                    if item.vendor_metadata:
+                        image_url_kwargs['detail'] = item.vendor_metadata.get('detail', default='auto')
                     image_url = ImageURL(**image_url_kwargs)
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     if item.is_image:
                         image_url_kwargs = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
-                        if image_detail is not None:
-                            image_url_kwargs['detail'] = image_detail
+                        if item.vendor_metadata:
+                            image_url_kwargs['detail'] = item.vendor_metadata.get('detail', default='auto')
                         image_url = ImageURL(**image_url_kwargs)
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
@@ -1218,7 +1204,7 @@ class OpenAIResponsesModel(Model):
                     if isinstance(part, SystemPromptPart):
                         openai_messages.append(responses.EasyInputMessageParam(role='system', content=part.content))
                     elif isinstance(part, UserPromptPart):
-                        openai_messages.append(await self._map_user_prompt(part, model_settings))
+                        openai_messages.append(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
                         call_id = _guard_tool_call_id(t=part)
                         call_id, _ = _split_combined_tool_call_id(call_id)
@@ -1391,10 +1377,7 @@ class OpenAIResponsesModel(Model):
         return response_format_param
 
     @staticmethod
-    async def _map_user_prompt(
-        part: UserPromptPart, model_settings: OpenAIResponsesModelSettings
-    ) -> responses.EasyInputMessageParam:
-        image_detail = model_settings.get('openai_image_detail', 'auto')
+    async def _map_user_prompt(part: UserPromptPart) -> responses.EasyInputMessageParam:
         content: str | list[responses.ResponseInputContentParam]
         if isinstance(part.content, str):
             content = part.content
@@ -1406,11 +1389,17 @@ class OpenAIResponsesModel(Model):
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     if item.is_image:
+                        detail: Literal['auto', 'low', 'high'] = 'auto'
+                        if item.vendor_metadata:
+                            detail = cast(
+                                Literal['auto', 'low', 'high'],
+                                item.vendor_metadata.get('detail', default='auto'),
+                            )
                         content.append(
                             responses.ResponseInputImageParam(
                                 image_url=f'data:{item.media_type};base64,{base64_encoded}',
                                 type='input_image',
-                                detail=image_detail,
+                                detail=detail,
                             )
                         )
                     elif item.is_document:
@@ -1429,8 +1418,17 @@ class OpenAIResponsesModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
+                    detail: Literal['auto', 'low', 'high'] = 'auto'
+                    if item.vendor_metadata:
+                        detail = cast(
+                            Literal['auto', 'low', 'high'], item.vendor_metadata.get('detail', default='auto')
+                        )
                     content.append(
-                        responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail=image_detail)
+                        responses.ResponseInputImageParam(
+                            image_url=item.url,
+                            type='input_image',
+                            detail=detail,
+                        )
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
