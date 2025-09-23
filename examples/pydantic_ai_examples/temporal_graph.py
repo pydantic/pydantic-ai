@@ -216,7 +216,7 @@ g.add(
     g.edge_from(choose_type).to(
         g.decision()
         .branch(g.match(TypeExpression[Literal['int']]).to(handle_int))
-        .branch(g.match(HandleStrNode).to(HandleStrNode))
+        .branch(g.match_node(HandleStrNode))
     ),
     g.edge_from(handle_int).to(handle_int_1, handle_int_2, handle_int_3),
     g.edge_from(handle_str).to(

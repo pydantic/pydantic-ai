@@ -11,7 +11,7 @@ from typing_extensions import Never, TypeAliasType, TypeVar
 
 from pydantic_graph import _utils, exceptions
 from pydantic_graph.nodes import BaseNode, End
-from pydantic_graph.v2.decision import Decision, DecisionBranchBuilder
+from pydantic_graph.v2.decision import Decision, DecisionBranch, DecisionBranchBuilder
 from pydantic_graph.v2.graph import Graph
 from pydantic_graph.v2.id_types import ForkId, JoinId, NodeId
 from pydantic_graph.v2.join import Join, Reducer
@@ -43,6 +43,7 @@ StateT = TypeVar('StateT', infer_variance=True)
 InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 SourceT = TypeVar('SourceT', infer_variance=True)
+SourceNodeT = TypeVar('SourceNodeT', bound=BaseNode[Any, Any, Any], infer_variance=True)
 SourceOutputT = TypeVar('SourceOutputT', infer_variance=True)
 GraphInputT = TypeVar('GraphInputT', infer_variance=True)
 GraphOutputT = TypeVar('GraphOutputT', infer_variance=True)
@@ -289,6 +290,15 @@ class GraphBuilder(Generic[StateT, GraphInputT, GraphOutputT]):
         decision = Decision[StateT, Never](node_id, branches=[], note=None)
         new_path_builder = PathBuilder[StateT, SourceT](working_items=[])
         return DecisionBranchBuilder(decision=decision, source=source, matches=matches, path_builder=new_path_builder)
+
+    def match_node(
+        self,
+        source: TypeOrTypeExpression[SourceNodeT],
+        *,
+        matches: Callable[[Any], bool] | None = None,
+    ) -> DecisionBranch[SourceNodeT]:
+        """Like match, but for BaseNode subclasses."""
+        return None  # TODO: Need to implement this
 
     def node(
         self,
