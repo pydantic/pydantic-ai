@@ -20,6 +20,7 @@ from pydantic_ai import (
     DocumentUrl,
     ImageUrl,
     ModelHTTPError,
+    ModelProfile,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -36,7 +37,6 @@ from pydantic_ai import (
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles._json_schema import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage

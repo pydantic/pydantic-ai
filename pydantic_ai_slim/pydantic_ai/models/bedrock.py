@@ -22,6 +22,7 @@ from pydantic_ai import (
     FinishReason,
     ImageUrl,
     ModelMessage,
+    ModelProfileSpec,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -40,7 +41,6 @@ from pydantic_ai import (
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse, download_item
-from pydantic_ai.profiles import ModelProfileSpec
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile
 from pydantic_ai.settings import ModelSettings

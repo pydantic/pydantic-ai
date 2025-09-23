@@ -5,9 +5,9 @@ from typing import Literal, overload
 
 import httpx
 
+from pydantic_ai import ModelProfile
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import get_user_agent
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.profiles.google import google_model_profile
 from pydantic_ai.providers import Provider
 

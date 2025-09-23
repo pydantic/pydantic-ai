@@ -79,6 +79,13 @@ from .messages import (
     VideoUrl,
 )
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
+from .profiles import (
+    DEFAULT_PROFILE,
+    InlineDefsJsonSchemaTransformer,
+    JsonSchemaTransformer,
+    ModelProfile,
+    ModelProfileSpec,
+)
 from .settings import ModelSettings
 from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
 from .toolsets import (
@@ -171,6 +178,12 @@ __all__ = (
     'VideoFormat',
     'VideoMediaType',
     'VideoUrl',
+    # profiles
+    'ModelProfile',
+    'ModelProfileSpec',
+    'DEFAULT_PROFILE',
+    'InlineDefsJsonSchemaTransformer',
+    'JsonSchemaTransformer',
     # tools
     'Tool',
     'ToolDefinition',

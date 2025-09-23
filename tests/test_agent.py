@@ -27,6 +27,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelMessage,
     ModelMessagesTypeAdapter,
+    ModelProfile,
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
@@ -58,7 +59,6 @@ from pydantic_ai.agent import AgentRunResult, WrapperAgent
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
 from pydantic_ai.usage import RequestUsage
