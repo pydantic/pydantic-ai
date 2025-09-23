@@ -110,9 +110,9 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
 DBOS_SQLITE_FILE = 'dbostest.sqlite'
 DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
-    'database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'run_admin_server': False,
+    'enable_otlp': True,
 }
 
 
@@ -1042,7 +1042,10 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     ):
         pass
 
-    with workflow_raises(TypeError, snapshot('Serialized function should be defined at the top level of a module')):
+    with pytest.raises(
+        AttributeError,
+        match="Can't get local object",
+    ):
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
 
 
@@ -1144,7 +1147,7 @@ async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: No
     # Test this raises a serialization error because httpx.AsyncClient is not serializable.
     with pytest.raises(
         Exception,
-        match='object proxy must define __reduce_ex__()',
+        match='cannot pickle',
     ):
         async with AsyncClient() as client:
             # This will trigger the client to be unserializable
