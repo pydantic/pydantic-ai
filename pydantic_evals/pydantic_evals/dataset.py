@@ -887,10 +887,10 @@ async def _run_task(
         #   allow `None` to disable it entirely.
         for node in span_tree:
             for k, v in node.attributes.items():
-                if not isinstance(v, int | float):
-                    continue
                 if k == 'gen_ai.operation.name' and v == 'chat':
                     task_run.increment_metric('requests', 1)
+                elif not isinstance(v, int | float):
+                    continue
                 elif k == 'operation.cost':
                     task_run.increment_metric('cost', v)
                 elif k.startswith('gen_ai.usage.details.'):
