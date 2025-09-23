@@ -10,25 +10,29 @@ from pydantic_graph.v2.node import EndNode, Fork, StartNode
 from pydantic_graph.v2.step import NodeStep, Step
 
 StateT = TypeVar('StateT', infer_variance=True)
+DepsT = TypeVar('DepsT', infer_variance=True)
 InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
 MiddleNode = TypeAliasType(
     'MiddleNode',
-    Step[StateT, InputT, OutputT] | Join[StateT, InputT, OutputT] | Fork[InputT, OutputT] | NodeStep[StateT],
-    type_params=(StateT, InputT, OutputT),
+    Step[StateT, DepsT, InputT, OutputT]
+    | Join[StateT, DepsT, InputT, OutputT]
+    | Fork[InputT, OutputT]
+    | NodeStep[StateT, DepsT],
+    type_params=(StateT, DepsT, InputT, OutputT),
 )
 SourceNode = TypeAliasType(
-    'SourceNode', MiddleNode[StateT, Any, OutputT] | StartNode[OutputT], type_params=(StateT, OutputT)
+    'SourceNode', MiddleNode[StateT, DepsT, Any, OutputT] | StartNode[OutputT], type_params=(StateT, DepsT, OutputT)
 )
 DestinationNode = TypeAliasType(
     'DestinationNode',
-    MiddleNode[StateT, InputT, Any] | Decision[StateT, InputT] | EndNode[InputT],
-    type_params=(StateT, InputT),
+    MiddleNode[StateT, DepsT, InputT, Any] | Decision[StateT, DepsT, InputT] | EndNode[InputT],
+    type_params=(StateT, DepsT, InputT),
 )
 
-AnySourceNode = TypeAliasType('AnySourceNode', SourceNode[Any, Any])
-AnyDestinationNode = TypeAliasType('AnyDestinationNode', DestinationNode[Any, Any])
+AnySourceNode = TypeAliasType('AnySourceNode', SourceNode[Any, Any, Any])
+AnyDestinationNode = TypeAliasType('AnyDestinationNode', DestinationNode[Any, Any, Any])
 AnyNode = TypeAliasType('AnyNode', AnySourceNode | AnyDestinationNode)
 
 

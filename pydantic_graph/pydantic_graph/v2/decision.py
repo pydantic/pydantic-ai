@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from pydantic_graph.v2.node_types import DestinationNode
 
 StateT = TypeVar('StateT', infer_variance=True)
+DepsT = TypeVar('DepsT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 BranchSourceT = TypeVar('BranchSourceT', infer_variance=True)
 DecisionHandledT = TypeVar('DecisionHandledT', infer_variance=True)
@@ -27,14 +28,14 @@ SourceT = TypeVar('SourceT', infer_variance=True)
 
 
 @dataclass
-class Decision(Generic[StateT, HandledT]):
+class Decision(Generic[StateT, DepsT, HandledT]):
     """A decision."""
 
     id: NodeId
     branches: list[DecisionBranch[Any]]
     note: str | None
 
-    def branch(self, branch: DecisionBranch[S]) -> Decision[StateT, HandledT | S]:
+    def branch(self, branch: DecisionBranch[S]) -> Decision[StateT, DepsT, HandledT | S]:
         # TODO(P3): Add an overload that skips the need for `match`, and is just less flexible about the building.
         #   I discussed this with Douwe but don't fully remember the details...
         return Decision(id=self.id, branches=self.branches + [branch], note=self.note)
@@ -53,13 +54,13 @@ class DecisionBranch(Generic[SourceT]):
 
 
 @dataclass
-class DecisionBranchBuilder(Generic[StateT, OutputT, BranchSourceT, DecisionHandledT]):
+class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, BranchSourceT, DecisionHandledT]):
     """A builder for a decision branch."""
 
-    decision: Decision[StateT, DecisionHandledT]
+    decision: Decision[StateT, DepsT, DecisionHandledT]
     source: TypeOrTypeExpression[BranchSourceT]
     matches: Callable[[Any], bool] | None
-    path_builder: PathBuilder[StateT, OutputT]
+    path_builder: PathBuilder[StateT, DepsT, OutputT]
 
     @property
     def last_fork_id(self) -> ForkId | None:
@@ -70,9 +71,9 @@ class DecisionBranchBuilder(Generic[StateT, OutputT, BranchSourceT, DecisionHand
 
     def to(
         self,
-        destination: DestinationNode[StateT, OutputT],
+        destination: DestinationNode[StateT, DepsT, OutputT],
         /,
-        *extra_destinations: DestinationNode[StateT, OutputT],
+        *extra_destinations: DestinationNode[StateT, DepsT, OutputT],
     ) -> DecisionBranch[BranchSourceT]:
         return DecisionBranch(
             source=self.source, matches=self.matches, path=self.path_builder.to(destination, *extra_destinations)
@@ -80,7 +81,7 @@ class DecisionBranchBuilder(Generic[StateT, OutputT, BranchSourceT, DecisionHand
 
     def fork(
         self,
-        get_forks: Callable[[Self], Sequence[Decision[StateT, DecisionHandledT | BranchSourceT]]],
+        get_forks: Callable[[Self], Sequence[Decision[StateT, DepsT, DecisionHandledT | BranchSourceT]]],
         /,
     ) -> DecisionBranch[BranchSourceT]:
         n_initial_branches = len(self.decision.branches)
@@ -89,8 +90,8 @@ class DecisionBranchBuilder(Generic[StateT, OutputT, BranchSourceT, DecisionHand
         return DecisionBranch(source=self.source, matches=self.matches, path=self.path_builder.fork(new_paths))
 
     def transform(
-        self, func: StepFunction[StateT, OutputT, NewOutputT], /
-    ) -> DecisionBranchBuilder[StateT, NewOutputT, BranchSourceT, DecisionHandledT]:
+        self, func: StepFunction[StateT, DepsT, OutputT, NewOutputT], /
+    ) -> DecisionBranchBuilder[StateT, DepsT, NewOutputT, BranchSourceT, DecisionHandledT]:
         return DecisionBranchBuilder(
             decision=self.decision,
             source=self.source,
@@ -99,13 +100,13 @@ class DecisionBranchBuilder(Generic[StateT, OutputT, BranchSourceT, DecisionHand
         )
 
     def spread(
-        self: DecisionBranchBuilder[StateT, Iterable[T], BranchSourceT, DecisionHandledT],
-    ) -> DecisionBranchBuilder[StateT, T, BranchSourceT, DecisionHandledT]:
+        self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], BranchSourceT, DecisionHandledT],
+    ) -> DecisionBranchBuilder[StateT, DepsT, T, BranchSourceT, DecisionHandledT]:
         return DecisionBranchBuilder(
             decision=self.decision, source=self.source, matches=self.matches, path_builder=self.path_builder.spread()
         )
 
-    def label(self, label: str) -> DecisionBranchBuilder[StateT, OutputT, BranchSourceT, DecisionHandledT]:
+    def label(self, label: str) -> DecisionBranchBuilder[StateT, DepsT, OutputT, BranchSourceT, DecisionHandledT]:
         return DecisionBranchBuilder(
             decision=self.decision,
             source=self.source,

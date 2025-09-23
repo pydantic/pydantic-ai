@@ -49,7 +49,7 @@ class MermaidEdge:
     label: str | None
 
 
-def build_mermaid_graph(graph: Graph[Any, Any, Any]) -> MermaidGraph:  # noqa C901
+def build_mermaid_graph(graph: Graph[Any, Any, Any, Any]) -> MermaidGraph:  # noqa C901
     """Build a mermaid graph."""
     nodes: list[MermaidNode] = []
     edges_by_source: dict[str, list[MermaidEdge]] = defaultdict(list)

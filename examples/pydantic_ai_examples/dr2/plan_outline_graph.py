@@ -20,6 +20,7 @@ state PlanOutline {
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import NoneType
 from typing import Literal
 
 from pydantic import BaseModel
@@ -121,24 +122,28 @@ class YieldToHuman:
 
 
 # Transforms
-async def transform_proceed(ctx: StepContext[State, object]) -> GenerateOutlineInputs:
+async def transform_proceed(
+    ctx: StepContext[State, None, object],
+) -> GenerateOutlineInputs:
     return GenerateOutlineInputs(chat=ctx.state.chat, feedback=None)
 
 
 async def transform_clarify(
-    ctx: StepContext[State, Clarify],
+    ctx: StepContext[State, None, Clarify],
 ) -> Interruption[YieldToHuman, MessageHistory]:
     return Interruption[YieldToHuman, MessageHistory](
         YieldToHuman(ctx.inputs.message), handle_user_message.id
     )
 
 
-async def transform_outline(ctx: StepContext[State, Outline]) -> ReviewOutlineInputs:
+async def transform_outline(
+    ctx: StepContext[State, None, Outline],
+) -> ReviewOutlineInputs:
     return ReviewOutlineInputs(chat=ctx.state.chat, outline=ctx.inputs)
 
 
 async def transform_revise_outline(
-    ctx: StepContext[State, ReviseOutline],
+    ctx: StepContext[State, None, ReviseOutline],
 ) -> GenerateOutlineInputs:
     return GenerateOutlineInputs(
         chat=ctx.state.chat,
@@ -149,7 +154,7 @@ async def transform_revise_outline(
 
 
 async def transform_approve_outline(
-    ctx: StepContext[State, ApproveOutline],
+    ctx: StepContext[State, None, ApproveOutline],
 ) -> OutlineStageOutput:
     return OutlineStageOutput(outline=ctx.inputs.outline, message=ctx.inputs.message)
 
@@ -157,6 +162,7 @@ async def transform_approve_outline(
 # Graph builder
 g = GraphBuilder(
     state_type=State,
+    deps_type=NoneType,
     input_type=MessageHistory,
     output_type=TypeExpression[
         Refuse | OutlineStageOutput | Interruption[YieldToHuman, MessageHistory]

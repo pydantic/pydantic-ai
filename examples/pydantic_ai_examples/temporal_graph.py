@@ -46,7 +46,10 @@ class WorkflowResult:
 
 
 g = GraphBuilder(
-    state_type=GraphState, input_type=NoneType, output_type=MyContainer[Any]
+    state_type=GraphState,
+    deps_type=NoneType,
+    input_type=NoneType,
+    output_type=MyContainer[Any],
 )
 
 
@@ -56,12 +59,12 @@ async def get_random_number() -> float:
 
 
 @g.step
-async def handle_int(ctx: StepContext[object, object]) -> None:
+async def handle_int(ctx: StepContext[GraphState, None, object]) -> None:
     pass
 
 
 @g.step
-async def handle_str(ctx: StepContext[object, str]) -> None:
+async def handle_str(ctx: StepContext[GraphState, None, str]) -> None:
     print(f'handle_str {ctx.inputs}')
     pass
 
@@ -72,14 +75,14 @@ class HandleStrNode(BaseNode[GraphState, None, Any]):
 
     async def run(
         self, ctx: GraphRunContext[GraphState, None]
-    ) -> Annotated[StepNode[GraphState], handle_str]:
+    ) -> Annotated[StepNode[GraphState, None], handle_str]:
         # Node to Step with input
         return handle_str.as_node(self.inputs)
 
 
 @g.step
 async def choose_type(
-    ctx: StepContext[GraphState, object],
+    ctx: StepContext[GraphState, None, None],
 ) -> Literal['int'] | HandleStrNode:
     if workflow.in_workflow():
         random_number = await workflow.execute_activity(  # pyright: ignore[reportUnknownMemberType]
@@ -96,19 +99,19 @@ async def choose_type(
 class ChooseTypeNode(BaseNode[GraphState, None, MyContainer[Any]]):
     async def run(
         self, ctx: GraphRunContext[GraphState, None]
-    ) -> Annotated[StepNode[GraphState], choose_type]:
+    ) -> Annotated[StepNode[GraphState, None], choose_type]:
         # Node to Step
         return choose_type.as_node()
 
 
 @g.step
-async def begin(ctx: StepContext[GraphState, None]) -> ChooseTypeNode:
+async def begin(ctx: StepContext[GraphState, None, None]) -> ChooseTypeNode:
     # Step to Node
     return ChooseTypeNode()
 
 
 @g.step
-async def handle_int_1(ctx: StepContext[GraphState, object]) -> None:
+async def handle_int_1(ctx: StepContext[GraphState, None, None]) -> None:
     print('start int 1')
     await asyncio.sleep(1)
     assert ctx.state.container is not None
@@ -117,7 +120,7 @@ async def handle_int_1(ctx: StepContext[GraphState, object]) -> None:
 
 
 @g.step
-async def handle_int_2(ctx: StepContext[GraphState, object]) -> None:
+async def handle_int_2(ctx: StepContext[GraphState, None, None]) -> None:
     print('start int 2')
     await asyncio.sleep(1)
     assert ctx.state.container is not None
@@ -127,7 +130,7 @@ async def handle_int_2(ctx: StepContext[GraphState, object]) -> None:
 
 @g.step
 async def handle_int_3(
-    ctx: StepContext[GraphState, object],
+    ctx: StepContext[GraphState, None, None],
 ) -> list[int]:
     print('start int 3')
     await asyncio.sleep(1)
@@ -138,7 +141,7 @@ async def handle_int_3(
 
 
 @g.step
-async def handle_str_1(ctx: StepContext[GraphState, object]) -> None:
+async def handle_str_1(ctx: StepContext[GraphState, None, None]) -> None:
     print('start str 1')
     await asyncio.sleep(1)
     assert ctx.state.container is not None
@@ -147,7 +150,7 @@ async def handle_str_1(ctx: StepContext[GraphState, object]) -> None:
 
 
 @g.step
-async def handle_str_2(ctx: StepContext[GraphState, object]) -> None:
+async def handle_str_2(ctx: StepContext[GraphState, None, None]) -> None:
     print('start str 2')
     await asyncio.sleep(1)
     assert ctx.state.container is not None
@@ -157,7 +160,7 @@ async def handle_str_2(ctx: StepContext[GraphState, object]) -> None:
 
 @g.step
 async def handle_str_3(
-    ctx: StepContext[GraphState, object],
+    ctx: StepContext[GraphState, None, None],
 ) -> Iterable[str]:
     print('start str 3')
     await asyncio.sleep(1)
@@ -168,7 +171,7 @@ async def handle_str_3(
 
 
 @g.step(node_id='handle_field_3_item')
-async def handle_field_3_item(ctx: StepContext[GraphState, int | str]) -> None:
+async def handle_field_3_item(ctx: StepContext[GraphState, object, int | str]) -> None:
     inputs = ctx.inputs
     print(f'handle_field_3_item: {inputs}')
     await asyncio.sleep(0.25)
@@ -199,7 +202,9 @@ class ForwardContainerNode(BaseNode[GraphState, None, MyContainer[Any]]):
 
 
 @g.step
-async def return_container(ctx: StepContext[GraphState, None]) -> ForwardContainerNode:
+async def return_container(
+    ctx: StepContext[GraphState, None, None],
+) -> ForwardContainerNode:
     assert ctx.state.container is not None
     # Step to Node
     return ForwardContainerNode(ctx.state.container)
@@ -244,6 +249,7 @@ class MyWorkflow:
         state = GraphState(workflow=self)
         _ = await graph.run(
             state=state,
+            deps=None,
             inputs=None,
         )
         assert state.type_name is not None, 'graph run did not produce a type name'
@@ -257,6 +263,7 @@ async def main():
     state = GraphState()
     _ = await graph.run(
         state=state,
+        deps=None,
         inputs=None,
     )
     print(state)

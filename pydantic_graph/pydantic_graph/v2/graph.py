@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 
 StateT = TypeVar('StateT', infer_variance=True)
+DepsT = TypeVar('DepsT', infer_variance=True)
 InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
@@ -50,10 +51,11 @@ class JoinItem:
 
 
 @dataclass(repr=False)
-class Graph(Generic[StateT, InputT, OutputT]):
+class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     """A graph."""
 
     state_type: type[StateT]
+    deps_type: type[DepsT]
     input_type: type[InputT]
     output_type: type[OutputT]
 
@@ -67,8 +69,8 @@ class Graph(Generic[StateT, InputT, OutputT]):
             raise RuntimeError(f'Node {join_id} is not a join node or did not have a dominating fork (this is a bug)')
         return result
 
-    async def run(self, state: StateT, inputs: InputT) -> OutputT:
-        async with self.iter(state, inputs) as graph_run:
+    async def run(self, *, state: StateT, deps: DepsT, inputs: InputT) -> OutputT:
+        async with self.iter(state=state, deps=deps, inputs=inputs) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
             # which I'm less confident will be implemented correctly if not used on the critical path. We can change it
             # once we have tests, etc.
@@ -81,10 +83,13 @@ class Graph(Generic[StateT, InputT, OutputT]):
                     return cast(EndMarker[OutputT], event).value
 
     @asynccontextmanager
-    async def iter(self, state: StateT, inputs: InputT) -> AsyncIterator[GraphRun[StateT, OutputT]]:
-        yield GraphRun[StateT, OutputT](
+    async def iter(
+        self, *, state: StateT, deps: DepsT, inputs: InputT
+    ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
+        yield GraphRun[StateT, DepsT, OutputT](
             graph=self,
             state=state,
+            deps=deps,
             inputs=inputs,
         )
 
@@ -112,18 +117,21 @@ class GraphTask:
     task_id: TaskId = field(default_factory=lambda: TaskId(str(uuid.uuid4())))
 
 
-class GraphRun(Generic[StateT, OutputT]):
+class GraphRun(Generic[StateT, DepsT, OutputT]):
     """A graph run."""
 
     def __init__(
         self,
-        graph: Graph[StateT, InputT, OutputT],
+        graph: Graph[StateT, DepsT, InputT, OutputT],
+        *,
         state: StateT,
+        deps: DepsT,
         inputs: InputT,
     ):
         self._graph = graph
         self._state = state
-        self._active_reducers: dict[tuple[JoinId, NodeRunId], Reducer[Any, Any, Any]] = {}
+        self._deps = deps
+        self._active_reducers: dict[tuple[JoinId, NodeRunId], Reducer[Any, Any, Any, Any]] = {}
 
         self._next: EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None = None
 
@@ -178,10 +186,10 @@ class GraphRun(Generic[StateT, OutputT]):
                 if reducer is None:
                     join_node = self._graph.nodes[result.join_id]
                     assert isinstance(join_node, Join)
-                    reducer = join_node.create_reducer(StepContext(None, result.inputs))
+                    reducer = join_node.create_reducer(StepContext(None, None, result.inputs))
                     self._active_reducers[(result.join_id, fork_run_id)] = reducer
                 else:
-                    reducer.reduce(StepContext(None, result.inputs))
+                    reducer.reduce(StepContext(None, None, result.inputs))
             else:
                 for new_task in result:
                     _start_task(new_task)
@@ -201,7 +209,7 @@ class GraphRun(Generic[StateT, OutputT]):
                 ):
                     reducer = self._active_reducers.pop((join_id, fork_run_id))
 
-                    output = reducer.finalize(StepContext(None, None))
+                    output = reducer.finalize(StepContext(None, None, None))
                     join_node = self._graph.nodes[join_id]
                     assert isinstance(join_node, Join)  # We could drop this but if it fails it means there is a bug.
                     new_tasks = self._handle_edges(join_node, output, fork_stack)
@@ -218,6 +226,8 @@ class GraphRun(Generic[StateT, OutputT]):
         task: GraphTask,
     ) -> Sequence[GraphTask] | JoinItem | EndMarker[OutputT]:
         state = self._state
+        deps = self._deps
+
         node_id = task.node_id
         inputs = task.inputs
         fork_stack = task.fork_stack
@@ -226,7 +236,7 @@ class GraphRun(Generic[StateT, OutputT]):
         if isinstance(node, StartNode | Fork):
             return self._handle_edges(node, inputs, fork_stack)
         elif isinstance(node, Step):
-            step_context = StepContext[StateT, Any](state, inputs)
+            step_context = StepContext[StateT, DepsT, Any](state, deps, inputs)
             output = await node.call(step_context)
             if isinstance(node, NodeStep):
                 return self._handle_node(node, output, fork_stack)
@@ -242,7 +252,7 @@ class GraphRun(Generic[StateT, OutputT]):
             assert_never(node)
 
     def _handle_decision(
-        self, decision: Decision[StateT, Any], inputs: Any, fork_stack: ForkStack
+        self, decision: Decision[StateT, DepsT, Any], inputs: Any, fork_stack: ForkStack
     ) -> Sequence[GraphTask]:
         for branch in decision.branches:
             match_tester = branch.matches
@@ -267,7 +277,10 @@ class GraphRun(Generic[StateT, OutputT]):
         raise RuntimeError(f'No branch matched inputs {inputs} for decision node {decision}.')
 
     def _handle_node(
-        self, node_step: NodeStep[StateT], next_node: BaseNode[StateT, None, Any] | End[Any], fork_stack: ForkStack
+        self,
+        node_step: NodeStep[StateT, DepsT],
+        next_node: BaseNode[StateT, DepsT, Any] | End[Any],
+        fork_stack: ForkStack,
     ) -> Sequence[GraphTask] | EndMarker[OutputT]:
         if isinstance(next_node, StepNode):
             return [GraphTask(next_node.step.id, next_node.inputs, fork_stack)]
@@ -317,7 +330,7 @@ class GraphRun(Generic[StateT, OutputT]):
         elif isinstance(item, BroadcastMarker):
             return [GraphTask(item.fork_id, inputs, fork_stack)]
         elif isinstance(item, TransformMarker):
-            inputs = item.transform(StepContext(self._state, inputs))
+            inputs = item.transform(StepContext(self._state, self._deps, inputs))
             return self._handle_path(path.next_path, inputs, fork_stack)
         elif isinstance(item, LabelMarker):
             return self._handle_path(path.next_path, inputs, fork_stack)
