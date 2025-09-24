@@ -217,7 +217,9 @@ g.add(
     g.node(HandleStrNode),
     g.node(ReturnContainerNode),
     g.node(ForwardContainerNode),
-    g.edge_from(g.start_node).label('begin').to(begin),
+    g.edge_from(g.start_node)
+    .label('begin')
+    .to(begin),  # This also adds begin -> ChooseTypeNode
     g.edge_from(choose_type).to(
         g.decision()
         .branch(g.match(TypeExpression[Literal['int']]).to(handle_int))
@@ -236,7 +238,9 @@ g.add(
     g.edge_from(
         handle_int_1, handle_int_2, handle_str_1, handle_str_2, handle_field_3_item
     ).to(handle_join),
-    g.edge_from(handle_join).to(return_container),
+    g.edge_from(handle_join).to(
+        return_container
+    ),  # This also adds return_container -> ForwardContainerNode
 )
 
 graph = g.build()

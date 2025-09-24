@@ -272,17 +272,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
         step = Step[StateT, DepsT, InputT, OutputT](id=NodeId(node_id), call=call, user_label=label)
 
-        parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
-        type_hints = get_type_hints(call, localns=parent_namespace, include_extras=True)
-        try:
-            return_hint = type_hints['return']
-        except KeyError:
-            pass
-        else:
-            edge = self._edge_from_return_hint(step, return_hint)
-            if edge is not None:
-                self.add(edge)
-
         return step
 
     @overload
@@ -413,14 +402,31 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                 elif isinstance(item, DestinationMarker):
                     pass
 
+        destinations: list[AnyDestinationNode] = []
         for edge in edges:
             for source_node in edge.sources:
                 self._insert_node(source_node)
                 self._edges_by_source[source_node.id].append(edge.path)
             for destination_node in edge.destinations:
+                destinations.append(destination_node)
                 self._insert_node(destination_node)
 
             _handle_path(edge.path)
+
+        # Automatically create edges from step function return hints including `BaseNode`s
+        for destination in destinations:
+            if not isinstance(destination, Step) or isinstance(destination, NodeStep):
+                continue
+            parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
+            type_hints = get_type_hints(destination.call, localns=parent_namespace, include_extras=True)
+            try:
+                return_hint = type_hints['return']
+            except KeyError:
+                pass
+            else:
+                edge = self._edge_from_return_hint(destination, return_hint)
+                if edge is not None:
+                    self.add(edge)
 
     def add_edge(self, source: Source[T], destination: Destination[T], *, label: str | None = None) -> None:
         """Add a simple edge between two nodes.
