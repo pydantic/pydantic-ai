@@ -1,6 +1,6 @@
-"""Core graph execution engine for v2 graph system.
+"""Core graph execution engine for the next version of the pydantic-graph library.
 
-This module provides the main Graph class and GraphRun execution engine that
+This module provides the main `Graph` class and `GraphRun` execution engine that
 handles the orchestration of nodes, edges, and parallel execution paths in
 the graph-based workflow system.
 """
@@ -38,9 +38,16 @@ if TYPE_CHECKING:
 
 
 StateT = TypeVar('StateT', infer_variance=True)
+"""Type variable for graph state."""
+
 DepsT = TypeVar('DepsT', infer_variance=True)
+"""Type variable for graph dependencies."""
+
 InputT = TypeVar('InputT', infer_variance=True)
+"""Type variable for graph inputs."""
+
 OutputT = TypeVar('OutputT', infer_variance=True)
+"""Type variable for graph outputs."""
 
 
 @dataclass
@@ -63,7 +70,7 @@ class JoinItem:
     """An item representing data flowing into a join operation.
 
     JoinItem carries input data from a parallel execution path to a join
-    node, along with metadata about which fork it originated from.
+    node, along with metadata about which execution 'fork' it originated from.
     """
 
     join_id: JoinId
@@ -73,7 +80,7 @@ class JoinItem:
     """The input data for the join operation."""
 
     fork_stack: ForkStack
-    """The stack of forks that led to this join item."""
+    """The stack of ForkStackItems that led to producing this join item."""
 
 
 @dataclass(repr=False)
@@ -93,7 +100,11 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
     Example:
         ```python
         # Create a simple graph
-        graph = GraphBuilder[MyState, MyDeps, str, int]().build()
+        g = GraphBuilder[MyState, MyDeps, str, int]()
+
+        ...  # Build the graph here
+
+        graph = g.build()
 
         # Run the graph
         result = await graph.run(

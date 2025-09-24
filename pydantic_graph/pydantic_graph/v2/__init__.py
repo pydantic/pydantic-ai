@@ -1,10 +1,10 @@
-"""Version 2 of the pydantic-graph framework with enhanced graph execution capabilities.
+"""The next version of the pydantic-graph framework with enhanced graph execution capabilities.
 
-This module provides an advanced graph execution framework with support for:
-- Decision nodes for conditional branching
-- Join nodes for parallel execution coordination
-- Step nodes for sequential task execution
-- Comprehensive path tracking and visualization
+This module provides a parallel control flow graph execution framework with support for:
+- 'Step' nodes for task execution
+- 'Decision' nodes for conditional branching
+- 'Fork' nodes for parallel execution coordination
+- 'Join' nodes and 'Reducer's for re-joining parallel executions
 - Mermaid diagram generation for graph visualization
 """
 

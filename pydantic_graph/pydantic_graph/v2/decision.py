@@ -95,7 +95,7 @@ class DecisionBranch(Generic[SourceT]):
     source: TypeOrTypeExpression[SourceT]
     """The expected type of data for this branch.
 
-    This is necessary for exhaustiveness-checking when handling inputs to a decision node."""
+    This is necessary for exhaustiveness-checking when handling the inputs to a decision node."""
 
     matches: Callable[[Any], bool] | None
     """An optional predicate function used to determine whether input data matches this branch.
