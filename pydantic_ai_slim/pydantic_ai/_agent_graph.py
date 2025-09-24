@@ -1044,6 +1044,7 @@ def build_agent_graph(
 ]:
     """Build the execution [Graph][pydantic_graph.Graph] for a given agent."""
     g = GraphBuilder(
+        name=name or 'Agent',
         state_type=GraphAgentState,
         deps_type=GraphAgentDeps[DepsT, OutputT],
         input_type=UserPromptNode[DepsT, OutputT],

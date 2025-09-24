@@ -143,6 +143,9 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         ```
     """
 
+    name: str | None
+    """Optional name for the graph, if not provided the name will be inferred from the calling frame on the first call to a graph method."""
+
     state_type: TypeOrTypeExpression[StateT]
     """The type of the graph state."""
 
@@ -173,6 +176,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     def __init__(
         self,
         *,
+        name: str | None = None,
         state_type: TypeOrTypeExpression[StateT] = NoneType,
         deps_type: TypeOrTypeExpression[DepsT] = NoneType,
         input_type: TypeOrTypeExpression[GraphInputT] = NoneType,
@@ -182,12 +186,15 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         """Initialize a graph builder.
 
         Args:
+            name: Optional name for the graph, if not provided the name will be inferred from the calling frame on the first call to a graph method.
             state_type: The type of the graph state
             deps_type: The type of the dependencies
             input_type: The type of the graph input data
             output_type: The type of the graph output data
             auto_instrument: Whether to automatically create instrumentation spans
         """
+        self.name = name
+
         self.state_type = state_type
         self.deps_type = deps_type
         self.input_type = input_type
@@ -726,6 +733,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         parent_forks = _collect_dominating_forks(nodes, edges_by_source)
 
         return Graph[StateT, DepsT, GraphInputT, GraphOutputT](
+            name=self.name,
             state_type=unpack_type_expression(self.state_type),
             deps_type=unpack_type_expression(self.deps_type),
             input_type=unpack_type_expression(self.input_type),

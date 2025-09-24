@@ -1,6 +1,8 @@
 import os
 
 os.environ['PYDANTIC_DISABLE_PLUGINS'] = 'true'
+
+
 import asyncio
 import random
 from collections.abc import Iterable
@@ -8,6 +10,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Annotated, Any, Generic, Literal
 
+import logfire
 from temporalio import activity, workflow
 from temporalio.client import Client
 from temporalio.contrib.pydantic import pydantic_data_converter
@@ -23,6 +26,8 @@ with workflow.unsafe.imports_passed_through():
         StepNode,
         TypeExpression,
     )
+
+logfire.configure()
 
 T = TypeVar('T', infer_variance=True)
 

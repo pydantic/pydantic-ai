@@ -8,6 +8,8 @@ the graph-based workflow system.
 from __future__ import annotations as _annotations
 
 import asyncio
+import inspect
+import types
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable, Sequence
 from contextlib import AbstractContextManager, ExitStack, asynccontextmanager
@@ -115,6 +117,9 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         ```
     """
 
+    name: str | None
+    """Optional name for the graph, if not provided the name will be inferred from the calling frame on the first call to a graph method."""
+
     state_type: type[StateT]
     """The type of the graph state."""
 
@@ -163,6 +168,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         deps: DepsT = None,
         inputs: InputT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
+        infer_name: bool = True,
     ) -> OutputT:
         """Execute the graph and return the final output.
 
@@ -174,11 +180,15 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             deps: The dependencies instance
             inputs: The input data for the graph
             span: Optional span for tracing/instrumentation
+            infer_name: Whether to infer the graph name from the calling frame.
 
         Returns:
             The final output from the graph execution
         """
-        async with self.iter(state=state, deps=deps, inputs=inputs, span=span) as graph_run:
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        async with self.iter(state=state, deps=deps, inputs=inputs, span=span, infer_name=False) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
             # which I'm less confident will be implemented correctly if not used on the critical path. We can change it
             # once we have tests, etc.
@@ -198,6 +208,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         deps: DepsT = None,
         inputs: InputT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
+        infer_name: bool = True,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
         """Create an iterator for step-by-step graph execution.
 
@@ -209,10 +220,16 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             deps: The dependencies instance
             inputs: The input data for the graph
             span: Optional span for tracing/instrumentation
+            infer_name: Whether to infer the graph name from the calling frame.
 
         Yields:
             A GraphRun instance that can be iterated for step-by-step execution
         """
+        if infer_name and self.name is None:
+            # f_back because `asynccontextmanager` adds one frame
+            if frame := inspect.currentframe():  # pragma: no branch
+                self._infer_name(frame.f_back)
+
         with ExitStack() as stack:
             entered_span: AbstractSpan | None = None
             if span is None:
@@ -250,6 +267,26 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             A string containing the Mermaid diagram of the graph
         """
         return self.render()
+
+    def _infer_name(self, function_frame: types.FrameType | None) -> None:
+        """Infer the agent name from the call frame.
+
+        Usage should be `self._infer_name(inspect.currentframe())`.
+
+        Copied from `Agent`.
+        """
+        assert self.name is None, 'Name already set'
+        if function_frame is not None and (parent_frame := function_frame.f_back):  # pragma: no branch
+            for name, item in parent_frame.f_locals.items():
+                if item is self:
+                    self.name = name
+                    return
+            if parent_frame.f_locals != parent_frame.f_globals:  # pragma: no branch
+                # if we couldn't find the agent in locals and globals are a different dict, try globals
+                for name, item in parent_frame.f_globals.items():  # pragma: no branch
+                    if item is self:
+                        self.name = name
+                        return
 
 
 @dataclass
@@ -497,8 +534,12 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         if isinstance(node, StartNode | Fork):
             return self._handle_edges(node, inputs, fork_stack)
         elif isinstance(node, Step):
-            step_context = StepContext[StateT, DepsT, Any](state, deps, inputs)
-            output = await node.call(step_context)
+            with ExitStack() as stack:
+                if self.graph.auto_instrument:
+                    stack.enter_context(logfire_span('run node {node_id}', node_id=node.id, node=node))
+
+                step_context = StepContext[StateT, DepsT, Any](state, deps, inputs)
+                output = await node.call(step_context)
             if isinstance(node, NodeStep):
                 return self._handle_node(node, output, fork_stack)
             else:
