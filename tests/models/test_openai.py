@@ -838,7 +838,9 @@ async def test_openai_binary_content_text_like_is_inlined(
 
     assert content[0]['type'] == 'text'
     text = content[0]['text']
-    expected = f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE-----'
+    expected = (
+        f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE id="{identifier}"-----'
+    )
     assert text == expected
 
 
@@ -879,7 +881,9 @@ async def test_openai_document_url_text_like_is_inlined(
 
     assert content[0]['type'] == 'text'
     text = content[0]['text']
-    expected = f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE-----'
+    expected = (
+        f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE id="{identifier}"-----'
+    )
     assert text == expected
 
 
