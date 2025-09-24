@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING, Any, Generic, overload
 
 from typing_extensions import Self, TypeAliasType, TypeVar
 
+from pydantic_graph import BaseNode
 from pydantic_graph.v2.id_types import ForkId, NodeId
-from pydantic_graph.v2.step import StepFunction
+from pydantic_graph.v2.step import NodeStep, StepFunction
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
@@ -308,14 +309,19 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
 
     @overload
     def to(
-        self, /, *destinations: DestinationNode[StateT, DepsT, OutputT], fork_id: str | None = None
+        self,
+        /,
+        *destinations: DestinationNode[StateT, DepsT, OutputT] | type[BaseNode[StateT, DepsT, Any]],
+        fork_id: str | None = None,
     ) -> EdgePath[StateT, DepsT]: ...
 
     def to(
         self,
-        first_item: DestinationNode[StateT, DepsT, OutputT] | Callable[[Self], Sequence[EdgePath[StateT, DepsT]]],
+        first_item: DestinationNode[StateT, DepsT, OutputT]
+        | type[BaseNode[StateT, DepsT, Any]]
+        | Callable[[Self], Sequence[EdgePath[StateT, DepsT]]],
         /,
-        *extra_destinations: DestinationNode[StateT, DepsT, OutputT],
+        *extra_destinations: DestinationNode[StateT, DepsT, OutputT] | type[BaseNode[StateT, DepsT, Any]],
         fork_id: str | None = None,
     ) -> EdgePath[StateT, DepsT]:
         """Complete the edge path by routing to destination nodes.
@@ -328,7 +334,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A complete EdgePath connecting sources to destinations
         """
-        if callable(first_item):
+        if callable(first_item) and not isinstance(first_item, type):
             new_edge_paths = first_item(self)
             path = self.path_builder.fork([Path(x.path.items) for x in new_edge_paths], fork_id=fork_id)
             destinations = [d for ep in new_edge_paths for d in ep.destinations]
@@ -338,10 +344,11 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
                 destinations=destinations,
             )
         else:
+            destinations = [(NodeStep(d) if isinstance(d, type) else d) for d in (first_item, *extra_destinations)]
             return EdgePath(
                 sources=self.sources,
-                path=self.path_builder.to(first_item, *extra_destinations, fork_id=fork_id),
-                destinations=[first_item, *extra_destinations],
+                path=self.path_builder.to(*destinations, fork_id=fork_id),
+                destinations=destinations,
             )
 
     def spread(

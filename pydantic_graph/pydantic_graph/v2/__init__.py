@@ -13,7 +13,7 @@ from .graph import Graph
 from .graph_builder import GraphBuilder
 from .join import DictReducer, Join, ListReducer, NullReducer, Reducer
 from .node import EndNode, Fork, StartNode
-from .step import NodeStep, Step, StepContext, StepNode
+from .step import Step, StepContext, StepNode
 from .util import TypeExpression
 
 __all__ = (
@@ -25,7 +25,6 @@ __all__ = (
     'GraphBuilder',
     'Join',
     'ListReducer',
-    'NodeStep',
     'NullReducer',
     'Reducer',
     'StartNode',

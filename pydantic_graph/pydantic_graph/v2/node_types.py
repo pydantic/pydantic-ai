@@ -14,7 +14,7 @@ from typing_extensions import TypeAliasType, TypeVar
 from pydantic_graph.v2.decision import Decision
 from pydantic_graph.v2.join import Join
 from pydantic_graph.v2.node import EndNode, Fork, StartNode
-from pydantic_graph.v2.step import NodeStep, Step
+from pydantic_graph.v2.step import Step
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
@@ -23,10 +23,7 @@ OutputT = TypeVar('OutputT', infer_variance=True)
 
 MiddleNode = TypeAliasType(
     'MiddleNode',
-    Step[StateT, DepsT, InputT, OutputT]
-    | Join[StateT, DepsT, InputT, OutputT]
-    | Fork[InputT, OutputT]
-    | NodeStep[StateT, DepsT],
+    Step[StateT, DepsT, InputT, OutputT] | Join[StateT, DepsT, InputT, OutputT] | Fork[InputT, OutputT],
     type_params=(StateT, DepsT, InputT, OutputT),
 )
 """Type alias for nodes that can appear in the middle of a graph execution path.
