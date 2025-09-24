@@ -95,8 +95,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     input_type: TypeOrTypeExpression[GraphInputT]
     output_type: TypeOrTypeExpression[GraphOutputT]
 
-    parallel: bool = True  # if False, allow direct state modification and don't copy state sent to steps, but disallow parallel node execution
-    auto_instrument: bool = True
+    auto_instrument: bool
 
     _nodes: dict[NodeId, AnyNode]
     _edges_by_source: dict[NodeId, list[Path]]
@@ -112,7 +111,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         deps_type: TypeOrTypeExpression[DepsT] = NoneType,
         input_type: TypeOrTypeExpression[GraphInputT] = NoneType,
         output_type: TypeOrTypeExpression[GraphOutputT] = NoneType,
-        parallel: bool = True,
         auto_instrument: bool = True,
     ):
         self.state_type = state_type
@@ -120,7 +118,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         self.input_type = input_type
         self.output_type = output_type
 
-        self.parallel = parallel
         self.auto_instrument = auto_instrument
 
         self._nodes = {}
@@ -145,7 +142,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         node_id: str | None = None,
         label: str | None = None,
-        activity: bool = False,
     ) -> Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]: ...
     @overload
     def _step(
@@ -154,7 +150,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         node_id: str | None = None,
         label: str | None = None,
-        activity: bool = False,
     ) -> Step[StateT, DepsT, InputT, OutputT]: ...
     def _step(
         self,
@@ -162,7 +157,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         node_id: str | None = None,
         label: str | None = None,
-        activity: bool = False,
     ) -> (
         Step[StateT, DepsT, InputT, OutputT]
         | Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]
@@ -173,13 +167,13 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             def decorator(
                 func: StepFunction[StateT, DepsT, InputT, OutputT],
             ) -> Step[StateT, DepsT, InputT, OutputT]:
-                return self._step(call=func, node_id=node_id, label=label, activity=activity)
+                return self._step(call=func, node_id=node_id, label=label)
 
             return decorator
 
         node_id = node_id or get_callable_name(call)
 
-        step = Step[StateT, DepsT, InputT, OutputT](id=NodeId(node_id), call=call, user_label=label, activity=activity)
+        step = Step[StateT, DepsT, InputT, OutputT](id=NodeId(node_id), call=call, user_label=label)
 
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
         type_hints = get_type_hints(call, localns=parent_namespace, include_extras=True)
@@ -200,7 +194,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         node_id: str | None = None,
         label: str | None = None,
-        activity: bool = False,
     ) -> Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]: ...
     @overload
     def step(
@@ -209,7 +202,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         node_id: str | None = None,
         label: str | None = None,
-        activity: bool = False,
     ) -> Step[StateT, DepsT, InputT, OutputT]: ...
     def step(
         self,
@@ -217,15 +209,14 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         node_id: str | None = None,
         label: str | None = None,
-        activity: bool = False,
     ) -> (
         Step[StateT, DepsT, InputT, OutputT]
         | Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]
     ):
         if call is None:
-            return self._step(node_id=node_id, label=label, activity=activity)
+            return self._step(node_id=node_id, label=label)
         else:
-            return self._step(call=call, node_id=node_id, label=label, activity=activity)
+            return self._step(call=call, node_id=node_id, label=label)
 
     @overload
     def join(

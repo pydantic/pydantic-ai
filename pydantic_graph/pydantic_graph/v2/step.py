@@ -67,12 +67,10 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         id: NodeId,
         call: StepFunction[StateT, DepsT, InputT, OutputT],
         user_label: str | None = None,
-        activity: bool = False,
     ):
         self.id = id
         self._call = call
         self.user_label = user_label
-        self.activity = activity
 
     # TODO(P3): Consider replacing this with __call__, so the decorated object can still be called with the same signature
     @property
@@ -119,13 +117,11 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
         *,
         id: NodeId | None = None,
         user_label: str | None = None,
-        activity: bool = False,
     ):
         super().__init__(
             id=id or NodeId(node_type.get_node_id()),
             call=self._call,
             user_label=user_label,
-            activity=activity,
         )
         self.node_type = get_origin(node_type) or node_type
 
