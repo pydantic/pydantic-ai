@@ -137,8 +137,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _deps_type: type[AgentDepsT] = dataclasses.field(repr=False)
     _output_schema: _output.BaseOutputSchema[OutputDataT] = dataclasses.field(repr=False)
     _output_validators: list[_output.OutputValidator[AgentDepsT, OutputDataT]] = dataclasses.field(repr=False)
-    _instructions: str | None = dataclasses.field(repr=False)
-    _instructions_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
+    _instructions: Instructions = dataclasses.field(repr=False)
     _system_prompts: tuple[str, ...] = dataclasses.field(repr=False)
     _system_prompt_functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(repr=False)
     _system_prompt_dynamic_functions: dict[str, _system_prompt.SystemPromptRunner[AgentDepsT]] = dataclasses.field(
@@ -313,7 +312,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._output_schema = _output.OutputSchema[OutputDataT].build(output_type, default_mode=default_output_mode)
         self._output_validators = []
 
-        self._instructions, self._instructions_functions = self._instructions_literal_and_functions(instructions)
+        self._instructions = instructions
 
         self._system_prompts = (system_prompt,) if isinstance(system_prompt, str) else tuple(system_prompt)
         self._system_prompt_functions = []
@@ -361,25 +360,27 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._entered_count = 0
         self._exit_stack = None
 
-    def _get_instructions_literal_and_functions(
+    def _get_instructions(
         self,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
-        instructions, instructions_functions = self._instructions, self._instructions_functions
-        if override_instructions := self._override_instructions.get():
-            instructions, instructions_functions = self._instructions_literal_and_functions(override_instructions.value)
-        return instructions, instructions_functions
+        override_instructions = self._override_instructions.get()
+        instructions_value: Instructions = (
+            override_instructions.value if override_instructions else self._instructions
+        )
 
-    def _instructions_literal_and_functions(
-        self,
-        instructions: Instructions,
-    ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
 
-        if isinstance(instructions, str | Callable):
-            instructions = [instructions]
+        if instructions_value is None:
+            instructions_iterable: Sequence[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = ()
+        elif isinstance(instructions_value, str):
+            instructions_iterable = (instructions_value,)
+        elif callable(instructions_value):
+            instructions_iterable = (instructions_value,)
+        else:
+            instructions_iterable = instructions_value
 
-        for instruction in instructions or []:
+        for instruction in instructions_iterable:
             if isinstance(instruction, str):
                 literal_parts.append(instruction)
             elif callable(instruction):
@@ -390,6 +391,18 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         literal = '\n'.join(literal_parts).strip() or None
         return literal, functions
+
+    def _append_instruction(self, instruction: _system_prompt.SystemPromptFunc[AgentDepsT]) -> None:
+        if self._instructions is None:
+            instructions_list: list[str | _system_prompt.SystemPromptFunc[AgentDepsT]] = [instruction]
+        elif isinstance(self._instructions, str):
+            instructions_list = [self._instructions, instruction]
+        elif callable(self._instructions):
+            instructions_list = [self._instructions, instruction]
+        else:
+            instructions_list = [*self._instructions, instruction]
+
+        self._instructions = instructions_list
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:
@@ -608,11 +621,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         model_settings = merge_model_settings(merged_settings, model_settings)
         usage_limits = usage_limits or _usage.UsageLimits()
 
+        instructions_literal, instructions_functions = self._get_instructions()
+
         async def get_instructions(run_context: RunContext[AgentDepsT]) -> str | None:
-            literal, functions = self._get_instructions_literal_and_functions()
             parts = [
-                literal,
-                *[await func.run(run_context) for func in functions],
+                instructions_literal,
+                *[await func.run(run_context) for func in instructions_functions],
             ]
 
             model_profile = model_used.profile
@@ -651,12 +665,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=instrumentation_settings,
         )
 
-        instructions_for_node, instructions_functions_for_node = self._get_instructions_literal_and_functions()
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
             deferred_tool_results=deferred_tool_results,
-            instructions=instructions_for_node,
-            instructions_functions=instructions_functions_for_node,
+            instructions=instructions_literal,
+            instructions_functions=instructions_functions,
             system_prompts=self._system_prompts,
             system_prompt_functions=self._system_prompt_functions,
             system_prompt_dynamic_functions=self._system_prompt_dynamic_functions,
@@ -708,6 +721,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     def _run_span_end_attributes(
         self, state: _agent_graph.GraphAgentState, usage: _usage.RunUsage, settings: InstrumentationSettings
     ):
+        literal_instructions, _ = self._get_instructions()
+
         if settings.version == 1:
             attrs = {
                 'all_messages_events': json.dumps(
@@ -720,7 +735,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         else:
             attrs = {
                 'pydantic_ai.all_messages': json.dumps(settings.messages_to_otel_messages(state.message_history)),
-                **settings.system_instructions_attributes(self._instructions),
+                **settings.system_instructions_attributes(literal_instructions),
             }
 
         return {
@@ -857,12 +872,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             def decorator(
                 func_: _system_prompt.SystemPromptFunc[AgentDepsT],
             ) -> _system_prompt.SystemPromptFunc[AgentDepsT]:
-                self._instructions_functions.append(_system_prompt.SystemPromptRunner(func_))
+                self._append_instruction(func_)
                 return func_
 
             return decorator
         else:
-            self._instructions_functions.append(_system_prompt.SystemPromptRunner(func))
+            self._append_instruction(func)
             return func
 
     @overload
