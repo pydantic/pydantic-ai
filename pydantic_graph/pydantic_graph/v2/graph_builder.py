@@ -575,11 +575,7 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         existing = self._nodes.get(node.id)
         if existing is None:
             self._nodes[node.id] = node
-        elif (
-            isinstance(existing, NodeStep)
-            and isinstance(node, NodeStep)
-            and (get_origin(existing.node_type) or existing.node_type) is (get_origin(node.node_type) or node.node_type)
-        ):
+        elif isinstance(existing, NodeStep) and isinstance(node, NodeStep) and existing.node_type is node.node_type:
             pass
         elif existing is not node:
             raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
@@ -662,13 +658,14 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         union_args = _utils.get_union_args(return_hint)
         for return_type in union_args:
             return_type, annotations = _utils.unpack_annotated(return_type)
-            # edge = next((a for a in annotations if isinstance(a, Edge)), Edge(None))
             return_type_origin = get_origin(return_type) or return_type
             if return_type_origin is End:
                 destinations.append(self.end_node)
             elif return_type_origin is BaseNode:
-                # TODO (DouweM): Enumerate all subclasses
-                raise exceptions.GraphSetupError(f'Node {node} returned a plain BaseNode')
+                raise exceptions.GraphSetupError(
+                    f'Node {node} return type hint includes a plain `BaseNode`. '
+                    'Edge inference requires each possible returned `BaseNode` subclass to be listed explicitly.'
+                )
             elif return_type_origin is StepNode:
                 step = cast(
                     Step[StateT, DepsT, Any, Any] | None,
@@ -676,7 +673,8 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
                 )
                 if step is None:
                     raise exceptions.GraphSetupError(
-                        f'Node {node} returned a StepNode but no Step was found in the annotations'
+                        f'Node {node} return type hint includes a `StepNode` without a `Step` annotations. '
+                        'When returning `my_step.as_node()`, use `Annotated[StepNode[StateT, DepsT], my_step]` as the return type hint.'
                     )
                 destinations.append(step)
             elif inspect.isclass(return_type_origin) and issubclass(return_type_origin, BaseNode):

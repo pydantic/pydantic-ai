@@ -7,10 +7,11 @@ Paths enable complex data flow patterns in graph execution.
 
 from __future__ import annotations
 
+import inspect
 import secrets
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, overload
+from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
 
 from typing_extensions import Self, TypeAliasType, TypeVar
 
@@ -334,7 +335,12 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         Returns:
             A complete EdgePath connecting sources to destinations
         """
-        if callable(first_item) and not isinstance(first_item, type):
+        # `type[BaseNode[StateT, DepsT, Any]]` could actually be a `typing._GenericAlias` like `pydantic_ai._agent_graph.UserPromptNode[~DepsT, ~OutputT]`,
+        # so we get the origin to get to the actual class
+        first_item = get_origin(first_item) or first_item
+        extra_destinations = tuple(get_origin(d) or d for d in extra_destinations)
+
+        if callable(first_item) and not inspect.isclass(first_item):
             new_edge_paths = first_item(self)
             path = self.path_builder.fork([Path(x.path.items) for x in new_edge_paths], fork_id=fork_id)
             destinations = [d for ep in new_edge_paths for d in ep.destinations]
@@ -344,7 +350,7 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
                 destinations=destinations,
             )
         else:
-            destinations = [(NodeStep(d) if isinstance(d, type) else d) for d in (first_item, *extra_destinations)]
+            destinations = [(NodeStep(d) if inspect.isclass(d) else d) for d in (first_item, *extra_destinations)]
             return EdgePath(
                 sources=self.sources,
                 path=self.path_builder.to(*destinations, fork_id=fork_id),

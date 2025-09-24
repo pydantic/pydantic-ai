@@ -260,6 +260,8 @@ class NodeStep(Step[StateT, DepsT, Any, BaseNode[StateT, DepsT, Any] | End[Any]]
             call=self._call,
             user_label=user_label,
         )
+        # `type[BaseNode[StateT, DepsT, Any]]` could actually be a `typing._GenericAlias` like `pydantic_ai._agent_graph.UserPromptNode[~DepsT, ~OutputT]`,
+        # so we get the origin to get to the actual class
         self.node_type = get_origin(node_type) or node_type
         """The BaseNode type this step executes."""
 
