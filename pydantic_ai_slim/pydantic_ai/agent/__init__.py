@@ -364,9 +364,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self,
     ) -> tuple[str | None, list[_system_prompt.SystemPromptRunner[AgentDepsT]]]:
         override_instructions = self._override_instructions.get()
-        instructions_value: Instructions = (
-            override_instructions.value if override_instructions else self._instructions
-        )
+        instructions_value: Instructions = override_instructions.value if override_instructions else self._instructions
 
         literal_parts: list[str] = []
         functions: list[_system_prompt.SystemPromptRunner[AgentDepsT]] = []
