@@ -114,7 +114,6 @@ You can access models from the [Model Garden](https://cloud.google.com/model-gar
 
 ```python
 from google.oauth2 import service_account
-from google.genai import Client
 
 from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
@@ -126,13 +125,11 @@ credentials = service_account.Credentials.from_service_account_file(
     'path/to/service-account.json',
     scopes=['https://www.googleapis.com/auth/cloud-platform'],
 )
-client = Client(
-    vertexai=True,
-    location=location,
+provider = GoogleProvider(
+    credentials=credentials,
     project=project,
-    credentials=credentials
+    location=location
 )
-provider = GoogleProvider(client=client)
 model = GoogleModel(
     f'projects/{project}/locations/{location}/publishers/meta/models/llama-3.3-70b-instruct-maas',
     provider=provider
