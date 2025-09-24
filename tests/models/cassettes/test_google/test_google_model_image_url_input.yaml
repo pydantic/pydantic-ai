@@ -580,7 +580,7 @@ interactions:
       access-control-allow-origin:
       - '*'
       age:
-      - '1386476'
+      - '1500997'
       cache-control:
       - public, max-age=31536000
       connection:
@@ -632,11 +632,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '740'
+      - '738'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1424
+      - gfet4t7; dur=867
       transfer-encoding:
       - chunked
       vary:
@@ -645,27 +645,26 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.1821905771891276
+      - avgLogprobs: -0.18855420351028443
         content:
           parts:
-          - text: |
-              That is a potato.
+          - text: That is a potato.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 3VpeaPexBLq3nvgP0vasuQk
+      responseId: 64fNaIPHJNulqtsPx8OZsQQ
       usageMetadata:
-        candidatesTokenCount: 6
+        candidatesTokenCount: 5
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 6
+          tokenCount: 5
         promptTokenCount: 1817
         promptTokensDetails:
         - modality: TEXT
           tokenCount: 11
         - modality: IMAGE
           tokenCount: 1806
-        totalTokenCount: 1823
+        totalTokenCount: 1822
     status:
       code: 200
       message: OK

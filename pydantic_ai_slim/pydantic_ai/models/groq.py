@@ -8,11 +8,11 @@ from datetime import datetime
 from typing import Any, Literal, cast, overload
 
 from pydantic import BaseModel, Json, ValidationError
+from pydantic_core import from_json
 from typing_extensions import assert_never
 
-from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
-
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
@@ -55,6 +55,7 @@ try:
     from groq import NOT_GIVEN, APIError, APIStatusError, AsyncGroq, AsyncStream
     from groq.types import chat
     from groq.types.chat.chat_completion_content_part_image_param import ImageURL
+    from groq.types.chat.chat_completion_message import ExecutedTool
 except ImportError as _import_error:
     raise ImportError(
         'Please install `groq` to use the Groq model, '
@@ -308,22 +309,15 @@ class GroqModel(Model):
         timestamp = number_to_datetime(response.created)
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
-        if choice.message.executed_tools:
-            for tool in choice.message.executed_tools:
-                tool_call_id = generate_tool_call_id()
-                items.append(
-                    BuiltinToolCallPart(
-                        tool_name=tool.type, args=tool.arguments, provider_name=self.system, tool_call_id=tool_call_id
-                    )
-                )
-                items.append(
-                    BuiltinToolReturnPart(
-                        provider_name=self.system, tool_name=tool.type, content=tool.output, tool_call_id=tool_call_id
-                    )
-                )
         if choice.message.reasoning is not None:
             # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
             items.append(ThinkingPart(content=choice.message.reasoning))
+        if choice.message.executed_tools:
+            for tool in choice.message.executed_tools:
+                call_part, return_part = _map_executed_tool(tool, self.system)
+                if call_part and return_part:  # pragma: no branch
+                    items.append(call_part)
+                    items.append(return_part)
         if choice.message.content is not None:
             # NOTE: The `<think>` tag is only present if `groq_reasoning_format` is set to `raw`.
             items.extend(split_content_into_text_and_thinking(choice.message.content, self.profile.thinking_tags))
@@ -400,7 +394,7 @@ class GroqModel(Model):
                         start_tag, end_tag = self.profile.thinking_tags
                         texts.append('\n'.join([start_tag, item.content, end_tag]))
                     elif isinstance(item, BuiltinToolCallPart | BuiltinToolReturnPart):  # pragma: no cover
-                        # This is currently never returned from groq
+                        # These are not currently sent back
                         pass
                     else:
                         assert_never(item)
@@ -513,8 +507,9 @@ class GroqStreamedResponse(StreamedResponse):
     _timestamp: datetime
     _provider_name: str
 
-    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+    async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         try:
+            executed_tool_call_id: str | None = None
             async for chunk in self._response:
                 self._usage += _map_usage(chunk)
 
@@ -529,6 +524,28 @@ class GroqStreamedResponse(StreamedResponse):
                 if raw_finish_reason := choice.finish_reason:
                     self.provider_details = {'finish_reason': raw_finish_reason}
                     self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
+                if choice.delta.reasoning is not None:
+                    # NOTE: The `reasoning` field is only present if `groq_reasoning_format` is set to `parsed`.
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id='reasoning', content=choice.delta.reasoning
+                    )
+
+                if choice.delta.executed_tools:
+                    for tool in choice.delta.executed_tools:
+                        call_part, return_part = _map_executed_tool(
+                            tool, self.provider_name, streaming=True, tool_call_id=executed_tool_call_id
+                        )
+                        if call_part:
+                            executed_tool_call_id = call_part.tool_call_id
+                            yield self._parts_manager.handle_builtin_tool_call_part(
+                                vendor_part_id=f'executed_tools-{tool.index}-call', part=call_part
+                            )
+                        if return_part:
+                            executed_tool_call_id = None
+                            yield self._parts_manager.handle_builtin_tool_return_part(
+                                vendor_part_id=f'executed_tools-{tool.index}-return', part=return_part
+                            )
 
                 # Handle the text part of the response
                 content = choice.delta.content
@@ -626,3 +643,37 @@ class _GroqToolUseFailedError(BaseModel):
     # }
 
     error: _GroqToolUseFailedInnerError
+
+
+def _map_executed_tool(
+    tool: ExecutedTool, provider_name: str, streaming: bool = False, tool_call_id: str | None = None
+) -> tuple[BuiltinToolCallPart | None, BuiltinToolReturnPart | None]:
+    if tool.type == 'search':
+        if tool.search_results and (tool.search_results.images or tool.search_results.results):
+            results = tool.search_results.model_dump(mode='json')
+        else:
+            results = tool.output
+
+        tool_call_id = tool_call_id or generate_tool_call_id()
+        call_part = BuiltinToolCallPart(
+            tool_name=WebSearchTool.kind,
+            args=from_json(tool.arguments),
+            provider_name=provider_name,
+            tool_call_id=tool_call_id,
+        )
+        return_part = BuiltinToolReturnPart(
+            tool_name=WebSearchTool.kind,
+            content=results,
+            provider_name=provider_name,
+            tool_call_id=tool_call_id,
+        )
+
+        if streaming:
+            if results:
+                return None, return_part
+            else:
+                return call_part, None
+        else:
+            return call_part, return_part
+    else:  # pragma: no cover
+        return None, None

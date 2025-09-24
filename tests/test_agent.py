@@ -2168,14 +2168,79 @@ def test_run_with_history_ending_on_model_response_without_tool_calls_or_user_pr
     assert result.new_messages() == []
 
 
-def test_empty_tool_calls():
-    def empty(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+def test_empty_response():
+    def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[])
+        else:
+            return ModelResponse(parts=[TextPart('ok here is text')])
+
+    agent = Agent(FunctionModel(llm))
+
+    result = agent.run_sync('Hello')
+
+    assert result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(parts=[]),
+            ModelResponse(
+                parts=[TextPart(content='ok here is text')],
+                usage=RequestUsage(input_tokens=51, output_tokens=4),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+def test_empty_response_without_recovery():
+    def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[])
 
-    agent = Agent(FunctionModel(empty))
+    agent = Agent(FunctionModel(llm), output_type=tuple[str, int])
 
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        agent.run_sync('Hello')
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum retries \(1\) for output validation'):
+            agent.run_sync('Hello')
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='Hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(parts=[]),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=51),
+                model_name='function:llm:',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 def test_unknown_tool():
