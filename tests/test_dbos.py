@@ -43,9 +43,14 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import IsDatetime, IsStr
 
 try:
+    import importlib.metadata
+
     from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from packaging.version import Version
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
+
+    dbos_version = Version(importlib.metadata.version('dbos'))
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
@@ -112,7 +117,8 @@ DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
     'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'run_admin_server': False,
-    'enable_otlp': True,
+    # enable_otlp requires dbos>1.14
+    'enable_otlp': True,  # type: ignore
 }
 
 
@@ -1042,11 +1048,17 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     ):
         pass
 
-    with pytest.raises(
-        AttributeError,
-        match="Can't get local object",
-    ):
+    with pytest.raises(Exception) as exc_info:
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
+
+    if dbos_version <= Version('1.14'):
+        # Older DBOS versions used jsonpickle
+        assert str(exc_info.value) == snapshot('Serialized function should be defined at the top level of a module')
+    else:
+        # Newer DBOS versions use pickle
+        assert str(exc_info.value) == snapshot(
+            "Can't get local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
+        )
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
@@ -1145,14 +1157,18 @@ async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
 async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
     unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)
     # Test this raises a serialization error because httpx.AsyncClient is not serializable.
-    with pytest.raises(
-        Exception,
-        match='cannot pickle',
-    ):
+    with pytest.raises(Exception) as exc_info:
         async with AsyncClient() as client:
             # This will trigger the client to be unserializable
             logfire.instrument_httpx(client, capture_all=True)
             await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
+
+    if dbos_version <= Version('1.14'):
+        # Older DBOS versions used jsonpickle
+        assert str(exc_info.value) == snapshot('object proxy must define __reduce_ex__()')
+    else:
+        # Newer DBOS versions use pickle
+        assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")
 
 
 # Test dynamic toolsets in an agent with DBOS
