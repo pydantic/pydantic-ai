@@ -222,7 +222,12 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         def _start_task(t_: GraphTask) -> None:
             """Helper function to start a new task while doing all necessary tracking."""
             tasks_by_id[t_.task_id] = t_
-            pending.add(asyncio.create_task(self._handle_task(t_), name=t_.task_id))
+            task = asyncio.create_task(self._handle_task(t_))
+            # Temporal insists on modifying the `name` passed to `create_task`, causing our `task.get_name()`-based lookup further down to fail,
+            # so we set it explicitly after creation.
+            # https://github.com/temporalio/sdk-python/blob/3fe7e422b008bcb8cd94e985f18ebec2de70e8e6/temporalio/worker/_workflow_instance.py#L2143
+            task.set_name(t_.task_id)
+            pending.add(task)
 
         _start_task(self._first_task)
 
