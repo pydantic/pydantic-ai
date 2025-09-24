@@ -1,3 +1,10 @@
+"""Core graph execution engine for v2 graph system.
+
+This module provides the main Graph class and GraphRun execution engine that
+handles the orchestration of nodes, edges, and parallel execution paths in
+the graph-based workflow system.
+"""
+
 from __future__ import annotations as _annotations
 
 import asyncio
@@ -38,36 +45,101 @@ OutputT = TypeVar('OutputT', infer_variance=True)
 
 @dataclass
 class EndMarker(Generic[OutputT]):
-    """An end marker."""
+    """A marker indicating the end of graph execution with a final value.
+
+    EndMarker is used internally to signal that the graph has completed
+    execution and carries the final output value.
+
+    Type Parameters:
+        OutputT: The type of the final output value
+    """
 
     value: OutputT
+    """The final output value from the graph execution."""
 
 
 @dataclass
 class JoinItem:
-    """A join item."""
+    """An item representing data flowing into a join operation.
+
+    JoinItem carries input data from a parallel execution path to a join
+    node, along with metadata about which fork it originated from.
+    """
 
     join_id: JoinId
+    """The ID of the join node this item is targeting."""
+
     inputs: Any
+    """The input data for the join operation."""
+
     fork_stack: ForkStack
+    """The stack of forks that led to this join item."""
 
 
 @dataclass(repr=False)
 class Graph(Generic[StateT, DepsT, InputT, OutputT]):
-    """A graph."""
+    """A complete graph definition ready for execution.
+
+    The Graph class represents a complete workflow graph with typed inputs,
+    outputs, state, and dependencies. It contains all nodes, edges, and
+    metadata needed for execution.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        InputT: The type of the input data
+        OutputT: The type of the output data
+
+    Example:
+        ```python
+        # Create a simple graph
+        graph = GraphBuilder[MyState, MyDeps, str, int]().build()
+
+        # Run the graph
+        result = await graph.run(
+            state=MyState(),
+            deps=MyDeps(),
+            inputs="input_data"
+        )
+        ```
+    """
 
     state_type: type[StateT]
+    """The type of the graph state."""
+
     deps_type: type[DepsT]
+    """The type of the dependencies."""
+
     input_type: type[InputT]
+    """The type of the input data."""
+
     output_type: type[OutputT]
+    """The type of the output data."""
 
     auto_instrument: bool
+    """Whether to automatically create instrumentation spans."""
 
     nodes: dict[NodeId, AnyNode]
+    """All nodes in the graph indexed by their ID."""
+
     edges_by_source: dict[NodeId, list[Path]]
+    """Outgoing paths from each source node."""
+
     parent_forks: dict[JoinId, ParentFork[NodeId]]
+    """Parent fork information for each join node."""
 
     def get_parent_fork(self, join_id: JoinId) -> ParentFork[NodeId]:
+        """Get the parent fork information for a join node.
+
+        Args:
+            join_id: The ID of the join node
+
+        Returns:
+            The parent fork information for the join
+
+        Raises:
+            RuntimeError: If the join ID is not found or has no parent fork
+        """
         result = self.parent_forks.get(join_id)
         if result is None:
             raise RuntimeError(f'Node {join_id} is not a join node or did not have a dominating fork (this is a bug)')
@@ -81,6 +153,20 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         inputs: InputT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
     ) -> OutputT:
+        """Execute the graph and return the final output.
+
+        This is the main entry point for graph execution. It runs the graph
+        to completion and returns the final output value.
+
+        Args:
+            state: The graph state instance
+            deps: The dependencies instance
+            inputs: The input data for the graph
+            span: Optional span for tracing/instrumentation
+
+        Returns:
+            The final output from the graph execution
+        """
         async with self.iter(state=state, deps=deps, inputs=inputs, span=span) as graph_run:
             # Note: This would probably be better using `async for _ in graph_run`, but this tests the `next` method,
             # which I'm less confident will be implemented correctly if not used on the critical path. We can change it
@@ -102,6 +188,20 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         inputs: InputT = None,
         span: AbstractContextManager[AbstractSpan] | None = None,
     ) -> AsyncIterator[GraphRun[StateT, DepsT, OutputT]]:
+        """Create an iterator for step-by-step graph execution.
+
+        This method allows for more fine-grained control over graph execution,
+        enabling inspection of intermediate states and results.
+
+        Args:
+            state: The graph state instance
+            deps: The dependencies instance
+            inputs: The input data for the graph
+            span: Optional span for tracing/instrumentation
+
+        Yields:
+            A GraphRun instance that can be iterated for step-by-step execution
+        """
         with ExitStack() as stack:
             entered_span: AbstractSpan | None = None
             if span is None:
@@ -119,31 +219,64 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
             )
 
     def render(self, *, title: str | None = None, direction: StateDiagramDirection | None = None) -> str:
+        """Render the graph as a Mermaid diagram string.
+
+        Args:
+            title: Optional title for the diagram
+            direction: Optional direction for the diagram layout
+
+        Returns:
+            A string containing the Mermaid diagram representation
+        """
         from pydantic_graph.v2.mermaid import build_mermaid_graph
 
         return build_mermaid_graph(self).render(title=title, direction=direction)
 
     def __repr__(self):
+        """Return a Mermaid diagram representation of the graph.
+
+        Returns:
+            A string containing the Mermaid diagram of the graph
+        """
         return self.render()
 
 
 @dataclass
 class GraphTask:
-    """A graph task."""
+    """A single task representing the execution of a node in the graph.
+
+    GraphTask encapsulates all the information needed to execute a specific
+    node, including its inputs and the fork context it's executing within.
+    """
 
     # With our current BaseNode thing, next_node_id and next_node_inputs are merged into `next_node` itself
     node_id: NodeId
+    """The ID of the node to execute."""
+
     inputs: Any
+    """The input data for the node."""
+
     fork_stack: ForkStack
-    """
-    Stack of forks that have been entered; used so that the GraphRunner can decide when to proceed through joins
+    """Stack of forks that have been entered.
+
+    Used by the GraphRun to decide when to proceed through joins.
     """
 
     task_id: TaskId = field(default_factory=lambda: TaskId(str(uuid.uuid4())))
+    """Unique identifier for this task."""
 
 
 class GraphRun(Generic[StateT, DepsT, OutputT]):
-    """A graph run."""
+    """A single execution instance of a graph.
+
+    GraphRun manages the execution state for a single run of a graph,
+    including task scheduling, fork/join coordination, and result tracking.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        OutputT: The type of the output data
+    """
 
     def __init__(
         self,
@@ -154,14 +287,32 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
         inputs: InputT,
         traceparent: str | None,
     ):
+        """Initialize a graph run.
+
+        Args:
+            graph: The graph to execute
+            state: The graph state instance
+            deps: The dependencies instance
+            inputs: The input data for the graph
+            traceparent: Optional trace parent for instrumentation
+        """
         self.graph = graph
+        """The graph being executed."""
+
         self.state = state
+        """The graph state instance."""
+
         self.deps = deps
+        """The dependencies instance."""
+
         self.inputs = inputs
+        """The initial input data."""
 
         self._active_reducers: dict[tuple[JoinId, NodeRunId], Reducer[Any, Any, Any, Any]] = {}
+        """Active reducers for join operations."""
 
         self._next: EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None = None
+        """The next item to be processed."""
 
         run_id = GraphRunId(str(uuid.uuid4()))
         initial_fork_stack: ForkStack = (ForkStackItem(StartNode.id, NodeRunId(run_id), 0),)
@@ -175,14 +326,35 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
     @overload
     def _traceparent(self) -> str: ...
     def _traceparent(self, *, required: bool = True) -> str | None:
+        """Get the trace parent for instrumentation.
+
+        Args:
+            required: Whether to raise an error if no traceparent exists
+
+        Returns:
+            The traceparent string, or None if not required and not set
+
+        Raises:
+            GraphRuntimeError: If required is True and no traceparent exists
+        """
         if self.__traceparent is None and required:  # pragma: no cover
             raise exceptions.GraphRuntimeError('No span was created for this graph run')
         return self.__traceparent
 
     def __aiter__(self) -> AsyncIterator[EndMarker[OutputT] | JoinItem | Sequence[GraphTask]]:
+        """Return self as an async iterator.
+
+        Returns:
+            Self for async iteration
+        """
         return self
 
     async def __anext__(self) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask]:
+        """Get the next item in the async iteration.
+
+        Returns:
+            The next execution result from the graph
+        """
         if self._next is None:
             self._next = await self._iterator.__anext__()
         else:
@@ -192,7 +364,17 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
     async def next(
         self, value: EndMarker[OutputT] | JoinItem | Sequence[GraphTask] | None = None
     ) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask]:
-        """Allows for sending a value to the iterator, which is useful for resuming the iteration."""
+        """Advance the graph execution by one step.
+
+        This method allows for sending a value to the iterator, which is useful
+        for resuming iteration or overriding intermediate results.
+
+        Args:
+            value: Optional value to send to the iterator
+
+        Returns:
+            The next execution result: either an EndMarker, JoinItem, or sequence of GraphTasks
+        """
         if self._next is None:
             # Prevent `TypeError: can't send non-None value to a just-started async generator`
             # if `next` is called before the `first_node` has run.
@@ -203,10 +385,20 @@ class GraphRun(Generic[StateT, DepsT, OutputT]):
 
     @property
     def next_task(self) -> EndMarker[OutputT] | JoinItem | Sequence[GraphTask]:
+        """Get the next task(s) to be executed.
+
+        Returns:
+            The next execution item, or the initial task if none is set
+        """
         return self._next or [self._first_task]
 
     @property
     def output(self) -> OutputT | None:
+        """Get the final output if the graph has completed.
+
+        Returns:
+            The output value if execution is complete, None otherwise
+        """
         if isinstance(self._next, EndMarker):
             return self._next.value
         return None

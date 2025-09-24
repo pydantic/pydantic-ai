@@ -135,7 +135,7 @@ class MermaidGraph:
             # List all nodes in order they were created
             node_lines: list[str] = []
             if node.kind == 'start' or node.kind == 'end':
-                pass
+                pass  # Start and end nodes use special [*] syntax in edges
             elif node.kind == 'step':
                 line = f'  {node.id}'
                 if node.label:
@@ -149,15 +149,19 @@ class MermaidGraph:
                 node_lines = [f'  state {node.id} <<choice>>']
                 if node.note:
                     node_lines.append(f'  note right of {node.id}\n    {node.note}\n  end note')
+            elif node.kind == 'base_node':
+                # Base nodes from v1 system
+                node_lines.append(f'  {node.id}')
             lines.extend(node_lines)
 
         lines.append('')
 
         for edge in self.edges:
+            # Use special [*] syntax for start/end nodes
             render_start_id = '[*]' if edge.start_id == StartNode.id else edge.start_id
             render_end_id = '[*]' if edge.end_id == EndNode.id else edge.end_id
             edge_line = f'  {render_start_id} --> {render_end_id}'
-            if edge.label:
+            if edge.label and edge_labels:
                 edge_line += f': {edge.label}'
             lines.append(edge_line)
             # TODO(P3): Support node notes/highlighting

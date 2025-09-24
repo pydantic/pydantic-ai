@@ -1,8 +1,20 @@
-"""TODO(P3): Explain what a "parent fork" is, how it relates to dominating forks, and why we need this.
+"""Parent fork identification and deadlock avoidance in parallel graph execution.
 
-In particular, explain the relationship to avoiding deadlocks, and that for most typical graphs such a
-dominating fork does exist. Also explain how when there are multiple subsequent forks the preferred choice
-could be ambiguous, and that in some cases it should/must be specified by the control flow graph designer.
+This module provides functionality to identify "parent forks" in a graph, which are dominating
+fork nodes that control access to join nodes. A parent fork is a fork node that:
+
+1. Dominates a join node (all paths to the join must pass through the fork)
+2. Does not participate in cycles that bypass it to reach the join
+
+Identifying parent forks is crucial for deadlock avoidance in parallel execution. When a join
+node waits for all its incoming branches, knowing the parent fork helps determine when it's
+safe to proceed without risking deadlock.
+
+In most typical graphs, such dominating forks exist naturally. However, when there are multiple
+subsequent forks, the choice of parent fork can be ambiguous and may need to be specified by
+the graph designer.
+
+TODO(P3): Expand this documentation with more detailed examples and edge cases.
 """
 
 from __future__ import annotations
@@ -20,9 +32,16 @@ T = TypeVar('T', bound=Hashable, infer_variance=True)
 
 @dataclass
 class ParentFork(Generic[T]):
-    """A parent fork."""
+    """Represents a parent fork node and its relationship to a join node.
+
+    A parent fork is a dominating fork that controls the execution flow to a join node.
+    It tracks which nodes lie between the fork and the join, which is essential for
+    determining when it's safe to proceed past the join point.
+    """
 
     fork_id: T
+    """The identifier of the fork node that serves as the parent."""
+
     intermediate_nodes: set[T]
     """The set of node IDs of nodes upstream of the join and downstream of the parent fork.
 
@@ -33,18 +52,42 @@ class ParentFork(Generic[T]):
 
 @dataclass
 class ParentForkFinder(Generic[T]):
-    """A parent fork finder."""
+    """Analyzes graph structure to identify parent forks for join nodes.
+
+    This class implements algorithms to find dominating forks in a directed graph,
+    which is essential for coordinating parallel execution and avoiding deadlocks.
+    """
 
     nodes: set[T]
+    """All node identifiers in the graph."""
+
     start_ids: set[T]
+    """Node identifiers that serve as entry points to the graph."""
+
     fork_ids: set[T]
+    """Node identifiers that represent fork nodes (nodes that create parallel branches)."""
+
     edges: dict[T, list[T]]  # source_id to list of destination_ids
+    """Graph edges represented as adjacency list mapping source nodes to destinations."""
 
     def find_parent_fork(self, join_id: T) -> ParentFork[T] | None:
-        """Return the most ancestral parent fork of the join along with the that lie strictly between the fork and join.
+        """Find the parent fork for a given join node.
 
-        If every dominating fork of J lets J participate in a cycle that avoids the
-        fork, return `None`, since that means no "parent fork" exists.
+        Searches for the most ancestral dominating fork that can serve as a parent fork
+        for the specified join node. A valid parent fork must dominate the join without
+        allowing cycles that bypass it.
+
+        Args:
+            join_id: The identifier of the join node to analyze.
+
+        Returns:
+            A ParentFork object containing the fork ID and intermediate nodes if a valid
+            parent fork exists, or None if no valid parent fork can be found (which would
+            indicate potential deadlock risk).
+
+        Note:
+            If every dominating fork of the join lets it participate in a cycle that avoids
+            the fork, None is returned since no valid "parent fork" exists.
         """
         visited: set[str] = set()
         cur = join_id  # start at J and walk up the immediate dominator chain
@@ -77,6 +120,11 @@ class ParentForkFinder(Generic[T]):
 
     @cached_property
     def _predecessors(self) -> dict[T, list[T]]:
+        """Compute and cache the predecessor mapping for all nodes.
+
+        Returns:
+            A dictionary mapping each node to a list of its immediate predecessors.
+        """
         predecessors: dict[T, list[T]] = {n: [] for n in self.nodes}
         for source_id in self.nodes:
             for destination_id in self.edges.get(source_id, []):
@@ -85,6 +133,14 @@ class ParentForkFinder(Generic[T]):
 
     @cached_property
     def _dominators(self) -> dict[T, set[T]]:
+        """Compute the dominator sets for all nodes using iterative dataflow analysis.
+
+        A node D dominates node N if every path from a start node to N must pass through D.
+        This is computed using a fixed-point iteration algorithm.
+
+        Returns:
+            A dictionary mapping each node to its set of dominators.
+        """
         node_ids = set(self.nodes)
         start_ids = self.start_ids
 
@@ -107,7 +163,17 @@ class ParentForkFinder(Generic[T]):
         return dom
 
     def _immediate_dominator(self, node_id: T) -> T | None:
-        """Return the immediate dominator of node_id (if any)."""
+        """Find the immediate dominator of a node.
+
+        The immediate dominator is the closest dominator to a node (other than itself)
+        in the dominator tree.
+
+        Args:
+            node_id: The node to find the immediate dominator for.
+
+        Returns:
+            The immediate dominator's ID if one exists, None otherwise.
+        """
         dom = self._dominators
         candidates = dom[node_id] - {node_id}
         for c in candidates:
@@ -116,11 +182,25 @@ class ParentForkFinder(Generic[T]):
         return None
 
     def _get_upstream_nodes_if_parent(self, join_id: T, fork_id: T) -> set[T] | None:
-        """Return the set of node‑ids that can reach the join (J) in the graph where the node `fork_id` is removed.
+        """Check if a fork is a valid parent and return upstream nodes.
 
-        If, in that pruned graph, a path exists that starts and ends at J
-        (i.e. J is on a cycle that avoids the provided node) we return `None` instead,
-        because the fork would not be a valid "parent fork".
+        Tests whether the given fork can serve as a parent fork for the join by checking
+        for cycles that bypass the fork. If valid, returns all nodes that can reach the
+        join without going through the fork.
+
+        Args:
+            join_id: The join node being analyzed.
+            fork_id: The potential parent fork to test.
+
+        Returns:
+            The set of node IDs upstream of the join (excluding the fork) if the fork is
+            a valid parent, or None if a cycle exists that bypasses the fork (making it
+            invalid as a parent fork).
+
+        Note:
+            If, in the graph with fork_id removed, a path exists that starts and ends at
+            the join (i.e., join is on a cycle avoiding the fork), we return None because
+            the fork would not be a valid "parent fork".
         """
         upstream: set[T] = set()
         stack = [join_id]
@@ -138,7 +218,11 @@ class ParentForkFinder(Generic[T]):
 
 
 def main_test():
-    """Basic smoke test of the functionality."""
+    """Run basic smoke tests to verify parent fork finding functionality.
+
+    Tests both valid cases (where a parent fork exists) and invalid cases
+    (where cycles bypass potential parent forks).
+    """
     join_id = 'J'
     nodes = {'start', 'A', 'B', 'C', 'F', 'F2', 'I', 'J', 'end'}
     start_ids = {'start'}

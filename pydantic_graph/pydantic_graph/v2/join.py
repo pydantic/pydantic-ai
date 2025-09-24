@@ -1,3 +1,10 @@
+"""Join operations and reducers for graph execution.
+
+This module provides the core components for joining parallel execution paths
+in a graph, including various reducer types that aggregate data from multiple
+sources into a single output.
+"""
+
 from __future__ import annotations
 
 from abc import ABC
@@ -20,68 +27,200 @@ V = TypeVar('V', infer_variance=True)
 
 @dataclass(init=False)
 class Reducer(ABC, Generic[StateT, DepsT, InputT, OutputT]):
-    """An abstract base reducer."""
+    """An abstract base class for reducing data from parallel execution paths.
+
+    Reducers accumulate input data from multiple sources and produce a single
+    output when finalized. This is the core mechanism for joining parallel
+    execution paths in the graph.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        InputT: The type of input data to reduce
+        OutputT: The type of the final output after reduction
+    """
 
     def __init__(self, ctx: StepContext[StateT, DepsT, InputT]) -> None:
+        """Initialize the reducer with the first input context.
+
+        Args:
+            ctx: The step context containing the initial input data
+        """
         self.reduce(ctx)
 
     def reduce(self, ctx: StepContext[StateT, DepsT, InputT]) -> None:
-        """Reduce the input data into the instance state."""
+        """Accumulate input data from a step context into the reducer's internal state.
+
+        This method is called for each input that needs to be reduced. Subclasses
+        should override this method to implement their specific reduction logic.
+
+        Args:
+            ctx: The step context containing input data to reduce
+        """
         pass
 
     def finalize(self, ctx: StepContext[StateT, DepsT, None]) -> OutputT:
-        """Finalize the reduction and return the output."""
+        """Finalize the reduction and return the aggregated output.
+
+        This method is called after all inputs have been reduced to produce
+        the final output value.
+
+        Args:
+            ctx: The step context for finalization (no input data)
+
+        Returns:
+            The final aggregated output from all reduced inputs
+
+        Raises:
+            NotImplementedError: Must be implemented by subclasses
+        """
         raise NotImplementedError('Finalize method must be implemented in subclasses.')
 
 
 @dataclass(init=False)
 class NullReducer(Reducer[object, object, object, None]):
-    """A null reducer."""
+    """A reducer that discards all input data and returns None.
+
+    This reducer is useful when you need to join parallel execution paths
+    but don't care about collecting their outputs - only about synchronizing
+    their completion.
+    """
 
     def finalize(self, ctx: StepContext[object, object, object]) -> None:
+        """Return None, ignoring all accumulated inputs.
+
+        Args:
+            ctx: The step context for finalization
+
+        Returns:
+            Always returns None
+        """
         return None
 
 
 @dataclass(init=False)
 class ListReducer(Reducer[object, object, T, list[T]], Generic[T]):
-    """A list reducer."""
+    """A reducer that collects all input values into a list.
+
+    This reducer accumulates each input value in order and returns them
+    as a list when finalized.
+
+    Type Parameters:
+        T: The type of elements in the resulting list
+    """
 
     items: list[T] = field(default_factory=list)
+    """The accumulated list of input items."""
 
     def reduce(self, ctx: StepContext[object, object, T]) -> None:
+        """Append the input value to the list of items.
+
+        Args:
+            ctx: The step context containing the input value to append
+        """
         self.items.append(ctx.inputs)
 
     def finalize(self, ctx: StepContext[object, object, None]) -> list[T]:
+        """Return the accumulated list of items.
+
+        Args:
+            ctx: The step context for finalization
+
+        Returns:
+            A list containing all accumulated input values in order
+        """
         return self.items
 
 
 @dataclass(init=False)
 class DictReducer(Reducer[object, object, dict[K, V], dict[K, V]], Generic[K, V]):
-    """A dict reducer."""
+    """A reducer that merges dictionary inputs into a single dictionary.
 
-    data: dict[K, V] = field(default_factory=dict[K, V])
+    This reducer accumulates dictionary inputs by merging them together,
+    with later inputs overriding earlier ones for duplicate keys.
+
+    Type Parameters:
+        K: The type of dictionary keys
+        V: The type of dictionary values
+    """
+
+    data: dict[K, V] = field(default_factory=dict)
+    """The accumulated dictionary data."""
 
     def reduce(self, ctx: StepContext[object, object, dict[K, V]]) -> None:
+        """Merge the input dictionary into the accumulated data.
+
+        Args:
+            ctx: The step context containing the dictionary to merge
+        """
         self.data.update(ctx.inputs)
 
     def finalize(self, ctx: StepContext[object, object, None]) -> dict[K, V]:
+        """Return the accumulated merged dictionary.
+
+        Args:
+            ctx: The step context for finalization
+
+        Returns:
+            A dictionary containing all merged key-value pairs
+        """
         return self.data
 
 
 class Join(Generic[StateT, DepsT, InputT, OutputT]):
-    """A join."""
+    """A join operation that synchronizes and aggregates parallel execution paths.
+
+    A join defines how to combine outputs from multiple parallel execution paths
+    using a [`Reducer`][pydantic_graph.v2.join.Reducer]. It specifies which fork
+    it joins (if any) and manages the creation of reducer instances.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        InputT: The type of input data to join
+        OutputT: The type of the final joined output
+
+    Example:
+        ```python
+        # Create a join that collects results into a list
+        join = Join(
+            id=JoinId("collect_results"),
+            reducer_type=ListReducer[str],
+            joins=ForkId("parallel_tasks")
+        )
+        ```
+    """
 
     def __init__(
         self, id: JoinId, reducer_type: type[Reducer[StateT, DepsT, InputT, OutputT]], joins: ForkId | None = None
     ) -> None:
+        """Initialize a join operation.
+
+        Args:
+            id: Unique identifier for this join
+            reducer_type: The type of reducer to use for aggregating inputs
+            joins: The fork ID this join synchronizes with, if any
+        """
         self.id = id
+        """Unique identifier for this join operation."""
+
         self._reducer_type = reducer_type
+        """The reducer type used to aggregate inputs."""
+
         self.joins = joins
+        """The fork ID this join synchronizes with, if any."""
 
         # self._type_adapter: TypeAdapter[Any] = TypeAdapter(reducer_type)  # needs to be annotated this way for variance
 
     def create_reducer(self, ctx: StepContext[StateT, DepsT, InputT]) -> Reducer[StateT, DepsT, InputT, OutputT]:
-        """Create a reducer instance using the provided context."""
+        """Create a reducer instance for this join operation.
+
+        Args:
+            ctx: The step context containing the first input data
+
+        Returns:
+            A new reducer instance initialized with the provided context
+        """
         return self._reducer_type(ctx)
 
     # TODO(P3): If we want the ability to snapshot graph-run state, we'll need a way to
@@ -93,4 +232,17 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
     #     return self._type_adapter.validate_json(serialized)
 
     def _force_covariant(self, inputs: InputT) -> OutputT:
+        """Force covariant typing for generic parameters.
+
+        This method exists solely for typing purposes and should never be called.
+
+        Args:
+            inputs: Input value for typing purposes only
+
+        Returns:
+            Output value for typing purposes only
+
+        Raises:
+            RuntimeError: Always raised as this method should never be called
+        """
         raise RuntimeError('This method should never be called, it is just defined for typing purposes.')

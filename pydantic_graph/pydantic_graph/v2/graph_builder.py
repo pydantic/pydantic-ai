@@ -1,3 +1,10 @@
+"""Graph builder for constructing executable graph definitions.
+
+This module provides the GraphBuilder class and related utilities for
+constructing typed, executable graph definitions with steps, joins,
+decisions, and edge routing.
+"""
+
 from __future__ import annotations
 
 import inspect
@@ -67,7 +74,28 @@ def join(
     *,
     node_id: str | None = None,
 ) -> Join[StateT, DepsT, Any, Any] | Callable[[type[Reducer[StateT, DepsT, Any, Any]]], Join[StateT, DepsT, Any, Any]]:
-    """Get a Join instance from a reducer type."""
+    """Create a join node from a reducer type.
+
+    This function can be used as a decorator or called directly to create
+    a join node that aggregates data from parallel execution paths.
+
+    Args:
+        reducer_type: The reducer class to use for aggregating data
+        node_id: Optional ID for the node, defaults to the reducer type name
+
+    Returns:
+        Either a Join instance or a decorator function
+
+    Example:
+        ```python
+        # As a decorator
+        @join(node_id="collect_results")
+        class MyReducer(ListReducer[str]): ...
+
+        # Or called directly
+        my_join = join(ListReducer, node_id="collect_results")
+        ```
+    """
     if reducer_type is None:
 
         def decorator(
@@ -88,18 +116,56 @@ def join(
 
 @dataclass(init=False)
 class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
-    """A graph builder."""
+    """A builder for constructing executable graph definitions.
+
+    GraphBuilder provides a fluent interface for defining nodes, edges, and
+    routing in a graph workflow. It supports typed state, dependencies, and
+    input/output validation.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        GraphInputT: The type of the graph input data
+        GraphOutputT: The type of the graph output data
+
+    Example:
+        ```python
+        builder = GraphBuilder[MyState, MyDeps, str, int]()
+
+        @builder.step
+        async def process_data(ctx: StepContext[MyState, MyDeps, str]) -> int:
+            return len(ctx.inputs)
+
+        builder.add_edge(builder.start_node, process_data)
+        builder.add_edge(process_data, builder.end_node)
+
+        graph = builder.build()
+        ```
+    """
 
     state_type: TypeOrTypeExpression[StateT]
+    """The type of the graph state."""
+
     deps_type: TypeOrTypeExpression[DepsT]
+    """The type of the dependencies."""
+
     input_type: TypeOrTypeExpression[GraphInputT]
+    """The type of the graph input data."""
+
     output_type: TypeOrTypeExpression[GraphOutputT]
+    """The type of the graph output data."""
 
     auto_instrument: bool
+    """Whether to automatically create instrumentation spans."""
 
     _nodes: dict[NodeId, AnyNode]
+    """Internal storage for nodes in the graph."""
+
     _edges_by_source: dict[NodeId, list[Path]]
+    """Internal storage for edges by source node."""
+
     _decision_index: int
+    """Counter for generating unique decision node IDs."""
 
     Source = TypeAliasType('Source', SourceNode[StateT, DepsT, OutputT], type_params=(OutputT,))
     Destination = TypeAliasType('Destination', DestinationNode[StateT, DepsT, InputT], type_params=(InputT,))
@@ -113,6 +179,15 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         output_type: TypeOrTypeExpression[GraphOutputT] = NoneType,
         auto_instrument: bool = True,
     ):
+        """Initialize a graph builder.
+
+        Args:
+            state_type: The type of the graph state
+            deps_type: The type of the dependencies
+            input_type: The type of the graph input data
+            output_type: The type of the graph output data
+            auto_instrument: Whether to automatically create instrumentation spans
+        """
         self.state_type = state_type
         self.deps_type = deps_type
         self.input_type = input_type
@@ -130,10 +205,20 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     # Node building
     @property
     def start_node(self) -> StartNode[GraphInputT]:
+        """Get the start node for the graph.
+
+        Returns:
+            The start node that receives the initial graph input
+        """
         return self._start_node
 
     @property
     def end_node(self) -> EndNode[GraphOutputT]:
+        """Get the end node for the graph.
+
+        Returns:
+            The end node that produces the final graph output
+        """
         return self._end_node
 
     @overload
@@ -161,7 +246,19 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Step[StateT, DepsT, InputT, OutputT]
         | Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]
     ):
-        """Get a Step instance from a step function."""
+        """Create a step from a step function (internal implementation).
+
+        This internal method handles the actual step creation logic and
+        automatic edge inference from type hints.
+
+        Args:
+            call: The step function to wrap
+            node_id: Optional ID for the node
+            label: Optional human-readable label
+
+        Returns:
+            Either a Step instance or a decorator function
+        """
         if call is None:
 
             def decorator(
@@ -213,6 +310,30 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Step[StateT, DepsT, InputT, OutputT]
         | Callable[[StepFunction[StateT, DepsT, InputT, OutputT]], Step[StateT, DepsT, InputT, OutputT]]
     ):
+        """Create a step from a step function.
+
+        This method can be used as a decorator or called directly to create
+        a step node from an async function.
+
+        Args:
+            call: The step function to wrap
+            node_id: Optional ID for the node
+            label: Optional human-readable label
+
+        Returns:
+            Either a Step instance or a decorator function
+
+        Example:
+            ```python
+            # As a decorator
+            @builder.step(node_id="process", label="Process Data")
+            async def process_data(ctx: StepContext[MyState, MyDeps, str]) -> int:
+                return len(ctx.inputs)
+
+            # Or called directly
+            step = builder.step(process_data, node_id="process")
+            ```
+        """
         if call is None:
             return self._step(node_id=node_id, label=label)
         else:
@@ -240,6 +361,24 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         Join[StateT, DepsT, Any, Any]
         | Callable[[type[Reducer[StateT, DepsT, Any, Any]]], Join[StateT, DepsT, Any, Any]]
     ):
+        """Create a join node with a reducer.
+
+        This method can be used as a decorator or called directly to create
+        a join node that aggregates data from parallel execution paths.
+
+        Args:
+            reducer_factory: The reducer class to use for aggregating data
+            node_id: Optional ID for the node
+
+        Returns:
+            Either a Join instance or a decorator function
+
+        Example:
+            ```python
+            # Create a join that collects results into a list
+            collect_join = builder.join(ListReducer, node_id="collect_results")
+            ```
+        """
         if reducer_factory is None:
             return join(node_id=node_id)
         else:
@@ -247,7 +386,21 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
     # Edge building
     def add(self, *edges: EdgePath[StateT, DepsT]) -> None:
+        """Add one or more edge paths to the graph.
+
+        This method processes edge paths and automatically creates any necessary
+        fork nodes for broadcasts and spreads.
+
+        Args:
+            *edges: The edge paths to add to the graph
+        """
+
         def _handle_path(p: Path):
+            """Process a path and create necessary fork nodes.
+
+            Args:
+                p: The path to process
+            """
             for item in p.items:
                 if isinstance(item, BroadcastMarker):
                     new_node = Fork[Any, Any](id=item.fork_id, is_spread=False)
@@ -270,6 +423,13 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             _handle_path(edge.path)
 
     def add_edge(self, source: Source[T], destination: Destination[T], *, label: str | None = None) -> None:
+        """Add a simple edge between two nodes.
+
+        Args:
+            source: The source node
+            destination: The destination node
+            label: Optional label for the edge
+        """
         builder = self.edge_from(source)
         if label is not None:
             builder = builder.label(label)
@@ -283,6 +443,14 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         pre_spread_label: str | None = None,
         post_spread_label: str | None = None,
     ) -> None:
+        """Add an edge that spreads iterable data across parallel paths.
+
+        Args:
+            source: The source node that produces iterable data
+            spread_to: The destination node that receives individual items
+            pre_spread_label: Optional label before the spread operation
+            post_spread_label: Optional label after the spread operation
+        """
         builder = self.edge_from(source)
         if pre_spread_label is not None:
             builder = builder.label(pre_spread_label)
@@ -295,11 +463,27 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     #  probably similar to a step, but with some tweaks
 
     def edge_from(self, *sources: Source[SourceOutputT]) -> EdgePathBuilder[StateT, DepsT, SourceOutputT]:
+        """Create an edge path builder starting from the given source nodes.
+
+        Args:
+            *sources: The source nodes to start the edge path from
+
+        Returns:
+            An EdgePathBuilder for constructing the complete edge path
+        """
         return EdgePathBuilder[StateT, DepsT, SourceOutputT](
             sources=sources, path_builder=PathBuilder(working_items=[])
         )
 
     def decision(self, *, note: str | None = None) -> Decision[StateT, DepsT, Never]:
+        """Create a new decision node.
+
+        Args:
+            note: Optional note to describe the decision logic
+
+        Returns:
+            A new Decision node with no branches
+        """
         return Decision(id=NodeId(self._get_new_decision_id()), branches=[], note=note)
 
     def match(
@@ -308,6 +492,15 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         matches: Callable[[Any], bool] | None = None,
     ) -> DecisionBranchBuilder[StateT, DepsT, SourceT, SourceT, Never]:
+        """Create a decision branch matcher.
+
+        Args:
+            source: The type or type expression to match against
+            matches: Optional custom matching function
+
+        Returns:
+            A DecisionBranchBuilder for constructing the branch
+        """
         node_id = NodeId(self._get_new_decision_id())
         decision = Decision[StateT, DepsT, Never](node_id, branches=[], note=None)
         new_path_builder = PathBuilder[StateT, DepsT, SourceT](working_items=[])
@@ -319,7 +512,18 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         *,
         matches: Callable[[Any], bool] | None = None,
     ) -> DecisionBranch[SourceNodeT]:
-        """Like match, but for BaseNode subclasses."""
+        """Create a decision branch for BaseNode subclasses.
+
+        This is similar to match() but specifically designed for matching
+        against BaseNode types from the v1 system.
+
+        Args:
+            source: The BaseNode subclass to match against
+            matches: Optional custom matching function
+
+        Returns:
+            A DecisionBranch for the BaseNode type
+        """
         path = Path(items=[DestinationMarker(NodeStep(source).id)])
         return DecisionBranch(source=source, matches=matches, path=path)
 
@@ -327,6 +531,20 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         self,
         node_type: type[BaseNode[StateT, DepsT, GraphOutputT]],
     ) -> EdgePath[StateT, DepsT]:
+        """Create an edge path from a BaseNode class.
+
+        This method integrates v1-style BaseNode classes into the v2 graph
+        system by analyzing their type hints and creating appropriate edges.
+
+        Args:
+            node_type: The BaseNode subclass to integrate
+
+        Returns:
+            An EdgePath representing the node and its connections
+
+        Raises:
+            GraphSetupError: If the node type is missing required type hints
+        """
         parent_namespace = _utils.get_parent_namespace(inspect.currentframe())
         type_hints = get_type_hints(node_type.run, localns=parent_namespace, include_extras=True)
         try:
@@ -346,6 +564,14 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
     # Helpers
     def _insert_node(self, node: AnyNode) -> None:
+        """Insert a node into the graph, checking for ID conflicts.
+
+        Args:
+            node: The node to insert
+
+        Raises:
+            ValueError: If a different node with the same ID already exists
+        """
         existing = self._nodes.get(node.id)
         if existing is None:
             self._nodes[node.id] = node
@@ -359,6 +585,11 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
             raise ValueError(f'All nodes must have unique node IDs. {node.id!r} was the ID for {existing} and {node}')
 
     def _get_new_decision_id(self) -> str:
+        """Generate a unique ID for a new decision node.
+
+        Returns:
+            A unique decision node ID
+        """
         node_id = f'decision_{self._decision_index}'
         self._decision_index += 1
         while node_id in self._nodes:
@@ -367,6 +598,14 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         return node_id
 
     def _get_new_broadcast_id(self, from_: str | None = None) -> str:
+        """Generate a unique ID for a new broadcast fork.
+
+        Args:
+            from_: Optional source identifier to include in the ID
+
+        Returns:
+            A unique broadcast fork ID
+        """
         prefix = 'broadcast'
         if from_ is not None:
             prefix += f'_from_{from_}'
@@ -379,6 +618,15 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         return node_id
 
     def _get_new_spread_id(self, from_: str | None = None, to: str | None = None) -> str:
+        """Generate a unique ID for a new spread fork.
+
+        Args:
+            from_: Optional source identifier to include in the ID
+            to: Optional destination identifier to include in the ID
+
+        Returns:
+            A unique spread fork ID
+        """
         prefix = 'spread'
         if from_ is not None:
             prefix += f'_from_{from_}'
@@ -395,6 +643,21 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
     def _edge_from_return_hint(
         self, node: SourceNode[StateT, DepsT, Any], return_hint: TypeOrTypeExpression[Any]
     ) -> EdgePath[StateT, DepsT] | None:
+        """Create edges from a return type hint.
+
+        This method analyzes return type hints from step functions or node methods
+        to automatically create appropriate edges in the graph.
+
+        Args:
+            node: The source node
+            return_hint: The return type hint to analyze
+
+        Returns:
+            An EdgePath if edges can be inferred, None otherwise
+
+        Raises:
+            GraphSetupError: If the return type hint is invalid or incomplete
+        """
         destinations: list[AnyDestinationNode] = []
         union_args = _utils.get_union_args(return_hint)
         for return_type in union_args:
@@ -435,6 +698,17 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
     # Graph building
     def build(self) -> Graph[StateT, DepsT, GraphInputT, GraphOutputT]:
+        """Build the final executable graph from the accumulated nodes and edges.
+
+        This method performs validation, normalization, and analysis of the graph
+        structure to create a complete, executable graph instance.
+
+        Returns:
+            A complete Graph instance ready for execution
+
+        Raises:
+            ValueError: If the graph structure is invalid (e.g., join without parent fork)
+        """
         # TODO(P2): Warn/error if there is no start node / edges, or end node / edges
         # TODO(P2): Warn/error if the graph is not connected
         # TODO(P2): Warn/error if any non-End node is a dead end
@@ -462,9 +736,17 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 def _normalize_forks(
     nodes: dict[NodeId, AnyNode], edges: dict[NodeId, list[Path]]
 ) -> tuple[dict[NodeId, AnyNode], dict[NodeId, list[Path]]]:
-    """Rework the nodes/edges so that the _only_ nodes with multiple edges coming out are broadcast forks.
+    """Normalize the graph structure so only broadcast forks have multiple outgoing edges.
 
-    Also, add forks to edges.
+    This function ensures that any node with multiple outgoing edges is converted
+    to use an explicit broadcast fork, simplifying the graph execution model.
+
+    Args:
+        nodes: The nodes in the graph
+        edges: The edges by source node
+
+    Returns:
+        A tuple of normalized nodes and edges
     """
     new_nodes = nodes.copy()
     new_edges: dict[NodeId, list[Path]] = {}
@@ -505,6 +787,22 @@ def _normalize_forks(
 def _collect_dominating_forks(
     graph_nodes: dict[NodeId, AnyNode], graph_edges_by_source: dict[NodeId, list[Path]]
 ) -> dict[JoinId, ParentFork[NodeId]]:
+    """Find the dominating fork for each join node in the graph.
+
+    This function analyzes the graph structure to find the parent fork that
+    dominates each join node, which is necessary for proper synchronization
+    during graph execution.
+
+    Args:
+        graph_nodes: All nodes in the graph
+        graph_edges_by_source: Edges organized by source node
+
+    Returns:
+        A mapping from join IDs to their parent fork information
+
+    Raises:
+        ValueError: If any join node lacks a dominating fork
+    """
     nodes = set(graph_nodes)
     start_ids: set[NodeId] = {StartNode.id}
     edges: dict[NodeId, list[NodeId]] = defaultdict(list)
@@ -519,6 +817,12 @@ def _collect_dominating_forks(
             continue
 
         def _handle_path(path: Path, last_source_id: NodeId):
+            """Process a path and collect edges and fork information.
+
+            Args:
+                path: The path to process
+                last_source_id: The current source node ID
+            """
             for item in path.items:
                 if isinstance(item, SpreadMarker):
                     fork_ids.add(item.fork_id)

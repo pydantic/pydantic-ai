@@ -1,3 +1,9 @@
+"""Utility types and functions for type manipulation and introspection.
+
+This module provides helper classes and functions for working with Python's type system,
+including workarounds for type checker limitations and utilities for runtime type inspection.
+"""
+
 import inspect
 from dataclasses import dataclass
 from typing import Any, Generic, cast, get_args, get_origin
@@ -5,28 +11,45 @@ from typing import Any, Generic, cast, get_args, get_origin
 from typing_extensions import TypeAliasType, TypeVar
 
 T = TypeVar('T', infer_variance=True)
+"""Generic type variable with inferred variance."""
 
 
 class TypeExpression(Generic[T]):
-    """This is a workaround for the lack of TypeForm.
+    """A workaround for type checker limitations when using complex type expressions.
 
-    This is used in places that require an argument of type `type[T]` when you want to use a `T` that type checkers
-    don't allow in this position, such as `Any`, `Union[...]`, or `Literal[...]`. In that case, you can just use e.g.
-    `output_type=TypeExpression[Union[...]]` instead of `output_type=Union[...]`.
+    This class serves as a wrapper for types that cannot normally be used in positions
+    requiring `type[T]`, such as `Any`, `Union[...]`, or `Literal[...]`. It provides a
+    way to pass these complex type expressions to functions expecting concrete types.
+
+    Example:
+        Instead of `output_type=Union[str, int]` (which may cause type errors),
+        use `output_type=TypeExpression[Union[str, int]]`.
+
+    Note:
+        This is a workaround for the lack of TypeForm in the Python type system.
     """
 
     pass
 
 
 TypeOrTypeExpression = TypeAliasType('TypeOrTypeExpression', type[TypeExpression[T]] | type[T], type_params=(T,))
-"""This is used to allow types directly when compatible with typecheckers, but also allow TypeExpression[T] to be used.
+"""Type alias allowing both direct types and TypeExpression wrappers.
 
-The correct type should get inferred either way.
+This alias enables functions to accept either regular types (when compatible with type checkers)
+or TypeExpression wrappers for complex type expressions. The correct type should be inferred
+automatically in either case.
 """
 
 
 def unpack_type_expression(type_: TypeOrTypeExpression[T]) -> type[T]:
-    """Unpack the type expression."""
+    """Extract the actual type from a TypeExpression wrapper or return the type directly.
+
+    Args:
+        type_: Either a direct type or a TypeExpression wrapper.
+
+    Returns:
+        The unwrapped type, ready for use in runtime type operations.
+    """
     if get_origin(type_) is TypeExpression:
         return get_args(type_)[0]
     return cast(type[T], type_)
@@ -34,27 +57,62 @@ def unpack_type_expression(type_: TypeOrTypeExpression[T]) -> type[T]:
 
 @dataclass
 class Some(Generic[T]):
-    """A marker that a value is present. Like a monadic version of `Optional`."""
+    """Container for explicitly present values in Maybe type pattern.
+
+    This class represents a value that is definitely present, as opposed to None.
+    It's part of the Maybe pattern, similar to Option/Maybe in functional programming,
+    allowing distinction between "no value" (None) and "value is None" (Some(None)).
+    """
 
     value: T
+    """The wrapped value."""
 
 
-Maybe = TypeAliasType(
-    'Maybe', Some[T] | None, type_params=(T,)
-)  # like optional, but you can tell the difference between "no value" and "value is None"
+Maybe = TypeAliasType('Maybe', Some[T] | None, type_params=(T,))
+"""Optional-like type that distinguishes between absence and None values.
+
+Unlike Optional[T], Maybe[T] can differentiate between:
+- No value present: represented as None
+- Value is None: represented as Some(None)
+
+This is particularly useful when None is a valid value in your domain.
+"""
 
 
 def get_callable_name(callable_: Any) -> str:
-    """Get the name to use for a callable."""
-    # TODO(P2): Do we need to extend this logic? E.g., for instances of classes defining `__call__`?
+    """Extract a human-readable name from a callable object.
+
+    Args:
+        callable_: Any callable object (function, method, class, etc.).
+
+    Returns:
+        The callable's __name__ attribute if available, otherwise its string representation.
+
+    Note:
+        TODO(P2): Consider extending for instances of classes with __call__ methods.
+    """
     return getattr(callable_, '__name__', str(callable_))
 
 
-# TODO(P3): Use or remove this
 def infer_name(obj: Any, *, depth: int) -> str | None:
-    """Infer the name of `obj` from the call frame.
+    """Infer the variable name of an object from the calling frame's scope.
 
-    Usage should generally look like `infer_name(self, depth=2)` or similar.
+    This function examines the call stack to find what variable name was used
+    for the given object in the calling scope. This is useful for automatic
+    naming of objects based on their variable names.
+
+    Args:
+        obj: The object whose variable name to infer.
+        depth: Number of stack frames to traverse upward from the current frame.
+
+    Returns:
+        The inferred variable name if found, None otherwise.
+
+    Example:
+        Usage should generally look like `infer_name(self, depth=2)` or similar.
+
+    Note:
+        TODO(P3): Evaluate whether this function is still needed or should be removed.
     """
     target_frame = inspect.currentframe()
     if target_frame is None:

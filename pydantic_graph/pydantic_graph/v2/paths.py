@@ -1,3 +1,10 @@
+"""Path and edge definition for graph navigation.
+
+This module provides the building blocks for defining paths through a graph,
+including transformations, spreads, broadcasts, and routing to destinations.
+Paths enable complex data flow patterns in graph execution.
+"""
+
 from __future__ import annotations
 
 import secrets
@@ -20,52 +27,89 @@ if TYPE_CHECKING:
 
 @dataclass
 class TransformMarker:
-    """A transform marker."""
+    """A marker indicating a data transformation step in a path.
+
+    Transform markers wrap step functions that modify data as it flows
+    through the graph path.
+    """
 
     transform: StepFunction[Any, Any, Any, Any]
+    """The step function that performs the transformation."""
 
 
 @dataclass
 class SpreadMarker:
-    """A spread marker."""
+    """A marker indicating that iterable data should be spread across parallel paths.
+
+    Spread markers take iterable input and create parallel execution paths
+    for each item in the iterable.
+    """
 
     fork_id: ForkId
+    """Unique identifier for the fork created by this spread operation."""
 
 
 @dataclass
 class BroadcastMarker:
-    """A broadcast marker."""
+    """A marker indicating that data should be broadcast to multiple parallel paths.
+
+    Broadcast markers create multiple parallel execution paths, sending the
+    same input data to each path.
+    """
 
     paths: Sequence[Path]
+    """The parallel paths that will receive the broadcast data."""
+
     fork_id: ForkId
+    """Unique identifier for the fork created by this broadcast operation."""
 
 
 @dataclass
 class LabelMarker:
-    """A label marker."""
+    """A marker providing a human-readable label for a path segment.
+
+    Label markers are used for debugging, visualization, and documentation
+    purposes to provide meaningful names for path segments.
+    """
 
     label: str
+    """The human-readable label for this path segment."""
 
 
 @dataclass
 class DestinationMarker:
-    """A destination marker."""
+    """A marker indicating the target destination node for a path.
+
+    Destination markers specify where data should be routed at the end
+    of a path execution.
+    """
 
     destination_id: NodeId
+    """The unique identifier of the destination node."""
 
 
 PathItem = TypeAliasType('PathItem', TransformMarker | SpreadMarker | BroadcastMarker | LabelMarker | DestinationMarker)
+"""Type alias for any item that can appear in a path sequence."""
 
 
 @dataclass
 class Path:
-    """A path."""
+    """A sequence of path items defining data flow through the graph.
+
+    Paths represent the route that data takes through the graph, including
+    transformations, forks, and routing decisions.
+    """
 
     items: Sequence[PathItem]
+    """The sequence of path items that define this path."""
 
     @property
     def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
-        """Returns the last fork or spread marker in the path, if any."""
+        """Get the most recent fork or spread marker in this path.
+
+        Returns:
+            The last BroadcastMarker or SpreadMarker in the path, or None if no forks exist
+        """
         for item in reversed(self.items):
             if isinstance(item, BroadcastMarker | SpreadMarker):
                 return item
@@ -73,18 +117,37 @@ class Path:
 
     @property
     def next_path(self) -> Path:
+        """Create a new path with the first item removed.
+
+        Returns:
+            A new Path with all items except the first one
+        """
         return Path(self.items[1:])
 
 
 @dataclass
 class PathBuilder(Generic[StateT, DepsT, OutputT]):
-    """A path builder."""
+    """A builder for constructing paths with method chaining.
+
+    PathBuilder provides a fluent interface for creating paths by chaining
+    operations like transforms, spreads, and routing to destinations.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        OutputT: The type of the current data in the path
+    """
 
     working_items: Sequence[PathItem]
+    """The accumulated sequence of path items being built."""
 
     @property
     def last_fork(self) -> BroadcastMarker | SpreadMarker | None:
-        """Returns the last fork or spread marker in the path, if any."""
+        """Get the most recent fork or spread marker in the working path.
+
+        Returns:
+            The last BroadcastMarker or SpreadMarker in the working items, or None if no forks exist
+        """
         for item in reversed(self.working_items):
             if isinstance(item, BroadcastMarker | SpreadMarker):
                 return item
@@ -97,6 +160,16 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         *extra_destinations: DestinationNode[StateT, DepsT, OutputT],
         fork_id: str | None = None,
     ) -> Path:
+        """Route the path to one or more destination nodes.
+
+        Args:
+            destination: The primary destination node
+            *extra_destinations: Additional destination nodes (creates a broadcast)
+            fork_id: Optional ID for the fork created when multiple destinations are specified
+
+        Returns:
+            A complete Path ending at the specified destination(s)
+        """
         if extra_destinations:
             next_item = BroadcastMarker(
                 paths=[Path(items=[DestinationMarker(d.id)]) for d in (destination,) + extra_destinations],
@@ -107,53 +180,122 @@ class PathBuilder(Generic[StateT, DepsT, OutputT]):
         return Path(items=[*self.working_items, next_item])
 
     def fork(self, forks: Sequence[Path], /, *, fork_id: str | None = None) -> Path:
+        """Create a fork that broadcasts data to multiple parallel paths.
+
+        Args:
+            forks: The sequence of paths to run in parallel
+            fork_id: Optional ID for the fork, defaults to a generated value
+
+        Returns:
+            A complete Path that forks to the specified parallel paths
+        """
         next_item = BroadcastMarker(paths=forks, fork_id=ForkId(NodeId(fork_id or 'broadcast_' + secrets.token_hex(8))))
         return Path(items=[*self.working_items, next_item])
 
     def transform(self, func: StepFunction[StateT, DepsT, OutputT, Any], /) -> PathBuilder[StateT, DepsT, Any]:
+        """Add a transformation step to the path.
+
+        Args:
+            func: The step function that will transform the data
+
+        Returns:
+            A new PathBuilder with the transformation added
+        """
         next_item = TransformMarker(func)
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
 
     def spread(
         self: PathBuilder[StateT, DepsT, Iterable[Any]], *, fork_id: str | None = None
     ) -> PathBuilder[StateT, DepsT, Any]:
+        """Spread iterable data across parallel execution paths.
+
+        This method can only be called when the current output type is iterable.
+        It creates parallel paths for each item in the iterable.
+
+        Args:
+            fork_id: Optional ID for the fork, defaults to a generated value
+
+        Returns:
+            A new PathBuilder that operates on individual items from the iterable
+        """
         next_item = SpreadMarker(fork_id=ForkId(NodeId(fork_id or 'spread_' + secrets.token_hex(8))))
         return PathBuilder[StateT, DepsT, Any](working_items=[*self.working_items, next_item])
 
     def label(self, label: str, /) -> PathBuilder[StateT, DepsT, OutputT]:
+        """Add a human-readable label to this point in the path.
+
+        Args:
+            label: The label to add for documentation/debugging purposes
+
+        Returns:
+            A new PathBuilder with the label added
+        """
         next_item = LabelMarker(label)
         return PathBuilder[StateT, DepsT, OutputT](working_items=[*self.working_items, next_item])
 
 
 @dataclass
 class EdgePath(Generic[StateT, DepsT]):
-    """An edge path."""
+    """A complete edge connecting source nodes to destinations via a path.
 
-    sources: Sequence[SourceNode[StateT, DepsT, Any]]
-    path: Path
-    destinations: list[AnyDestinationNode]  # can be referenced by DestinationMarker in `path.items`
-
-
-class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
-    """This can't be a dataclass due to variance issues.
-
-    It could probably be converted back to one once ReadOnly is available in typing_extensions.
+    EdgePath represents a complete connection in the graph, specifying the
+    source nodes, the path that data follows, and the destination nodes.
     """
 
     sources: Sequence[SourceNode[StateT, DepsT, Any]]
+    """The source nodes that provide data to this edge."""
+
+    path: Path
+    """The path that data follows through the graph."""
+
+    destinations: list[AnyDestinationNode]
+    """The destination nodes that can be referenced by DestinationMarker in the path."""
+
+
+class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
+    """A builder for constructing complete edge paths with method chaining.
+
+    EdgePathBuilder combines source nodes with path building capabilities
+    to create complete edge definitions. It cannot use dataclass due to
+    type variance issues.
+
+    Type Parameters:
+        StateT: The type of the graph state
+        DepsT: The type of the dependencies
+        OutputT: The type of the current data in the path
+    """
+
+    sources: Sequence[SourceNode[StateT, DepsT, Any]]
+    """The source nodes for this edge path."""
 
     def __init__(
         self, sources: Sequence[SourceNode[StateT, DepsT, Any]], path_builder: PathBuilder[StateT, DepsT, OutputT]
     ):
+        """Initialize an edge path builder.
+
+        Args:
+            sources: The source nodes that provide data
+            path_builder: The path builder for defining the data flow
+        """
         self.sources = sources
         self._path_builder = path_builder
 
     @property
     def path_builder(self) -> PathBuilder[StateT, DepsT, OutputT]:
+        """Get the underlying path builder.
+
+        Returns:
+            The PathBuilder instance for this edge
+        """
         return self._path_builder
 
     @property
     def last_fork_id(self) -> ForkId | None:
+        """Get the ID of the most recent fork in the path.
+
+        Returns:
+            The ForkId of the last fork, or None if no forks exist
+        """
         last_fork = self._path_builder.last_fork
         if last_fork is None:
             return None
@@ -176,6 +318,16 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
         *extra_destinations: DestinationNode[StateT, DepsT, OutputT],
         fork_id: str | None = None,
     ) -> EdgePath[StateT, DepsT]:
+        """Complete the edge path by routing to destination nodes.
+
+        Args:
+            first_item: Either a destination node or a function that generates edge paths
+            *extra_destinations: Additional destination nodes (creates a broadcast)
+            fork_id: Optional ID for the fork created when multiple destinations are specified
+
+        Returns:
+            A complete EdgePath connecting sources to destinations
+        """
         if callable(first_item):
             new_edge_paths = first_item(self)
             path = self.path_builder.fork([Path(x.path.items) for x in new_edge_paths], fork_id=fork_id)
@@ -195,10 +347,34 @@ class EdgePathBuilder(Generic[StateT, DepsT, OutputT]):
     def spread(
         self: EdgePathBuilder[StateT, DepsT, Iterable[Any]], fork_id: str | None = None
     ) -> EdgePathBuilder[StateT, DepsT, Any]:
+        """Spread iterable data across parallel execution paths.
+
+        Args:
+            fork_id: Optional ID for the fork, defaults to a generated value
+
+        Returns:
+            A new EdgePathBuilder that operates on individual items from the iterable
+        """
         return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.spread(fork_id=fork_id))
 
     def transform(self, func: StepFunction[StateT, DepsT, OutputT, Any], /) -> EdgePathBuilder[StateT, DepsT, Any]:
+        """Add a transformation step to the edge path.
+
+        Args:
+            func: The step function that will transform the data
+
+        Returns:
+            A new EdgePathBuilder with the transformation added
+        """
         return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.transform(func))
 
     def label(self, label: str) -> EdgePathBuilder[StateT, DepsT, OutputT]:
+        """Add a human-readable label to this point in the edge path.
+
+        Args:
+            label: The label to add for documentation/debugging purposes
+
+        Returns:
+            A new EdgePathBuilder with the label added
+        """
         return EdgePathBuilder(sources=self.sources, path_builder=self.path_builder.label(label))

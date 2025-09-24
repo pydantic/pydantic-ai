@@ -1,22 +1,42 @@
+"""Type definitions for identifiers used throughout the graph execution system.
+
+This module defines NewType wrappers and aliases for various ID types used in graph execution,
+providing type safety and clarity when working with different kinds of identifiers.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import NewType
 
 NodeId = NewType('NodeId', str)
+"""Unique identifier for a node in the graph."""
+
 NodeRunId = NewType('NodeRunId', str)
+"""Unique identifier for a specific execution instance of a node."""
 
 # The following aliases are just included for clarity; making them NewTypes is a hassle
 JoinId = NodeId
+"""Alias for NodeId when referring to join nodes."""
+
 ForkId = NodeId
+"""Alias for NodeId when referring to fork nodes."""
 
 GraphRunId = NewType('GraphRunId', str)
+"""Unique identifier for a complete graph execution run."""
+
 TaskId = NewType('TaskId', str)
+"""Unique identifier for a task within the graph execution."""
 
 
 @dataclass(frozen=True)
 class ForkStackItem:
-    """A fork stack item."""
+    """Represents a single fork point in the execution stack.
+
+    When a node creates multiple parallel execution paths (forks), each fork is tracked
+    using a ForkStackItem. This allows the system to maintain the execution hierarchy
+    and coordinate parallel branches of execution.
+    """
 
     fork_id: ForkId
     """The ID of the node that created this fork."""
@@ -29,3 +49,8 @@ class ForkStackItem:
 
 
 ForkStack = tuple[ForkStackItem, ...]
+"""A stack of fork items representing the full hierarchy of parallel execution branches.
+
+The fork stack tracks the complete path through nested parallel executions,
+allowing the system to coordinate and join parallel branches correctly.
+"""
