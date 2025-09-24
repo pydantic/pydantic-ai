@@ -750,29 +750,32 @@ class OpenAIChatModel(Model):
         return chat.ChatCompletionUserMessageParam(role='user', content=content_parts)
 
     @staticmethod
-    async def _map_user_prompt_items(items: Sequence[object]) -> list[ChatCompletionContentPartParam]:
+    async def _map_user_prompt_items(
+        items: Sequence[str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl],
+    ) -> list[ChatCompletionContentPartParam]:
         result: list[ChatCompletionContentPartParam] = []
         for item in items:
             result.extend(await OpenAIChatModel._map_single_item(item))
         return result
 
     @staticmethod
-    async def _map_single_item(item: object) -> list[ChatCompletionContentPartParam]:
+    async def _map_single_item(
+        item: str | ImageUrl | BinaryContent | AudioUrl | DocumentUrl | VideoUrl,
+    ) -> list[ChatCompletionContentPartParam]:
         if isinstance(item, str):
             return [ChatCompletionContentPartTextParam(text=item, type='text')]
         elif isinstance(item, ImageUrl):
-            return OpenAIChatModel._handle_image_url(item) or []
+            return OpenAIChatModel._handle_image_url(item)
         elif isinstance(item, BinaryContent):
-            return await OpenAIChatModel._handle_binary_content(item) or []
+            return await OpenAIChatModel._handle_binary_content(item)
         elif isinstance(item, AudioUrl):
-            return await OpenAIChatModel._handle_audio_url(item) or []
+            return await OpenAIChatModel._handle_audio_url(item)
         elif isinstance(item, DocumentUrl):
-            return await OpenAIChatModel._handle_document_url(item) or []
+            return await OpenAIChatModel._handle_document_url(item)
         elif isinstance(item, VideoUrl):
             raise NotImplementedError('VideoUrl is not supported for OpenAI')
         else:
-            # Fallback: unknown type — return empty parts to avoid type-checker Never error
-            return []
+            assert_never(item)
 
     @staticmethod
     def _handle_image_url(item: ImageUrl) -> list[ChatCompletionContentPartParam]:

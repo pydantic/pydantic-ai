@@ -825,36 +825,21 @@ async def test_document_url_input(allow_model_requests: None, openai_api_key: st
     ],
 )
 async def test_openai_binary_content_text_like_is_inlined(
-    media_type: str, body: str, openai_api_key: str, allow_model_requests: None
+    media_type: str,
+    body: str,
 ) -> None:
     # Arrange input
     bin_content = BinaryContent(data=body.encode(), media_type=media_type)
     identifier = bin_content.identifier
+    part = UserPromptPart(content=[bin_content])
 
-    # Capture mapped OpenAI messages via public request() API
-    captured: list[list[dict[str, Any]]] = []
+    msg = await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
+    content = cast(list[dict[str, Any]], msg['content'])
 
-    async def fake_create(*args: Any, **kwargs: Any):
-        captured.append(kwargs['messages'])
-        raise RuntimeError('stop-after-capture')
-
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    # Monkeypatch the client's create method
-    model.client.chat.completions.create = fake_create
-
-    # Act
-    with pytest.raises(RuntimeError, match='stop-after-capture'):
-        await model.request([ModelRequest(parts=[UserPromptPart(content=[bin_content])])], {}, ModelRequestParameters())
-
-    # Assert on the mapped user message content
-    user_msgs = captured[0]
-    # Find the user message
-    user = next(m for m in user_msgs if m.get('role') == 'user')
-    parts = cast(list[dict[str, Any]], user['content'])
-    assert parts[0]['type'] == 'text'
-    text = parts[0]['text']
-    assert text.startswith(f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----')
-    assert text.rstrip().endswith('-----END FILE-----')
+    assert content[0]['type'] == 'text'
+    text = content[0]['text']
+    expected = f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE-----'
+    assert text == expected
 
 
 @pytest.mark.parametrize(
@@ -874,12 +859,11 @@ async def test_openai_document_url_text_like_is_inlined(
     media_type: str,
     data_type: str,
     body: str,
-    openai_api_key: str,
-    allow_model_requests: None,
 ) -> None:
     async def fake_download_item(
         item: Any, data_format: str = 'text', type_format: str = 'extension'
     ) -> dict[str, str]:
+        assert item.url == url
         assert data_format == 'text'
         return {'data': body, 'data_type': data_type}
 
@@ -888,29 +872,15 @@ async def test_openai_document_url_text_like_is_inlined(
     document_url = DocumentUrl(url=url, media_type=media_type)
     identifier = document_url.identifier
 
-    captured: list[list[dict[str, Any]]] = []
+    part = UserPromptPart(content=[document_url])
 
-    async def fake_create(*args: Any, **kwargs: Any):
-        captured.append(kwargs['messages'])
-        raise RuntimeError('stop-after-capture')
+    msg = await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
+    content = cast(list[dict[str, Any]], msg['content'])
 
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    model.client.chat.completions.create = fake_create
-
-    with pytest.raises(RuntimeError, match='stop-after-capture'):
-        await model.request(
-            [ModelRequest(parts=[UserPromptPart(content=[document_url])])],
-            {},
-            ModelRequestParameters(),
-        )
-
-    user_msgs = captured[0]
-    user = next(m for m in user_msgs if m.get('role') == 'user')
-    parts = cast(list[dict[str, Any]], user['content'])
-    assert parts[0]['type'] == 'text'
-    text = parts[0]['text']
-    assert text.startswith(f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----')
-    assert text.rstrip().endswith('-----END FILE-----')
+    assert content[0]['type'] == 'text'
+    text = content[0]['text']
+    expected = f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE-----'
+    assert text == expected
 
 
 @pytest.mark.vcr()
@@ -3033,51 +3003,28 @@ async def test_openai_video_url_raises_not_implemented(openai_api_key: str, allo
         )
 
 
-async def test_openai_map_single_item_unknown_returns_empty_branch(
-    openai_api_key: str, allow_model_requests: None
-) -> None:
+async def test_openai_map_single_item_unsupported_binary_content() -> None:
     # Use BinaryContent with unsupported media_type to exercise empty mapping via public API
 
-    captured: list[list[dict[str, Any]]] = []
-
-    async def fake_create(*args: Any, **kwargs: Any):
-        captured.append(kwargs['messages'])
-        raise RuntimeError('stop-after-capture')
-
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    model.client.chat.completions.create = fake_create
-
     bc = BinaryContent(data=b'data', media_type='application/octet-stream')
-    with pytest.raises(RuntimeError, match='stop-after-capture'):
-        await model.request([ModelRequest(parts=[UserPromptPart(content=[bc])])], {}, ModelRequestParameters())
+    part = UserPromptPart(content=[bc])
 
-    user_msgs = captured[0]
-    user = next(m for m in user_msgs if m.get('role') == 'user')
-    parts = cast(list[dict[str, Any]], user['content'])
-    assert parts == []
+    msg = await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
+    content = cast(list[dict[str, Any]], msg['content'])
+    assert content == []
 
 
-async def test_openai_binary_content_unsupported_type(openai_api_key: str, allow_model_requests: None) -> None:
-    # Covers BinaryContent unsupported path (not text-like, not image/audio/document) via public API
-
-    captured: list[list[dict[str, Any]]] = []
-
-    async def fake_create(*args: Any, **kwargs: Any):
-        captured.append(kwargs['messages'])
-        raise RuntimeError('stop-after-capture')
-
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    model.client.chat.completions.create = fake_create
-
+async def test_openai_binary_content_unsupported_type() -> None:
+    # Covers BinaryContent unsupported path (not text-like, not image/audio/document/video) via public API
     class Location(TypedDict):
+        """Location model for testing"""
+
         city: str
         country: str
 
     unsupported = Location(city='Paris', country='France')
-    with pytest.raises(RuntimeError, match='stop-after-capture'):
-        await model.request([ModelRequest(parts=[UserPromptPart(content=[unsupported])])], {}, ModelRequestParameters())  # type: ignore[reportPrivateUsage]
-
-    user_msgs = captured[0]
-    user = next(m for m in user_msgs if m.get('role') == 'user')
-    parts = cast(list[dict[str, Any]], user['content'])
-    assert parts == []
+    part = UserPromptPart(content=[unsupported])  # type: ignore[reportArgumentType]
+    with pytest.raises(
+        AssertionError, match="Expected code to be unreachable, but got: {'city': 'Paris', 'country': 'France'}"
+    ):
+        await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
