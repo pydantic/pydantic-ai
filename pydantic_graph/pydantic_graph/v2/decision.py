@@ -1,7 +1,7 @@
 """Decision node implementation for conditional branching in graph execution.
 
 This module provides the Decision node type and related classes for implementing
-conditional branching logic in execution graphs. Decision nodes allow the graph
+conditional branching logic in parallel control flow graphs. Decision nodes allow the graph
 to choose different execution paths based on runtime conditions.
 """
 
@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic
 
-from typing_extensions import Self, TypeVar
+from typing_extensions import Never, Self, TypeVar
 
 from pydantic_graph.v2.id_types import ForkId, NodeId
 from pydantic_graph.v2.paths import Path, PathBuilder
@@ -25,31 +25,13 @@ StateT = TypeVar('StateT', infer_variance=True)
 """Type variable for graph state."""
 
 DepsT = TypeVar('DepsT', infer_variance=True)
-"""Type variable for dependencies."""
-
-OutputT = TypeVar('OutputT', infer_variance=True)
-"""Type variable for output data."""
-
-BranchSourceT = TypeVar('BranchSourceT', infer_variance=True)
-"""Type variable for branch source data."""
-
-DecisionHandledT = TypeVar('DecisionHandledT', infer_variance=True)
-"""Type variable for types handled by the decision."""
+"""Type variable for graph dependencies."""
 
 HandledT = TypeVar('HandledT', infer_variance=True)
-"""Type variable for handled types."""
-
-S = TypeVar('S', infer_variance=True)
-"""Generic type variable."""
+"""Type variable used to track types handled by the branches of a Decision."""
 
 T = TypeVar('T', infer_variance=True)
 """Generic type variable."""
-
-NewOutputT = TypeVar('NewOutputT', infer_variance=True)
-"""Type variable for transformed output."""
-
-SourceT = TypeVar('SourceT', infer_variance=True)
-"""Type variable for source data."""
 
 
 @dataclass
@@ -69,7 +51,7 @@ class Decision(Generic[StateT, DepsT, HandledT]):
     note: str | None
     """Optional documentation note for this decision."""
 
-    def branch(self, branch: DecisionBranch[S]) -> Decision[StateT, DepsT, HandledT | S]:
+    def branch(self, branch: DecisionBranch[T]) -> Decision[StateT, DepsT, HandledT | T]:
         """Add a new branch to this decision.
 
         Args:
@@ -83,8 +65,11 @@ class Decision(Generic[StateT, DepsT, HandledT]):
         """
         return Decision(id=self.id, branches=self.branches + [branch], note=self.note)
 
-    def _force_handled_contravariant(self, inputs: HandledT) -> None:
-        """Force type variance for proper generic typing.
+    def _force_handled_contravariant(self, inputs: HandledT) -> Never:
+        """Forces this type to be contravariant in the HandledT type variable.
+
+        This is an implementation detail of how we can type-check that all possible input types have
+        been exhaustively covered.
 
         Args:
             inputs: Input data of handled types.
@@ -93,6 +78,10 @@ class Decision(Generic[StateT, DepsT, HandledT]):
             RuntimeError: Always, as this method should never be executed.
         """
         raise RuntimeError('This method should never be called, it is just defined for typing purposes.')
+
+
+SourceT = TypeVar('SourceT', infer_variance=True)
+"""Type variable for source data for a DecisionBranch."""
 
 
 @dataclass
@@ -104,27 +93,49 @@ class DecisionBranch(Generic[SourceT]):
     """
 
     source: TypeOrTypeExpression[SourceT]
-    """The expected type of data for this branch."""
+    """The expected type of data for this branch.
+
+    This is necessary for exhaustiveness-checking when handling inputs to a decision node."""
 
     matches: Callable[[Any], bool] | None
-    """Optional predicate function to match against input data."""
+    """An optional predicate function used to determine whether input data matches this branch.
+
+    If `None`, default logic is used which attempts to check the value for type-compatibility with the `source` type:
+    * If `source` is `Any` or `object`, the branch will always match
+    * If `source` is a `Literal` type, this branch will match if the value is one of the parametrizing literal values
+    * If `source` is any other type, the value will be checked for matching using `isinstance`
+
+    Inputs are tested against each branch of a decision node in order, and the path of the first matching branch is
+    used to handle the input value.
+    """
 
     path: Path
-    """The execution path to follow when this branch is taken."""
+    """The execution path to follow when an input value matches this branch of a decision node.
+
+    This can include transforming, spreading, and broadcasting the output before sending to the next node or nodes.
+
+    The path can also include position-aware labels which are used when generating mermaid diagrams."""
+
+
+OutputT = TypeVar('OutputT', infer_variance=True)
+"""Type variable for the output data of a node."""
+
+NewOutputT = TypeVar('NewOutputT', infer_variance=True)
+"""Type variable for transformed output."""
 
 
 @dataclass
-class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, BranchSourceT, DecisionHandledT]):
+class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, SourceT, HandledT]):
     """Builder for constructing decision branches with fluent API.
 
     This builder provides methods to configure branches with destinations,
     forks, and transformations in a type-safe manner.
     """
 
-    decision: Decision[StateT, DepsT, DecisionHandledT]
+    decision: Decision[StateT, DepsT, HandledT]
     """The parent decision node."""
 
-    source: TypeOrTypeExpression[BranchSourceT]
+    source: TypeOrTypeExpression[SourceT]
     """The expected source type for this branch."""
 
     matches: Callable[[Any], bool] | None
@@ -150,7 +161,7 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, BranchSourceT, Decis
         destination: DestinationNode[StateT, DepsT, OutputT],
         /,
         *extra_destinations: DestinationNode[StateT, DepsT, OutputT],
-    ) -> DecisionBranch[BranchSourceT]:
+    ) -> DecisionBranch[SourceT]:
         """Set the destination(s) for this branch.
 
         Args:
@@ -166,16 +177,16 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, BranchSourceT, Decis
 
     def fork(
         self,
-        get_forks: Callable[[Self], Sequence[Decision[StateT, DepsT, DecisionHandledT | BranchSourceT]]],
+        get_forks: Callable[[Self], Sequence[Decision[StateT, DepsT, HandledT | SourceT]]],
         /,
-    ) -> DecisionBranch[BranchSourceT]:
+    ) -> DecisionBranch[SourceT]:
         """Create a fork in the execution path.
 
         Args:
             get_forks: Function that generates fork decisions.
 
         Returns:
-            A DecisionBranch with forked execution paths.
+            A completed DecisionBranch with forked execution paths.
         """
         n_initial_branches = len(self.decision.branches)
         fork_decisions = get_forks(self)
@@ -184,14 +195,14 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, BranchSourceT, Decis
 
     def transform(
         self, func: StepFunction[StateT, DepsT, OutputT, NewOutputT], /
-    ) -> DecisionBranchBuilder[StateT, DepsT, NewOutputT, BranchSourceT, DecisionHandledT]:
+    ) -> DecisionBranchBuilder[StateT, DepsT, NewOutputT, SourceT, HandledT]:
         """Apply a transformation to the branch's output.
 
         Args:
             func: Transformation function to apply.
 
         Returns:
-            A new builder with the transformed output type.
+            A new DecisionBranchBuilder where the provided transform is applied prior to generating the final output.
         """
         return DecisionBranchBuilder(
             decision=self.decision,
@@ -201,13 +212,31 @@ class DecisionBranchBuilder(Generic[StateT, DepsT, OutputT, BranchSourceT, Decis
         )
 
     def spread(
-        self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], BranchSourceT, DecisionHandledT],
-    ) -> DecisionBranchBuilder[StateT, DepsT, T, BranchSourceT, DecisionHandledT]:
+        self: DecisionBranchBuilder[StateT, DepsT, Iterable[T], SourceT, HandledT],
+    ) -> DecisionBranchBuilder[StateT, DepsT, T, SourceT, HandledT]:
+        """Spread the branch's output.
+
+        To do this, the current output must be iterable, and any subsequent steps in the path being built for this
+        branch will be applied to each item of the current output in parallel.
+
+        Returns:
+            A new DecisionBranchBuilder where spreading is performed prior to generating the final output.
+        """
         return DecisionBranchBuilder(
             decision=self.decision, source=self.source, matches=self.matches, path_builder=self.path_builder.spread()
         )
 
-    def label(self, label: str) -> DecisionBranchBuilder[StateT, DepsT, OutputT, BranchSourceT, DecisionHandledT]:
+    def label(self, label: str) -> DecisionBranchBuilder[StateT, DepsT, OutputT, SourceT, HandledT]:
+        """Apply a label to the branch at the current point in the path being built.
+
+        These labels are only used in generated mermaid diagrams.
+
+        Args:
+            label: The label to apply.
+
+        Returns:
+            A new DecisionBranchBuilder where the label has been applied at the end of the current path being built.
+        """
         return DecisionBranchBuilder(
             decision=self.decision,
             source=self.source,
