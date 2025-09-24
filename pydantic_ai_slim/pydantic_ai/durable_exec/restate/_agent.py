@@ -4,7 +4,6 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any, Never,  overload
 from typing_extensions import Generic 
-from dataclasses import dataclass
 
 from pydantic_ai import models
 from pydantic_ai._run_context import AgentDepsT
@@ -38,6 +37,7 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
         # here we collect all the configuration that will be passed to the RestateAgent
         # the actual context will be provided at runtime.
         self.wrapped = wrapped
+        self.model = wrapped.model
         self.max_attempts = max_attempts
 
     def create_agent(self, context: Context) -> AbstractAgent[AgentDepsT, OutputDataT]:
@@ -70,7 +70,7 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
         Returns:
             A RestateAgent instance that uses the provided context for its operations.
         """
-        get_context = lambda _unused: context
+        get_context: Callable[[AgentDepsT], Context] = lambda _unused: context
         builder = self
         return RestateAgent(builder=builder, get_context=get_context, auto_wrap_tools=True)
 
@@ -139,7 +139,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @contextmanager
     def _restate_overrides(self, context: Context) -> Iterator[None]:
-        model = RestateModelWrapper(self._builder.wrapped.model, context, max_attempts=self._builder.max_attempts)
+        model = RestateModelWrapper(self._builder.model, context, max_attempts=self._builder.max_attempts)
 
         def set_context(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             """Set the Restate context for the toolset, wrapping tools if needed."""
