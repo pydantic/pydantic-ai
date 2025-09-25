@@ -1,9 +1,10 @@
 from __future__ import annotations
-from typing import Callable
-from collections.abc import Iterator, Sequence
+
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Never,  overload
-from typing_extensions import Generic 
+from typing import Any, Generic, Never, overload
+
+from restate import Context, TerminalError
 
 from pydantic_ai import models
 from pydantic_ai._run_context import AgentDepsT
@@ -19,17 +20,12 @@ from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
-from restate import Context, TerminalError  
-
 from ._model import RestateModelWrapper
 from ._toolset import RestateContextRunToolSet
 
-class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
 
-    def __init__(self, 
-                 wrapped: AbstractAgent[AgentDepsT, OutputDataT],
-                 *,
-                 max_attempts: int = 3): 
+class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
+    def __init__(self, wrapped: AbstractAgent[AgentDepsT, OutputDataT], *, max_attempts: int = 3):
         if not isinstance(wrapped.model, Model):
             raise TerminalError(
                 'An agent needs to have a `model` in order to be used with Restate, it cannot be set at agent run time.'
@@ -41,19 +37,18 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
         self.max_attempts = max_attempts
 
     def create_agent(self, context: Context) -> AbstractAgent[AgentDepsT, OutputDataT]:
-        """
-        Create an agent instance with the given Restate context.
-        
+        """Create an agent instance with the given Restate context.
+
         Use this method to create an agent that is tied to a specific Restate context.
         With this agent, all operations will be executed within the provided context,
         enabling features like retries and durable steps.
         Note that the agent will automatically wrap tool calls with restate's `ctx.run()`.
-        
+
         Example:
         ```python
            ...
            agent_provider = RestateAgentProvider(weather_agent)
-           
+
            weather = restate.Service('weather')
 
            @weather.handler()
@@ -63,28 +58,33 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
                 return result.output
            ...
         ```
-        
+
         Args:
             context: The Restate context to use for the agent.
             auto_wrap_tool_calls: Whether to automatically wrap tool calls with restate's ctx.run() (durable step), True by default.
+
         Returns:
             A RestateAgent instance that uses the provided context for its operations.
         """
-        get_context: Callable[[AgentDepsT], Context] = lambda _unused: context
+
+        def get_context(_unused: AgentDepsT) -> Context:
+            return context
+
         builder = self
         return RestateAgent(builder=builder, get_context=get_context, auto_wrap_tools=True)
 
-    def create_agent_with_advanced_tools(self, get_context: Callable[[AgentDepsT], Context]) -> AbstractAgent[AgentDepsT, OutputDataT]:
-        """
-        Create an agent instance that is able to obtain Restate context from its dependencies.
-        
+    def create_agent_with_advanced_tools(
+        self, get_context: Callable[[AgentDepsT], Context]
+    ) -> AbstractAgent[AgentDepsT, OutputDataT]:
+        """Create an agent instance that is able to obtain Restate context from its dependencies.
+
         Use this method, if you are planning to use restate's context inside the tools (for rpc, timers, multi step tools etc.)
         To obtain a context inside a tool you can add a dependency that has a `restate_context` attribute, and provide a `get_context` extractor
         function that extracts the context from the dependencies at runtime.
 
         Note: that the agent will NOT automatically wrap tool calls with restate's `ctx.run()`
         since the tools may use the context in different ways.
-        
+
         Example:
         ```python
            ...
@@ -93,9 +93,9 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
            WeatherDeps:
                 ...
                 restate_context: Context
-            
-           weather_agent = Agent(..., deps_type=WeatherDeps, ...)     
-           
+
+           weather_agent = Agent(..., deps_type=WeatherDeps, ...)
+
            @weather_agent.tool
            async def get_lat_lng(ctx: RunContext[WeatherDeps], location_description: str) -> LatLng:
                 restate_context = ctx.deps.restate_context
@@ -104,7 +104,7 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
                 return LatLng(lat, lng)
 
            agent = RestateAgentProvider(weather_agent).create_agent_from_deps(lambda deps: deps.restate_context)
-           
+
            weather = restate.Service('weather')
 
            @weather.handler()
@@ -113,19 +113,21 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
                 return result.output
            ...
         ```
-        
+
         Args:
             get_context: A callable that extracts the Restate context from the agent's dependencies.
+
         Returns:
             A RestateAgent instance that uses the provided context extractor to obtain the Restate context at runtime.
-        
+
         """
         builder = self
         return RestateAgent(builder=builder, get_context=get_context, auto_wrap_tools=False)
-    
+
 
 class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     """An agent that integrates with the Restate framework for resilient applications."""
+
     def __init__(
         self,
         builder: RestateAgentProvider[AgentDepsT, OutputDataT],
@@ -147,7 +149,8 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 return RestateContextRunToolSet(toolset, context)
             try:
                 from pydantic_ai.mcp import MCPServer
-                from ._toolset import RestateMCPServer 
+
+                from ._toolset import RestateMCPServer
             except ImportError:
                 pass
             else:
@@ -163,7 +166,7 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             self.sequential_tool_calls(),
         ):
             yield
-        
+
     @overload
     async def run(
         self,
@@ -253,8 +256,10 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             The result of the run.
         """
         if model is not None:
-            raise TerminalError('An agent needs to have a `model` in order to be used with Restate, it cannot be set at agent run time.')
-        context  = self._get_context(deps)
+            raise TerminalError(
+                'An agent needs to have a `model` in order to be used with Restate, it cannot be set at agent run time.'
+            )
+        context = self._get_context(deps)
         with self._restate_overrides(context):
             return await super(WrapperAgent, self).run(
                 user_prompt=user_prompt,
@@ -270,9 +275,3 @@ class RestateAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 toolsets=toolsets,
                 event_stream_handler=event_stream_handler,
             )
-        
-        
-        
- 
-
-
