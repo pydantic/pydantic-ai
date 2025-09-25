@@ -11,10 +11,10 @@ from typing import Any, TypeGuard
 
 from typing_extensions import TypeAliasType, TypeVar
 
-from pydantic_graph.v2.decision import Decision
-from pydantic_graph.v2.join import Join
-from pydantic_graph.v2.node import EndNode, Fork, StartNode
-from pydantic_graph.v2.step import Step
+from pydantic_graph.beta.decision import Decision
+from pydantic_graph.beta.join import Join
+from pydantic_graph.beta.node import EndNode, Fork, StartNode
+from pydantic_graph.beta.step import Step
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)

@@ -16,15 +16,15 @@ from typing import TYPE_CHECKING, Any, Generic, get_origin, overload
 from typing_extensions import Self, TypeAliasType, TypeVar
 
 from pydantic_graph import BaseNode
-from pydantic_graph.v2.id_types import ForkId, NodeId
-from pydantic_graph.v2.step import NodeStep, StepFunction
+from pydantic_graph.beta.id_types import ForkId, NodeId
+from pydantic_graph.beta.step import NodeStep, StepFunction
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)
 
 if TYPE_CHECKING:
-    from pydantic_graph.v2.node_types import AnyDestinationNode, DestinationNode, SourceNode
+    from pydantic_graph.beta.node_types import AnyDestinationNode, DestinationNode, SourceNode
 
 
 @dataclass

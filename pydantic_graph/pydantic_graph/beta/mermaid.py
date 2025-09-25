@@ -6,13 +6,13 @@ from typing import Any, Literal
 
 from typing_extensions import assert_never
 
-from pydantic_graph.v2.decision import Decision
-from pydantic_graph.v2.graph import Graph
-from pydantic_graph.v2.id_types import NodeId
-from pydantic_graph.v2.join import Join
-from pydantic_graph.v2.node import EndNode, Fork, StartNode
-from pydantic_graph.v2.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker
-from pydantic_graph.v2.step import NodeStep, Step
+from pydantic_graph.beta.decision import Decision
+from pydantic_graph.beta.graph import Graph
+from pydantic_graph.beta.id_types import NodeId
+from pydantic_graph.beta.join import Join
+from pydantic_graph.beta.node import EndNode, Fork, StartNode
+from pydantic_graph.beta.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker
+from pydantic_graph.beta.step import NodeStep, Step
 
 DEFAULT_HIGHLIGHT_CSS = 'fill:#fdff32'
 """The default CSS to use for highlighting nodes."""

@@ -8,9 +8,9 @@ from pydantic_core import to_json
 from typing_extensions import TypeVar
 
 from pydantic_ai import Agent, models
-from pydantic_graph.v2.id_types import NodeId
-from pydantic_graph.v2.step import StepContext
-from pydantic_graph.v2.util import TypeOrTypeExpression, unpack_type_expression
+from pydantic_graph.beta.id_types import NodeId
+from pydantic_graph.beta.step import StepContext
+from pydantic_graph.beta.util import TypeOrTypeExpression, unpack_type_expression
 
 InputT = TypeVar('InputT', infer_variance=True)
 OutputT = TypeVar('OutputT', infer_variance=True)

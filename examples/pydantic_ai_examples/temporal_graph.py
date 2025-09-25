@@ -17,14 +17,14 @@ from temporalio.worker import Worker
 from typing_extensions import TypeVar
 
 with workflow.unsafe.imports_passed_through():
-    from pydantic_graph.nodes import BaseNode, End, GraphRunContext
-    from pydantic_graph.v2 import (
+    from pydantic_graph.beta import (
         GraphBuilder,
         NullReducer,
         StepContext,
         StepNode,
         TypeExpression,
     )
+    from pydantic_graph.nodes import BaseNode, End, GraphRunContext
 
 T = TypeVar('T', infer_variance=True)
 

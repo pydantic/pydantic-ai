@@ -19,8 +19,8 @@ from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
 from pydantic_graph import BaseNode, GraphRunContext
+from pydantic_graph.beta import Graph, GraphBuilder
 from pydantic_graph.nodes import End, NodeRunEndT
-from pydantic_graph.v2 import Graph, GraphBuilder
 
 from . import _output, _system_prompt, exceptions, messages as _messages, models, result, usage as _usage
 from .exceptions import ToolRetryError

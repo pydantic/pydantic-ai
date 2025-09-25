@@ -20,23 +20,30 @@ from typing_extensions import TypeVar, assert_never
 
 from pydantic_graph import exceptions
 from pydantic_graph._utils import AbstractSpan, get_traceparent, logfire_span
-from pydantic_graph.nodes import BaseNode, End
-from pydantic_graph.v2.decision import Decision
-from pydantic_graph.v2.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
-from pydantic_graph.v2.join import Join, Reducer
-from pydantic_graph.v2.node import (
+from pydantic_graph.beta.decision import Decision
+from pydantic_graph.beta.id_types import ForkStack, ForkStackItem, GraphRunId, JoinId, NodeId, NodeRunId, TaskId
+from pydantic_graph.beta.join import Join, Reducer
+from pydantic_graph.beta.node import (
     EndNode,
     Fork,
     StartNode,
 )
-from pydantic_graph.v2.node_types import AnyNode
-from pydantic_graph.v2.parent_forks import ParentFork
-from pydantic_graph.v2.paths import BroadcastMarker, DestinationMarker, LabelMarker, Path, SpreadMarker, TransformMarker
-from pydantic_graph.v2.step import NodeStep, Step, StepContext, StepNode
-from pydantic_graph.v2.util import unpack_type_expression
+from pydantic_graph.beta.node_types import AnyNode
+from pydantic_graph.beta.parent_forks import ParentFork
+from pydantic_graph.beta.paths import (
+    BroadcastMarker,
+    DestinationMarker,
+    LabelMarker,
+    Path,
+    SpreadMarker,
+    TransformMarker,
+)
+from pydantic_graph.beta.step import NodeStep, Step, StepContext, StepNode
+from pydantic_graph.beta.util import unpack_type_expression
+from pydantic_graph.nodes import BaseNode, End
 
 if TYPE_CHECKING:
-    from pydantic_graph.v2.mermaid import StateDiagramDirection
+    from pydantic_graph.beta.mermaid import StateDiagramDirection
 
 
 StateT = TypeVar('StateT', infer_variance=True)
@@ -239,7 +246,7 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         Returns:
             A string containing the Mermaid diagram representation
         """
-        from pydantic_graph.v2.mermaid import build_mermaid_graph
+        from pydantic_graph.beta.mermaid import build_mermaid_graph
 
         return build_mermaid_graph(self).render(title=title, direction=direction)
 

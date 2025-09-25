@@ -17,24 +17,23 @@ from typing import Any, Generic, cast, get_origin, get_type_hints, overload
 from typing_extensions import Never, TypeAliasType, TypeVar
 
 from pydantic_graph import _utils, exceptions
-from pydantic_graph.nodes import BaseNode, End
-from pydantic_graph.v2.decision import Decision, DecisionBranch, DecisionBranchBuilder
-from pydantic_graph.v2.graph import Graph
-from pydantic_graph.v2.id_types import ForkId, JoinId, NodeId
-from pydantic_graph.v2.join import Join, Reducer
-from pydantic_graph.v2.node import (
+from pydantic_graph.beta.decision import Decision, DecisionBranch, DecisionBranchBuilder
+from pydantic_graph.beta.graph import Graph
+from pydantic_graph.beta.id_types import ForkId, JoinId, NodeId
+from pydantic_graph.beta.join import Join, Reducer
+from pydantic_graph.beta.node import (
     EndNode,
     Fork,
     StartNode,
 )
-from pydantic_graph.v2.node_types import (
+from pydantic_graph.beta.node_types import (
     AnyDestinationNode,
     AnyNode,
     DestinationNode,
     SourceNode,
 )
-from pydantic_graph.v2.parent_forks import ParentFork, ParentForkFinder
-from pydantic_graph.v2.paths import (
+from pydantic_graph.beta.parent_forks import ParentFork, ParentForkFinder
+from pydantic_graph.beta.paths import (
     BroadcastMarker,
     DestinationMarker,
     EdgePath,
@@ -43,8 +42,9 @@ from pydantic_graph.v2.paths import (
     PathBuilder,
     SpreadMarker,
 )
-from pydantic_graph.v2.step import NodeStep, Step, StepFunction, StepNode
-from pydantic_graph.v2.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
+from pydantic_graph.beta.step import NodeStep, Step, StepFunction, StepNode
+from pydantic_graph.beta.util import TypeOrTypeExpression, get_callable_name, unpack_type_expression
+from pydantic_graph.nodes import BaseNode, End
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)

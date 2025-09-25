@@ -13,8 +13,8 @@ from typing import Generic
 
 from typing_extensions import TypeVar
 
-from pydantic_graph.v2.id_types import ForkId, JoinId
-from pydantic_graph.v2.step import StepContext
+from pydantic_graph.beta.id_types import ForkId, JoinId
+from pydantic_graph.beta.step import StepContext
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)

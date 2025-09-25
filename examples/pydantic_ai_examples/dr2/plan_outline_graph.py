@@ -25,9 +25,9 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from pydantic_graph.v2.graph_builder import GraphBuilder
-from pydantic_graph.v2.step import StepContext
-from pydantic_graph.v2.util import TypeExpression
+from pydantic_graph.beta.graph_builder import GraphBuilder
+from pydantic_graph.beta.step import StepContext
+from pydantic_graph.beta.util import TypeExpression
 
 from .nodes import Interruption, Prompt
 from .shared_types import MessageHistory, Outline

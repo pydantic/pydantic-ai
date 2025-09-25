@@ -13,13 +13,13 @@ from typing import TYPE_CHECKING, Any, Generic
 
 from typing_extensions import Never, Self, TypeVar
 
-from pydantic_graph.v2.id_types import ForkId, NodeId
-from pydantic_graph.v2.paths import Path, PathBuilder
-from pydantic_graph.v2.step import StepFunction
-from pydantic_graph.v2.util import TypeOrTypeExpression
+from pydantic_graph.beta.id_types import ForkId, NodeId
+from pydantic_graph.beta.paths import Path, PathBuilder
+from pydantic_graph.beta.step import StepFunction
+from pydantic_graph.beta.util import TypeOrTypeExpression
 
 if TYPE_CHECKING:
-    from pydantic_graph.v2.node_types import DestinationNode
+    from pydantic_graph.beta.node_types import DestinationNode
 
 StateT = TypeVar('StateT', infer_variance=True)
 """Type variable for graph state."""

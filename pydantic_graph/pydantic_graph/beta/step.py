@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, get_origin, over
 
 from typing_extensions import TypeVar
 
+from pydantic_graph.beta.id_types import NodeId
 from pydantic_graph.nodes import BaseNode, End, GraphRunContext
-from pydantic_graph.v2.id_types import NodeId
 
 StateT = TypeVar('StateT', infer_variance=True)
 DepsT = TypeVar('DepsT', infer_variance=True)
