@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import functools
-from asyncio import Lock
 from collections.abc import AsyncGenerator, Mapping
 from pathlib import Path
 from typing import Literal, overload
@@ -119,7 +119,7 @@ class GoogleVertexProvider(Provider[httpx.AsyncClient]):
 class _VertexAIAuth(httpx.Auth):
     """Auth class for Vertex AI API."""
 
-    _refresh_lock: Lock = Lock()
+    _refresh_lock: asyncio.Lock = asyncio.Lock()
 
     credentials: BaseCredentials | ServiceAccountCredentials | None
 

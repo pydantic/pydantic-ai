@@ -4,7 +4,6 @@ import base64
 import functools
 import warnings
 from abc import ABC, abstractmethod
-from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import field, replace
@@ -105,7 +104,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _id: str | None
 
-    _enter_lock: Lock = field(compare=False)
+    _enter_lock: anyio.Lock = field(compare=False)
     _running_count: int
     _exit_stack: AsyncExitStack | None
 
@@ -144,7 +143,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.__post_init__()
 
     def __post_init__(self):
-        self._enter_lock = Lock()
+        self._enter_lock = anyio.Lock()
         self._running_count = 0
         self._exit_stack = None
 
