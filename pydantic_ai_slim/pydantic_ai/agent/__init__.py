@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import functools
 import inspect
 import json
 import warnings
@@ -153,7 +154,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
     _event_stream_handler: EventStreamHandler[AgentDepsT] | None = dataclasses.field(repr=False)
 
-    _enter_lock: anyio.Lock = dataclasses.field(repr=False)
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
@@ -371,9 +371,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
 
-        self._enter_lock = anyio.Lock()
         self._entered_count = 0
         self._exit_stack = None
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because it seems to work better with temporal...
+        return anyio.Lock()
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:

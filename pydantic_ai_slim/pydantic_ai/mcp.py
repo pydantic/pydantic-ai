@@ -6,7 +6,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import field, replace
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
@@ -104,7 +104,6 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _id: str | None
 
-    _enter_lock: anyio.Lock = field(compare=False)
     _running_count: int
     _exit_stack: AsyncExitStack | None
 
@@ -143,7 +142,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.__post_init__()
 
     def __post_init__(self):
-        self._enter_lock = anyio.Lock()
         self._running_count = 0
         self._exit_stack = None
 
@@ -273,6 +271,10 @@ class MCPServer(AbstractToolset[Any], ABC):
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        return anyio.Lock()
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
