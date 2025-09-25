@@ -6,6 +6,7 @@ from typing import Any
 from hatchet_sdk import Context, Hatchet
 from pydantic import BaseModel, ConfigDict
 
+from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
@@ -13,8 +14,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 
+from ._run_context import HatchetRunContext
 from ._utils import TaskConfig
 
 
@@ -24,6 +26,16 @@ class ModelInput(BaseModel):
     messages: list[ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
+
+
+class ModelStreamInput(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    messages: list[ModelMessage]
+    model_settings: ModelSettings | None
+    model_request_parameters: ModelRequestParameters
+    serialized_run_context: Any
+    deps_type_name: str
 
 
 class HatchetModel(WrapperModel):
@@ -36,13 +48,17 @@ class HatchetModel(WrapperModel):
         task_name_prefix: str,
         task_config: TaskConfig,
         hatchet: Hatchet,
-        event_stream_handler: Any = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        deps_type: type[AgentDepsT] | None = None,
+        run_context_type: type[HatchetRunContext[AgentDepsT]] = HatchetRunContext[AgentDepsT],
     ):
         super().__init__(model)
         self.task_config = task_config
         self.hatchet = hatchet
         self._task_name_prefix = task_name_prefix
         self.event_stream_handler = event_stream_handler
+        self.deps_type = deps_type
+        self.run_context_type = run_context_type
 
         @hatchet.task(
             name=f'{self._task_name_prefix}__model__request',
@@ -70,6 +86,44 @@ class HatchetModel(WrapperModel):
             )
 
         self.hatchet_wrapped_request_task = wrapped_request_task
+
+        @hatchet.task(
+            name=f'{self._task_name_prefix}__model__request_stream',
+            description=self.task_config.description,
+            input_validator=ModelStreamInput,
+            version=self.task_config.version,
+            sticky=self.task_config.sticky,
+            default_priority=self.task_config.default_priority,
+            concurrency=self.task_config.concurrency,
+            schedule_timeout=self.task_config.schedule_timeout,
+            execution_timeout=self.task_config.execution_timeout,
+            retries=self.task_config.retries,
+            rate_limits=self.task_config.rate_limits,
+            desired_worker_labels=self.task_config.desired_worker_labels,
+            backoff_factor=self.task_config.backoff_factor,
+            backoff_max_seconds=self.task_config.backoff_max_seconds,
+            default_filters=self.task_config.default_filters,
+        )
+        async def wrapped_request_stream_task(
+            input: ModelStreamInput,
+            _ctx: Context,
+        ) -> ModelResponse:
+            run_context = self.run_context_type.deserialize_run_context(
+                input.serialized_run_context, deps=input.serialized_run_context
+            )
+
+            async with super(HatchetModel, self).request_stream(
+                input.messages, input.model_settings, input.model_request_parameters, run_context
+            ) as streamed_response:
+                if self.event_stream_handler:
+                    await self.event_stream_handler(run_context, streamed_response)
+
+                async for _ in streamed_response:
+                    pass
+
+            return streamed_response.get()
+
+        self.hatchet_wrapped_request_stream_task = wrapped_request_stream_task
 
     async def request(
         self,
@@ -107,3 +161,24 @@ class HatchetModel(WrapperModel):
                 messages, model_settings, model_request_parameters, run_context
             ) as streamed_response:
                 yield streamed_response
+
+    async def request_stream_via_task(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> ModelResponse:
+        """Execute a streaming request via Hatchet task and return the final response."""
+        if run_context is None:
+            raise ValueError('run_context is required for streaming via Hatchet task')
+
+        return await self.hatchet_wrapped_request_stream_task.aio_run(
+            ModelStreamInput(
+                messages=messages,
+                model_settings=model_settings,
+                model_request_parameters=model_request_parameters,
+                serialized_run_context=self.run_context_type.serialize_run_context(run_context),
+                deps_type_name=self.deps_type.__name__ if self.deps_type else '',
+            )
+        )
