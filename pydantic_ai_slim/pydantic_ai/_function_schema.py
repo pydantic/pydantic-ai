@@ -257,6 +257,8 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
             call_func = getattr(type(callable_obj), '__call__', None)
             if call_func is not None:
                 callable_obj = call_func
+            else:
+                return False  # pragma: no cover
 
         type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
         annotation = type_hints.get(first_param_name)
