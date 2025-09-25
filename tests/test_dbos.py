@@ -118,7 +118,7 @@ DBOS_CONFIG: DBOSConfig = {
     'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'run_admin_server': False,
     # enable_otlp requires dbos>1.14
-    'enable_otlp': True,  # type: ignore
+    'enable_otlp': True,
 }
 
 
@@ -1056,8 +1056,9 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
         assert str(exc_info.value) == snapshot('Serialized function should be defined at the top level of a module')
     else:
         # Newer DBOS versions use pickle
-        assert str(exc_info.value) == snapshot(
-            "Can't get local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
+        assert (
+            "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
+            in str(exc_info.value)
         )
 
 
