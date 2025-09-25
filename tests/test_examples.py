@@ -22,25 +22,25 @@ from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
 from pytest_mock import MockerFixture
 from rich.console import Console
 
-from pydantic_ai import ModelHTTPError
-from pydantic_ai._run_context import RunContext
-from pydantic_ai._utils import group_by_temporal
-from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    AbstractToolset,
+    ModelHTTPError,
     ModelMessage,
     ModelResponse,
     RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    ToolsetTool,
     UserPromptPart,
 )
+from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import group_by_temporal
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.toolsets import AbstractToolset
-from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from .conftest import ClientWithHandler, TestEnv, try_import
 

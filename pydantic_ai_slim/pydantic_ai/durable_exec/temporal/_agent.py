@@ -16,6 +16,7 @@ from temporalio.workflow import ActivityConfig
 from typing_extensions import Never
 
 from pydantic_ai import (
+    AbstractToolset,
     _utils,
     messages as _messages,
     models,
@@ -34,7 +35,6 @@ from pydantic_ai.tools import (
     Tool,
     ToolFuncEither,
 )
-from pydantic_ai.toolsets import AbstractToolset
 
 from ._model import TemporalModel
 from ._run_context import TemporalRunContext
