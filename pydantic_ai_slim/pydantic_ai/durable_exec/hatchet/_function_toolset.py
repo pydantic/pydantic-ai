@@ -66,7 +66,7 @@ class HatchetFunctionToolset(HatchetWrapperToolset[AgentDepsT]):
                     _ctx: Context,
                 ) -> ToolOutput:
                     run_context = self.run_context_type.deserialize_run_context(
-                        input.serialized_run_context, deps=input.deps
+                        input.serialized_run_context, deps=input.deps, hatchet_context=_ctx
                     )
                     tool = (await wrapped.get_tools(run_context))[current_tool_name]
 

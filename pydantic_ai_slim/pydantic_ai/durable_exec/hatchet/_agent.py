@@ -14,6 +14,7 @@ from pydantic_ai import _utils, messages as _messages, models, usage as _usage
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
+from pydantic_ai.messages import ModelMessage
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.settings import ModelSettings
@@ -474,7 +475,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         # Execute the streaming via Hatchet workflow
         agent_run_id = uuid4()
 
-        result = await self.hatchet_wrapped_run_stream_workflow.aio_run(
+        ref = await self.hatchet_wrapped_run_stream_workflow.aio_run_no_wait(
             RunAgentInput[RunOutputDataT, AgentDepsT](
                 user_prompt=user_prompt,
                 output_type=output_type,
@@ -498,6 +499,13 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 }
             ),
         )
+
+        all_messages: list[ModelMessage] = []
+
+        async for x in self._hatchet.runs.subscribe_to_stream(ref.workflow_run_id):
+            print('\nx', x)
+
+        result = await ref.aio_result()
 
         if isinstance(result, dict):
             result = TypeAdapter(AgentRunResult[Any]).validate_python(result)

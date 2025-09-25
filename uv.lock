@@ -1686,7 +1686,7 @@ wheels = [
 [[package]]
 name = "hatchet-sdk"
 version = "1.19.1"
-source = { git = "https://github.com/hatchet-dev/hatchet.git?subdirectory=sdks%2Fpython&rev=mk%2Ftweaks-for-pydantic-ai#6975357268b740219309633352d85f377782179e" }
+source = { git = "https://github.com/hatchet-dev/hatchet.git?subdirectory=sdks%2Fpython&rev=mk%2Ftweaks-for-pydantic-ai#ed3a64aa36f0e4c15da148023894422ed5b1eccd" }
 dependencies = [
     { name = "aiohttp" },
     { name = "grpcio" },
