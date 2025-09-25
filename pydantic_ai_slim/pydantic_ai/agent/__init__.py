@@ -651,10 +651,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         try:
             async with toolset:
                 async with graph.iter(
+                    inputs=user_prompt_node,
                     state=state,
                     deps=graph_deps,
-                    inputs=user_prompt_node,
                     span=use_span(run_span) if run_span.is_recording() else None,
+                    infer_name=False,
                 ) as graph_run:
                     agent_run = AgentRun(graph_run)
                     yield agent_run
