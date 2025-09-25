@@ -24,6 +24,7 @@ __all__ = (
     'UsageLimitExceeded',
     'ModelHTTPError',
     'FallbackExceptionGroup',
+    'StreamCancelled',
 )
 
 
@@ -160,6 +161,14 @@ class ModelHTTPError(AgentRunError):
 
 class FallbackExceptionGroup(ExceptionGroup):
     """A group of exceptions that can be raised when all fallback models fail."""
+
+
+class StreamCancelled(Exception):
+    """Exception raised when a streaming response is cancelled."""
+
+    def __init__(self, message: str = 'Stream was cancelled'):
+        self.message = message
+        super().__init__(message)
 
 
 class ToolRetryError(Exception):

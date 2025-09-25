@@ -18,7 +18,7 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id, now_utc as _now_utc, number_to_datetime
 from ..builtin_tools import CodeExecutionTool, WebSearchTool
-from ..exceptions import UserError
+from ..exceptions import StreamCancelled, UserError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -1443,9 +1443,14 @@ class OpenAIStreamedResponse(StreamedResponse):
     _response: AsyncIterable[ChatCompletionChunk]
     _timestamp: datetime
     _provider_name: str
+    _cancelled: bool = field(default=False, init=False)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
+            # Check for cancellation before processing each chunk
+            if self._cancelled:
+                raise StreamCancelled('OpenAI stream was cancelled')
+
             self._usage += _map_usage(chunk)
 
             if chunk.id:  # pragma: no branch
@@ -1516,6 +1521,14 @@ class OpenAIStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        This marks the stream as cancelled, which will cause the iterator to raise
+        a StreamCancelled exception on the next iteration.
+        """
+        self._cancelled = True
 
 
 @dataclass

@@ -641,6 +641,14 @@ class StreamedResponse(ABC):
         """Get the timestamp of the response."""
         raise NotImplementedError()
 
+    async def cancel(self) -> None:
+        """Cancel the streaming response.
+
+        This should close the underlying network connection and cause any active iteration
+        to raise a StreamCancelled exception. The default implementation is a no-op.
+        """
+        pass
+
 
 ALLOW_MODEL_REQUESTS = True
 """Whether to allow requests to models.
