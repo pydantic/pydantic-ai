@@ -85,16 +85,6 @@ def join(
 
     Returns:
         Either a Join instance or a decorator function
-
-    Example:
-        ```python
-        # As a decorator
-        @join(node_id="collect_results")
-        class MyReducer(ListReducer[str]): ...
-
-        # Or called directly
-        my_join = join(ListReducer, node_id="collect_results")
-        ```
     """
     if reducer_type is None:
 
@@ -127,20 +117,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
         DepsT: The type of the dependencies
         GraphInputT: The type of the graph input data
         GraphOutputT: The type of the graph output data
-
-    Example:
-        ```python
-        builder = GraphBuilder[MyState, MyDeps, str, int]()
-
-        @builder.step
-        async def process_data(ctx: StepContext[MyState, MyDeps, str]) -> int:
-            return len(ctx.inputs)
-
-        builder.add_edge(builder.start_node, process_data)
-        builder.add_edge(process_data, builder.end_node)
-
-        graph = builder.build()
-        ```
     """
 
     name: str | None
@@ -318,17 +294,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
         Returns:
             Either a Step instance or a decorator function
-
-        Example:
-            ```python
-            # As a decorator
-            @builder.step(node_id="process", label="Process Data")
-            async def process_data(ctx: StepContext[MyState, MyDeps, str]) -> int:
-                return len(ctx.inputs)
-
-            # Or called directly
-            step = builder.step(process_data, node_id="process")
-            ```
         """
         if call is None:
             return self._step(node_id=node_id, label=label)
@@ -368,12 +333,6 @@ class GraphBuilder(Generic[StateT, DepsT, GraphInputT, GraphOutputT]):
 
         Returns:
             Either a Join instance or a decorator function
-
-        Example:
-            ```python
-            # Create a join that collects results into a list
-            collect_join = builder.join(ListReducer, node_id="collect_results")
-            ```
         """
         if reducer_factory is None:
             return join(node_id=node_id)

@@ -121,18 +121,6 @@ class Step(Generic[StateT, DepsT, InputT, OutputT]):
         DepsT: The type of the dependencies
         InputT: The type of the input data
         OutputT: The type of the output data
-
-    Example:
-        ```python
-        async def my_step(ctx: StepContext[MyState, MyDeps, str]) -> int:
-            return len(ctx.inputs)
-
-        step = Step(
-            id=NodeId("process_string"),
-            call=my_step,
-            user_label="Process String Length"
-        )
-        ```
     """
 
     def __init__(

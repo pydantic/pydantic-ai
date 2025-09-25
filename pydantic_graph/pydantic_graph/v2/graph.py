@@ -98,23 +98,6 @@ class Graph(Generic[StateT, DepsT, InputT, OutputT]):
         DepsT: The type of the dependencies
         InputT: The type of the input data
         OutputT: The type of the output data
-
-    Example:
-        ```python
-        # Create a simple graph
-        g = GraphBuilder[MyState, MyDeps, str, int]()
-
-        ...  # Build the graph here
-
-        graph = g.build()
-
-        # Run the graph
-        result = await graph.run(
-            state=MyState(),
-            deps=MyDeps(),
-            inputs="input_data"
-        )
-        ```
     """
 
     name: str | None

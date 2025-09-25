@@ -179,16 +179,6 @@ class Join(Generic[StateT, DepsT, InputT, OutputT]):
         DepsT: The type of the dependencies
         InputT: The type of input data to join
         OutputT: The type of the final joined output
-
-    Example:
-        ```python
-        # Create a join that collects results into a list
-        join = Join(
-            id=JoinId("collect_results"),
-            reducer_type=ListReducer[str],
-            joins=ForkId("parallel_tasks")
-        )
-        ```
     """
 
     def __init__(
