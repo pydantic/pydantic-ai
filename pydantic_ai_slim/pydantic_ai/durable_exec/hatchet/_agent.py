@@ -6,7 +6,6 @@ from typing import Any, Generic, overload
 from uuid import uuid4
 
 from hatchet_sdk import DurableContext, Hatchet, TriggerWorkflowOptions
-from hatchet_sdk.runnables.contextvars import ctx_workflow_run_id
 from hatchet_sdk.runnables.workflow import BaseWorkflow
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Never
@@ -56,6 +55,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         hatchet: Hatchet,
         *,
         name: str | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         mcp_task_config: TaskConfig | None = None,
         model_task_config: TaskConfig | None = None,
         run_context_type: type[HatchetRunContext[AgentDepsT]] = HatchetRunContext[AgentDepsT],
@@ -76,6 +76,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self._name = name or wrapped.name
         self._hatchet = hatchet
+        self._event_stream_handler = event_stream_handler
 
         if not self._name:
             raise UserError(
@@ -92,6 +93,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             task_name_prefix=self._name,
             task_config=model_task_config or TaskConfig(),
             hatchet=self._hatchet,
+            event_stream_handler=self.event_stream_handler,
         )
         hatchet_agent_name = self._name
         self.run_context_type: type[HatchetRunContext[AgentDepsT]] = run_context_type
@@ -147,6 +149,10 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @property
     def model(self) -> Model:
         return self._model
+
+    @property
+    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
+        return self.event_stream_handler or super().event_stream_handler
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -429,8 +435,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        run_id = ctx_workflow_run_id.get()
-        if run_id:
+        if self._hatchet.is_in_task_run:
             raise UserError(
                 '`agent.run_stream()` cannot currently be used inside a Hatchet workflow. '
                 'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
@@ -582,8 +587,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        run_id = ctx_workflow_run_id.get()
-        if run_id:
+        if self._hatchet.is_in_task_run:
             raise UserError(
                 '`agent.iter()` cannot currently be used inside a Hatchet workflow. '
                 'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
