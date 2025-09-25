@@ -100,3 +100,7 @@ Thinking is supported by the `command-a-reasoning-08-2025` model. It does not ne
 
 Text output inside `<think>` tags is automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
 You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](models/openai.md#model-profile).
+
+## Outlines
+
+Some local models run through Outlines include a reasoning part in their output. In that case, it will be handlded by Pydantic AI without the need to specifically enable it. However, Outlines currently does not support thinking along with structured output. If you provide an `output_type`, thinking will be skipped and you may experience degraded performance.
