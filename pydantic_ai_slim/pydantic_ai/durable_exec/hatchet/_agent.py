@@ -152,7 +152,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
     @property
     def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        return self.event_stream_handler or super().event_stream_handler
+        return self._event_stream_handler or super().event_stream_handler
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
