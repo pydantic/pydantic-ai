@@ -68,6 +68,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             wrapped: The agent to wrap.
             hatchet: The Hatchet instance to use for creating tasks.
             name: Optional unique agent name to use in the Hatchet tasks' names. If not provided, the agent's `name` will be used.
+            event_stream_handler: Optional event stream handler to use for this agent.
             mcp_task_config: The base Hatchet task config to use for MCP server tasks. If no config is provided, use the default settings.
             model_task_config: The Hatchet task config to use for model request tasks. If no config is provided, use the default settings.
             run_context_type: The `HatchetRunContext` (sub)class that's used to serialize and deserialize the run context.
@@ -75,8 +76,10 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         super().__init__(wrapped)
 
         self._name = name or wrapped.name
-        self._hatchet = hatchet
         self._event_stream_handler = event_stream_handler
+        self.run_context_type: type[HatchetRunContext[AgentDepsT]] = run_context_type
+
+        self._hatchet = hatchet
 
         if not self._name:
             raise UserError(
@@ -94,9 +97,10 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             task_config=model_task_config or TaskConfig(),
             hatchet=self._hatchet,
             event_stream_handler=self.event_stream_handler,
+            deps_type=self.deps_type,
+            run_context_type=self.run_context_type,
         )
         hatchet_agent_name = self._name
-        self.run_context_type: type[HatchetRunContext[AgentDepsT]] = run_context_type
 
         def hatchetize_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             from ._toolset import hatchetize_toolset
@@ -136,6 +140,30 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
         self.hatchet_wrapped_run_workflow = wrapped_run_workflow
 
+        @hatchet.durable_task(name=f'{self._name}.run_stream', input_validator=RunAgentInput[Any, Any])
+        async def wrapped_run_stream_workflow(
+            input: RunAgentInput[RunOutputDataT, AgentDepsT],
+            _ctx: DurableContext,
+        ) -> AgentRunResult[Any]:
+            with self._hatchet_overrides():
+                return await super(WrapperAgent, self).run(
+                    input.user_prompt,
+                    output_type=input.output_type,
+                    message_history=input.message_history,
+                    deferred_tool_results=input.deferred_tool_results,
+                    model=input.model,
+                    deps=input.deps,
+                    model_settings=input.model_settings,
+                    usage_limits=input.usage_limits,
+                    usage=input.usage,
+                    infer_name=input.infer_name,
+                    toolsets=input.toolsets,
+                    event_stream_handler=input.event_stream_handler,
+                    **input.deprecated_kwargs,
+                )
+
+        self.hatchet_wrapped_run_stream_workflow = wrapped_run_stream_workflow
+
     @property
     def name(self) -> str | None:
         return self._name
@@ -168,7 +196,9 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     def workflows(self) -> list[BaseWorkflow[Any]]:
         workflows: list[BaseWorkflow[Any]] = [
             self.hatchet_wrapped_run_workflow,
+            self.hatchet_wrapped_run_stream_workflow,
             self._model.hatchet_wrapped_request_task,
+            self._model.hatchet_wrapped_request_stream_task,
         ]
 
         for toolset in self._toolsets:
@@ -442,22 +472,47 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 'Please file an issue if this is not sufficient for your use case.'
             )
 
-        async with super().run_stream(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            model=model,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            usage=usage,
-            infer_name=infer_name,
-            toolsets=toolsets,
-            event_stream_handler=event_stream_handler,
-            **_deprecated_kwargs,
-        ) as result:
-            yield result
+        # Execute the streaming via Hatchet workflow
+        agent_run_id = uuid4()
+
+        result = await self.hatchet_wrapped_run_stream_workflow.aio_run(
+            RunAgentInput[RunOutputDataT, AgentDepsT](
+                user_prompt=user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                model=model,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                usage=usage,
+                infer_name=infer_name,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                deprecated_kwargs=_deprecated_kwargs,
+            ),
+            options=TriggerWorkflowOptions(
+                additional_metadata={
+                    'hatchet__agent_name': self._name,
+                    'hatchet__agent_run_id': str(agent_run_id),
+                    'hatchet__stream_mode': True,
+                }
+            ),
+        )
+
+        if isinstance(result, dict):
+            result = TypeAdapter(AgentRunResult[Any]).validate_python(result)
+
+        messages = result.all_messages()
+        new_message_index = result._new_message_index
+
+        streamed_result = StreamedRunResult(
+            all_messages=messages,
+            new_message_index=new_message_index,
+            run_result=result,
+        )
+
+        yield streamed_result
 
     @overload
     def iter(
