@@ -6,6 +6,7 @@ from typing import Any, Generic, overload
 from uuid import uuid4
 
 from hatchet_sdk import DurableContext, Hatchet, TriggerWorkflowOptions
+from hatchet_sdk.runnables.contextvars import ctx_workflow_run_id
 from hatchet_sdk.runnables.workflow import BaseWorkflow
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Never
@@ -428,6 +429,14 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        run_id = ctx_workflow_run_id.get()
+        if run_id:
+            raise UserError(
+                '`agent.run_stream()` cannot currently be used inside a Hatchet workflow. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
+                'Please file an issue if this is not sufficient for your use case.'
+            )
+
         async with super().run_stream(
             user_prompt,
             output_type=output_type,
@@ -573,6 +582,14 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
+        run_id = ctx_workflow_run_id.get()
+        if run_id:
+            raise UserError(
+                '`agent.iter()` cannot currently be used inside a Hatchet workflow. '
+                'Set an `event_stream_handler` on the agent and use `agent.run()` instead. '
+                'Please file an issue if this is not sufficient for your use case.'
+            )
+
         async with super().iter(
             user_prompt=user_prompt,
             output_type=output_type,
