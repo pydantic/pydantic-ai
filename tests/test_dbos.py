@@ -1053,7 +1053,9 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
 
     if dbos_version <= Version('1.14'):
         # Older DBOS versions used jsonpickle
-        assert str(exc_info.value) == snapshot('Serialized function should be defined at the top level of a module')
+        assert str(exc_info.value) == snapshot(
+            'Serialized function should be defined at the top level of a module'
+        )  # pragma: lax no cover
     else:
         # Newer DBOS versions use pickle
         assert (
@@ -1166,7 +1168,7 @@ async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: No
 
     if dbos_version <= Version('1.14'):
         # Older DBOS versions used jsonpickle
-        assert str(exc_info.value) == snapshot('object proxy must define __reduce_ex__()')
+        assert str(exc_info.value) == snapshot('object proxy must define __reduce_ex__()')  # pragma: lax no cover
     else:
         # Newer DBOS versions use pickle
         assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")
