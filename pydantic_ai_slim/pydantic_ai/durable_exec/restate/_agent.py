@@ -45,7 +45,6 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
         Note that the agent will automatically wrap tool calls with restate's `ctx.run()`.
 
         Example:
-        ```python
            ...
            agent_provider = RestateAgentProvider(weather_agent)
 
@@ -57,7 +56,6 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
                 result = await agent.run(f'What is the weather in {city}?')
                 return result.output
            ...
-        ```
 
         Args:
             context: The Restate context to use for the agent.
@@ -86,7 +84,6 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
         since the tools may use the context in different ways.
 
         Example:
-        ```python
            ...
 
            @dataclass
@@ -112,7 +109,6 @@ class RestateAgentProvider(Generic[AgentDepsT, OutputDataT]):
                 result = await agent.run(f'What is the weather in {city}?', deps=WeatherDeps(restate_context=ctx, ...))
                 return result.output
            ...
-        ```
 
         Args:
             get_context: A callable that extracts the Restate context from the agent's dependencies.
