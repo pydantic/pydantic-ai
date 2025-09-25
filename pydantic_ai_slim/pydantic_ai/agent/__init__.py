@@ -157,6 +157,11 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     _entered_count: int = dataclasses.field(repr=False)
     _exit_stack: AsyncExitStack | None = dataclasses.field(repr=False)
 
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because it seems to work better with temporal...
+        return anyio.Lock()
+
     @overload
     def __init__(
         self,
@@ -373,11 +378,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         self._entered_count = 0
         self._exit_stack = None
-
-    @functools.cached_property
-    def _enter_lock(self) -> anyio.Lock:
-        # We use a cached_property for this because it seems to work better with temporal...
-        return anyio.Lock()
 
     @staticmethod
     def instrument_all(instrument: InstrumentationSettings | bool = True) -> None:

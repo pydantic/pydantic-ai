@@ -111,6 +111,10 @@ class MCPServer(AbstractToolset[Any], ABC):
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
 
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        return anyio.Lock()
+
     def __init__(
         self,
         tool_prefix: str | None = None,
@@ -271,10 +275,6 @@ class MCPServer(AbstractToolset[Any], ABC):
             max_retries=self.max_retries,
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
-
-    @functools.cached_property
-    def _enter_lock(self) -> anyio.Lock:
-        return anyio.Lock()
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
