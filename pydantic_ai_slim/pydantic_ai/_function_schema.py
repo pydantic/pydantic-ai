@@ -245,8 +245,8 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
     """
     try:
         sig = signature(callable_obj)
-    except ValueError:  # pragma: no cover
-        return False  # pragma: no cover
+    except ValueError:
+        return False
     try:
         first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
@@ -263,7 +263,7 @@ def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
         type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
         annotation = type_hints.get(first_param_name)
         if annotation is None:
-            return False  # pragma: no cover
+            return False
         return True is not sig.empty and _is_call_ctx(annotation)
 
 
