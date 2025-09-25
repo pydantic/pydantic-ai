@@ -10,7 +10,7 @@ on:
 
 env:
   COLUMNS: 150
-  UV_PYTHON: 3.10
+  UV_PYTHON: "3.10"
   UV_FROZEN: "1"
 
 permissions:
