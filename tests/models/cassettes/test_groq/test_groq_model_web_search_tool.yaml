@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '106'
+      - '131'
       content-type:
       - application/json
       host:
@@ -16,7 +16,7 @@ interactions:
     method: POST
     parsed_body:
       messages:
-      - content: What day is today?
+      - content: What is the weather in San Francisco today?
         role: user
       model: compound-beta
       n: 1
@@ -31,7 +31,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '13044'
+      - '22205'
       content-type:
       - application/json
       transfer-encoding:
@@ -44,227 +44,268 @@ interactions:
         index: 0
         logprobs: null
         message:
-          content: The current day is Tuesday.
+          content: "The weather in San Francisco today, September 17, 2025, is partly cloudy with a temperature of 17°C (62.6°F)
+            and a wind speed of 7.8 mph (12.6 kph) from the west. The humidity is 94%, and there is a 0% chance of precipitation.
+            The UV index is 6.8, and the feels-like temperature is also 17°C (62.6°F). \n\nAdditionally, the forecast for
+            the day indicates that it will be a comfortable day with a high of 75°F (24°C) and a low of 59°F (15°C). There
+            is a slight chance of rain and thunderstorms in the Bay Area due to the remnants of Tropical Storm Mario, but
+            it is not expected to significantly impact San Francisco.\n\nIt's worth noting that the weather in San Francisco
+            can be quite variable, and the temperature can drop significantly at night, so it's a good idea to dress in layers.
+            Overall, it should be a pleasant day in San Francisco, with plenty of sunshine and mild temperatures."
           executed_tools:
-          - arguments: '{"query": "What is the current date?"}'
+          - arguments: '{"query": "What is the weather in San Francisco today?"}'
             index: 0
-            output: |+
-              Title: Today's Date - Find Out Quickly What's The Date Today ️
-              URL: https://calendarhours.com/todays-date/
-              Content: The current date in RFC 2822 Format with shortened day of week, numerical date, three-letter month abbreviation, year, time, and time zone is: Tue, 13 May 2025 06:07:56 -0400; The current date in Unix Epoch Format with number of seconds that have elapsed since January 1, 1970 (midnight UTC/GMT) is:
-              Score: 0.8299
-
-              Title: Today's Date | Current date now - MaxTables
-              URL: https://maxtables.com/tools/todays-date.html
-              Content: The current date, including day of the week, month, day, and year. The exact time, down to seconds. Details on the time zone, its location, and its GMT difference. A tool to select the present date. A visual calendar chart. Why would I need to check Today's Date on this platform instead of my device?
-              Score: 0.7223
-
-              Title: Current Time and Date - Exact Time!
-              URL: https://time-and-calendar.com/
-              Content: The actual time is: Mon May 12 2025 22:14:39 GMT-0700 (Pacific Daylight Time) Your computer time is: 22:14:38 The time of your computer is synchronized with our web server. This mean that it is synchronizing in real time with our server clock.
-              Score: 0.6799
-
-              Title: Today's Date - CalendarDate.com
-              URL: https://www.calendardate.com/todays.htm
-              Content: Details about today's date with count of days, weeks, and months, Sun and Moon cycles, Zodiac signs and holidays. Monday May 12, 2025 . Home; Calendars. 2025 Calendar; ... Current Season Today: Spring with 40 days until the start of Summer. S. Hemisphere flip seasons - i.e. Winter is Summer.
-              Score: 0.6416
-
-              Title: What is the date today | Today's Date
-              URL: https://www.datetoday.info/
-              Content: Master time tracking with Today's Date. Stay updated with real-time information on current date, time, day of the week, days left in the week, current day and remaining days of the year. Explore time in globally accepted formats. Keep up with the current week and month, along with the remaining weeks and months for the year. Embrace efficient time tracking with Today's Date.
-              Score: 0.6282
-
-              Title: Explore Today's Date, Time Zones, Holidays & More
-              URL: https://whatdateis.today/
-              Content: Check what date and time it is today (May 8, 2025). View current time across different time zones, upcoming holidays, and use our date calculator. Your one-stop destination for all date and time information.
-              Score: 0.6181
-
-              Title: Today's Date and Time - Date and Time Tools
-              URL: https://todaysdatetime.com/
-              Content: Discover today's exact date and time, learn about time zones, date formats, and explore our comprehensive collection of date and time tools including calculators, converters, and calendars. ... Get the exact current date and time, along with powerful calculation tools for all your scheduling needs. 12h. Today. Day 76 of year (366) Yesterday
-              Score: 0.5456
-
-              Title: Current Time Now - What time is it? - RapidTables.com
-              URL: https://www.rapidtables.com/tools/current-time.html
-              Content: This page includes the following information: Current time: hours, minutes, seconds. Today's date: day of week, month, day, year. Time zone with location and GMT offset.
-              Score: 0.4255
-
-              Title: Current Time
-              URL: https://www.timeanddate.com/
-              Content: Welcome to the world's top site for time, time zones, and astronomy. Organize your life with free online info and tools you can rely on. No sign-up needed. Sign in. News. News Home; Astronomy News; ... Current Time. Monday May 12, 2025 Roanoke Rapids, North Carolina, USA. Set home location. 11:27: 03 pm. World Clock.
-              Score: 0.3876
-
-              Title: Current local time in the United States - World clock
-              URL: https://dateandtime.info/country.php?code=US
-              Content: Time and Date of DST Change Time Change; DST started: Sunday, March 9, 2025 at 2:00 AM: The clocks were put forward an hour to 3:00 AM. DST ends: Sunday, November 2, 2025 at 2:00 AM: The clocks will be put back an hour to 1:00 AM. DST starts: Sunday, March 8, 2026 at 2:00 AM: The clocks will be put forward an hour to 3:00 AM.
-              Score: 0.3042
-
-              Title: Time.is - exact time, any time zone
-              URL: https://time.is/
-              Content: 7 million locations, 58 languages, synchronized with atomic clock time. Time.is. Get Time.is Ad-free! Exact time now: 05:08:45. Tuesday, 13 May, 2025, week 20. Sun: ↑ 05:09 ↓ 20:45 (15h 36m) - More info - Make London time default - Remove from favorite locations
-              Score: 0.2796
-
-              Title: Time in United States now
-              URL: https://time.is/United_States
-              Content: Exact time now, time zone, time difference, sunrise/sunset time and key facts for United States. Time.is. Get Time.is Ad-free! Time in United States now . 11:17:42 PM. Monday, May 12, 2025. United States (incl. dependent territories) has 11 time zones. The time zone for the capital Washington, D.C. is used here.
-              Score: 0.2726
-
-              Title: Current Local Time in the United States - timeanddate.com
-              URL: https://www.timeanddate.com/worldclock/usa
-              Content: United States time now. USA time zones and time zone map with current time in each state.
-              Score: 0.2519
-
-              Title: Current local time in United States - World Time Clock & Map
-              URL: https://24timezones.com/United-States/time
-              Content: Check the current time in United States and time zone information, the UTC offset and daylight saving time dates in 2025.
-              Score: 0.2221
-
-              Title: The World Clock — Worldwide - timeanddate.com
-              URL: https://www.timeanddate.com/worldclock/
-              Content: World time and date for cities in all time zones. International time right now. Takes into account all DST clock changes.
-              Score: 0.2134
-
+            output: "Title: Weather in San Francisco\nURL: https://www.weatherapi.com/\nContent: {'location': {'name': 'San
+              Francisco', 'region': 'California', 'country': 'United States of America', 'lat': 37.775, 'lon': -122.4183,
+              'tz_id': 'America/Los_Angeles', 'localtime_epoch': 1758143975, 'localtime': '2025-09-17 14:19'}, 'current':
+              {'last_updated_epoch': 1758143700, 'last_updated': '2025-09-17 14:15', 'temp_c': 17.0, 'temp_f': 62.6, 'is_day':
+              1, 'condition': {'text': 'Partly cloudy', 'icon': '//cdn.weatherapi.com/weather/64x64/day/116.png', 'code':
+              1003}, 'wind_mph': 7.8, 'wind_kph': 12.6, 'wind_degree': 264, 'wind_dir': 'W', 'pressure_mb': 1015.0, 'pressure_in':
+              29.96, 'precip_mm': 0.0, 'precip_in': 0.0, 'humidity': 94, 'cloud': 50, 'feelslike_c': 17.0, 'feelslike_f':
+              62.6, 'windchill_c': 17.7, 'windchill_f': 63.9, 'heatindex_c': 17.7, 'heatindex_f': 63.9, 'dewpoint_c': 15.3,
+              'dewpoint_f': 59.6, 'vis_km': 13.0, 'vis_miles': 8.0, 'uv': 6.8, 'gust_mph': 14.4, 'gust_kph': 23.1}}\nScore:
+              0.9842\n\nTitle: Wednesday, September 17, 2025. San Francisco, CA - Weather ...\nURL: https://weathershogun.com/weather/usa/ca/san-francisco/480/september/2025-09-17\nContent:
+              San Francisco, California Weather: Wednesday, September 17, 2025. Day 75°. Night 59°. Precipitation 0 %. Wind
+              8 mph. UV Index (0 - 11+) 11\nScore: 0.9597\n\nTitle: Find cheap flights from Milan (MXP) to San Francisco (SFO)\nURL:
+              https://www.aa.com/en-it/flights-from-milan-to-san-francisco\nContent: Weather in San Francisco. Weather Unit:
+              Weather unit option Celsius Selected ... 17/09/2025. ​. Thursday. overcast clouds. 18°C. 18/09/2025. ​. Friday.
+              few\nScore: 0.9083\n\nTitle: San Francisco weather in September 2025 | Weather25.com\nURL: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September\nContent:
+              The temperatures in San Francisco in September are comfortable with low of 57°F and and high up to 77°F. There
+              is little to no rain in San Francisco during\nScore: 0.8854\n\nTitle: Bay Area basks in unseasonable heat with
+              thunderstorms and ...\nURL: https://www.cbsnews.com/sanfrancisco/news/bay-area-hot-weather-thunderstorms-fire-danger-dry-lightning/\nContent:
+              Carlos E. Castañeda. September 17, 2025 / 11:20 AM PDT / CBS San Francisco. Wednesday morning First Alert weather
+              forecast with Jessica Burch - 9/17/25\nScore: 0.8625\n\nTitle: Area Forecast Discussion - National Weather Service\nURL:
+              https://forecast.weather.gov/product.php?site=mtr&issuedby=MTR&product=AFD\nContent: 067 FXUS66 KMTR 171648
+              AFDMTR Area Forecast Discussion National Weather Service San Francisco CA 948 AM PDT Wed Sep 17 2025 ...New
+              UPDATE, FIRE WEATHER.\nScore: 0.8163\n\nTitle: Weather in San Francisco in September 2025\nURL: https://world-weather.info/forecast/usa/san_francisco/september-2025/\nContent:
+              Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night \U0001F321️ temperatures, precipitations
+              – World-Weather.info.\nScore: 0.7421\n\nTitle: The Fantasy Forecast: September skies with Maye weather\nURL:
+              https://dailycampus.com/2025/09/17/the-fantasy-forecast-september-skies-with-maye-weather/\nContent: ... Wednesday,
+              September 17, 2025 ... The Arizona Cardinals quarterback will face the San Francisco 49ers this Sunday in a
+              battle for the West.\nScore: 0.7171\n\nTitle: 60-Day Extended Weather Forecast for San Francisco, San ...\nURL:
+              https://www.almanac.com/weather/longrange/CA/San%20Francisco%2C%20San%20Francisco%20County\nContent: Almanac
+              Logo Wednesday, September 17, 2025 · Almanac.com. Weather · Long-Range; California. Toggle navigation. Gardening.
+              All Gardening · Planting Calendar\nScore: 0.6857\n\nTitle: San Francisco weather in September 2025 | California\nURL:
+              https://www.weather2travel.com/california/san-francisco/september/\nContent: Daytime temperatures usually reach
+              22°C in San Francisco in September, falling to 13°C at night. How sunny is it in San Francisco in September?
+              There are\nScore: 0.6799\n\nTitle: Weather Forecast for San Francisco for Wednesday 17 September\nURL: https://www.metcheck.com/WEATHER/dayforecast.asp?location=San%20Francisco&locationID=1628582&lat=-25.23078&lon=-57.57218&dateFor=17/09/2025\nContent:
+              Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 23 °c, 25 °c, 0%, 0.0mm,
+              0%, 6mph, 24mph, 73%, 0.\nScore: 0.6581\n\nTitle: Weather in San Francisco, California for September 2025\nURL:
+              https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september\nContent:
+              In general, the average temperature in San Francisco at the beginning of September is 70 °F. As the month progressed,
+              temperatures tended to moderately fall,\nScore: 0.6533\n\nTitle: San Francisco September 2025 Historical Weather
+              Data (California ...\nURL: https://weatherspark.com/h/m/557/2025/9/Historical-Weather-in-September-2025-in-San-Francisco-California-United-States\nContent:
+              This report shows the past weather for San Francisco, providing a weather history for September 2025. It features
+              all historical weather data series we have\nScore: 0.5855\n\nTitle: Weather Forecast for Batey San Francisco
+              for Wednesday 17 ...\nURL: https://www.metcheck.com/WEATHER/dayforecast.asp?location=Batey%20San%20Francisco&locationID=511664&lat=18.62123&lon=-68.63688&dateFor=17/09/2025\nContent:
+              Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 25 °c, 27 °c, 88%, 0.1mm,
+              0%, 4mph, 19mph, 91%, 0.\nScore: 0.3891\n\nTitle: Wednesday morning First Alert weather forecast with Jessica
+              Burch\nURL: https://www.youtube.com/watch?v=fzAVNg32R2M\nContent: Wednesday morning First Alert weather forecast
+              with Jessica Burch - 9/17/25. 742 views · 2 hours ago ...more. KPIX | CBS NEWS BAY AREA. 452K.\nScore: 0.2947\n\nTitle:
+              Monthly Weather Forecast for San Francisco, CA\nURL: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87\nContent:
+              Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.\nScore: 0.2857\n\nTitle: Rain and
+              thunderstorms coming to Bay Area - SFGATE\nURL: https://www.sfgate.com/bayarea/article/thunder-rain-tropical-storm-mario-21053020.php\nContent:
+              San Francisco could be hit with rain and lightning thanks to the remnants of Tropical Storm Mario.\nScore: 0.2418\n\n"
+            search_results:
+              results:
+              - content: '{''location'': {''name'': ''San Francisco'', ''region'': ''California'', ''country'': ''United States
+                  of America'', ''lat'': 37.775, ''lon'': -122.4183, ''tz_id'': ''America/Los_Angeles'', ''localtime_epoch'':
+                  1758143975, ''localtime'': ''2025-09-17 14:19''}, ''current'': {''last_updated_epoch'': 1758143700, ''last_updated'':
+                  ''2025-09-17 14:15'', ''temp_c'': 17.0, ''temp_f'': 62.6, ''is_day'': 1, ''condition'': {''text'': ''Partly
+                  cloudy'', ''icon'': ''//cdn.weatherapi.com/weather/64x64/day/116.png'', ''code'': 1003}, ''wind_mph'': 7.8,
+                  ''wind_kph'': 12.6, ''wind_degree'': 264, ''wind_dir'': ''W'', ''pressure_mb'': 1015.0, ''pressure_in'':
+                  29.96, ''precip_mm'': 0.0, ''precip_in'': 0.0, ''humidity'': 94, ''cloud'': 50, ''feelslike_c'': 17.0, ''feelslike_f'':
+                  62.6, ''windchill_c'': 17.7, ''windchill_f'': 63.9, ''heatindex_c'': 17.7, ''heatindex_f'': 63.9, ''dewpoint_c'':
+                  15.3, ''dewpoint_f'': 59.6, ''vis_km'': 13.0, ''vis_miles'': 8.0, ''uv'': 6.8, ''gust_mph'': 14.4, ''gust_kph'':
+                  23.1}}'
+                score: 0.9842367
+                title: Weather in San Francisco
+                url: https://www.weatherapi.com/
+              - content: 'San Francisco, California Weather: Wednesday, September 17, 2025. Day 75°. Night 59°. Precipitation
+                  0 %. Wind 8 mph. UV Index (0 - 11+) 11'
+                score: 0.95967525
+                title: Wednesday, September 17, 2025. San Francisco, CA - Weather ...
+                url: https://weathershogun.com/weather/usa/ca/san-francisco/480/september/2025-09-17
+              - content: 'Weather in San Francisco. Weather Unit: Weather unit option Celsius Selected ... 17/09/2025. ​.
+                  Thursday. overcast clouds. 18°C. 18/09/2025. ​. Friday. few'
+                score: 0.90830135
+                title: Find cheap flights from Milan (MXP) to San Francisco (SFO)
+                url: https://www.aa.com/en-it/flights-from-milan-to-san-francisco
+              - content: The temperatures in San Francisco in September are comfortable with low of 57°F and and high up to
+                  77°F. There is little to no rain in San Francisco during
+                score: 0.885404
+                title: San Francisco weather in September 2025 | Weather25.com
+                url: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September
+              - content: Carlos E. Castañeda. September 17, 2025 / 11:20 AM PDT / CBS San Francisco. Wednesday morning First
+                  Alert weather forecast with Jessica Burch - 9/17/25
+                score: 0.8624794
+                title: Bay Area basks in unseasonable heat with thunderstorms and ...
+                url: https://www.cbsnews.com/sanfrancisco/news/bay-area-hot-weather-thunderstorms-fire-danger-dry-lightning/
+              - content: 067 FXUS66 KMTR 171648 AFDMTR Area Forecast Discussion National Weather Service San Francisco CA
+                  948 AM PDT Wed Sep 17 2025 ...New UPDATE, FIRE WEATHER.
+                score: 0.81630427
+                title: Area Forecast Discussion - National Weather Service
+                url: https://forecast.weather.gov/product.php?site=mtr&issuedby=MTR&product=AFD
+              - content: "Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night \U0001F321️ temperatures,
+                  precipitations – World-Weather.info."
+                score: 0.7420672
+                title: Weather in San Francisco in September 2025
+                url: https://world-weather.info/forecast/usa/san_francisco/september-2025/
+              - content: '... Wednesday, September 17, 2025 ... The Arizona Cardinals quarterback will face the San Francisco
+                  49ers this Sunday in a battle for the West.'
+                score: 0.7171114
+                title: 'The Fantasy Forecast: September skies with Maye weather'
+                url: https://dailycampus.com/2025/09/17/the-fantasy-forecast-september-skies-with-maye-weather/
+              - content: Almanac Logo Wednesday, September 17, 2025 · Almanac.com. Weather · Long-Range; California. Toggle
+                  navigation. Gardening. All Gardening · Planting Calendar
+                score: 0.68571854
+                title: 60-Day Extended Weather Forecast for San Francisco, San ...
+                url: https://www.almanac.com/weather/longrange/CA/San%20Francisco%2C%20San%20Francisco%20County
+              - content: Daytime temperatures usually reach 22°C in San Francisco in September, falling to 13°C at night.
+                  How sunny is it in San Francisco in September? There are
+                score: 0.67988104
+                title: San Francisco weather in September 2025 | California
+                url: https://www.weather2travel.com/california/san-francisco/september/
+              - content: Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 23 °c, 25 °c,
+                  0%, 0.0mm, 0%, 6mph, 24mph, 73%, 0.
+                score: 0.6580885
+                title: Weather Forecast for San Francisco for Wednesday 17 September
+                url: https://www.metcheck.com/WEATHER/dayforecast.asp?location=San%20Francisco&locationID=1628582&lat=-25.23078&lon=-57.57218&dateFor=17/09/2025
+              - content: In general, the average temperature in San Francisco at the beginning of September is 70 °F. As the
+                  month progressed, temperatures tended to moderately fall,
+                score: 0.6533265
+                title: Weather in San Francisco, California for September 2025
+                url: https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september
+              - content: This report shows the past weather for San Francisco, providing a weather history for September 2025.
+                  It features all historical weather data series we have
+                score: 0.5855047
+                title: San Francisco September 2025 Historical Weather Data (California ...
+                url: https://weatherspark.com/h/m/557/2025/9/Historical-Weather-in-September-2025-in-San-Francisco-California-United-States
+              - content: Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 25 °c, 27 °c,
+                  88%, 0.1mm, 0%, 4mph, 19mph, 91%, 0.
+                score: 0.38908273
+                title: Weather Forecast for Batey San Francisco for Wednesday 17 ...
+                url: https://www.metcheck.com/WEATHER/dayforecast.asp?location=Batey%20San%20Francisco&locationID=511664&lat=18.62123&lon=-68.63688&dateFor=17/09/2025
+              - content: Wednesday morning First Alert weather forecast with Jessica Burch - 9/17/25. 742 views · 2 hours
+                  ago ...more. KPIX | CBS NEWS BAY AREA. 452K.
+                score: 0.29469728
+                title: Wednesday morning First Alert weather forecast with Jessica Burch
+                url: https://www.youtube.com/watch?v=fzAVNg32R2M
+              - content: Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.
+                score: 0.28572106
+                title: Monthly Weather Forecast for San Francisco, CA
+                url: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87
+              - content: San Francisco could be hit with rain and lightning thanks to the remnants of Tropical Storm Mario.
+                score: 0.24180745
+                title: Rain and thunderstorms coming to Bay Area - SFGATE
+                url: https://www.sfgate.com/bayarea/article/thunder-rain-tropical-storm-mario-21053020.php
             type: search
-          reasoning: |2-
-
-            To determine the current day, I need to access real-time information. I will use the search tool to find out the current date.
-
-            <tool>
-            search(What is the current date?)
-            </tool>
-            <output>Title: Today's Date - Find Out Quickly What's The Date Today ️
-            URL: https://calendarhours.com/todays-date/
-            Content: The current date in RFC 2822 Format with shortened day of week, numerical date, three-letter month abbreviation, year, time, and time zone is: Tue, 13 May 2025 06:07:56 -0400; The current date in Unix Epoch Format with number of seconds that have elapsed since January 1, 1970 (midnight UTC/GMT) is:
-            Score: 0.8299
-
-            Title: Today's Date | Current date now - MaxTables
-            URL: https://maxtables.com/tools/todays-date.html
-            Content: The current date, including day of the week, month, day, and year. The exact time, down to seconds. Details on the time zone, its location, and its GMT difference. A tool to select the present date. A visual calendar chart. Why would I need to check Today's Date on this platform instead of my device?
-            Score: 0.7223
-
-            Title: Current Time and Date - Exact Time!
-            URL: https://time-and-calendar.com/
-            Content: The actual time is: Mon May 12 2025 22:14:39 GMT-0700 (Pacific Daylight Time) Your computer time is: 22:14:38 The time of your computer is synchronized with our web server. This mean that it is synchronizing in real time with our server clock.
-            Score: 0.6799
-
-            Title: Today's Date - CalendarDate.com
-            URL: https://www.calendardate.com/todays.htm
-            Content: Details about today's date with count of days, weeks, and months, Sun and Moon cycles, Zodiac signs and holidays. Monday May 12, 2025 . Home; Calendars. 2025 Calendar; ... Current Season Today: Spring with 40 days until the start of Summer. S. Hemisphere flip seasons - i.e. Winter is Summer.
-            Score: 0.6416
-
-            Title: What is the date today | Today's Date
-            URL: https://www.datetoday.info/
-            Content: Master time tracking with Today's Date. Stay updated with real-time information on current date, time, day of the week, days left in the week, current day and remaining days of the year. Explore time in globally accepted formats. Keep up with the current week and month, along with the remaining weeks and months for the year. Embrace efficient time tracking with Today's Date.
-            Score: 0.6282
-
-            Title: Explore Today's Date, Time Zones, Holidays & More
-            URL: https://whatdateis.today/
-            Content: Check what date and time it is today (May 8, 2025). View current time across different time zones, upcoming holidays, and use our date calculator. Your one-stop destination for all date and time information.
-            Score: 0.6181
-
-            Title: Today's Date and Time - Date and Time Tools
-            URL: https://todaysdatetime.com/
-            Content: Discover today's exact date and time, learn about time zones, date formats, and explore our comprehensive collection of date and time tools including calculators, converters, and calendars. ... Get the exact current date and time, along with powerful calculation tools for all your scheduling needs. 12h. Today. Day 76 of year (366) Yesterday
-            Score: 0.5456
-
-            Title: Current Time Now - What time is it? - RapidTables.com
-            URL: https://www.rapidtables.com/tools/current-time.html
-            Content: This page includes the following information: Current time: hours, minutes, seconds. Today's date: day of week, month, day, year. Time zone with location and GMT offset.
-            Score: 0.4255
-
-            Title: Current Time
-            URL: https://www.timeanddate.com/
-            Content: Welcome to the world's top site for time, time zones, and astronomy. Organize your life with free online info and tools you can rely on. No sign-up needed. Sign in. News. News Home; Astronomy News; ... Current Time. Monday May 12, 2025 Roanoke Rapids, North Carolina, USA. Set home location. 11:27: 03 pm. World Clock.
-            Score: 0.3876
-
-            Title: Current local time in the United States - World clock
-            URL: https://dateandtime.info/country.php?code=US
-            Content: Time and Date of DST Change Time Change; DST started: Sunday, March 9, 2025 at 2:00 AM: The clocks were put forward an hour to 3:00 AM. DST ends: Sunday, November 2, 2025 at 2:00 AM: The clocks will be put back an hour to 1:00 AM. DST starts: Sunday, March 8, 2026 at 2:00 AM: The clocks will be put forward an hour to 3:00 AM.
-            Score: 0.3042
-
-            Title: Time.is - exact time, any time zone
-            URL: https://time.is/
-            Content: 7 million locations, 58 languages, synchronized with atomic clock time. Time.is. Get Time.is Ad-free! Exact time now: 05:08:45. Tuesday, 13 May, 2025, week 20. Sun: ↑ 05:09 ↓ 20:45 (15h 36m) - More info - Make London time default - Remove from favorite locations
-            Score: 0.2796
-
-            Title: Time in United States now
-            URL: https://time.is/United_States
-            Content: Exact time now, time zone, time difference, sunrise/sunset time and key facts for United States. Time.is. Get Time.is Ad-free! Time in United States now . 11:17:42 PM. Monday, May 12, 2025. United States (incl. dependent territories) has 11 time zones. The time zone for the capital Washington, D.C. is used here.
-            Score: 0.2726
-
-            Title: Current Local Time in the United States - timeanddate.com
-            URL: https://www.timeanddate.com/worldclock/usa
-            Content: United States time now. USA time zones and time zone map with current time in each state.
-            Score: 0.2519
-
-            Title: Current local time in United States - World Time Clock & Map
-            URL: https://24timezones.com/United-States/time
-            Content: Check the current time in United States and time zone information, the UTC offset and daylight saving time dates in 2025.
-            Score: 0.2221
-
-            Title: The World Clock — Worldwide - timeanddate.com
-            URL: https://www.timeanddate.com/worldclock/
-            Content: World time and date for cities in all time zones. International time right now. Takes into account all DST clock changes.
-            Score: 0.2134
-
-            </output>
-            The current date is Tuesday, May 13, 2025.
-
-
-
-            The current day is Tuesday.
+          reasoning: "\nTo find the current weather in San Francisco, I will use the search tool to look up this information.\n\n<tool>\nsearch(What
+            is the weather in San Francisco today?)\n</tool>\n<output>Title: Weather in San Francisco\nURL: https://www.weatherapi.com/\nContent:
+            {'location': {'name': 'San Francisco', 'region': 'California', 'country': 'United States of America', 'lat': 37.775,
+            'lon': -122.4183, 'tz_id': 'America/Los_Angeles', 'localtime_epoch': 1758143975, 'localtime': '2025-09-17 14:19'},
+            'current': {'last_updated_epoch': 1758143700, 'last_updated': '2025-09-17 14:15', 'temp_c': 17.0, 'temp_f': 62.6,
+            'is_day': 1, 'condition': {'text': 'Partly cloudy', 'icon': '//cdn.weatherapi.com/weather/64x64/day/116.png',
+            'code': 1003}, 'wind_mph': 7.8, 'wind_kph': 12.6, 'wind_degree': 264, 'wind_dir': 'W', 'pressure_mb': 1015.0,
+            'pressure_in': 29.96, 'precip_mm': 0.0, 'precip_in': 0.0, 'humidity': 94, 'cloud': 50, 'feelslike_c': 17.0, 'feelslike_f':
+            62.6, 'windchill_c': 17.7, 'windchill_f': 63.9, 'heatindex_c': 17.7, 'heatindex_f': 63.9, 'dewpoint_c': 15.3,
+            'dewpoint_f': 59.6, 'vis_km': 13.0, 'vis_miles': 8.0, 'uv': 6.8, 'gust_mph': 14.4, 'gust_kph': 23.1}}\nScore:
+            0.9842\n\nTitle: Wednesday, September 17, 2025. San Francisco, CA - Weather ...\nURL: https://weathershogun.com/weather/usa/ca/san-francisco/480/september/2025-09-17\nContent:
+            San Francisco, California Weather: Wednesday, September 17, 2025. Day 75°. Night 59°. Precipitation 0 %. Wind
+            8 mph. UV Index (0 - 11+) 11\nScore: 0.9597\n\nTitle: Find cheap flights from Milan (MXP) to San Francisco (SFO)\nURL:
+            https://www.aa.com/en-it/flights-from-milan-to-san-francisco\nContent: Weather in San Francisco. Weather Unit:
+            Weather unit option Celsius Selected ... 17/09/2025. ​. Thursday. overcast clouds. 18°C. 18/09/2025. ​. Friday.
+            few\nScore: 0.9083\n\nTitle: San Francisco weather in September 2025 | Weather25.com\nURL: https://www.weather25.com/north-america/usa/california/san-francisco?page=month&month=September\nContent:
+            The temperatures in San Francisco in September are comfortable with low of 57°F and and high up to 77°F. There
+            is little to no rain in San Francisco during\nScore: 0.8854\n\nTitle: Bay Area basks in unseasonable heat with
+            thunderstorms and ...\nURL: https://www.cbsnews.com/sanfrancisco/news/bay-area-hot-weather-thunderstorms-fire-danger-dry-lightning/\nContent:
+            Carlos E. Castañeda. September 17, 2025 / 11:20 AM PDT / CBS San Francisco. Wednesday morning First Alert weather
+            forecast with Jessica Burch - 9/17/25\nScore: 0.8625\n\nTitle: Area Forecast Discussion - National Weather Service\nURL:
+            https://forecast.weather.gov/product.php?site=mtr&issuedby=MTR&product=AFD\nContent: 067 FXUS66 KMTR 171648 AFDMTR
+            Area Forecast Discussion National Weather Service San Francisco CA 948 AM PDT Wed Sep 17 2025 ...New UPDATE, FIRE
+            WEATHER.\nScore: 0.8163\n\nTitle: Weather in San Francisco in September 2025\nURL: https://world-weather.info/forecast/usa/san_francisco/september-2025/\nContent:
+            Detailed ⚡ San Francisco Weather Forecast for September 2025 – day/night \U0001F321️ temperatures, precipitations
+            – World-Weather.info.\nScore: 0.7421\n\nTitle: The Fantasy Forecast: September skies with Maye weather\nURL: https://dailycampus.com/2025/09/17/the-fantasy-forecast-september-skies-with-maye-weather/\nContent:
+            ... Wednesday, September 17, 2025 ... The Arizona Cardinals quarterback will face the San Francisco 49ers this
+            Sunday in a battle for the West.\nScore: 0.7171\n\nTitle: 60-Day Extended Weather Forecast for San Francisco,
+            San ...\nURL: https://www.almanac.com/weather/longrange/CA/San%20Francisco%2C%20San%20Francisco%20County\nContent:
+            Almanac Logo Wednesday, September 17, 2025 · Almanac.com. Weather · Long-Range; California. Toggle navigation.
+            Gardening. All Gardening · Planting Calendar\nScore: 0.6857\n\nTitle: San Francisco weather in September 2025
+            | California\nURL: https://www.weather2travel.com/california/san-francisco/september/\nContent: Daytime temperatures
+            usually reach 22°C in San Francisco in September, falling to 13°C at night. How sunny is it in San Francisco in
+            September? There are\nScore: 0.6799\n\nTitle: Weather Forecast for San Francisco for Wednesday 17 September\nURL:
+            https://www.metcheck.com/WEATHER/dayforecast.asp?location=San%20Francisco&locationID=1628582&lat=-25.23078&lon=-57.57218&dateFor=17/09/2025\nContent:
+            Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 23 °c, 25 °c, 0%, 0.0mm,
+            0%, 6mph, 24mph, 73%, 0.\nScore: 0.6581\n\nTitle: Weather in San Francisco, California for September 2025\nURL:
+            https://www.easeweather.com/north-america/united-states/california/city-and-county-of-san-francisco/san-francisco/september\nContent:
+            In general, the average temperature in San Francisco at the beginning of September is 70 °F. As the month progressed,
+            temperatures tended to moderately fall,\nScore: 0.6533\n\nTitle: San Francisco September 2025 Historical Weather
+            Data (California ...\nURL: https://weatherspark.com/h/m/557/2025/9/Historical-Weather-in-September-2025-in-San-Francisco-California-United-States\nContent:
+            This report shows the past weather for San Francisco, providing a weather history for September 2025. It features
+            all historical weather data series we have\nScore: 0.5855\n\nTitle: Weather Forecast for Batey San Francisco for
+            Wednesday 17 ...\nURL: https://www.metcheck.com/WEATHER/dayforecast.asp?location=Batey%20San%20Francisco&locationID=511664&lat=18.62123&lon=-68.63688&dateFor=17/09/2025\nContent:
+            Time, Weather, Temp, Feels, RainRisk, Amount, Cloud, Dir, Speed, Gust, RH, UV. 0:00, 25 °c, 27 °c, 88%, 0.1mm,
+            0%, 4mph, 19mph, 91%, 0.\nScore: 0.3891\n\nTitle: Wednesday morning First Alert weather forecast with Jessica
+            Burch\nURL: https://www.youtube.com/watch?v=fzAVNg32R2M\nContent: Wednesday morning First Alert weather forecast
+            with Jessica Burch - 9/17/25. 742 views · 2 hours ago ...more. KPIX | CBS NEWS BAY AREA. 452K.\nScore: 0.2947\n\nTitle:
+            Monthly Weather Forecast for San Francisco, CA\nURL: https://weather.com/weather/monthly/l/69bedc6a5b6e977993fb3e5344e3c06d8bc36a1fb6754c3ddfb5310a3c6d6c87\nContent:
+            Considerable cloudiness. Low 56F. Winds WSW at 10 to 15 mph. Record Low52°.\nScore: 0.2857\n\nTitle: Rain and
+            thunderstorms coming to Bay Area - SFGATE\nURL: https://www.sfgate.com/bayarea/article/thunder-rain-tropical-storm-mario-21053020.php\nContent:
+            San Francisco could be hit with rain and lightning thanks to the remnants of Tropical Storm Mario.\nScore: 0.2418\n\n</output>\n\n\nBased
+            on the search results, the current weather in San Francisco is partly cloudy with a temperature of 17°C (62.6°F).
+            \n\nThe weather in San Francisco today is partly cloudy with a high of 17°C (62.6°F)."
           role: assistant
-      created: 1747232793
+      created: 1758143653
       id: stub
-      model: compound-beta
+      model: groq/compound
       object: chat.completion
-      system_fingerprint: null
+      service_tier: on_demand
       usage:
-        completion_time: 0.312814
-        completion_tokens: 117
-        prompt_time: 0.737839
-        prompt_tokens: 4287
-        queue_time: 1.687734
-        total_time: 1.050655
-        total_tokens: 4404
+        completion_time: 1.047857
+        completion_tokens: 387
+        prompt_time: 0.323124
+        prompt_tokens: 5296
+        queue_time: 0.22001
+        total_time: 1.370978
+        total_tokens: 5683
       usage_breakdown:
         models:
         - model: llama-3.3-70b-versatile
           usage:
-            completion_time: 0.033092212
+            completion_time: 0.008405714
             completion_tokens: 4
-            prompt_time: 0.008749282
-            prompt_tokens: 134
-            queue_time: 0.251916212
-            total_time: 0.041841494
-            total_tokens: 138
+            prompt_time: 0.044897735
+            prompt_tokens: 138
+            queue_time: 0.058984649
+            total_time: 0.053303449
+            total_tokens: 142
         - model: meta-llama/llama-4-scout-17b-16e-instruct
           usage:
-            completion_time: 0.198660413
-            completion_tokens: 82
-            prompt_time: 0.026323206
-            prompt_tokens: 491
-            queue_time: 0.556546565
-            total_time: 0.224983619
-            total_tokens: 573
+            completion_time: 0.290415658
+            completion_tokens: 106
+            prompt_time: 0.014458645
+            prompt_tokens: 495
+            queue_time: 0.079786511
+            total_time: 0.304874303
+            total_tokens: 601
         - model: meta-llama/llama-4-scout-17b-16e-instruct
           usage:
-            completion_time: 0.047136438
-            completion_tokens: 24
-            prompt_time: 0.077990192
-            prompt_tokens: 1926
-            queue_time: 0.619169638
-            total_time: 0.12512663
-            total_tokens: 1950
+            completion_time: 0.12481859
+            completion_tokens: 55
+            prompt_time: 0.072430557
+            prompt_tokens: 2378
+            queue_time: 0.057718134
+            total_time: 0.197249147
+            total_tokens: 2433
         - model: llama-3.3-70b-versatile
           usage:
-            completion_time: 0.033926045
-            completion_tokens: 7
-            prompt_time: 0.624777225
-            prompt_tokens: 1736
-            queue_time: 0.26010064499999996
-            total_time: 0.65870327
-            total_tokens: 1743
+            completion_time: 0.624216255
+            completion_tokens: 222
+            prompt_time: 0.19133571
+            prompt_tokens: 2285
+            queue_time: 0.023520178
+            total_time: 0.815551965
+            total_tokens: 2507
       x_groq:
         id: stub
     status:

@@ -20,10 +20,24 @@ from pydantic import BaseModel
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.agent import Agent, AgentRunResult
+from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import (
     AgentInfo,
+    BuiltinToolCallsReturns,
     DeltaThinkingCalls,
     DeltaThinkingPart,
     DeltaToolCall,
@@ -34,7 +48,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
-from .conftest import IsSameStr
+from .conftest import IsDatetime, IsSameStr
 
 has_ag_ui: bool = False
 with contextlib.suppress(ImportError):
@@ -59,6 +73,7 @@ with contextlib.suppress(ImportError):
         SSE_CONTENT_TYPE,
         OnCompleteFunc,
         StateDeps,
+        _messages_from_ag_ui,  # type: ignore[reportPrivateUsage]
         run_ag_ui,
     )
 
@@ -68,6 +83,12 @@ with contextlib.suppress(ImportError):
 pytestmark = [
     pytest.mark.anyio,
     pytest.mark.skipif(not has_ag_ui, reason='ag-ui-protocol not installed'),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.:DeprecationWarning'
+    ),
+    pytest.mark.filterwarnings(
+        'ignore:`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.:DeprecationWarning'
+    ),
 ]
 
 
@@ -153,24 +174,22 @@ async def send_snapshot() -> StateSnapshotEvent:
     )
 
 
-async def send_custom() -> list[CustomEvent]:
-    """Display the recipe to the user.
-
-    Returns:
-        StateSnapshotEvent.
-    """
-    return [
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='custom_event1',
-            value={'key1': 'value1'},
-        ),
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='custom_event2',
-            value={'key2': 'value2'},
-        ),
-    ]
+async def send_custom() -> ToolReturn:
+    return ToolReturn(
+        return_value='Done',
+        metadata=[
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='custom_event1',
+                value={'key1': 'value1'},
+            ),
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='custom_event2',
+                value={'key2': 'value2'},
+            ),
+        ],
+    )
 
 
 def uuid_str() -> str:
@@ -775,7 +794,7 @@ async def test_tool_local_multiple_events() -> None:
                 'type': 'TOOL_CALL_RESULT',
                 'messageId': IsStr(),
                 'toolCallId': tool_call_id,
-                'content': '[{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event1","value":{"key1":"value1"}},{"type":"CUSTOM","timestamp":null,"raw_event":null,"name":"custom_event2","value":{"key2":"value2"}}]',
+                'content': 'Done',
                 'role': 'tool',
             },
             {'type': 'CUSTOM', 'name': 'custom_event1', 'value': {'key1': 'value1'}},
@@ -1347,3 +1366,244 @@ async def test_callback_with_error() -> None:
     assert len(events) > 0
     assert events[0]['type'] == 'RUN_STARTED'
     assert any(event['type'] == 'RUN_ERROR' for event in events)
+
+
+async def test_messages_from_ag_ui() -> None:
+    messages = [
+        SystemMessage(
+            id='msg_1',
+            content='System message',
+        ),
+        DeveloperMessage(
+            id='msg_2',
+            content='Developer message',
+        ),
+        UserMessage(
+            id='msg_3',
+            content='User message',
+        ),
+        UserMessage(
+            id='msg_4',
+            content='User message',
+        ),
+        AssistantMessage(
+            id='msg_5',
+            tool_calls=[
+                ToolCall(
+                    id='pyd_ai_builtin|function|search_1',
+                    function=FunctionCall(
+                        name='web_search',
+                        arguments='{"query": "Hello, world!"}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_6',
+            content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+            tool_call_id='pyd_ai_builtin|function|search_1',
+        ),
+        AssistantMessage(
+            id='msg_7',
+            content='Assistant message',
+        ),
+        AssistantMessage(
+            id='msg_8',
+            tool_calls=[
+                ToolCall(
+                    id='tool_call_1',
+                    function=FunctionCall(
+                        name='tool_call_1',
+                        arguments='{}',
+                    ),
+                ),
+            ],
+        ),
+        AssistantMessage(
+            id='msg_9',
+            tool_calls=[
+                ToolCall(
+                    id='tool_call_2',
+                    function=FunctionCall(
+                        name='tool_call_2',
+                        arguments='{}',
+                    ),
+                ),
+            ],
+        ),
+        ToolMessage(
+            id='msg_10',
+            content='Tool message',
+            tool_call_id='tool_call_1',
+        ),
+        ToolMessage(
+            id='msg_11',
+            content='Tool message',
+            tool_call_id='tool_call_2',
+        ),
+        UserMessage(
+            id='msg_12',
+            content='User message',
+        ),
+        AssistantMessage(
+            id='msg_13',
+            content='Assistant message',
+        ),
+    ]
+
+    assert _messages_from_ag_ui(messages) == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    SystemPromptPart(
+                        content='System message',
+                        timestamp=IsDatetime(),
+                    ),
+                    SystemPromptPart(
+                        content='Developer message',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[
+                    BuiltinToolCallPart(
+                        tool_name='web_search',
+                        args='{"query": "Hello, world!"}',
+                        tool_call_id='search_1',
+                        provider_name='function',
+                    ),
+                    BuiltinToolReturnPart(
+                        tool_name='web_search',
+                        content='{"results": [{"title": "Hello, world!", "url": "https://en.wikipedia.org/wiki/Hello,_world!"}]}',
+                        tool_call_id='search_1',
+                        timestamp=IsDatetime(),
+                        provider_name='function',
+                    ),
+                    TextPart(content='Assistant message'),
+                    ToolCallPart(tool_name='tool_call_1', args='{}', tool_call_id='tool_call_1'),
+                    ToolCallPart(tool_name='tool_call_2', args='{}', tool_call_id='tool_call_2'),
+                ],
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='tool_call_1',
+                        content='Tool message',
+                        tool_call_id='tool_call_1',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolReturnPart(
+                        tool_name='tool_call_2',
+                        content='Tool message',
+                        tool_call_id='tool_call_2',
+                        timestamp=IsDatetime(),
+                    ),
+                    UserPromptPart(
+                        content='User message',
+                        timestamp=IsDatetime(),
+                    ),
+                ]
+            ),
+            ModelResponse(
+                parts=[TextPart(content='Assistant message')],
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+
+async def test_builtin_tool_call() -> None:
+    async def stream_function(
+        messages: list[ModelMessage], agent_info: AgentInfo
+    ) -> AsyncIterator[BuiltinToolCallsReturns | DeltaToolCalls | str]:
+        yield {
+            0: BuiltinToolCallPart(
+                tool_name=WebSearchTool.kind,
+                args='{"query":',
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        yield {
+            0: DeltaToolCall(
+                name=WebSearchTool.kind,
+                json_args='"Hello world"}',
+                tool_call_id='search_1',
+            )
+        }
+        yield {
+            1: BuiltinToolReturnPart(
+                tool_name=WebSearchTool.kind,
+                content={
+                    'results': [
+                        {
+                            'title': '"Hello, World!" program',
+                            'url': 'https://en.wikipedia.org/wiki/%22Hello,_World!%22_program',
+                        }
+                    ]
+                },
+                tool_call_id='search_1',
+                provider_name='function',
+            )
+        }
+        yield 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". '
+
+    agent = Agent(
+        model=FunctionModel(stream_function=stream_function),
+    )
+
+    run_input = create_input(
+        UserMessage(
+            id='msg_1',
+            content='Tell me about Hello World',
+        ),
+    )
+    events = await run_and_collect_events(agent, run_input)
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'threadId': (thread_id := IsSameStr()),
+                'runId': (run_id := IsSameStr()),
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'toolCallName': 'web_search',
+                'parentMessageId': IsStr(),
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '{"query":'},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'pyd_ai_builtin|function|search_1', 'delta': '"Hello world"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'pyd_ai_builtin|function|search_1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': 'pyd_ai_builtin|function|search_1',
+                'content': '{"results":[{"title":"\\"Hello, World!\\" program","url":"https://en.wikipedia.org/wiki/%22Hello,_World!%22_program"}]}',
+                'role': 'tool',
+            },
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (message_id := IsSameStr()), 'role': 'assistant'},
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'messageId': message_id,
+                'delta': 'A "Hello, World!" program is usually a simple computer program that emits (or displays) to the screen (often the console) a message similar to "Hello, World!". ',
+            },
+            {'type': 'TEXT_MESSAGE_END', 'messageId': message_id},
+            {
+                'type': 'RUN_FINISHED',
+                'threadId': thread_id,
+                'runId': run_id,
+            },
+        ]
+    )

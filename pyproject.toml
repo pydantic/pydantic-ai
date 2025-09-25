@@ -22,6 +22,7 @@ authors = [
     { name = "Douwe Maan", email = "douwe@pydantic.dev" },
 ]
 license = "MIT"
+license-files = ["LICENSE"]
 readme = "README.md"
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -34,7 +35,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Topic :: Internet",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",

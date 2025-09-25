@@ -86,12 +86,11 @@ async def test_a2a_pydantic_model_output():
             task_id = result['id']
 
             # Wait for completion
-            await anyio.sleep(0.1)
-            task = await a2a_client.get_task(task_id)
-
-            assert 'result' in task
-            result = task['result']
-            assert result['status']['state'] == 'completed'
+            while task := await a2a_client.get_task(task_id):  # pragma: no branch
+                if 'result' in task and task['result']['status']['state'] == 'completed':
+                    result = task['result']
+                    break
+                await anyio.sleep(0.1)
 
             # Check artifacts
             assert 'artifacts' in result
@@ -198,6 +197,7 @@ async def test_a2a_simple():
                 if 'result' in task and task['result']['status']['state'] == 'completed':
                     break
                 await anyio.sleep(0.1)
+
             assert task == snapshot(
                 {
                     'jsonrpc': '2.0',
@@ -623,10 +623,10 @@ async def test_a2a_multiple_tasks_same_context():
                                 content='Final result processed.',
                                 tool_call_id=IsStr(),
                                 timestamp=IsDatetime(),
-                            )
-                        ]
+                            ),
+                            UserPromptPart(content='Second message', timestamp=IsDatetime()),
+                        ],
                     ),
-                    ModelRequest(parts=[UserPromptPart(content='Second message', timestamp=IsDatetime())]),
                 ]
             )
 

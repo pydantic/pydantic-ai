@@ -204,11 +204,10 @@ user experiences with frontend user interfaces.
 
 ### Events
 
-Pydantic AI tools can send
-[AG-UI events](https://docs.ag-ui.com/concepts/events) simply by defining a tool
-which returns a (subclass of)
-[`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent), which allows
-for custom events and state updates.
+Pydantic AI tools can send [AG-UI events](https://docs.ag-ui.com/concepts/events) simply by returning a
+[`ToolReturn`](tools-advanced.md#advanced-tool-returns) object with a
+[`BaseEvent`](https://docs.ag-ui.com/sdk/python/core/events#baseevent) (or a list of events) as `metadata`,
+which allows for custom events and state updates.
 
 ```python {title="ag_ui_tool_events.py"}
 from ag_ui.core import CustomEvent, EventType, StateSnapshotEvent
@@ -216,6 +215,7 @@ from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.ag_ui import StateDeps
+from pydantic_ai.messages import ToolReturn
 
 
 class DocumentState(BaseModel):
@@ -233,27 +233,35 @@ app = agent.to_ag_ui(deps=StateDeps(DocumentState()))
 
 
 @agent.tool
-async def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> StateSnapshotEvent:
-    return StateSnapshotEvent(
-        type=EventType.STATE_SNAPSHOT,
-        snapshot=ctx.deps.state,
+async def update_state(ctx: RunContext[StateDeps[DocumentState]]) -> ToolReturn:
+    return ToolReturn(
+        return_value='State updated',
+        metadata=[
+            StateSnapshotEvent(
+                type=EventType.STATE_SNAPSHOT,
+                snapshot=ctx.deps.state,
+            ),
+        ],
     )
 
 
 @agent.tool_plain
-async def custom_events() -> list[CustomEvent]:
-    return [
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='count',
-            value=1,
-        ),
-        CustomEvent(
-            type=EventType.CUSTOM,
-            name='count',
-            value=2,
-        ),
-    ]
+async def custom_events() -> ToolReturn:
+    return ToolReturn(
+        return_value='Count events sent',
+        metadata=[
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='count',
+                value=1,
+            ),
+            CustomEvent(
+                type=EventType.CUSTOM,
+                name='count',
+                value=2,
+            ),
+        ]
+    )
 ```
 
 Since `app` is an ASGI application, it can be used with any ASGI server:

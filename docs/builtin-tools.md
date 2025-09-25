@@ -26,10 +26,11 @@ making it ideal for queries that require up-to-date data.
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | Full feature support |
+| OpenAI Responses | ✅ | Full feature support. To include search results on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart], set the `openai_include_web_search_sources` setting to `True` on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. |
 | Anthropic | ✅ | Full feature support |
+| Google | ✅ | No parameter support. No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is generated when streaming. Using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Groq | ✅ | Limited parameter support. To use web search capabilities with Groq, you need to use the [compound models](https://console.groq.com/docs/compound). |
-| Google | ✅ | No parameter support. Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| OpenAI Chat Completions | ❌ | Not supported |
 | Bedrock | ❌ | Not supported |
 | Mistral | ❌ | Not supported |
 | Cohere | ❌ | Not supported |
@@ -37,14 +38,26 @@ making it ideal for queries that require up-to-date data.
 
 ### Usage
 
-```py title="web_search_basic.py"
+```py title="web_search_anthropic.py"
 from pydantic_ai import Agent, WebSearchTool
 
 agent = Agent('anthropic:claude-sonnet-4-0', builtin_tools=[WebSearchTool()])
 
 result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
-# > Scientists have developed a universal AI detector that can identify deepfake videos.
+print(result.output)
+#> Scientists have developed a universal AI detector that can identify deepfake videos.
+```
 
+With OpenAI, you must use their responses API to access the web search tool.
+
+```py title="web_search_openai.py"
+from pydantic_ai import Agent, WebSearchTool
+
+agent = Agent('openai-responses:gpt-4.1', builtin_tools=[WebSearchTool()])
+
+result = agent.run_sync('Give me a sentence with the biggest news in AI this week.')
+print(result.output)
+#> Scientists have developed a universal AI detector that can identify deepfake videos.
 ```
 
 ### Configuration Options
@@ -98,9 +111,9 @@ in a secure environment, making it perfect for computational tasks, data analysi
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| OpenAI | ✅ | |
+| OpenAI | ✅ | To include outputs on the [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart], set the `openai_include_code_execution_outputs` setting to `True` on [`OpenAIResponsesModelSettings`][pydantic_ai.models.openai.OpenAIResponsesModelSettings]. |
 | Anthropic | ✅ | |
-| Google | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Google | ✅ | Using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | Groq | ❌ | |
 | Bedrock | ❌ | |
 | Mistral | ❌ | |
@@ -127,7 +140,7 @@ allowing it to pull up-to-date information from the web.
 
 | Provider | Supported | Notes |
 |----------|-----------|-------|
-| Google | ✅ | Google does not support using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time. To use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
+| Google | ✅ | No [`BuiltinToolCallPart`][pydantic_ai.messages.BuiltinToolCallPart] or [`BuiltinToolReturnPart`][pydantic_ai.messages.BuiltinToolReturnPart] is currently generated; please submit an issue if you need this. Using built-in tools and user tools (including [output tools](output.md#tool-output)) at the same time is not supported; to use structured output, use [`PromptedOutput`](output.md#prompted-output) instead. |
 | OpenAI | ❌ | |
 | Anthropic | ❌ | |
 | Groq | ❌ | |

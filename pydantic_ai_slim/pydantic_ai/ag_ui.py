@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
-from dataclasses import Field, dataclass, replace
+from dataclasses import Field, dataclass, field, replace
 from http import HTTPStatus
 from typing import (
     Any,
@@ -29,10 +29,15 @@ from ._agent_graph import CallToolsNode, ModelRequestNode
 from .agent import AbstractAgent, AgentRun, AgentRunResult
 from .exceptions import UserError
 from .messages import (
+    BaseToolCallPart,
+    BuiltinToolCallPart,
+    BuiltinToolReturnPart,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     ModelResponseStreamEvent,
     PartDeltaEvent,
     PartStartEvent,
@@ -119,6 +124,8 @@ SSE_CONTENT_TYPE: Final[str] = 'text/event-stream'
 
 OnCompleteFunc: TypeAlias = Callable[[AgentRunResult[Any]], None] | Callable[[AgentRunResult[Any]], Awaitable[None]]
 """Callback function type that receives the `AgentRunResult` of the completed run. Can be sync or async."""
+
+_BUILTIN_TOOL_CALL_ID_PREFIX: Final[str] = 'pyd_ai_builtin'
 
 
 class AGUIApp(Generic[AgentDepsT, OutputDataT], Starlette):
@@ -484,20 +491,37 @@ async def _handle_model_request_event(  # noqa: C901
                 stream_ctx.part_end = TextMessageEndEvent(
                     message_id=message_id,
                 )
-            elif isinstance(part, ToolCallPart):  # pragma: no branch
+            elif isinstance(part, BaseToolCallPart):
+                tool_call_id = part.tool_call_id
+                if isinstance(part, BuiltinToolCallPart):
+                    builtin_tool_call_id = '|'.join(
+                        [_BUILTIN_TOOL_CALL_ID_PREFIX, part.provider_name or '', tool_call_id]
+                    )
+                    stream_ctx.builtin_tool_call_ids[tool_call_id] = builtin_tool_call_id
+                    tool_call_id = builtin_tool_call_id
+
                 message_id = stream_ctx.message_id or stream_ctx.new_message_id()
                 yield ToolCallStartEvent(
-                    tool_call_id=part.tool_call_id,
+                    tool_call_id=tool_call_id,
                     tool_call_name=part.tool_name,
                     parent_message_id=message_id,
                 )
                 if part.args:
                     yield ToolCallArgsEvent(
-                        tool_call_id=part.tool_call_id,
-                        delta=part.args if isinstance(part.args, str) else json.dumps(part.args),
+                        tool_call_id=tool_call_id,
+                        delta=part.args_as_json_str(),
                     )
                 stream_ctx.part_end = ToolCallEndEvent(
-                    tool_call_id=part.tool_call_id,
+                    tool_call_id=tool_call_id,
+                )
+            elif isinstance(part, BuiltinToolReturnPart):  # pragma: no branch
+                tool_call_id = stream_ctx.builtin_tool_call_ids[part.tool_call_id]
+                yield ToolCallResultEvent(
+                    message_id=stream_ctx.new_message_id(),
+                    type=EventType.TOOL_CALL_RESULT,
+                    role='tool',
+                    tool_call_id=tool_call_id,
+                    content=part.model_response_str(),
                 )
 
     elif isinstance(agent_event, PartDeltaEvent):
@@ -509,9 +533,12 @@ async def _handle_model_request_event(  # noqa: C901
                     delta=delta.content_delta,
                 )
         elif isinstance(delta, ToolCallPartDelta):  # pragma: no branch
-            assert delta.tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
+            tool_call_id = delta.tool_call_id
+            assert tool_call_id, '`ToolCallPartDelta.tool_call_id` must be set'
+            if tool_call_id in stream_ctx.builtin_tool_call_ids:
+                tool_call_id = stream_ctx.builtin_tool_call_ids[tool_call_id]
             yield ToolCallArgsEvent(
-                tool_call_id=delta.tool_call_id,
+                tool_call_id=tool_call_id,
                 delta=delta.args_delta if isinstance(delta.args_delta, str) else json.dumps(delta.args_delta),
             )
         elif isinstance(delta, ThinkingPartDelta):  # pragma: no branch
@@ -547,24 +574,23 @@ async def _handle_tool_result_event(
     if not isinstance(result, ToolReturnPart):
         return
 
-    message_id = stream_ctx.new_message_id()
     yield ToolCallResultEvent(
-        message_id=message_id,
+        message_id=stream_ctx.new_message_id(),
         type=EventType.TOOL_CALL_RESULT,
         role='tool',
         tool_call_id=result.tool_call_id,
         content=result.model_response_str(),
     )
 
-    # Now check for  AG-UI events returned by the tool calls.
-    content = result.content
-    if isinstance(content, BaseEvent):
-        yield content
-    elif isinstance(content, str | bytes):  # pragma: no branch
+    # Now check for AG-UI events returned by the tool calls.
+    possible_event = result.metadata or result.content
+    if isinstance(possible_event, BaseEvent):
+        yield possible_event
+    elif isinstance(possible_event, str | bytes):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
-    elif isinstance(content, Iterable):  # pragma: no branch
-        for item in content:  # type: ignore[reportUnknownMemberType]
+    elif isinstance(possible_event, Iterable):  # pragma: no branch
+        for item in possible_event:  # type: ignore[reportUnknownMemberType]
             if isinstance(item, BaseEvent):  # pragma: no branch
                 yield item
 
@@ -573,49 +599,86 @@ def _messages_from_ag_ui(messages: list[Message]) -> list[ModelMessage]:
     """Convert a AG-UI history to a Pydantic AI one."""
     result: list[ModelMessage] = []
     tool_calls: dict[str, str] = {}  # Tool call ID to tool name mapping.
+    request_parts: list[ModelRequestPart] | None = None
+    response_parts: list[ModelResponsePart] | None = None
     for msg in messages:
-        if isinstance(msg, UserMessage):
-            result.append(ModelRequest(parts=[UserPromptPart(content=msg.content)]))
-        elif isinstance(msg, AssistantMessage):
-            if msg.content:
-                result.append(ModelResponse(parts=[TextPart(content=msg.content)]))
+        if isinstance(msg, UserMessage | SystemMessage | DeveloperMessage) or (
+            isinstance(msg, ToolMessage) and not msg.tool_call_id.startswith(_BUILTIN_TOOL_CALL_ID_PREFIX)
+        ):
+            if request_parts is None:
+                request_parts = []
+                result.append(ModelRequest(parts=request_parts))
+                response_parts = None
 
-            if msg.tool_calls:
-                for tool_call in msg.tool_calls:
-                    tool_calls[tool_call.id] = tool_call.function.name
+            if isinstance(msg, UserMessage):
+                request_parts.append(UserPromptPart(content=msg.content))
+            elif isinstance(msg, SystemMessage | DeveloperMessage):
+                request_parts.append(SystemPromptPart(content=msg.content))
+            else:
+                tool_call_id = msg.tool_call_id
+                tool_name = tool_calls.get(tool_call_id)
+                if tool_name is None:  # pragma: no cover
+                    raise _ToolCallNotFoundError(tool_call_id=tool_call_id)
 
-                result.append(
-                    ModelResponse(
-                        parts=[
-                            ToolCallPart(
-                                tool_name=tool_call.function.name,
-                                tool_call_id=tool_call.id,
-                                args=tool_call.function.arguments,
-                            )
-                            for tool_call in msg.tool_calls
-                        ]
+                request_parts.append(
+                    ToolReturnPart(
+                        tool_name=tool_name,
+                        content=msg.content,
+                        tool_call_id=tool_call_id,
                     )
                 )
-        elif isinstance(msg, SystemMessage):
-            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
-        elif isinstance(msg, ToolMessage):
-            tool_name = tool_calls.get(msg.tool_call_id)
-            if tool_name is None:  # pragma: no cover
-                raise _ToolCallNotFoundError(tool_call_id=msg.tool_call_id)
 
-            result.append(
-                ModelRequest(
-                    parts=[
-                        ToolReturnPart(
-                            tool_name=tool_name,
-                            content=msg.content,
-                            tool_call_id=msg.tool_call_id,
-                        )
-                    ]
+        elif isinstance(msg, AssistantMessage) or (  # pragma: no branch
+            isinstance(msg, ToolMessage) and msg.tool_call_id.startswith(_BUILTIN_TOOL_CALL_ID_PREFIX)
+        ):
+            if response_parts is None:
+                response_parts = []
+                result.append(ModelResponse(parts=response_parts))
+                request_parts = None
+
+            if isinstance(msg, AssistantMessage):
+                if msg.content:
+                    response_parts.append(TextPart(content=msg.content))
+
+                if msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        tool_call_id = tool_call.id
+                        tool_name = tool_call.function.name
+                        tool_calls[tool_call_id] = tool_name
+
+                        if tool_call_id.startswith(_BUILTIN_TOOL_CALL_ID_PREFIX):
+                            _, provider_name, tool_call_id = tool_call_id.split('|', 2)
+                            response_parts.append(
+                                BuiltinToolCallPart(
+                                    tool_name=tool_name,
+                                    args=tool_call.function.arguments,
+                                    tool_call_id=tool_call_id,
+                                    provider_name=provider_name,
+                                )
+                            )
+                        else:
+                            response_parts.append(
+                                ToolCallPart(
+                                    tool_name=tool_name,
+                                    tool_call_id=tool_call_id,
+                                    args=tool_call.function.arguments,
+                                )
+                            )
+            else:
+                tool_call_id = msg.tool_call_id
+                tool_name = tool_calls.get(tool_call_id)
+                if tool_name is None:  # pragma: no cover
+                    raise _ToolCallNotFoundError(tool_call_id=tool_call_id)
+                _, provider_name, tool_call_id = tool_call_id.split('|', 2)
+
+                response_parts.append(
+                    BuiltinToolReturnPart(
+                        tool_name=tool_name,
+                        content=msg.content,
+                        tool_call_id=tool_call_id,
+                        provider_name=provider_name,
+                    )
                 )
-            )
-        elif isinstance(msg, DeveloperMessage):  # pragma: no branch
-            result.append(ModelRequest(parts=[SystemPromptPart(content=msg.content)]))
 
     return result
 
@@ -676,6 +739,7 @@ class _RequestStreamContext:
     message_id: str = ''
     part_end: BaseEvent | None = None
     thinking: bool = False
+    builtin_tool_call_ids: dict[str, str] = field(default_factory=dict)
 
     def new_message_id(self) -> str:
         """Generate a new message ID for the request stream.
