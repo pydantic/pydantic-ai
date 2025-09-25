@@ -145,22 +145,21 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             input: RunAgentInput[RunOutputDataT, AgentDepsT],
             _ctx: DurableContext,
         ) -> AgentRunResult[Any]:
-            with self._hatchet_overrides():
-                return await super(WrapperAgent, self).run(
-                    input.user_prompt,
-                    output_type=input.output_type,
-                    message_history=input.message_history,
-                    deferred_tool_results=input.deferred_tool_results,
-                    model=input.model,
-                    deps=input.deps,
-                    model_settings=input.model_settings,
-                    usage_limits=input.usage_limits,
-                    usage=input.usage,
-                    infer_name=input.infer_name,
-                    toolsets=input.toolsets,
-                    event_stream_handler=input.event_stream_handler,
-                    **input.deprecated_kwargs,
-                )
+            return await wrapped.run(
+                input.user_prompt,
+                output_type=input.output_type,
+                message_history=input.message_history,
+                deferred_tool_results=input.deferred_tool_results,
+                model=self._model,
+                deps=input.deps,
+                model_settings=input.model_settings,
+                usage_limits=input.usage_limits,
+                usage=input.usage,
+                infer_name=input.infer_name,
+                toolsets=self._toolsets,
+                event_stream_handler=input.event_stream_handler,
+                **input.deprecated_kwargs,
+            )
 
         self.hatchet_wrapped_run_stream_workflow = wrapped_run_stream_workflow
 
