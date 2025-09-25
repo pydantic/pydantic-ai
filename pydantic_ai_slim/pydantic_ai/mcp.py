@@ -225,13 +225,28 @@ class MCPServer(AbstractToolset[Any], ABC):
             except McpError as e:
                 raise exceptions.ModelRetry(e.error.message)
 
-        content = [await self._map_tool_result_part(part) for part in result.content]
-
         if result.isError:
-            text = '\n'.join(str(part) for part in content)
-            raise exceptions.ModelRetry(text)
-        else:
-            return content[0] if len(content) == 1 else content
+            error_message = 'Error in direct tool call'
+            if result.content:
+                text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
+                message = '\n'.join(text_parts) if text_parts else error_message
+            else:
+                message = error_message
+
+            raise exceptions.ModelRetry(message)
+
+        structured = result.structuredContent
+        if structured and not any(not isinstance(part, mcp_types.TextContent) for part in result.content):
+            return structured  # pragma: no cover
+            # if result.content:  # pragma: no cover
+            #     mapped = [await self._map_tool_result_part(part) for part in result.content]
+            #     return mapped[0] if len(mapped) == 1 else mapped
+
+            # value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
+            # return value
+
+        mapped = [await self._map_tool_result_part(part) for part in result.content]
+        return mapped[0] if len(mapped) == 1 else mapped
 
     async def call_tool(
         self,
