@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from hatchet_sdk import Context
 from pydantic import BaseModel, Field
 
 from pydantic_ai.exceptions import UserError
@@ -24,7 +25,10 @@ class HatchetRunContext(RunContext[AgentDepsT]):
     To make another attribute available, create a `HatchetRunContext` subclass with a custom `serialize_run_context` class method that returns a dictionary that includes the attribute and pass it to [`HatchetAgent`][pydantic_ai.durable_exec.hatchet.HatchetAgent].
     """
 
-    def __init__(self, deps: AgentDepsT, **kwargs: Any):
+    def __init__(self, deps: AgentDepsT, hatchet_context: Context | None, **kwargs: Any):
+        print('HatchetRunContext init', kwargs, hatchet_context)
+        self.hatchet_contetxt = hatchet_context
+
         self.__dict__ = {**kwargs, 'deps': deps}
         setattr(
             self,
@@ -58,7 +62,11 @@ class HatchetRunContext(RunContext[AgentDepsT]):
 
     @classmethod
     def deserialize_run_context(
-        cls, ctx: SerializedHatchetRunContext, deps: AgentDepsT
+        cls, ctx: SerializedHatchetRunContext, deps: AgentDepsT, hatchet_context: Context
     ) -> HatchetRunContext[AgentDepsT]:
         """Deserialize the run context from a `SerializedHatchetRunContext`."""
-        return cls(**ctx.model_dump(), deps=deps)
+        return cls(
+            deps=deps,
+            hatchet_context=hatchet_context,
+            **ctx.model_dump(),
+        )
