@@ -23,6 +23,9 @@ class AbstractBuiltinTool(ABC):
     The builtin tools are passed to the model as part of the `ModelRequestParameters`.
     """
 
+    kind: str = 'unknown_builtin_tool'
+    """Built-in tool identifier, this should be available on all built-in tools as a discriminator."""
+
 
 @dataclass(kw_only=True)
 class WebSearchTool(AbstractBuiltinTool):
@@ -85,6 +88,9 @@ class WebSearchTool(AbstractBuiltinTool):
     * Anthropic
     """
 
+    kind: str = 'web_search'
+    """The kind of tool."""
+
 
 class WebSearchUserLocation(TypedDict, total=False):
     """Allows you to localize search results based on a user's location.
@@ -118,6 +124,9 @@ class CodeExecutionTool(AbstractBuiltinTool):
     * Google
     """
 
+    kind: str = 'code_execution'
+    """The kind of tool."""
+
 
 class UrlContextTool(AbstractBuiltinTool):
     """Allows your agent to access contents from URLs.
@@ -126,6 +135,9 @@ class UrlContextTool(AbstractBuiltinTool):
 
     * Google
     """
+
+    kind: str = 'url_context'
+    """The kind of tool."""
 
 
 def merge_builtin_tools(

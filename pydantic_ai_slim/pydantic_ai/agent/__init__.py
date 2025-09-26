@@ -259,7 +259,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
-            retries: The default number of retries to allow before raising an error.
+            retries: The default number of retries to allow for tool calls and output validation, before raising an error.
+                For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].

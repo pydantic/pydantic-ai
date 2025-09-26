@@ -21,6 +21,7 @@ class ToolCallPart(TypedDict):
     id: str
     name: str
     arguments: NotRequired[JsonValue]
+    builtin: NotRequired[bool]  # Not (currently?) part of the spec, used by Logfire
 
 
 class ToolCallResponsePart(TypedDict):
@@ -28,6 +29,7 @@ class ToolCallResponsePart(TypedDict):
     id: str
     name: str
     result: NotRequired[JsonValue]
+    builtin: NotRequired[bool]  # Not (currently?) part of the spec, used by Logfire
 
 
 class MediaUrlPart(TypedDict):
