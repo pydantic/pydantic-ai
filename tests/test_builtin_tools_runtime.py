@@ -26,8 +26,24 @@ def test_merge_builtin_tools_basic():
         if isinstance(tool, WebSearchTool):
             web_tool = tool
             break
+    else:
+        web_tool = None
     assert web_tool is not None
     assert web_tool.allowed_domains == ['runtime.com']
+
+    base_tools = [CodeExecutionTool()]
+    runtime_tools = [CodeExecutionTool()]
+
+    merged = merge_builtin_tools(base_tools, runtime_tools)
+    assert len(merged) == 1
+    web_tool = None
+    for tool in merged:
+        if isinstance(tool, WebSearchTool):
+            web_tool = tool
+            break
+    else:
+        web_tool = None
+    assert web_tool is None
 
 
 def test_merge_builtin_tools_none_handling():
@@ -43,6 +59,8 @@ def test_merge_builtin_tools_none_handling():
         if isinstance(tool, WebSearchTool):
             web_tool = tool
             break
+    else:
+        web_tool = None
     assert web_tool is not None
     assert web_tool.allowed_domains == ['base.com']
 
@@ -54,12 +72,38 @@ def test_merge_builtin_tools_none_handling():
         if isinstance(tool, WebSearchTool):
             web_tool = tool
             break
+    else:
+        web_tool = None
     assert web_tool is not None
     assert web_tool.allowed_domains == ['runtime.com']
 
     # Test with both None
     merged = merge_builtin_tools(None, None)
     assert len(merged) == 0
+
+    base_tools = [CodeExecutionTool()]
+    merged = merge_builtin_tools(base_tools, None)
+    assert len(merged) == 1
+    web_tool = None
+    for tool in merged:
+        if isinstance(tool, WebSearchTool):
+            web_tool = tool
+            break
+    else:
+        web_tool = None
+    assert web_tool is None
+
+    runtime_tools = [CodeExecutionTool()]
+    merged = merge_builtin_tools(None, runtime_tools)
+    assert len(merged) == 1
+    web_tool = None
+    for tool in merged:
+        if isinstance(tool, WebSearchTool):
+            web_tool = tool
+            break
+    else:
+        web_tool = None
+    assert web_tool is None
 
 
 def test_agent_builtin_tools_runtime_parameter():
