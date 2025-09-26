@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import datetime
 from typing import Any
 
@@ -111,21 +113,22 @@ class HatchetModel(WrapperModel):
         )
         async def wrapped_request_stream_task(
             input: ModelStreamInput,
-            _ctx: Context,
+            ctx: Context,
         ) -> ModelResponse:
             assert self.event_stream_handler
 
             run_context = self.run_context_type.deserialize_run_context(
-                input.serialized_run_context, deps=input.serialized_run_context, hatchet_context=_ctx
+                input.serialized_run_context, deps=input.serialized_run_context, hatchet_context=ctx
             )
 
             async with self.wrapped.request_stream(
                 input.messages, input.model_settings, input.model_request_parameters, run_context
             ) as streamed_response:
-                await self.event_stream_handler(run_context, streamed_response)
+                async for s in streamed_response:
+                    print('streamed chunk', s)
+                    serialized = json.dumps(asdict(s), default=str)
 
-                async for _ in streamed_response:
-                    pass
+                    await ctx.aio_put_stream(serialized)
 
             return streamed_response.get()
 

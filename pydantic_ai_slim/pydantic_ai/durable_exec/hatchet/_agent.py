@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from typing import Any, Generic, overload
 from uuid import uuid4
@@ -13,14 +13,15 @@ from typing_extensions import Never
 from pydantic_ai import _utils, messages as _messages, models, usage as _usage
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage
 from pydantic_ai.models import Model
-from pydantic_ai.messages import ModelMessage
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolResults,
+    RunContext,
     Tool,
     ToolFuncEither,
 )
@@ -45,7 +46,6 @@ class RunAgentInput(BaseModel, Generic[RunOutputDataT, AgentDepsT]):
     usage: _usage.RunUsage | None = None
     infer_name: bool = True
     toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None
-    event_stream_handler: EventStreamHandler[AgentDepsT] | None = None
     deprecated_kwargs: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -97,7 +97,6 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             task_name_prefix=self._name,
             task_config=model_task_config or TaskConfig(),
             hatchet=self._hatchet,
-            event_stream_handler=self.event_stream_handler,
             deps_type=self.deps_type,
             run_context_type=self.run_context_type,
         )
@@ -135,7 +134,6 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                     usage=input.usage,
                     infer_name=input.infer_name,
                     toolsets=input.toolsets,
-                    event_stream_handler=input.event_stream_handler,
                     **input.deprecated_kwargs,
                 )
 
@@ -144,8 +142,15 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         @hatchet.durable_task(name=f'{self._name}.run_stream', input_validator=RunAgentInput[Any, Any])
         async def wrapped_run_stream_workflow(
             input: RunAgentInput[RunOutputDataT, AgentDepsT],
-            _ctx: DurableContext,
+            hctx: DurableContext,
         ) -> AgentRunResult[Any]:
+            async def event_stream_handler(
+                ctx: RunContext[AgentDepsT], events: AsyncIterable[AgentStreamEvent]
+            ) -> None:
+                async for event in events:
+                    b: bytes = TypeAdapter(AgentStreamEvent).dump_json(event)
+                    await hctx.aio_put_stream(b)
+
             return await wrapped.run(
                 input.user_prompt,
                 output_type=input.output_type,
@@ -158,7 +163,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=input.usage,
                 infer_name=input.infer_name,
                 toolsets=self._toolsets,
-                event_stream_handler=input.event_stream_handler,
+                event_stream_handler=event_stream_handler,
                 **input.deprecated_kwargs,
             )
 
@@ -177,10 +182,6 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
     @property
     def model(self) -> Model:
         return self._model
-
-    @property
-    def event_stream_handler(self) -> EventStreamHandler[AgentDepsT] | None:
-        return self._event_stream_handler or super().event_stream_handler
 
     @property
     def toolsets(self) -> Sequence[AbstractToolset[AgentDepsT]]:
@@ -488,7 +489,6 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
                 deprecated_kwargs=_deprecated_kwargs,
             ),
             options=TriggerWorkflowOptions(
@@ -501,25 +501,19 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         )
 
         all_messages: list[ModelMessage] = []
+        index = 0
 
         async for x in self._hatchet.runs.subscribe_to_stream(ref.workflow_run_id):
-            print('\nx', x)
+            adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
+            parsed = adapter.validate_json(x)
 
-        result = await ref.aio_result()
+            yield StreamedRunResult(
+                all_messages=messages,
+                new_message_index=index,
+                run_result=result,
+            )
 
-        if isinstance(result, dict):
-            result = TypeAdapter(AgentRunResult[Any]).validate_python(result)
-
-        messages = result.all_messages()
-        new_message_index = result._new_message_index
-
-        streamed_result = StreamedRunResult(
-            all_messages=messages,
-            new_message_index=new_message_index,
-            run_result=result,
-        )
-
-        yield streamed_result
+            index += 1
 
     @overload
     def iter(
