@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
+from genai_prices.types import PriceCalculation
 from opentelemetry._events import (
     Event,  # pyright: ignore[reportPrivateImportUsage]
     EventLogger,  # pyright: ignore[reportPrivateImportUsage]
@@ -310,7 +311,7 @@ class InstrumentationSettings:
     def record_metrics(
         self,
         response: ModelResponse,
-        price_calculation: Any,
+        price_calculation: PriceCalculation | None,
         attributes: dict[str, AttributeValue],
     ):
         for typ in ['input', 'output']:
