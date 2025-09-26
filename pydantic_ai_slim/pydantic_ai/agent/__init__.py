@@ -36,7 +36,7 @@ from .._agent_graph import (
 )
 from .._output import OutputToolset
 from .._tool_manager import ToolManager
-from ..builtin_tools import AbstractBuiltinTool
+from ..builtin_tools import AbstractBuiltinTool, merge_builtin_tools
 from ..models.instrumented import InstrumentationSettings, InstrumentedModel, instrument_model
 from ..output import OutputDataT, OutputSpec
 from ..profiles import ModelProfile
@@ -438,6 +438,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
     @overload
@@ -455,6 +456,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
@@ -472,6 +474,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         usage: _usage.RunUsage | None = None,
         infer_name: bool = True,
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        builtin_tools: Sequence[AbstractBuiltinTool] | None = None,
     ) -> AsyncIterator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
 
@@ -544,6 +547,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             usage: Optional usage to start with, useful for resuming a conversation or agents used in tools.
             infer_name: Whether to try to infer the agent name from the call frame if it's not set.
             toolsets: Optional additional toolsets for this run.
+            builtin_tools: Optional additional builtin tools for this run.
 
         Returns:
             The result of the run.
@@ -626,7 +630,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             output_schema=output_schema,
             output_validators=output_validators,
             history_processors=self.history_processors,
-            builtin_tools=list(self._builtin_tools),
+            builtin_tools=merge_builtin_tools(
+                list(self._builtin_tools), list(builtin_tools) if builtin_tools else None
+            ),
             tool_manager=tool_manager,
             tracer=tracer,
             get_instructions=get_instructions,

@@ -1,5 +1,10 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .builtin_tools import AbstractBuiltinTool
 from abc import ABC
 from dataclasses import dataclass
 from typing import Literal
@@ -121,3 +126,39 @@ class UrlContextTool(AbstractBuiltinTool):
 
     * Google
     """
+
+
+def merge_builtin_tools(
+    base: Sequence[AbstractBuiltinTool] | None, runtime: Sequence[AbstractBuiltinTool] | None
+) -> list[AbstractBuiltinTool]:
+    """Merge two sets of builtin tools, with runtime tools having priority over base tools.
+
+    Args:
+        base: The base builtin tools (e.g., from agent initialization)
+        runtime: The runtime builtin tools (e.g., from agent.run())
+
+    Returns:
+        A merged list of builtin tools with duplicates removed by type.
+        Runtime tools take priority over base tools when both have the same type.
+    """
+    if not base and not runtime:
+        return []
+
+    if not base:
+        return list(runtime) if runtime else []
+
+    if not runtime:
+        return list(base)
+
+    # Create a mapping of tool types to tools, with runtime tools taking priority
+    tool_map: dict[type[AbstractBuiltinTool], AbstractBuiltinTool] = {}
+
+    # Add base tools first
+    for tool in base:
+        tool_map[type(tool)] = tool
+
+    # Add runtime tools, which will override base tools of the same type
+    for tool in runtime:
+        tool_map[type(tool)] = tool
+
+    return list(tool_map.values())
