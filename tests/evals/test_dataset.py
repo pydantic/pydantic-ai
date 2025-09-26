@@ -4,9 +4,10 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from _pytest.python_api import RaisesContext
 from dirty_equals import HasRepr, IsNumber
 from inline_snapshot import snapshot
 from pydantic import BaseModel, TypeAdapter
@@ -908,7 +909,7 @@ async def test_from_text_failure():
         ],
         'evaluators': ['NotAnEvaluator'],
     }
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
     assert exc_info.value == HasRepr(
         repr(
@@ -938,7 +939,7 @@ async def test_from_text_failure():
         ],
         'evaluators': ['LLMJudge'],
     }
-    with pytest.raises(ExceptionGroup) as exc_info:
+    with cast(RaisesContext[ExceptionGroup[Any]], pytest.raises(ExceptionGroup)) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_text(json.dumps(dataset_dict))
     assert exc_info.value == HasRepr(  # pragma: lax no cover
         repr(
