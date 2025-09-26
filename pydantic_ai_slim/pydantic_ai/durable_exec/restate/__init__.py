@@ -1,4 +1,4 @@
-from ._agent import RestateAgent, RestateAgentProvider
+from ._agent import RestateAgent
 from ._model import RestateModelWrapper
 from ._serde import PydanticTypeAdapter
 from ._toolset import RestateContextRunToolSet
@@ -6,7 +6,6 @@ from ._toolset import RestateContextRunToolSet
 __all__ = [
     'RestateModelWrapper',
     'RestateAgent',
-    'RestateAgentProvider',
     'PydanticTypeAdapter',
     'RestateContextRunToolSet',
 ]
