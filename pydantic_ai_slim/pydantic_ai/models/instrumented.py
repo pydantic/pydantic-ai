@@ -315,12 +315,12 @@ class InstrumentationSettings:
     ):
         for typ in ['input', 'output']:
             if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
-                return
-            attributes = {**attributes, 'gen_ai.token.type': typ}
-            self.tokens_histogram.record(tokens, attributes)
+                continue
+            token_attributes = {**attributes, 'gen_ai.token.type': typ}
+            self.tokens_histogram.record(tokens, token_attributes)
             if price_calculation:
                 cost = float(getattr(price_calculation, f'{typ}_price'))
-                self.cost_histogram.record(cost, attributes)
+                self.cost_histogram.record(cost, token_attributes)
 
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
