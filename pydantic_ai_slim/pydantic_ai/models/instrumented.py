@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
 
+from genai_prices.types import PriceCalculation
 from opentelemetry._events import (
     Event,  # pyright: ignore[reportPrivateImportUsage]
     EventLogger,  # pyright: ignore[reportPrivateImportUsage]
@@ -169,6 +170,11 @@ class InstrumentationSettings:
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
             )
+        self.cost_histogram = self.meter.create_histogram(
+            'operation.cost',
+            unit='{USD}',
+            description='Monetary cost',
+        )
 
     def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
         """Convert a list of model messages to OpenTelemetry events.
@@ -302,6 +308,21 @@ class InstrumentationSettings:
                 }
             )
 
+    def record_metrics(
+        self,
+        response: ModelResponse,
+        price_calculation: PriceCalculation | None,
+        attributes: dict[str, AttributeValue],
+    ):
+        for typ in ['input', 'output']:
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no cover
+                continue
+            token_attributes = {**attributes, 'gen_ai.token.type': typ}
+            self.tokens_histogram.record(tokens, token_attributes)
+            if price_calculation:
+                cost = float(getattr(price_calculation, f'{typ}_price'))
+                self.cost_histogram.record(cost, token_attributes)
+
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
@@ -395,6 +416,7 @@ class InstrumentedModel(WrapperModel):
                     system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
                     response_model = response.model_name or request_model
+                    price_calculation = None
 
                     def _record_metrics():
                         metric_attributes = {
@@ -403,16 +425,7 @@ class InstrumentedModel(WrapperModel):
                             'gen_ai.request.model': request_model,
                             'gen_ai.response.model': response_model,
                         }
-                        if response.usage.input_tokens:  # pragma: no branch
-                            self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.input_tokens,
-                                {**metric_attributes, 'gen_ai.token.type': 'input'},
-                            )
-                        if response.usage.output_tokens:  # pragma: no branch
-                            self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.output_tokens,
-                                {**metric_attributes, 'gen_ai.token.type': 'output'},
-                            )
+                        self.instrumentation_settings.record_metrics(response, price_calculation, metric_attributes)
 
                     nonlocal record_metrics
                     record_metrics = _record_metrics
@@ -427,7 +440,7 @@ class InstrumentedModel(WrapperModel):
                         'gen_ai.response.model': response_model,
                     }
                     try:
-                        attributes_to_set['operation.cost'] = float(response.cost().total_price)
+                        price_calculation = response.cost()
                     except LookupError:
                         # The cost of this provider/model is unknown, which is common.
                         pass
@@ -435,6 +448,9 @@ class InstrumentedModel(WrapperModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
+                    else:
+                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
+
                     if response.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                     if response.finish_reason is not None:
