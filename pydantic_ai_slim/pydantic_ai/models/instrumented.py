@@ -307,6 +307,21 @@ class InstrumentationSettings:
                 }
             )
 
+    def record_metrics(
+        self,
+        response: ModelResponse,
+        price_calculation: Any,
+        attributes: dict[str, AttributeValue],
+    ):
+        for typ in ['input', 'output']:
+            if not (tokens := getattr(response.usage, f'{typ}_tokens', 0)):  # pragma: no branch
+                return
+            attributes = {**attributes, 'gen_ai.token.type': typ}
+            self.tokens_histogram.record(tokens, attributes)
+            if price_calculation:
+                cost = float(getattr(price_calculation, f'{typ}_price'))
+                self.cost_histogram.record(cost, attributes)
+
 
 GEN_AI_SYSTEM_ATTRIBUTE = 'gen_ai.system'
 GEN_AI_REQUEST_MODEL_ATTRIBUTE = 'gen_ai.request.model'
@@ -409,24 +424,7 @@ class InstrumentedModel(WrapperModel):
                             'gen_ai.request.model': request_model,
                             'gen_ai.response.model': response_model,
                         }
-                        if response.usage.input_tokens:  # pragma: no branch
-                            input_metric_attributes = {**metric_attributes, 'gen_ai.token.type': 'input'}
-                            self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.input_tokens, input_metric_attributes
-                            )
-                            if price_calculation:
-                                self.instrumentation_settings.cost_histogram.record(
-                                    float(price_calculation.input_price), input_metric_attributes
-                                )
-                        if response.usage.output_tokens:  # pragma: no branch
-                            output_metric_attributes = {**metric_attributes, 'gen_ai.token.type': 'output'}
-                            self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.output_tokens, output_metric_attributes
-                            )
-                            if price_calculation:
-                                self.instrumentation_settings.cost_histogram.record(
-                                    float(price_calculation.output_price), output_metric_attributes
-                                )
+                        self.instrumentation_settings.record_metrics(response, price_calculation, metric_attributes)
 
                     nonlocal record_metrics
                     record_metrics = _record_metrics
