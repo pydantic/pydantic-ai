@@ -13,7 +13,7 @@ from typing_extensions import Never
 from pydantic_ai import _utils, messages as _messages, models, usage as _usage
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent, ModelMessage
+from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
@@ -148,7 +148,7 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 ctx: RunContext[AgentDepsT], events: AsyncIterable[AgentStreamEvent]
             ) -> None:
                 async for event in events:
-                    b: bytes = TypeAdapter(AgentStreamEvent).dump_json(event)
+                    b = TypeAdapter[AgentStreamEvent](AgentStreamEvent).dump_json(event)
                     await hctx.aio_put_stream(b)
 
             return await wrapped.run(
@@ -279,7 +279,6 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
                 deprecated_kwargs=_deprecated_kwargs,
             ),
             options=TriggerWorkflowOptions(
@@ -364,7 +363,6 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
                 usage=usage,
                 infer_name=infer_name,
                 toolsets=toolsets,
-                event_stream_handler=event_stream_handler,
                 deprecated_kwargs=_deprecated_kwargs,
             ),
             options=TriggerWorkflowOptions(
@@ -500,20 +498,11 @@ class HatchetAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             ),
         )
 
-        all_messages: list[ModelMessage] = []
-        index = 0
-
         async for x in self._hatchet.runs.subscribe_to_stream(ref.workflow_run_id):
             adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
             parsed = adapter.validate_json(x)
 
-            yield StreamedRunResult(
-                all_messages=messages,
-                new_message_index=index,
-                run_result=result,
-            )
-
-            index += 1
+            yield parsed
 
     @overload
     def iter(
