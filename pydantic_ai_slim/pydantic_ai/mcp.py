@@ -4,10 +4,9 @@ import base64
 import functools
 import warnings
 from abc import ABC, abstractmethod
-from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import field, replace
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any
@@ -105,13 +104,16 @@ class MCPServer(AbstractToolset[Any], ABC):
 
     _id: str | None
 
-    _enter_lock: Lock = field(compare=False)
     _running_count: int
     _exit_stack: AsyncExitStack | None
 
     _client: ClientSession
     _read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
     _write_stream: MemoryObjectSendStream[SessionMessage]
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        return anyio.Lock()
 
     def __init__(
         self,
@@ -144,7 +146,6 @@ class MCPServer(AbstractToolset[Any], ABC):
         self.__post_init__()
 
     def __post_init__(self):
-        self._enter_lock = Lock()
         self._running_count = 0
         self._exit_stack = None
 

@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import asyncio
-from asyncio import Lock
+import functools
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+import anyio
 from typing_extensions import Self
 
+from .. import _anyio
 from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from .abstract import AbstractToolset, ToolsetTool
@@ -31,9 +32,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     toolsets: Sequence[AbstractToolset[AgentDepsT]]
 
-    _enter_lock: Lock = field(compare=False, init=False, default_factory=Lock)
     _entered_count: int = field(init=False, default=0)
     _exit_stack: AsyncExitStack | None = field(init=False, default=None)
+
+    @functools.cached_property
+    def _enter_lock(self) -> anyio.Lock:
+        # We use a cached_property for this because it seems to work better with temporal...
+        return anyio.Lock()
 
     @property
     def id(self) -> str | None:
@@ -61,7 +66,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
                 self._exit_stack = None
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
-        toolsets_tools = await asyncio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
+        toolsets_tools = await _anyio.gather(*(toolset.get_tools(ctx) for toolset in self.toolsets))
         all_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
 
         for toolset, tools in zip(self.toolsets, toolsets_tools):
