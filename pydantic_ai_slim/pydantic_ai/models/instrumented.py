@@ -169,6 +169,11 @@ class InstrumentationSettings:
             self.tokens_histogram = self.meter.create_histogram(
                 **tokens_histogram_kwargs,  # pyright: ignore
             )
+        self.cost_histogram = self.meter.create_histogram(
+            'operation.cost',
+            unit='{USD}',
+            description='Monetary cost',
+        )
 
     def messages_to_otel_events(self, messages: list[ModelMessage]) -> list[Event]:
         """Convert a list of model messages to OpenTelemetry events.
@@ -395,6 +400,7 @@ class InstrumentedModel(WrapperModel):
                     system = cast(str, attributes[GEN_AI_SYSTEM_ATTRIBUTE])
 
                     response_model = response.model_name or request_model
+                    price_calculation = None
 
                     def _record_metrics():
                         metric_attributes = {
@@ -404,15 +410,23 @@ class InstrumentedModel(WrapperModel):
                             'gen_ai.response.model': response_model,
                         }
                         if response.usage.input_tokens:  # pragma: no branch
+                            input_metric_attributes = {**metric_attributes, 'gen_ai.token.type': 'input'}
                             self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.input_tokens,
-                                {**metric_attributes, 'gen_ai.token.type': 'input'},
+                                response.usage.input_tokens, input_metric_attributes
                             )
+                            if price_calculation:
+                                self.instrumentation_settings.cost_histogram.record(
+                                    float(price_calculation.input_price), input_metric_attributes
+                                )
                         if response.usage.output_tokens:  # pragma: no branch
+                            output_metric_attributes = {**metric_attributes, 'gen_ai.token.type': 'output'}
                             self.instrumentation_settings.tokens_histogram.record(
-                                response.usage.output_tokens,
-                                {**metric_attributes, 'gen_ai.token.type': 'output'},
+                                response.usage.output_tokens, output_metric_attributes
                             )
+                            if price_calculation:
+                                self.instrumentation_settings.cost_histogram.record(
+                                    float(price_calculation.output_price), output_metric_attributes
+                                )
 
                     nonlocal record_metrics
                     record_metrics = _record_metrics
@@ -427,7 +441,7 @@ class InstrumentedModel(WrapperModel):
                         'gen_ai.response.model': response_model,
                     }
                     try:
-                        attributes_to_set['operation.cost'] = float(response.cost().total_price)
+                        price_calculation = response.cost()
                     except LookupError:
                         # The cost of this provider/model is unknown, which is common.
                         pass
@@ -435,6 +449,9 @@ class InstrumentedModel(WrapperModel):
                         warnings.warn(
                             f'Failed to get cost from response: {type(e).__name__}: {e}', CostCalculationFailedWarning
                         )
+                    else:
+                        attributes_to_set['operation.cost'] = float(price_calculation.total_price)
+
                     if response.provider_response_id is not None:
                         attributes_to_set['gen_ai.response.id'] = response.provider_response_id
                     if response.finish_reason is not None:
