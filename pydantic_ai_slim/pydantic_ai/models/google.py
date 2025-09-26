@@ -37,7 +37,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import (
     Model,
@@ -225,6 +225,7 @@ class GoogleModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, False, model_settings, model_request_parameters)
         return self._process_response(response)
@@ -291,6 +292,7 @@ class GoogleModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore

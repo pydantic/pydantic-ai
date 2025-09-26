@@ -39,7 +39,7 @@ from ..messages import (
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -205,6 +205,7 @@ class AnthropicModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         response = await self._messages_create(
             messages, False, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )
@@ -220,6 +221,7 @@ class AnthropicModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         response = await self._messages_create(
             messages, True, cast(AnthropicModelSettings, model_settings or {}), model_request_parameters
         )

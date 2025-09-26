@@ -29,7 +29,7 @@ from ..messages import (
     ToolReturnPart,
 )
 from ..profiles import ModelProfileSpec
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -111,6 +111,7 @@ class TestModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         self.last_model_request_parameters = model_request_parameters
+        model_settings = merge_model_settings(self.settings, model_settings)
         model_response = self._request(messages, model_settings, model_request_parameters)
         model_response.usage = _estimate_usage([*messages, model_response])
         return model_response
@@ -124,6 +125,7 @@ class TestModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         self.last_model_request_parameters = model_request_parameters
+        model_settings = merge_model_settings(self.settings, model_settings)
 
         model_response = self._request(messages, model_settings, model_request_parameters)
         yield TestStreamedResponse(

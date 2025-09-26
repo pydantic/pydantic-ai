@@ -38,7 +38,7 @@ from ..messages import (
 )
 from ..profiles import ModelProfileSpec
 from ..providers import Provider, infer_provider
-from ..settings import ModelSettings
+from ..settings import ModelSettings, merge_model_settings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
@@ -155,6 +155,7 @@ class GeminiModel(Model):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         async with self._make_request(
             messages, False, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
@@ -171,6 +172,7 @@ class GeminiModel(Model):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncIterator[StreamedResponse]:
         check_allow_model_requests()
+        model_settings = merge_model_settings(self.settings, model_settings)
         async with self._make_request(
             messages, True, cast(GeminiModelSettings, model_settings or {}), model_request_parameters
         ) as http_response:
