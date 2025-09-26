@@ -398,8 +398,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instructions_list = [self._instructions, instruction]
         elif callable(self._instructions):
             instructions_list = [self._instructions, instruction]
-        else:  # pragma: no cover
-            instructions_list = [*self._instructions, instruction]
+        else:
+            instructions_list = [*self._instructions, instruction]  # pragma: no cover
 
         self._instructions = instructions_list
 
