@@ -302,13 +302,17 @@ You can then use the model with the [`OllamaProvider`][pydantic_ai.providers.oll
 
 #### Example local usage
 
-With `ollama` installed, you can run the server with the model you want to use:
+With `ollama` installed, you can download the model you want to use:
 
 ```bash
-ollama run llama3.2
+ollama pull llama3.2
 ```
 
-(this will pull the `llama3.2` model if you don't already have it downloaded)
+Run the server with the model you want to use:
+
+```bash
+ollama serve
+```
 
 Then run your code, here's a minimal example:
 
