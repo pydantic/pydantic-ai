@@ -353,3 +353,16 @@ class AgentRunResult(Generic[OutputDataT]):
         model_response = self.all_messages()[-1]
         assert isinstance(model_response, _messages.ModelResponse)
         return model_response.timestamp
+
+
+@dataclasses.dataclass
+class AgentRunResultEvent(Generic[OutputDataT]):
+    """An event indicating the agent run ended and containing the final result of the agent run."""
+
+    result: AgentRunResult[OutputDataT]
+    """The result of the run."""
+
+    _: dataclasses.KW_ONLY
+
+    event_kind: Literal['agent_run_result'] = 'agent_run_result'
+    """Event type identifier, used as a discriminator."""
