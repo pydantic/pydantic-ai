@@ -8,7 +8,7 @@ from asyncio import Lock
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager, contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
 
 from opentelemetry.trace import NoOpTracer, use_span
 from pydantic.json_schema import GenerateJsonSchema
@@ -47,6 +47,7 @@ from ..tools import (
     AgentDepsT,
     DeferredToolResults,
     DocstringFormat,
+    FunctionTextFormat,
     GenerateToolJsonSchema,
     RunContext,
     Tool,
@@ -983,6 +984,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
@@ -1000,6 +1002,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
@@ -1047,6 +1050,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -1067,6 +1072,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions=require_parameter_descriptions,
                 schema_generator=schema_generator,
                 strict=strict,
+                text_format=text_format,
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,
@@ -1090,6 +1096,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
@@ -1107,6 +1114,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         require_parameter_descriptions: bool = False,
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
         metadata: dict[str, Any] | None = None,
@@ -1154,6 +1162,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             schema_generator: The JSON schema generator class to use for this tool. Defaults to `GenerateToolJsonSchema`.
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
@@ -1172,6 +1182,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 require_parameter_descriptions=require_parameter_descriptions,
                 schema_generator=schema_generator,
                 strict=strict,
+                text_format=text_format,
                 sequential=sequential,
                 requires_approval=requires_approval,
                 metadata=metadata,

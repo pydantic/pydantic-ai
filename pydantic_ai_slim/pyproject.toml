@@ -65,7 +65,7 @@ dependencies = [
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
 # WARNING if you add optional groups, please update docs/install.md
-logfire = ["logfire[httpx]>=3.14.1"]
+logfire = ["logfire[httpx]>=3.16.1"]
 # Models
 openai = ["openai>=1.107.2"]
 cohere = ["cohere>=5.18.0; platform_system != 'Emscripten'"]
@@ -98,6 +98,8 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 retries = ["tenacity>=8.2.3"]
 # Temporal
 temporal = ["temporalio==1.17.0"]
+# freeform function calling with lark context free grammar
+lark = ["lark>=1.2.2"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
 
