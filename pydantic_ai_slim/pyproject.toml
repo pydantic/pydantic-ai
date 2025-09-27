@@ -100,6 +100,8 @@ retries = ["tenacity>=8.2.3"]
 temporal = ["temporalio==1.17.0"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
+# Restate
+restate = ["restate_sdk[serde]>=0.10"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
