@@ -13,7 +13,7 @@ import pydantic
 import pydantic_core
 from genai_prices import calc_price, types as genai_types
 from opentelemetry._events import Event  # pyright: ignore[reportPrivateImportUsage]
-from typing_extensions import deprecated
+from typing_extensions import Self, deprecated
 
 from . import _otel_messages, _utils
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
@@ -457,7 +457,7 @@ class BinaryContent:
     """The media type of the binary data."""
 
     identifier: str
-    """Identifier for the binary content, such as a unique ID. generating one from the data if not explicitly set
+    """Identifier for the binary content, such as a unique ID.
     This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
     and the tool can look up the file in question by iterating over the message history and finding the matching `BinaryContent`.
 
@@ -490,6 +490,20 @@ class BinaryContent:
         self.identifier = identifier or _multi_modal_content_identifier(data)
         self.vendor_metadata = vendor_metadata
         self.kind = kind
+
+    @classmethod
+    def from_data_uri(cls, data_uri: str) -> Self:
+        """Create a `BinaryContent` from a data URI."""
+        prefix = 'data:'
+        if not data_uri.startswith(prefix):
+            raise ValueError('Data URI must start with "data:"')
+        media_type, data = data_uri[len(prefix) :].split(';base64,', 1)
+        return cls(data=base64.b64decode(data), media_type=media_type)
+
+    @property
+    def data_uri(self) -> str:
+        """Convert the `BinaryContent` to a data URI."""
+        return f'data:{self.media_type};base64,{base64.b64encode(self.data).decode()}'
 
     @property
     def is_audio(self) -> bool:
@@ -527,6 +541,25 @@ class BinaryContent:
             raise ValueError(f'Unknown media type: {self.media_type}') from e
 
     __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+class Image(BinaryContent):
+    """Binary content that's guaranteed to be an image."""
+
+    def __init__(
+        self,
+        data: bytes,
+        *,
+        media_type: str,
+        identifier: str | None = None,
+        vendor_metadata: dict[str, Any] | None = None,
+        # TODO (DouweM): Should an `Image` survive a serialization roundtrip, or is it OK if it becomes a `BinaryContent`? Probably give these classes a common abstract ancestor.
+        kind: Literal['binary'] = 'binary',
+    ):
+        super().__init__(data=data, media_type=media_type, identifier=identifier, vendor_metadata=vendor_metadata)
+
+        if not self.is_image:
+            raise ValueError('`Image` must be have a media type that starts with "image/"')
 
 
 MultiModalContent = ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent
@@ -930,6 +963,34 @@ class ThinkingPart:
 
 
 @dataclass(repr=False)
+class FilePart:
+    """A file response from a model."""
+
+    content: BinaryContent
+    """The file content of the response."""
+
+    _: KW_ONLY
+
+    id: str | None = None
+    """The identifier of the file part."""
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+    """
+
+    part_kind: Literal['file'] = 'file'
+    """Part type identifier, this is available on all parts as a discriminator."""
+
+    def has_content(self) -> bool:
+        """Return `True` if the file content is non-empty."""
+        return bool(self.content)
+
+    # TODO (DouweM): OTel
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False)
 class BaseToolCallPart:
     """A tool call from a model."""
 
@@ -1011,7 +1072,7 @@ class BuiltinToolCallPart(BaseToolCallPart):
 
 
 ModelResponsePart = Annotated[
-    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart,
+    TextPart | ToolCallPart | BuiltinToolCallPart | BuiltinToolReturnPart | ThinkingPart | FilePart,
     pydantic.Discriminator('part_kind'),
 ]
 """A message part returned by a model."""

@@ -28,6 +28,8 @@ class ModelProfile:
     """Whether the model supports JSON schema output."""
     supports_json_object_output: bool = False
     """Whether the model supports JSON object output."""
+    supports_image_output: bool = False
+    """Whether the model supports image output."""
     default_structured_output_mode: StructuredOutputMode = 'tool'
     """The default structured output mode to use for the model."""
     prompted_output_template: str = dedent(

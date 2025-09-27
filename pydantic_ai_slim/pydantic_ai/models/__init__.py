@@ -379,6 +379,7 @@ class ModelRequestParameters:
     output_object: OutputObjectDefinition | None = None
     output_tools: list[ToolDefinition] = field(default_factory=list)
     allow_text_output: bool = True
+    allow_image_output: bool = False
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:

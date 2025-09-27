@@ -84,6 +84,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
+        supports_image_output=is_reasoning_model or '4.1' in model_name or '4o' in model_name,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,
