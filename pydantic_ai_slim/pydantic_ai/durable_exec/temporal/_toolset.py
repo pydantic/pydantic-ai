@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai.mcp import MCPServer
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.function import FunctionToolset
@@ -63,16 +62,22 @@ def temporalize_toolset(
             deps_type=deps_type,
             run_context_type=run_context_type,
         )
-    elif isinstance(toolset, MCPServer):
-        from ._mcp_server import TemporalMCPServer
 
-        return TemporalMCPServer(
-            toolset,
-            activity_name_prefix=activity_name_prefix,
-            activity_config=activity_config,
-            tool_activity_config=tool_activity_config,
-            deps_type=deps_type,
-            run_context_type=run_context_type,
-        )
+    try:
+        from pydantic_ai.mcp import MCPServer
+
+        from ._mcp_server import TemporalMCPServer
+    except ImportError:
+        pass
     else:
-        return toolset
+        if isinstance(toolset, MCPServer):
+            return TemporalMCPServer(
+                toolset,
+                activity_name_prefix=activity_name_prefix,
+                activity_config=activity_config,
+                tool_activity_config=tool_activity_config,
+                deps_type=deps_type,
+                run_context_type=run_context_type,
+            )
+
+    return toolset

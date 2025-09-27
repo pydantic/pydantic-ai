@@ -67,7 +67,7 @@ class MistralProvider(Provider[Mistral]):
             assert base_url is None, 'Cannot provide both `mistral_client` and `base_url`'
             self._client = mistral_client
         else:
-            api_key = api_key or os.environ.get('MISTRAL_API_KEY')
+            api_key = api_key or os.getenv('MISTRAL_API_KEY')
 
             if not api_key:
                 raise UserError(

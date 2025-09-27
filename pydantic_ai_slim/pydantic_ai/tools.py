@@ -307,7 +307,9 @@ class Tool(Generic[AgentDepsT]):
     require_parameter_descriptions: bool
     strict: bool | None
     text_format: Literal['text'] | FunctionTextFormat | None
+    sequential: bool
     requires_approval: bool
+    metadata: dict[str, Any] | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -329,7 +331,9 @@ class Tool(Generic[AgentDepsT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -384,8 +388,10 @@ class Tool(Generic[AgentDepsT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -405,7 +411,9 @@ class Tool(Generic[AgentDepsT]):
         self.require_parameter_descriptions = require_parameter_descriptions
         self.strict = strict
         self.text_format = text_format
+        self.sequential = sequential
         self.requires_approval = requires_approval
+        self.metadata = metadata
 
     @classmethod
     def from_schema(
@@ -415,6 +423,7 @@ class Tool(Generic[AgentDepsT]):
         description: str | None,
         json_schema: JsonSchemaValue,
         takes_ctx: bool = False,
+        sequential: bool = False,
     ) -> Self:
         """Creates a Pydantic tool from a function and a JSON schema.
 
@@ -428,6 +437,7 @@ class Tool(Generic[AgentDepsT]):
             json_schema: The schema for the function arguments
             takes_ctx: An optional boolean parameter indicating whether the function
                 accepts the context object as an argument.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
 
         Returns:
             A Pydantic tool that calls the function
@@ -447,6 +457,7 @@ class Tool(Generic[AgentDepsT]):
             name=name,
             description=description,
             function_schema=function_schema,
+            sequential=sequential,
         )
 
     @property
@@ -457,6 +468,8 @@ class Tool(Generic[AgentDepsT]):
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             text_format=self.text_format,
+            sequential=self.sequential,
+            metadata=self.metadata,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
@@ -537,6 +550,9 @@ class ToolDefinition:
     Note: this is currently only supported by OpenAI GPT-5 models.
     """
 
+    sequential: bool = False
+    """Whether this tool requires a sequential/serial execution environment."""
+
     kind: ToolKind = field(default='function')
     """The kind of tool:
 
@@ -546,6 +562,12 @@ class ToolDefinition:
         See the [tools documentation](../deferred-tools.md#deferred-tools) for more info.
     - `'unapproved'`: a tool that requires human-in-the-loop approval.
         See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
+
+    For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
     """
 
     @property

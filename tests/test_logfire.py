@@ -386,7 +386,9 @@ def test_logfire(
                                 'outer_typed_dict_key': None,
                                 'strict': None,
                                 'text_format': None,
+                                'sequential': False,
                                 'kind': 'function',
+                                'metadata': None,
                             }
                         ],
                         'builtin_tools': [],
@@ -779,7 +781,9 @@ def test_instructions_with_structured_output_exclude_content_v2(
                                 'outer_typed_dict_key': None,
                                 'strict': None,
                                 'text_format': None,
+                                'sequential': False,
                                 'kind': 'output',
+                                'metadata': None,
                             }
                         ],
                         'allow_text_output': False,

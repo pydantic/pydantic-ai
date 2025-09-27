@@ -45,16 +45,12 @@ from ..run import AgentRun, AgentRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..tools import (
     AgentDepsT,
-    DeferredToolCallResult,
-    DeferredToolResult,
     DeferredToolResults,
     DocstringFormat,
     FunctionTextFormat,
     GenerateToolJsonSchema,
     RunContext,
     Tool,
-    ToolApproved,
-    ToolDenied,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -264,7 +260,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             name: The name of the agent, used for logging. If `None`, we try to infer the agent name from the call frame
                 when the agent is first run.
             model_settings: Optional model request settings to use for this agent's runs, by default.
-            retries: The default number of retries to allow before raising an error.
+            retries: The default number of retries to allow for tool calls and output validation, before raising an error.
+                For model request retries, see the [HTTP Request Retries](../retries.md) documentation.
             output_retries: The maximum number of retries to allow for output validation, defaults to `retries`.
             tools: Tools to register with the agent, you can also register tools via the decorators
                 [`@agent.tool`][pydantic_ai.Agent.tool] and [`@agent.tool_plain`][pydantic_ai.Agent.tool_plain].
@@ -463,7 +460,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
     @asynccontextmanager
-    async def iter(  # noqa: C901
+    async def iter(
         self,
         user_prompt: str | Sequence[_messages.UserContent] | None = None,
         *,
@@ -506,7 +503,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             [
                 UserPromptNode(
                     user_prompt='What is the capital of France?',
-                    instructions=None,
                     instructions_functions=[],
                     system_prompts=(),
                     system_prompt_functions=[],
@@ -560,7 +556,6 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         del model
 
         deps = self._get_deps(deps)
-        new_message_index = len(message_history) if message_history else 0
         output_schema = self._prepare_output_schema(output_type, model_used.profile)
 
         output_type_ = output_type or self.output_type
@@ -621,27 +616,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings = None
             tracer = NoOpTracer()
 
-        tool_call_results: dict[str, DeferredToolResult] | None = None
-        if deferred_tool_results is not None:
-            tool_call_results = {}
-            for tool_call_id, approval in deferred_tool_results.approvals.items():
-                if approval is True:
-                    approval = ToolApproved()
-                elif approval is False:
-                    approval = ToolDenied()
-                tool_call_results[tool_call_id] = approval
-
-            if calls := deferred_tool_results.calls:
-                call_result_types = _utils.get_union_args(DeferredToolCallResult)
-                for tool_call_id, result in calls.items():
-                    if not isinstance(result, call_result_types):
-                        result = _messages.ToolReturn(result)
-                    tool_call_results[tool_call_id] = result
-
         graph_deps = _agent_graph.GraphAgentDeps[AgentDepsT, RunOutputDataT](
             user_deps=deps,
             prompt=user_prompt,
-            new_message_index=new_message_index,
+            new_message_index=len(message_history) if message_history else 0,
             model=model_used,
             model_settings=model_settings,
             usage_limits=usage_limits,
@@ -652,13 +630,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             history_processors=self.history_processors,
             builtin_tools=list(self._builtin_tools),
             tool_manager=tool_manager,
-            tool_call_results=tool_call_results,
             tracer=tracer,
             get_instructions=get_instructions,
             instrumentation_settings=instrumentation_settings,
         )
         start_node = _agent_graph.UserPromptNode[AgentDepsT](
             user_prompt=user_prompt,
+            deferred_tool_results=deferred_tool_results,
             instructions=self._instructions,
             instructions_functions=self._instructions_functions,
             system_prompts=self._system_prompts,
@@ -1007,7 +985,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
     def tool(
@@ -1023,7 +1003,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
 
@@ -1070,8 +1052,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
         """
 
         def tool_decorator(
@@ -1089,7 +1073,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 schema_generator=schema_generator,
                 strict=strict,
                 text_format=text_format,
+                sequential=sequential,
                 requires_approval=requires_approval,
+                metadata=metadata,
             )
             return func_
 
@@ -1111,7 +1097,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
     def tool_plain(
@@ -1127,7 +1115,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         schema_generator: type[GenerateJsonSchema] = GenerateToolJsonSchema,
         strict: bool | None = None,
         text_format: Literal['text'] | FunctionTextFormat | None = None,
+        sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
 
@@ -1174,8 +1164,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
+            sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
         """
 
         def tool_decorator(func_: ToolFuncPlain[ToolParams]) -> ToolFuncPlain[ToolParams]:
@@ -1191,7 +1183,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 schema_generator=schema_generator,
                 strict=strict,
                 text_format=text_format,
+                sequential=sequential,
                 requires_approval=requires_approval,
+                metadata=metadata,
             )
             return func_
 

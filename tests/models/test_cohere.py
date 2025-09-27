@@ -119,6 +119,8 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(parts=[UserPromptPart(content='hello', timestamp=IsNow(tz=timezone.utc))]),
             ModelResponse(
@@ -126,6 +128,8 @@ async def test_request_simple_success(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -195,6 +199,8 @@ async def test_request_structured_response(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -282,6 +288,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -305,6 +313,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
             ModelRequest(
                 parts=[
@@ -321,6 +331,8 @@ async def test_request_tool_call(allow_model_requests: None):
                 model_name='command-r7b-12-2024',
                 timestamp=IsNow(tz=timezone.utc),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -402,6 +414,8 @@ async def test_cohere_model_instructions(allow_model_requests: None, co_api_key:
                 model_name='command-r7b-12-2024',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )
@@ -417,7 +431,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
         pytest.skip('OpenAI is not installed')
 
     openai_model = OpenAIResponsesModel('o3-mini', provider=OpenAIProvider(api_key=openai_api_key))
-    co_model = CohereModel('command-r7b-12-2024', provider=CohereProvider(api_key=co_api_key))
+    co_model = CohereModel('command-a-reasoning-08-2025', provider=CohereProvider(api_key=co_api_key))
     agent = Agent(openai_model)
 
     # We call OpenAI to get the thinking parts, because Google disabled the thoughts in the API.
@@ -436,14 +450,15 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
                     IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
                     IsInstance(TextPart),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1909, details={'reasoning_tokens': 1472}),
+                usage=RequestUsage(input_tokens=13, output_tokens=2241, details={'reasoning_tokens': 1856}),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
-                provider_response_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
+                provider_details={'finish_reason': 'completed'},
+                provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
+                finish_reason='stop',
             ),
         ]
     )
@@ -453,23 +468,8 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
         model=co_model,
         message_history=result.all_messages(),
     )
-    assert result.all_messages() == snapshot(
+    assert result.new_messages() == snapshot(
         [
-            ModelRequest(parts=[UserPromptPart(content='How do I cross the street?', timestamp=IsDatetime())]),
-            ModelResponse(
-                parts=[
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(ThinkingPart),
-                    IsInstance(TextPart),
-                ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1909, details={'reasoning_tokens': 1472}),
-                model_name='o3-mini-2025-01-31',
-                timestamp=IsDatetime(),
-                provider_name='openai',
-                provider_response_id='resp_680739f4ad748191bd11096967c37c8b048efc3f8b2a068e',
-            ),
             ModelRequest(
                 parts=[
                     UserPromptPart(
@@ -479,13 +479,18 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 ]
             ),
             ModelResponse(
-                parts=[IsInstance(TextPart)],
+                parts=[
+                    IsInstance(ThinkingPart),
+                    IsInstance(TextPart),
+                ],
                 usage=RequestUsage(
-                    input_tokens=1457, output_tokens=807, details={'input_tokens': 954, 'output_tokens': 805}
+                    input_tokens=2190, output_tokens=1257, details={'input_tokens': 431, 'output_tokens': 661}
                 ),
-                model_name='command-r7b-12-2024',
+                model_name='command-a-reasoning-08-2025',
                 timestamp=IsDatetime(),
                 provider_name='cohere',
+                provider_details={'finish_reason': 'COMPLETE'},
+                finish_reason='stop',
             ),
         ]
     )

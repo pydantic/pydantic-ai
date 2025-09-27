@@ -1,0 +1,96 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate
+      connection:
+      - keep-alive
+      content-length:
+      - '143'
+      content-type:
+      - application/json
+      host:
+      - localhost:8787
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: What is the capital of France?
+        role: user
+      model: gpt-5
+      stream: false
+    uri: http://localhost:8787/openai/responses
+  response:
+    headers:
+      content-length:
+      - '2081'
+      content-type:
+      - application/json
+      pydantic-ai-gateway-price-estimate:
+      - 0.0001USD
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      created_at: 1757578027
+      error: null
+      id: resp_68c2832b6e8881a39b7a5c51ca65f5ed0edb299050b14e3e
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      object: response
+      output:
+      - encrypted_content: gAAAAABowoMtzpLx3I0ACILqVQrD5JLqPsSsnOId4zO9UPFzwHvShOS-m-z-qvUDPOKg8lpiGdxwbnTucs2LKboLMFhy4HdnBKA2Ht5eO0VaFiicrjJX6di0eEciaMi7WfJcmtEqz_E911yZIX112SeooYEbL3wSZ0nchpYkaGL_uVaqLITnIDnutiwenhiqGbLSTM7slXONnUF3JquEIdYhuEdII6usslBXFHKpcv0JGVMAv2m0G24Zj2RA3BihqZnmdCFXUVeEvBIdQGPjf7BK1AGQCg9Bk3FPFJqPjTrjqCBuoP8oloJT-GW0qaOChasym2zWU3Xvaqr7K4uiTR6ss1F5Krex7IF9GErHMBxuKCKKbj3-xb5plTxey-J-dex_swVvzT13RWqRB99TPd3k3wxnZgbWRkieEnw7T37Iq1SpEncke67vwCJNJ1bEUTEcXYiY34x3eAw5nF3wvVl_TwZUtZ8CfLbEdyH4t_WndTNrMUMjxA6TRgD944KKXOiVt-NwwL3dpY5ZCxlHx-NKVyEu1rLWBIFFOMJE50lRzhs7oOR1FUKdTfDsy23zB-p9V1OwGsE5i37GXd-efBVHt10saATXHXikEPHkAtkK5eketZ8NnwRKHPKcbHRRnMBOTD3ygvA8-gYo81oWusWSu_1M4WvHKNpawX7o24eLpXyN7YRnYS1LQonoXPES5n9G5AAzryc7ROwcHwQ_709Ua-2YXqGFgo8X9n5kY3QC-g0ZFxCO0clCBIOImoVEM5VRt0WRK30RFHiKl6_JhZ4OCiHWHb2oN131FOmb_UbMk698CsKNbY6-soEnyWMfFcRGQGsVI1-_vrwK2DeQuzL5jW0Fm3qpdnRKVeVhHyBDaekwHeWClTw=
+        id: rs_68c2832bf1a481a3b653d20f5608f9750edb299050b14e3e
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: Paris.
+          type: output_text
+        id: msg_68c2832c1dcc81a38f7b5fb9e3cae9000edb299050b14e3e
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      previous_response_id: null
+      prompt_cache_key: null
+      reasoning:
+        effort: medium
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tools: []
+      top_logprobs: 0
+      top_p: 1
+      truncation: disabled
+      usage:
+        input_tokens: 13
+        input_tokens_details:
+          cached_tokens: 0
+        output_tokens: 8
+        output_tokens_details:
+          reasoning_tokens: 0
+        pydantic_ai_gateway:
+          cost_estimate: 9.625000000000001e-05
+        total_tokens: 21
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
@@ -228,7 +229,9 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlnvvqIPFofAtKqtQKMWZkgXhzlT',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -255,7 +258,9 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlnyjUo5wlyqvdNdM5I8vIWjo1qF',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -358,7 +363,9 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo3e1Ud2lnvkddMilmwC7LAemiy',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -389,7 +396,9 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRlo41LxqBYgGKWgGrQn67fQacOLp',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -430,7 +439,9 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRmhyweJVYonarb7s9ckIMSHf2vHo',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -457,7 +468,9 @@ async def test_tool_returning_text_resource(allow_model_requests: None, agent: A
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRmhzqXFObpYwSzREMpJvX9kbDikR',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -498,7 +511,9 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHSFe0EykAOpf0LWZzsWAodIQzb',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -525,7 +540,9 @@ async def test_tool_returning_text_resource_link(allow_model_requests: None, age
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdHTIlBZWzXJPBR8VTOdC4O57ZQA',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -568,7 +585,9 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlo7KYJVXuNZ5lLLdYcKZDsX2CHb',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -600,7 +619,9 @@ async def test_tool_returning_image_resource(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloBGHh27w3fQKwxq4fX2cPuZJa9',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -645,7 +666,9 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BwdHygYePH1mZgHo2Xxzib0Y7sId7',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -677,7 +700,9 @@ async def test_tool_returning_image_resource_link(
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BwdI2D2r9dvqq3pbsA0qgwKDEdTtD',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -705,6 +730,7 @@ async def test_tool_returning_audio_resource(
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
+                    finish_reason='stop',
                 ),
                 ModelRequest(
                     parts=[
@@ -730,6 +756,7 @@ async def test_tool_returning_audio_resource(
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
                     provider_response_id=IsStr(),
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -738,7 +765,7 @@ async def test_tool_returning_audio_resource(
 async def test_tool_returning_audio_resource_link(
     allow_model_requests: None, agent: Agent, audio_content: BinaryContent, gemini_api_key: str
 ):
-    model = GoogleModel('gemini-2.5-pro-preview-03-25', provider=GoogleProvider(api_key=gemini_api_key))
+    model = GoogleModel('gemini-2.5-pro', provider=GoogleProvider(api_key=gemini_api_key))
     async with agent:
         result = await agent.run("What's the content of the audio resource via get_audio_resource_link?", model=model)
         assert result.output == snapshot('00:05')
@@ -754,19 +781,26 @@ async def test_tool_returning_audio_resource_link(
                 ),
                 ModelResponse(
                     parts=[
-                        TextPart(
-                            content='The content of the audio resource is at a link that can be accessed by calling the function `get_audio_resource_link`.'
+                        ThinkingPart(
+                            content='',
+                            signature=IsStr(),
+                            provider_name='google-gla',
                         ),
-                        ToolCallPart(tool_name='get_audio_resource_link', args={}, tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='get_audio_resource_link',
+                            args={},
+                            tool_call_id=IsStr(),
+                        ),
                     ],
                     usage=RequestUsage(
-                        input_tokens=561, output_tokens=236, details={'thoughts_tokens': 195, 'text_prompt_tokens': 561}
+                        input_tokens=605, output_tokens=168, details={'thoughts_tokens': 154, 'text_prompt_tokens': 605}
                     ),
-                    model_name='models/gemini-2.5-pro',
+                    model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
+                    provider_response_id='Pe_BaJGqOKSdz7IP0NqogA8',
+                    finish_reason='stop',
                 ),
                 ModelRequest(
                     parts=[
@@ -776,22 +810,29 @@ async def test_tool_returning_audio_resource_link(
                             tool_call_id=IsStr(),
                             timestamp=IsDatetime(),
                         ),
-                        UserPromptPart(content=['This is file 2d36ae:', audio_content], timestamp=IsDatetime()),
+                        UserPromptPart(
+                            content=[
+                                'This is file 2d36ae:',
+                                audio_content,
+                            ],
+                            timestamp=IsDatetime(),
+                        ),
                     ]
                 ),
                 ModelResponse(
                     parts=[TextPart(content='00:05')],
                     usage=RequestUsage(
-                        input_tokens=784,
+                        input_tokens=801,
                         output_tokens=5,
                         input_audio_tokens=144,
-                        details={'text_prompt_tokens': 640, 'audio_prompt_tokens': 144},
+                        details={'text_prompt_tokens': 657, 'audio_prompt_tokens': 144},
                     ),
-                    model_name='models/gemini-2.5-pro',
+                    model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
                     provider_name='google-gla',
                     provider_details={'finish_reason': 'STOP'},
-                    provider_response_id=IsStr(),
+                    provider_response_id='QO_BaLC6AozQz7IPh5Kj4Q4',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -832,7 +873,9 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloGQJWIX0Qk7gtNzF4s2Fez0O29',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -866,7 +909,9 @@ async def test_tool_returning_image(allow_model_requests: None, agent: Agent, im
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloJHR654fSD0fcvLWZxtKtn0pag',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -901,7 +946,9 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloOs7Bb2tq8wJyy9Rv7SQ7L65a7',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -928,7 +975,9 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloPczU1HSCWnreyo21DdNtdOM7L',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -971,7 +1020,9 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloSNg7aGSp1rXDkhInjMIUHKd7A',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1004,7 +1055,9 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloTvSkFeX4DZKQLqfH9KbQkWlpt',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1035,7 +1088,9 @@ async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloU3MhnqNEqujs28a3ofRbs7VPF',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -1070,7 +1125,9 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRloX2RokWc9j9PAXAuNXGR73WNqY',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1097,7 +1154,9 @@ async def test_tool_returning_none(allow_model_requests: None, agent: Agent):
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloYWGujk8yE94gfVSsM1T1Ol2Ej',
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -1140,7 +1199,9 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id='chatcmpl-BRlobKLgm6vf79c9O8sloZaYx3coC',
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1183,10 +1244,28 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id='chatcmpl-BRloepWR5NJpTgSqFBGTSPeM1SWm8',
+                    finish_reason='stop',
                 ),
             ]
         )
+
+
+async def test_tool_metadata_extraction():
+    """Test that MCP tool metadata is properly extracted into ToolDefinition."""
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        tools = [tool.tool_def for tool in (await server.get_tools(ctx)).values()]
+        # find `celsius_to_fahrenheit`
+        celsius_to_fahrenheit = next(tool for tool in tools if tool.name == 'celsius_to_fahrenheit')
+        assert celsius_to_fahrenheit.metadata is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations') is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations', {}).get('title', None) == 'Celsius to Fahrenheit'
+        assert celsius_to_fahrenheit.metadata.get('output_schema') is not None
+        assert celsius_to_fahrenheit.metadata.get('output_schema', {}).get('type', None) == 'object'
 
 
 async def test_client_sampling(run_context: RunContext[int]):
@@ -1246,7 +1325,8 @@ def test_map_from_mcp_params_model_request():
                 parts=[
                     UserPromptPart(content='xx', timestamp=IsNow(tz=timezone.utc)),
                     UserPromptPart(
-                        content=[BinaryContent(data=b'img', media_type='image/png')], timestamp=IsNow(tz=timezone.utc)
+                        content=[BinaryContent(data=b'img', media_type='image/png', identifier='978ea7')],
+                        timestamp=IsNow(tz=timezone.utc),
                     ),
                 ]
             )
@@ -1312,3 +1392,19 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
         # Should raise an error when elicitation is attempted without callback
         with pytest.raises(ModelRetry, match='Elicitation not supported'):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+
+def test_load_mcp_servers(tmp_path: Path):
+    config = tmp_path / 'mcp.json'
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStreamableHTTP(url='https://example.com/mcp')])
+
+    config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])])
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerSSE(url='https://example.com/sse')])
+
+    with pytest.raises(FileNotFoundError):
+        load_mcp_servers(tmp_path / 'does_not_exist.json')

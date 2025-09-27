@@ -12,7 +12,7 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext
+from pydantic_ai import Agent, ModelSettings, RunContext
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.messages import (
@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import Model, cached_async_http_client
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
@@ -1746,7 +1747,9 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name=IsStr(),
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1784,7 +1787,9 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
+                    finish_reason='stop',
                 ),
             ]
         )
@@ -1857,7 +1862,9 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1890,7 +1897,9 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
                     provider_response_id=IsStr(),
+                    finish_reason='tool_call',
                 ),
                 ModelRequest(
                     parts=[
@@ -1917,7 +1926,50 @@ async def test_temporal_agent_with_model_retry(allow_model_requests: None, clien
                     model_name='gpt-4o-2024-08-06',
                     timestamp=IsDatetime(),
                     provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
                     provider_response_id=IsStr(),
+                    finish_reason='stop',
                 ),
             ]
         )
+
+
+class CustomModelSettings(ModelSettings, total=False):
+    custom_setting: str
+
+
+def return_settings(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart(str(agent_info.model_settings))])
+
+
+model_settings = CustomModelSettings(max_tokens=123, custom_setting='custom_value')
+model = FunctionModel(return_settings, settings=model_settings)
+
+settings_agent = Agent(model, name='settings_agent')
+
+# This needs to be done before the `TemporalAgent` is bound to the workflow.
+settings_temporal_agent = TemporalAgent(settings_agent, activity_config=BASE_ACTIVITY_CONFIG)
+
+
+@workflow.defn
+class SettingsAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await settings_temporal_agent.run(prompt)
+        return result.output
+
+
+async def test_custom_model_settings(allow_model_requests: None, client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SettingsAgentWorkflow],
+        plugins=[AgentPlugin(settings_temporal_agent)],
+    ):
+        output = await client.execute_workflow(  # pyright: ignore[reportUnknownMemberType]
+            SettingsAgentWorkflow.run,
+            args=['Give me those settings'],
+            id=SettingsAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == snapshot("{'max_tokens': 123, 'custom_setting': 'custom_value'}")

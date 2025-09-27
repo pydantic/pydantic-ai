@@ -676,6 +676,30 @@ async def test_tool_manager_multiple_failed_tools():
     assert new_tool_manager.failed_tools == set()  # reset for new run step
 
 
+async def test_tool_manager_sequential_tool_call():
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool(sequential=True)
+    def tool_a(x: int) -> int: ...  # pragma: no cover
+
+    @toolset.tool(sequential=False)
+    def tool_b(x: int) -> int: ...  # pragma: no cover
+
+    tool_manager = ToolManager[None](toolset)
+
+    prepared_tool_manager = await tool_manager.for_run_step(build_run_context(None))
+
+    assert prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_a', args={'x': 1})])
+    assert not prepared_tool_manager.should_call_sequentially([ToolCallPart(tool_name='tool_b', args={'x': 1})])
+
+    assert prepared_tool_manager.should_call_sequentially(
+        [ToolCallPart(tool_name='tool_a', args={'x': 1}), ToolCallPart(tool_name='tool_b', args={'x': 1})]
+    )
+    assert prepared_tool_manager.should_call_sequentially(
+        [ToolCallPart(tool_name='tool_b', args={'x': 1}), ToolCallPart(tool_name='tool_a', args={'x': 1})]
+    )
+
+
 async def test_visit_and_replace():
     toolset1 = FunctionToolset(id='toolset1')
     toolset2 = FunctionToolset(id='toolset2')

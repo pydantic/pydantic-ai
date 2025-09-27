@@ -57,6 +57,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `mcp` - installs `mcp` [PyPI ↗](https://pypi.org/project/mcp){:target="_blank"}
 * `a2a` - installs `fasta2a` [PyPI ↗](https://pypi.org/project/fasta2a){:target="_blank"}
 * `ag-ui` - installs `ag-ui-protocol` [PyPI ↗](https://pypi.org/project/ag-ui-protocol){:target="_blank"} and `starlette` [PyPI ↗](https://pypi.org/project/starlette){:target="_blank"}
+* `dbos` - installs [`dbos`](durable_execution/dbos.md) [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 
 See the [models](models/overview.md) documentation for information on which optional dependencies are required for each model.
 

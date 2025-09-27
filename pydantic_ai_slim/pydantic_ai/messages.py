@@ -52,6 +52,15 @@ ImageFormat: TypeAlias = Literal['jpeg', 'png', 'gif', 'webp']
 DocumentFormat: TypeAlias = Literal['csv', 'doc', 'docx', 'html', 'md', 'pdf', 'txt', 'xls', 'xlsx']
 VideoFormat: TypeAlias = Literal['mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp']
 
+FinishReason: TypeAlias = Literal[
+    'stop',
+    'length',
+    'content_filter',
+    'tool_call',
+    'error',
+]
+"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+
 
 @dataclass(repr=False)
 class SystemPromptPart:
@@ -659,8 +668,11 @@ class BaseToolReturnPart:
     content: Any
     """The return value."""
 
-    tool_call_id: str
-    """The tool call identifier, this is used by some models including OpenAI."""
+    tool_call_id: str = field(default_factory=_generate_tool_call_id)
+    """The tool call identifier, this is used by some models including OpenAI.
+
+    In case the tool call id is not provided by the model, Pydantic AI will generate a random one.
+    """
 
     _: KW_ONLY
 
@@ -699,14 +711,16 @@ class BaseToolReturnPart:
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         from .models.instrumented import InstrumentedModel
 
-        return [
-            _otel_messages.ToolCallResponsePart(
-                type='tool_call_response',
-                id=self.tool_call_id,
-                name=self.tool_name,
-                **({'result': InstrumentedModel.serialize_any(self.content)} if settings.include_content else {}),
-            )
-        ]
+        part = _otel_messages.ToolCallResponsePart(
+            type='tool_call_response',
+            id=self.tool_call_id,
+            name=self.tool_name,
+        )
+
+        if settings.include_content and self.content is not None:
+            part['result'] = InstrumentedModel.serialize_any(self.content)
+
+        return [part]
 
     def has_content(self) -> bool:
         """Return `True` if the tool return has content."""
@@ -811,14 +825,16 @@ class RetryPromptPart:
         if self.tool_name is None:
             return [_otel_messages.TextPart(type='text', content=self.model_response())]
         else:
-            return [
-                _otel_messages.ToolCallResponsePart(
-                    type='tool_call_response',
-                    id=self.tool_call_id,
-                    name=self.tool_name,
-                    **({'result': self.model_response()} if settings.include_content else {}),
-                )
-            ]
+            part = _otel_messages.ToolCallResponsePart(
+                type='tool_call_response',
+                id=self.tool_call_id,
+                name=self.tool_name,
+            )
+
+            if settings.include_content:
+                part['result'] = self.model_response()
+
+            return [part]
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -861,6 +877,9 @@ class TextPart:
 
     _: KW_ONLY
 
+    id: str | None = None
+    """An optional identifier of the text part."""
+
     part_kind: Literal['text'] = 'text'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -886,7 +905,18 @@ class ThinkingPart:
     signature: str | None = None
     """The signature of the thinking.
 
-    The signature is only available on the Anthropic models.
+    Supported by:
+
+    * Anthropic (corresponds to the `signature` field)
+    * Bedrock (corresponds to the `signature` field)
+    * Google (corresponds to the `thought_signature` field)
+    * OpenAI (corresponds to the `encrypted_content` field)
+    """
+
+    provider_name: str | None = None
+    """The name of the provider that generated the response.
+
+    Signatures are only sent back to the same provider.
     """
 
     part_kind: Literal['thinking'] = 'thinking'
@@ -971,7 +1001,10 @@ class BuiltinToolCallPart(BaseToolCallPart):
     _: KW_ONLY
 
     provider_name: str | None = None
-    """The name of the provider that generated the response."""
+    """The name of the provider that generated the response.
+
+    Built-in tool calls are only sent back to the same provider.
+    """
 
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
@@ -1031,6 +1064,9 @@ class ModelResponse:
         pydantic.Field(validation_alias=pydantic.AliasChoices('provider_response_id', 'vendor_id')),
     ] = None
     """request ID as specified by the model provider. This can be used to track the specific request to the model."""
+
+    finish_reason: FinishReason | None = None
+    """Reason the model finished generating the response, normalized to OpenTelemetry values."""
 
     @deprecated('`price` is deprecated, use `cost` instead')
     def price(self) -> genai_types.PriceCalculation:  # pragma: no cover
@@ -1102,8 +1138,10 @@ class ModelResponse:
                         **({'content': part.content} if settings.include_content else {}),
                     )
                 )
-            elif isinstance(part, ToolCallPart):
+            elif isinstance(part, BaseToolCallPart):
                 call_part = _otel_messages.ToolCallPart(type='tool_call', id=part.tool_call_id, name=part.tool_name)
+                if isinstance(part, BuiltinToolCallPart):
+                    call_part['builtin'] = True
                 if settings.include_content and part.args is not None:
                     from .models.instrumented import InstrumentedModel
 
@@ -1113,6 +1151,19 @@ class ModelResponse:
                         call_part['arguments'] = {k: InstrumentedModel.serialize_any(v) for k, v in part.args.items()}
 
                 parts.append(call_part)
+            elif isinstance(part, BuiltinToolReturnPart):
+                return_part = _otel_messages.ToolCallResponsePart(
+                    type='tool_call_response',
+                    id=part.tool_call_id,
+                    name=part.tool_name,
+                    builtin=True,
+                )
+                if settings.include_content and part.content is not None:  # pragma: no branch
+                    from .models.instrumented import InstrumentedModel
+
+                    return_part['result'] = InstrumentedModel.serialize_any(part.content)
+
+                parts.append(return_part)
         return parts
 
     @property
@@ -1186,6 +1237,12 @@ class ThinkingPartDelta:
     Note this is never treated as a delta — it can replace None.
     """
 
+    provider_name: str | None = None
+    """Optional provider name for the thinking part.
+
+    Signatures are only sent back to the same provider.
+    """
+
     part_delta_kind: Literal['thinking'] = 'thinking'
     """Part delta type identifier, used as a discriminator."""
 
@@ -1210,14 +1267,18 @@ class ThinkingPartDelta:
         if isinstance(part, ThinkingPart):
             new_content = part.content + self.content_delta if self.content_delta else part.content
             new_signature = self.signature_delta if self.signature_delta is not None else part.signature
-            return replace(part, content=new_content, signature=new_signature)
+            new_provider_name = self.provider_name if self.provider_name is not None else part.provider_name
+            return replace(part, content=new_content, signature=new_signature, provider_name=new_provider_name)
         elif isinstance(part, ThinkingPartDelta):
             if self.content_delta is None and self.signature_delta is None:
                 raise ValueError('Cannot apply ThinkingPartDelta with no content or signature')
-            if self.signature_delta is not None:
-                return replace(part, signature_delta=self.signature_delta)
             if self.content_delta is not None:
-                return replace(part, content_delta=self.content_delta)
+                part = replace(part, content_delta=(part.content_delta or '') + self.content_delta)
+            if self.signature_delta is not None:
+                part = replace(part, signature_delta=self.signature_delta)
+            if self.provider_name is not None:
+                part = replace(part, provider_name=self.provider_name)
+            return part
         raise ValueError(  # pragma: no cover
             f'Cannot apply ThinkingPartDeltas to non-ThinkingParts or non-ThinkingPartDeltas ({part=}, {self=})'
         )
@@ -1260,35 +1321,39 @@ class ToolCallPartDelta:
         return ToolCallPart(self.tool_name_delta, self.args_delta, self.tool_call_id or _generate_tool_call_id())
 
     @overload
-    def apply(self, part: ModelResponsePart) -> ToolCallPart: ...
+    def apply(self, part: ModelResponsePart) -> ToolCallPart | BuiltinToolCallPart: ...
 
     @overload
-    def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta: ...
+    def apply(
+        self, part: ModelResponsePart | ToolCallPartDelta
+    ) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta: ...
 
-    def apply(self, part: ModelResponsePart | ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+    def apply(
+        self, part: ModelResponsePart | ToolCallPartDelta
+    ) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
         """Apply this delta to a part or delta, returning a new part or delta with the changes applied.
 
         Args:
             part: The existing model response part or delta to update.
 
         Returns:
-            Either a new `ToolCallPart` or an updated `ToolCallPartDelta`.
+            Either a new `ToolCallPart` or `BuiltinToolCallPart`, or an updated `ToolCallPartDelta`.
 
         Raises:
-            ValueError: If `part` is neither a `ToolCallPart` nor a `ToolCallPartDelta`.
+            ValueError: If `part` is neither a `ToolCallPart`, `BuiltinToolCallPart`, nor a `ToolCallPartDelta`.
             UnexpectedModelBehavior: If applying JSON deltas to dict arguments or vice versa.
         """
-        if isinstance(part, ToolCallPart):
+        if isinstance(part, ToolCallPart | BuiltinToolCallPart):
             return self._apply_to_part(part)
 
         if isinstance(part, ToolCallPartDelta):
             return self._apply_to_delta(part)
 
         raise ValueError(  # pragma: no cover
-            f'Can only apply ToolCallPartDeltas to ToolCallParts or ToolCallPartDeltas, not {part}'
+            f'Can only apply ToolCallPartDeltas to ToolCallParts, BuiltinToolCallParts, or ToolCallPartDeltas, not {part}'
         )
 
-    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | ToolCallPartDelta:
+    def _apply_to_delta(self, delta: ToolCallPartDelta) -> ToolCallPart | BuiltinToolCallPart | ToolCallPartDelta:
         """Internal helper to apply this delta to another delta."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name_delta
@@ -1319,8 +1384,8 @@ class ToolCallPartDelta:
 
         return delta
 
-    def _apply_to_part(self, part: ToolCallPart) -> ToolCallPart:
-        """Internal helper to apply this delta directly to a `ToolCallPart`."""
+    def _apply_to_part(self, part: ToolCallPart | BuiltinToolCallPart) -> ToolCallPart | BuiltinToolCallPart:
+        """Internal helper to apply this delta directly to a `ToolCallPart` or `BuiltinToolCallPart`."""
         if self.tool_name_delta:
             # Append incremental text to the existing tool_name
             tool_name = part.tool_name + self.tool_name_delta
@@ -1452,6 +1517,9 @@ class FunctionToolResultEvent:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
+@deprecated(
+    '`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolCallPart` instead.'
+)
 @dataclass(repr=False)
 class BuiltinToolCallEvent:
     """An event indicating the start to a call to a built-in tool."""
@@ -1465,6 +1533,9 @@ class BuiltinToolCallEvent:
     """Event type identifier, used as a discriminator."""
 
 
+@deprecated(
+    '`BuiltinToolResultEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `BuiltinToolReturnPart` instead.'
+)
 @dataclass(repr=False)
 class BuiltinToolResultEvent:
     """An event indicating the result of a built-in tool call."""
@@ -1479,7 +1550,10 @@ class BuiltinToolResultEvent:
 
 
 HandleResponseEvent = Annotated[
-    FunctionToolCallEvent | FunctionToolResultEvent | BuiltinToolCallEvent | BuiltinToolResultEvent,
+    FunctionToolCallEvent
+    | FunctionToolResultEvent
+    | BuiltinToolCallEvent  # pyright: ignore[reportDeprecated]
+    | BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""

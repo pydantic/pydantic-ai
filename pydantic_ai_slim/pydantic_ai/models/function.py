@@ -31,7 +31,7 @@ from ..messages import (
     UserContent,
     UserPromptPart,
 )
-from ..profiles import ModelProfileSpec
+from ..profiles import ModelProfile, ModelProfileSpec
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse
@@ -111,6 +111,12 @@ class FunctionModel(Model):
         stream_function_name = self.stream_function.__name__ if self.stream_function is not None else ''
         self._model_name = model_name or f'function:{function_name}:{stream_function_name}'
 
+        # Use a default profile that supports JSON schema and object output if none provided
+        if profile is None:
+            profile = ModelProfile(
+                supports_json_schema_output=True,
+                supports_json_object_output=True,
+            )
         super().__init__(settings=settings, profile=profile)
 
     async def request(
@@ -241,18 +247,20 @@ DeltaToolCalls: TypeAlias = dict[int, DeltaToolCall]
 DeltaThinkingCalls: TypeAlias = dict[int, DeltaThinkingPart]
 """A mapping of thinking call IDs to incremental changes."""
 
+BuiltinToolCallsReturns: TypeAlias = dict[int, BuiltinToolCallPart | BuiltinToolReturnPart]
+
 FunctionDef: TypeAlias = Callable[[list[ModelMessage], AgentInfo], ModelResponse | Awaitable[ModelResponse]]
 """A function used to generate a non-streamed response."""
 
 StreamFunctionDef: TypeAlias = Callable[
-    [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
+    [list[ModelMessage], AgentInfo], AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
 ]
 """A function used to generate a streamed response.
 
-While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]`, it should
+While this is defined as having return type of `AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinTools]`, it should
 really be considered as `AsyncIterator[str] | AsyncIterator[DeltaToolCalls] | AsyncIterator[DeltaThinkingCalls]`,
 
-E.g. you need to yield all text, all `DeltaToolCalls`, or all `DeltaThinkingCalls`, not mix them.
+E.g. you need to yield all text, all `DeltaToolCalls`, all `DeltaThinkingCalls`, or all `BuiltinToolCallsReturns`, not mix them.
 """
 
 
@@ -261,7 +269,7 @@ class FunctionStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for [FunctionModel][pydantic_ai.models.function.FunctionModel]."""
 
     _model_name: str
-    _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls]
+    _iter: AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     def __post_init__(self):
@@ -285,6 +293,7 @@ class FunctionStreamedResponse(StreamedResponse):
                             vendor_part_id=dtc_index,
                             content=delta.content,
                             signature=delta.signature,
+                            provider_name='function' if delta.signature else None,
                         )
                     elif isinstance(delta, DeltaToolCall):
                         if delta.json_args:
@@ -298,6 +307,16 @@ class FunctionStreamedResponse(StreamedResponse):
                         )
                         if maybe_event is not None:  # pragma: no branch
                             yield maybe_event
+                    elif isinstance(delta, BuiltinToolCallPart):
+                        if content := delta.args_as_json_str():  # pragma: no branch
+                            response_tokens = _estimate_string_tokens(content)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
+                        yield self._parts_manager.handle_builtin_tool_call_part(vendor_part_id=dtc_index, part=delta)
+                    elif isinstance(delta, BuiltinToolReturnPart):
+                        if content := delta.model_response_str():  # pragma: no branch
+                            response_tokens = _estimate_string_tokens(content)
+                            self._usage += usage.RequestUsage(output_tokens=response_tokens)
+                        yield self._parts_manager.handle_builtin_tool_return_part(vendor_part_id=dtc_index, part=delta)
                     else:
                         assert_never(delta)
 
@@ -344,11 +363,8 @@ def _estimate_usage(messages: Iterable[ModelMessage]) -> usage.RequestUsage:
                     response_tokens += _estimate_string_tokens(part.content)
                 elif isinstance(part, ToolCallPart):
                     response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
-                # TODO(Marcelo): We need to add coverage here.
                 elif isinstance(part, BuiltinToolCallPart):  # pragma: no cover
-                    call = part
-                    response_tokens += 1 + _estimate_string_tokens(call.args_as_json_str())
-                # TODO(Marcelo): We need to add coverage here.
+                    response_tokens += 1 + _estimate_string_tokens(part.args_as_json_str())
                 elif isinstance(part, BuiltinToolReturnPart):  # pragma: no cover
                     response_tokens += _estimate_string_tokens(part.model_response_str())
                 else:

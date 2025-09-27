@@ -1,13 +1,13 @@
 from __future__ import annotations as _annotations
 
 import io
-import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Literal, cast, overload
 
+from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
@@ -21,6 +21,7 @@ from ..messages import (
     BuiltinToolCallPart,
     BuiltinToolReturnPart,
     DocumentUrl,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -42,6 +43,16 @@ from ..settings import ModelSettings
 from ..tools import ToolDefinition
 from . import Model, ModelRequestParameters, StreamedResponse, check_allow_model_requests, download_item, get_user_agent
 
+_FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
+    'end_turn': 'stop',
+    'max_tokens': 'length',
+    'stop_sequence': 'stop',
+    'tool_use': 'tool_call',
+    'pause_turn': 'stop',
+    'refusal': 'content_filter',
+}
+
+
 try:
     from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
     from anthropic.types.beta import (
@@ -50,7 +61,9 @@ try:
         BetaCitationsDelta,
         BetaCodeExecutionTool20250522Param,
         BetaCodeExecutionToolResultBlock,
+        BetaCodeExecutionToolResultBlockContent,
         BetaCodeExecutionToolResultBlockParam,
+        BetaCodeExecutionToolResultBlockParamContentParam,
         BetaContentBlock,
         BetaContentBlockParam,
         BetaImageBlockParam,
@@ -67,9 +80,11 @@ try:
         BetaRawMessageStopEvent,
         BetaRawMessageStreamEvent,
         BetaRedactedThinkingBlock,
+        BetaRedactedThinkingBlockParam,
         BetaServerToolUseBlock,
         BetaServerToolUseBlockParam,
         BetaSignatureDelta,
+        BetaStopReason,
         BetaTextBlock,
         BetaTextBlockParam,
         BetaTextDelta,
@@ -85,7 +100,9 @@ try:
         BetaToolUseBlockParam,
         BetaWebSearchTool20250305Param,
         BetaWebSearchToolResultBlock,
+        BetaWebSearchToolResultBlockContent,
         BetaWebSearchToolResultBlockParam,
+        BetaWebSearchToolResultBlockParamContentParam,
     )
     from anthropic.types.beta.beta_web_search_tool_20250305_param import UserLocation
     from anthropic.types.model_param import ModelParam
@@ -290,32 +307,18 @@ class AnthropicModel(Model):
         for item in response.content:
             if isinstance(item, BetaTextBlock):
                 items.append(TextPart(content=item.text))
-            elif isinstance(item, BetaWebSearchToolResultBlock | BetaCodeExecutionToolResultBlock):
-                items.append(
-                    BuiltinToolReturnPart(
-                        provider_name='anthropic',
-                        tool_name=item.type,
-                        content=item.content,
-                        tool_call_id=item.tool_use_id,
-                    )
-                )
             elif isinstance(item, BetaServerToolUseBlock):
+                items.append(_map_server_tool_use_block(item, self.system))
+            elif isinstance(item, BetaWebSearchToolResultBlock):
+                items.append(_map_web_search_tool_result_block(item, self.system))
+            elif isinstance(item, BetaCodeExecutionToolResultBlock):
+                items.append(_map_code_execution_tool_result_block(item, self.system))
+            elif isinstance(item, BetaRedactedThinkingBlock):
                 items.append(
-                    BuiltinToolCallPart(
-                        provider_name='anthropic',
-                        tool_name=item.name,
-                        args=cast(dict[str, Any], item.input),
-                        tool_call_id=item.id,
-                    )
-                )
-            elif isinstance(item, BetaRedactedThinkingBlock):  # pragma: no cover
-                warnings.warn(
-                    'Pydantic AI currently does not handle redacted thinking blocks. '
-                    'If you have a suggestion on how we should handle them, please open an issue.',
-                    UserWarning,
+                    ThinkingPart(id='redacted_thinking', content='', signature=item.data, provider_name=self.system)
                 )
             elif isinstance(item, BetaThinkingBlock):
-                items.append(ThinkingPart(content=item.thinking, signature=item.signature))
+                items.append(ThinkingPart(content=item.thinking, signature=item.signature, provider_name=self.system))
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -326,12 +329,20 @@ class AnthropicModel(Model):
                     )
                 )
 
+        finish_reason: FinishReason | None = None
+        provider_details: dict[str, Any] | None = None
+        if raw_finish_reason := response.stop_reason:  # pragma: no branch
+            provider_details = {'finish_reason': raw_finish_reason}
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+
         return ModelResponse(
             parts=items,
             usage=_map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
             provider_name=self._provider.name,
+            finish_reason=finish_reason,
+            provider_details=provider_details,
         )
 
     async def _process_streamed_response(
@@ -342,13 +353,13 @@ class AnthropicModel(Model):
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
-        # Since Anthropic doesn't provide a timestamp in the message, we'll use the current time
-        timestamp = datetime.now(tz=timezone.utc)
+        assert isinstance(first_chunk, BetaRawMessageStartEvent)
+
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
-            _model_name=self._model_name,
+            _model_name=first_chunk.message.model,
             _response=peekable_response,
-            _timestamp=timestamp,
+            _timestamp=_utils.now_utc(),
             _provider_name=self._provider.name,
         )
 
@@ -425,6 +436,7 @@ class AnthropicModel(Model):
                     | BetaWebSearchToolResultBlockParam
                     | BetaCodeExecutionToolResultBlockParam
                     | BetaThinkingBlockParam
+                    | BetaRedactedThinkingBlockParam
                 ] = []
                 for response_part in m.parts:
                     if isinstance(response_part, TextPart):
@@ -439,36 +451,81 @@ class AnthropicModel(Model):
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
-                        # NOTE: We only send thinking part back for Anthropic, otherwise they raise an error.
-                        if response_part.signature is not None:  # pragma: no branch
+                        if (
+                            response_part.provider_name == self.system and response_part.signature is not None
+                        ):  # pragma: no branch
+                            if response_part.id == 'redacted_thinking':
+                                assistant_content_params.append(
+                                    BetaRedactedThinkingBlockParam(
+                                        data=response_part.signature,
+                                        type='redacted_thinking',
+                                    )
+                                )
+                            else:
+                                assistant_content_params.append(
+                                    BetaThinkingBlockParam(
+                                        thinking=response_part.content,
+                                        signature=response_part.signature,
+                                        type='thinking',
+                                    )
+                                )
+                        elif response_part.content:  # pragma: no branch
+                            start_tag, end_tag = self.profile.thinking_tags
                             assistant_content_params.append(
-                                BetaThinkingBlockParam(
-                                    thinking=response_part.content, signature=response_part.signature, type='thinking'
+                                BetaTextBlockParam(
+                                    text='\n'.join([start_tag, response_part.content, end_tag]), type='text'
                                 )
                             )
                     elif isinstance(response_part, BuiltinToolCallPart):
-                        if response_part.provider_name == 'anthropic':
-                            server_tool_use_block_param = BetaServerToolUseBlockParam(
-                                id=_guard_tool_call_id(t=response_part),
-                                type='server_tool_use',
-                                name=cast(Literal['web_search', 'code_execution'], response_part.tool_name),
-                                input=response_part.args_as_dict(),
-                            )
-                            assistant_content_params.append(server_tool_use_block_param)
-                    elif isinstance(response_part, BuiltinToolReturnPart):
-                        if response_part.provider_name == 'anthropic':
+                        if response_part.provider_name == self.system:
                             tool_use_id = _guard_tool_call_id(t=response_part)
-                            if response_part.tool_name == 'web_search_tool_result':
-                                server_tool_result_block_param = BetaWebSearchToolResultBlockParam(
-                                    tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
+                            if response_part.tool_name == WebSearchTool.kind:
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name='web_search',
+                                    input=response_part.args_as_dict(),
                                 )
-                            elif response_part.tool_name == 'code_execution_tool_result':
-                                server_tool_result_block_param = BetaCodeExecutionToolResultBlockParam(
-                                    tool_use_id=tool_use_id, type=response_part.tool_name, content=response_part.content
+                                assistant_content_params.append(server_tool_use_block_param)
+                            elif response_part.tool_name == CodeExecutionTool.kind:  # pragma: no branch
+                                server_tool_use_block_param = BetaServerToolUseBlockParam(
+                                    id=tool_use_id,
+                                    type='server_tool_use',
+                                    name='code_execution',
+                                    input=response_part.args_as_dict(),
                                 )
-                            else:
-                                raise ValueError(f'Unsupported tool name: {response_part.tool_name}')
-                            assistant_content_params.append(server_tool_result_block_param)
+                                assistant_content_params.append(server_tool_use_block_param)
+                    elif isinstance(response_part, BuiltinToolReturnPart):
+                        if response_part.provider_name == self.system:
+                            tool_use_id = _guard_tool_call_id(t=response_part)
+                            if response_part.tool_name in (
+                                WebSearchTool.kind,
+                                'web_search_tool_result',  # Backward compatibility
+                            ) and isinstance(response_part.content, dict | list):
+                                assistant_content_params.append(
+                                    BetaWebSearchToolResultBlockParam(
+                                        tool_use_id=tool_use_id,
+                                        type='web_search_tool_result',
+                                        content=cast(
+                                            BetaWebSearchToolResultBlockParamContentParam,
+                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                        ),
+                                    )
+                                )
+                            elif response_part.tool_name in (  # pragma: no branch
+                                CodeExecutionTool.kind,
+                                'code_execution_tool_result',  # Backward compatibility
+                            ) and isinstance(response_part.content, dict):
+                                assistant_content_params.append(
+                                    BetaCodeExecutionToolResultBlockParam(
+                                        tool_use_id=tool_use_id,
+                                        type='code_execution_tool_result',
+                                        content=cast(
+                                            BetaCodeExecutionToolResultBlockParamContentParam,
+                                            response_part.content,  # pyright: ignore[reportUnknownMemberType]
+                                        ),
+                                    )
+                                )
                     else:
                         assert_never(response_part)
                 if len(assistant_content_params) > 0:
@@ -583,24 +640,33 @@ class AnthropicStreamedResponse(StreamedResponse):
         async for event in self._response:
             if isinstance(event, BetaRawMessageStartEvent):
                 self._usage = _map_usage(event)
+                self.provider_response_id = event.message.id
 
             elif isinstance(event, BetaRawContentBlockStartEvent):
                 current_block = event.content_block
                 if isinstance(current_block, BetaTextBlock) and current_block.text:
                     maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content=current_block.text
+                        vendor_part_id=event.index, content=current_block.text
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(current_block, BetaThinkingBlock):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking',
+                        vendor_part_id=event.index,
                         content=current_block.thinking,
                         signature=current_block.signature,
+                        provider_name=self.provider_name,
+                    )
+                elif isinstance(current_block, BetaRedactedThinkingBlock):
+                    yield self._parts_manager.handle_thinking_delta(
+                        vendor_part_id=event.index,
+                        id='redacted_thinking',
+                        signature=current_block.data,
+                        provider_name=self.provider_name,
                     )
                 elif isinstance(current_block, BetaToolUseBlock):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=current_block.id,
+                        vendor_part_id=event.index,
                         tool_name=current_block.name,
                         args=cast(dict[str, Any], current_block.input) or None,
                         tool_call_id=current_block.id,
@@ -608,44 +674,56 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(current_block, BetaServerToolUseBlock):
-                    pass
+                    yield self._parts_manager.handle_builtin_tool_call_part(
+                        vendor_part_id=event.index,
+                        part=_map_server_tool_use_block(current_block, self.provider_name),
+                    )
+                elif isinstance(current_block, BetaWebSearchToolResultBlock):
+                    yield self._parts_manager.handle_builtin_tool_return_part(
+                        vendor_part_id=event.index,
+                        part=_map_web_search_tool_result_block(current_block, self.provider_name),
+                    )
+                elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
+                    yield self._parts_manager.handle_builtin_tool_return_part(
+                        vendor_part_id=event.index,
+                        part=_map_code_execution_tool_result_block(current_block, self.provider_name),
+                    )
 
             elif isinstance(event, BetaRawContentBlockDeltaEvent):
                 if isinstance(event.delta, BetaTextDelta):
                     maybe_event = self._parts_manager.handle_text_delta(
-                        vendor_part_id='content', content=event.delta.text
+                        vendor_part_id=event.index, content=event.delta.text
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
                 elif isinstance(event.delta, BetaThinkingDelta):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking', content=event.delta.thinking
+                        vendor_part_id=event.index,
+                        content=event.delta.thinking,
+                        provider_name=self.provider_name,
                     )
                 elif isinstance(event.delta, BetaSignatureDelta):
                     yield self._parts_manager.handle_thinking_delta(
-                        vendor_part_id='thinking', signature=event.delta.signature
+                        vendor_part_id=event.index,
+                        signature=event.delta.signature,
+                        provider_name=self.provider_name,
                     )
-                elif (
-                    current_block
-                    and event.delta.type == 'input_json_delta'
-                    and isinstance(current_block, BetaToolUseBlock)
-                ):  # pragma: no branch
+                elif isinstance(event.delta, BetaInputJSONDelta):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
-                        vendor_part_id=current_block.id,
-                        tool_name='',
+                        vendor_part_id=event.index,
                         args=event.delta.partial_json,
-                        tool_call_id=current_block.id,
                     )
                     if maybe_event is not None:  # pragma: no branch
                         yield maybe_event
-                elif isinstance(event.delta, BetaInputJSONDelta):
-                    pass
                 # TODO(Marcelo): We need to handle citations.
                 elif isinstance(event.delta, BetaCitationsDelta):
                     pass
 
             elif isinstance(event, BetaRawMessageDeltaEvent):
                 self._usage = _map_usage(event)
+                if raw_finish_reason := event.delta.stop_reason:  # pragma: no branch
+                    self.provider_details = {'finish_reason': raw_finish_reason}
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
 
             elif isinstance(event, BetaRawContentBlockStopEvent | BetaRawMessageStopEvent):  # pragma: no branch
                 current_block = None
@@ -664,3 +742,52 @@ class AnthropicStreamedResponse(StreamedResponse):
     def timestamp(self) -> datetime:
         """Get the timestamp of the response."""
         return self._timestamp
+
+
+def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str) -> BuiltinToolCallPart:
+    if item.name == 'web_search':
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=WebSearchTool.kind,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
+    elif item.name == 'code_execution':
+        return BuiltinToolCallPart(
+            provider_name=provider_name,
+            tool_name=CodeExecutionTool.kind,
+            args=cast(dict[str, Any], item.input) or None,
+            tool_call_id=item.id,
+        )
+    else:
+        assert_never(item.name)
+
+
+web_search_tool_result_content_ta: TypeAdapter[BetaWebSearchToolResultBlockContent] = TypeAdapter(
+    BetaWebSearchToolResultBlockContent
+)
+
+
+def _map_web_search_tool_result_block(item: BetaWebSearchToolResultBlock, provider_name: str) -> BuiltinToolReturnPart:
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=WebSearchTool.kind,
+        content=web_search_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_call_id=item.tool_use_id,
+    )
+
+
+code_execution_tool_result_content_ta: TypeAdapter[BetaCodeExecutionToolResultBlockContent] = TypeAdapter(
+    BetaCodeExecutionToolResultBlockContent
+)
+
+
+def _map_code_execution_tool_result_block(
+    item: BetaCodeExecutionToolResultBlock, provider_name: str
+) -> BuiltinToolReturnPart:
+    return BuiltinToolReturnPart(
+        provider_name=provider_name,
+        tool_name=CodeExecutionTool.kind,
+        content=code_execution_tool_result_content_ta.dump_python(item.content, mode='json'),
+        tool_call_id=item.tool_use_id,
+    )

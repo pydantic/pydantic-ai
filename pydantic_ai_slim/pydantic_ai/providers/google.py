@@ -106,13 +106,13 @@ class GoogleProvider(Provider[Client]):
             else:
                 self._client = Client(
                     vertexai=vertexai,
-                    project=project or os.environ.get('GOOGLE_CLOUD_PROJECT'),
+                    project=project or os.getenv('GOOGLE_CLOUD_PROJECT'),
                     # From https://github.com/pydantic/pydantic-ai/pull/2031/files#r2169682149:
                     # Currently `us-central1` supports the most models by far of any region including `global`, but not
                     # all of them. `us-central1` has all google models but is missing some Anthropic partner models,
                     # which use `us-east5` instead. `global` has fewer models but higher availability.
                     # For more details, check: https://cloud.google.com/vertex-ai/generative-ai/docs/learn/locations#available-regions
-                    location=location or os.environ.get('GOOGLE_CLOUD_LOCATION') or 'us-central1',
+                    location=location or os.getenv('GOOGLE_CLOUD_LOCATION') or 'us-central1',
                     credentials=credentials,
                     http_options=http_options,
                 )
