@@ -21,6 +21,8 @@ from opentelemetry.trace import Span, Tracer, TracerProvider, get_tracer_provide
 from opentelemetry.util.types import AttributeValue
 from pydantic import TypeAdapter
 
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
+
 from .. import _otel_messages
 from .._run_context import RunContext
 from ..messages import (
@@ -70,9 +72,6 @@ def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -
         model = InstrumentedModel(model, instrument)
 
     return model
-
-
-DEFAULT_INSTRUMENTATION_VERSION = 2
 
 
 @dataclass(init=False)
