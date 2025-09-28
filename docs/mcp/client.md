@@ -216,10 +216,10 @@ async def main():
 
 _(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
 
-## Tool call customisation
+## Tool call customization
 
 The MCP servers provide the ability to set a `process_tool_call` which allows
-the customisation of tool call requests and their responses.
+the customization of tool call requests and their responses.
 
 A common use case for this is to inject metadata to the requests which the server
 call needs:
