@@ -72,6 +72,9 @@ def instrument_model(model: Model, instrument: InstrumentationSettings | bool) -
     return model
 
 
+DEFAULT_INSTRUMENTATION_VERSION = 2
+
+
 @dataclass(init=False)
 class InstrumentationSettings:
     """Options for instrumenting models and agents with OpenTelemetry.
@@ -90,7 +93,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2, 3] = 1
+    version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION
 
     def __init__(
         self,
@@ -99,7 +102,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2, 3] = 2,
+        version: Literal[1, 2, 3] = DEFAULT_INSTRUMENTATION_VERSION,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         event_logger_provider: EventLoggerProvider | None = None,
     ):
