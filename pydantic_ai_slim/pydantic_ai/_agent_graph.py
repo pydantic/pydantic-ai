@@ -16,6 +16,7 @@ from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._function_schema import _takes_ctx as is_takes_ctx  # type: ignore
+from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._tool_manager import ToolManager
 from pydantic_ai._utils import dataclasses_no_defaults_repr, get_union_args, is_async_callable, run_in_executor
 from pydantic_ai.builtin_tools import AbstractBuiltinTool
@@ -704,6 +705,9 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         tracer=ctx.deps.tracer,
         trace_include_content=ctx.deps.instrumentation_settings is not None
         and ctx.deps.instrumentation_settings.include_content,
+        instrumentation_version=ctx.deps.instrumentation_settings.version
+        if ctx.deps.instrumentation_settings
+        else DEFAULT_INSTRUMENTATION_VERSION,
         run_step=ctx.state.run_step,
         tool_call_approved=ctx.state.run_step == 0,
     )
