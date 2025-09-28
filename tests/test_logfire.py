@@ -123,6 +123,7 @@ def test_logfire(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'final_result': '{"my_ret":"1"}',
@@ -176,6 +177,7 @@ def test_logfire(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 103,
@@ -435,6 +437,7 @@ def test_instructions_with_structured_output(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 51,
@@ -530,6 +533,7 @@ def test_instructions_with_structured_output(
             {
                 'model_name': 'test',
                 'agent_name': 'my_agent',
+                'gen_ai.agent.name': 'my_agent',
                 'logfire.msg': 'my_agent run',
                 'logfire.span_type': 'span',
                 'gen_ai.usage.input_tokens': 51,
@@ -620,6 +624,7 @@ def test_instructions_with_structured_output_exclude_content(get_logfire_summary
         {
             'model_name': 'test',
             'agent_name': 'my_agent',
+            'gen_ai.agent.name': 'my_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -710,6 +715,7 @@ def test_instructions_with_structured_output_exclude_content_v2(
         {
             'model_name': 'test',
             'agent_name': 'my_agent',
+            'gen_ai.agent.name': 'my_agent',
             'logfire.msg': 'my_agent run',
             'logfire.span_type': 'span',
             'gen_ai.usage.input_tokens': 51,
@@ -931,6 +937,7 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
                 'attributes': {
                     'model_name': 'test',
                     'agent_name': 'agent',
+                    'gen_ai.agent.name': 'agent',
                     'logfire.msg': 'agent run',
                     'logfire.span_type': 'span',
                     'gen_ai.usage.input_tokens': 51,
