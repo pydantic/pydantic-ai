@@ -370,6 +370,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         self._override_tools: ContextVar[
             _utils.Option[Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]]]
         ] = ContextVar('_override_tools', default=None)
+        self._override_model_settings: ContextVar[_utils.Option[ModelSettings]] = ContextVar(
+            '_override_model_settings', default=None
+        )
 
         self._enter_lock = Lock()
         self._entered_count = 0
@@ -714,48 +717,57 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         }
 
     @contextmanager
-    def override(
-        self,
-        *,
-        deps: AgentDepsT | _utils.Unset = _utils.UNSET,
-        model: models.Model | models.KnownModelName | str | _utils.Unset = _utils.UNSET,
-        toolsets: Sequence[AbstractToolset[AgentDepsT]] | _utils.Unset = _utils.UNSET,
-        tools: Sequence[Tool[AgentDepsT] | ToolFuncEither[AgentDepsT, ...]] | _utils.Unset = _utils.UNSET,
-    ) -> Iterator[None]:
-        """Context manager to temporarily override agent dependencies, model, toolsets, or tools.
+    def override(self, **kwargs: Any) -> Iterator[None]:
+        """Context manager to temporarily override agent attributes, dependencies, model, toolsets, or tools.
 
         This is particularly useful when testing.
         You can find an example of this [here](../testing.md#overriding-model-via-pytest-fixtures).
 
         Args:
-            deps: The dependencies to use instead of the dependencies passed to the agent run.
-            model: The model to use instead of the model passed to the agent run.
-            toolsets: The toolsets to use instead of the toolsets passed to the agent constructor and agent run.
-            tools: The tools to use instead of the tools registered with the agent.
+            **kwargs: The attributes to override on the agent.
+                `deps`, `model`, `toolsets`, and `tools` have special handling for per-run overrides.
+                Other keyword arguments will temporarily replace attributes on the agent instance.
         """
-        if _utils.is_set(deps):
-            deps_token = self._override_deps.set(_utils.Some(deps))
-        else:
-            deps_token = None
+        # handle special context-variable overrides
+        deps = kwargs.pop('deps', _utils.UNSET)
+        model = kwargs.pop('model', _utils.UNSET)
+        toolsets = kwargs.pop('toolsets', _utils.UNSET)
+        tools = kwargs.pop('tools', _utils.UNSET)
+        model_settings = kwargs.pop('model_settings', _utils.UNSET)
 
-        if _utils.is_set(model):
-            model_token = self._override_model.set(_utils.Some(models.infer_model(model)))
-        else:
-            model_token = None
-
-        if _utils.is_set(toolsets):
-            toolsets_token = self._override_toolsets.set(_utils.Some(toolsets))
-        else:
-            toolsets_token = None
-
-        if _utils.is_set(tools):
-            tools_token = self._override_tools.set(_utils.Some(tools))
-        else:
-            tools_token = None
+        deps_token = None
+        model_token = None
+        toolsets_token = None
+        tools_token = None
+        model_settings_token = None
+        original_values: dict[str, Any] = {}
 
         try:
+            if _utils.is_set(deps):
+                deps_token = self._override_deps.set(_utils.Some(deps))
+            if _utils.is_set(model):
+                model_token = self._override_model.set(_utils.Some(models.infer_model(model)))
+            if _utils.is_set(toolsets):
+                toolsets_token = self._override_toolsets.set(_utils.Some(toolsets))
+            if _utils.is_set(tools):
+                tools_token = self._override_tools.set(_utils.Some(tools))
+            if _utils.is_set(model_settings):
+                model_settings_token = self._override_model_settings.set(_utils.Some(model_settings))
+
+            # handle general attribute overrides
+            for key, value in kwargs.items():
+                if not hasattr(self, key):
+                    raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}' to override.")
+                original_values[key] = getattr(self, key)
+                setattr(self, key, value)
+
             yield
         finally:
+            # reset general attribute overrides
+            for key, value in original_values.items():
+                setattr(self, key, value)
+
+            # reset context-variable overrides
             if deps_token is not None:
                 self._override_deps.reset(deps_token)
             if model_token is not None:
@@ -764,6 +776,8 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 self._override_toolsets.reset(toolsets_token)
             if tools_token is not None:
                 self._override_tools.reset(tools_token)
+            if model_settings_token is not None:
+                self._override_model_settings.reset(model_settings_token)
 
     @overload
     def instructions(
