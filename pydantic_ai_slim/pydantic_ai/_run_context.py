@@ -36,6 +36,8 @@ class RunContext(Generic[AgentDepsT]):
     """The tracer to use for tracing the run."""
     trace_include_content: bool = False
     """Whether to include the content of the messages in the trace."""
+    instrumentation_version: int | None = None
+    """Instrumentation settings version, if instrumentation is enabled."""
     retries: dict[str, int] = field(default_factory=dict)
     """Number of retries for each tool so far."""
     tool_call_id: str | None = None
