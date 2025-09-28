@@ -31,6 +31,7 @@ try:
     from mcp.client.sse import sse_client
     from mcp.client.stdio import StdioServerParameters, stdio_client
     from mcp.client.streamable_http import GetSessionIdCallback, streamablehttp_client
+    from mcp.client.websocket import websocket_client
     from mcp.shared.context import RequestContext
     from mcp.shared.exceptions import McpError
     from mcp.shared.message import SessionMessage
@@ -866,6 +867,75 @@ class MCPServerStreamableHTTP(_MCPServerHTTP):
         return self.url == value.url
 
 
+class MCPServerWebSocket(_MCPServerHTTP):
+    """An MCP server that connects over a WebSocket connection.
+
+    This class implements the WebSocket transport from the MCP specification.
+    See <https://spec.modelcontextprotocol.io/specification/2024-11-05/basic/transports/#websocket> for more information.
+
+    !!! note
+        Using this class as an async context manager will create a WebSocket connection
+        to a server which should already be running.
+
+    Example:
+    ```python {py="3.10"}
+    from pydantic_ai import Agent
+    from pydantic_ai.mcp import MCPServerWebSocket
+
+    server = MCPServerWebSocket('ws://localhost:8000/mcp-ws')
+    agent = Agent('openai:gpt-4o', toolsets=[server])
+
+    async def main():
+        async with agent:  # This will connect to the WebSocket server.
+            ...
+    ```
+    """
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, _: Any, __: Any) -> CoreSchema:
+        return core_schema.no_info_after_validator_function(
+            lambda dct: MCPServerWebSocket(**dct),
+            core_schema.typed_dict_schema(
+                {
+                    'url': core_schema.typed_dict_field(core_schema.str_schema()),
+                    'headers': core_schema.typed_dict_field(
+                        core_schema.dict_schema(core_schema.str_schema(), core_schema.str_schema()), required=False
+                    ),
+                }
+            ),
+        )
+
+    @property
+    def _transport_client(self):
+        return websocket_client  # pragma: no cover
+
+    @asynccontextmanager
+    async def client_streams(
+        self,
+    ) -> AsyncIterator[
+        tuple[
+            MemoryObjectReceiveStream[SessionMessage | Exception],
+            MemoryObjectSendStream[SessionMessage],
+        ]
+    ]:
+        if self.http_client:
+            raise ValueError('`http_client` is not supported for WebSocket connections.')
+        if self.headers:
+            warnings.warn(
+                'The provided `websocket_client` does not support `headers`. They will be ignored.',
+                UserWarning,
+                stacklevel=2,
+            )
+
+        async with websocket_client(url=self.url) as (read_stream, write_stream):
+            yield read_stream, write_stream
+
+    def __eq__(self, value: object, /) -> bool:
+        if not isinstance(value, MCPServerWebSocket):
+            return False  # pragma: no cover
+        return self.url == value.url
+
+
 ToolResult = (
     str
     | messages.BinaryContent
@@ -898,7 +968,10 @@ metadata.
 
 def _mcp_server_discriminator(value: dict[str, Any]) -> str | None:
     if 'url' in value:
-        if value['url'].endswith('/sse'):
+        url: str = value['url']
+        if url.startswith('ws://') or url.startswith('wss://'):
+            return 'websocket'
+        if url.endswith('/sse'):
             return 'sse'
         return 'streamable-http'
     return 'stdio'
@@ -913,7 +986,8 @@ class MCPServerConfig(BaseModel):
             Annotated[
                 Annotated[MCPServerStdio, Tag('stdio')]
                 | Annotated[MCPServerStreamableHTTP, Tag('streamable-http')]
-                | Annotated[MCPServerSSE, Tag('sse')],
+                | Annotated[MCPServerSSE, Tag('sse')]
+                | Annotated[MCPServerWebSocket, Tag('websocket')],
                 Discriminator(_mcp_server_discriminator),
             ],
         ],
@@ -921,7 +995,9 @@ class MCPServerConfig(BaseModel):
     ]
 
 
-def load_mcp_servers(config_path: str | Path) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE]:
+def load_mcp_servers(
+    config_path: str | Path,
+) -> list[MCPServerStdio | MCPServerStreamableHTTP | MCPServerSSE | MCPServerWebSocket]:
     """Load MCP servers from a configuration file.
 
     Args:
