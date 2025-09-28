@@ -115,6 +115,7 @@ class ToolManager(Generic[AgentDepsT]):
                 wrap_validation_errors,
                 self.ctx.tracer,
                 self.ctx.trace_include_content,
+                self.ctx.instrumentation_version,
                 usage_limits,
             )
 
@@ -203,7 +204,8 @@ class ToolManager(Generic[AgentDepsT]):
         allow_partial: bool,
         wrap_validation_errors: bool,
         tracer: Tracer,
-        include_content: bool = False,
+        include_content: bool,
+        instrumentation_version: int,
         usage_limits: UsageLimits | None = None,
     ) -> Any:
         """See <https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/#execute-tool-span>."""
@@ -220,8 +222,12 @@ class ToolManager(Generic[AgentDepsT]):
                     'properties': {
                         **(
                             {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
+                                'gen_ai.tool.call.arguments' if instrumentation_version > 2 else 'tool_arguments': {
+                                    'type': 'object'
+                                },
+                                'gen_ai.tool.call.result' if instrumentation_version > 2 else 'tool_response': {
+                                    'type': 'object'
+                                },
                             }
                             if include_content
                             else {}
@@ -232,7 +238,10 @@ class ToolManager(Generic[AgentDepsT]):
                 }
             ),
         }
-        with tracer.start_as_current_span('running tool', attributes=span_attributes) as span:
+        with tracer.start_as_current_span(
+            f'execute_tool {call.tool_name}' if instrumentation_version > 2 else 'running tool',
+            attributes=span_attributes,
+        ) as span:
             try:
                 tool_result = await self._call_tool(call, allow_partial, wrap_validation_errors, usage_limits)
             except ToolRetryError as e:
