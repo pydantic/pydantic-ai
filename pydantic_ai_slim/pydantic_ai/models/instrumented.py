@@ -90,7 +90,7 @@ class InstrumentationSettings:
     event_mode: Literal['attributes', 'logs'] = 'attributes'
     include_binary_content: bool = True
     include_content: bool = True
-    version: Literal[1, 2] = 1
+    version: Literal[1, 2, 3] = 1
 
     def __init__(
         self,
@@ -99,7 +99,7 @@ class InstrumentationSettings:
         meter_provider: MeterProvider | None = None,
         include_binary_content: bool = True,
         include_content: bool = True,
-        version: Literal[1, 2] = 2,
+        version: Literal[1, 2, 3] = 2,
         event_mode: Literal['attributes', 'logs'] = 'attributes',
         event_logger_provider: EventLoggerProvider | None = None,
     ):

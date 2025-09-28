@@ -645,7 +645,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         agent_name = self.name or 'agent'
         run_span = tracer.start_span(
-            'agent run',
+            f'invoke_agent {agent_name}'
+            if instrumentation_settings and instrumentation_settings.version > 2
+            else 'agent run',
             attributes={
                 'model_name': model_used.model_name if model_used else 'no-model',
                 'agent_name': agent_name,
