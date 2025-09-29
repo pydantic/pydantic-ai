@@ -32,6 +32,7 @@ else:
 
 class SpanSummary(TypedDict):
     id: int
+    name: str
     message: str
     children: NotRequired[list[SpanSummary]]
 
@@ -50,7 +51,9 @@ class LogfireSummary:
         id_counter = 0
         for span in spans:
             tid = span['context']['trace_id'], span['context']['span_id']
-            span_lookup[tid] = span_summary = SpanSummary(id=id_counter, message=span['attributes']['logfire.msg'])
+            span_lookup[tid] = span_summary = SpanSummary(
+                id=id_counter, name=span['name'], message=span['attributes']['logfire.msg']
+            )
             self.attributes[id_counter] = span['attributes']
             id_counter += 1
             if parent := span['parent']:
@@ -104,17 +107,19 @@ def test_logfire(
             [
                 {
                     'id': 0,
+                    'name': 'invoke_agent my_agent',
                     'message': 'my_agent run',
                     'children': [
-                        {'id': 1, 'message': 'chat test'},
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                         {
                             'id': 2,
+                            'name': 'running tools',
                             'message': 'running 1 tool',
                             'children': [
-                                {'id': 3, 'message': 'running tool: my_ret'},
+                                {'id': 3, 'name': 'execute_tool my_ret', 'message': 'running tool: my_ret'},
                             ],
                         },
-                        {'id': 4, 'message': 'chat test'},
+                        {'id': 4, 'name': 'chat test', 'message': 'chat test'},
                     ],
                 }
             ]
@@ -124,17 +129,19 @@ def test_logfire(
             [
                 {
                     'id': 0,
+                    'name': 'agent run',
                     'message': 'my_agent run',
                     'children': [
-                        {'id': 1, 'message': 'chat test'},
+                        {'id': 1, 'name': 'chat test', 'message': 'chat test'},
                         {
                             'id': 2,
+                            'name': 'running tools',
                             'message': 'running 1 tool',
                             'children': [
-                                {'id': 3, 'message': 'running tool: my_ret'},
+                                {'id': 3, 'name': 'running tool', 'message': 'running tool: my_ret'},
                             ],
                         },
-                        {'id': 4, 'message': 'chat test'},
+                        {'id': 4, 'name': 'chat test', 'message': 'chat test'},
                     ],
                 }
             ]
