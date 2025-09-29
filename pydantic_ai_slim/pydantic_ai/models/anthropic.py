@@ -54,7 +54,7 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason] = {
 
 
 try:
-    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream
+    from anthropic import NOT_GIVEN, APIStatusError, AsyncStream, omit as OMIT
     from anthropic.types.beta import (
         BetaBase64PDFBlockParam,
         BetaBase64PDFSourceParam,
@@ -285,18 +285,18 @@ class AnthropicModel(Model):
 
             return await self.client.beta.messages.create(
                 max_tokens=model_settings.get('max_tokens', 4096),
-                system=system_prompt or NOT_GIVEN,
+                system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,
-                tools=tools or NOT_GIVEN,
-                tool_choice=tool_choice or NOT_GIVEN,
+                tools=tools or OMIT,
+                tool_choice=tool_choice or OMIT,
                 stream=stream,
-                thinking=model_settings.get('anthropic_thinking', NOT_GIVEN),
-                stop_sequences=model_settings.get('stop_sequences', NOT_GIVEN),
-                temperature=model_settings.get('temperature', NOT_GIVEN),
-                top_p=model_settings.get('top_p', NOT_GIVEN),
+                thinking=model_settings.get('anthropic_thinking', OMIT),
+                stop_sequences=model_settings.get('stop_sequences', OMIT),
+                temperature=model_settings.get('temperature', OMIT),
+                top_p=model_settings.get('top_p', OMIT),
                 timeout=model_settings.get('timeout', NOT_GIVEN),
-                metadata=model_settings.get('anthropic_metadata', NOT_GIVEN),
+                metadata=model_settings.get('anthropic_metadata', OMIT),
                 extra_headers=extra_headers,
                 extra_body=model_settings.get('extra_body'),
             )
@@ -763,6 +763,8 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
+    elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
 
