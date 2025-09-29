@@ -340,6 +340,7 @@ import base64
 from dataclasses import dataclass
 
 from mcp.types import BlobResourceContents, TextResourceContents
+
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.mcp import MCPServerStdio
