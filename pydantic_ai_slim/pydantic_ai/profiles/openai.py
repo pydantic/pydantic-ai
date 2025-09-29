@@ -38,6 +38,11 @@ class OpenAIModelProfile(ModelProfile):
     openai_system_prompt_role: OpenAISystemPromptRole | None = None
     """The role to use for the system prompt message. If not provided, defaults to `'system'`."""
 
+    # GPT-5 introduced support for directly calling a function with a string.
+    openai_supports_freeform_function_calling: bool = False
+    """Whether the provider accepts the value ``type='custom'`` for tools in the
+    request payload."""
+
     openai_chat_supports_web_search: bool = False
     """Whether the model supports web search in Chat Completions API."""
 
@@ -56,6 +61,7 @@ class OpenAIModelProfile(ModelProfile):
 def openai_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for an OpenAI model."""
     is_reasoning_model = model_name.startswith('o') or model_name.startswith('gpt-5')
+    is_freeform_function_calling_model = model_name.startswith('gpt-5')
     # Check if the model supports web search (only specific search-preview models)
     supports_web_search = '-search-preview' in model_name
 
@@ -84,6 +90,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         json_schema_transformer=OpenAIJsonSchemaTransformer,
         supports_json_schema_output=True,
         supports_json_object_output=True,
+        openai_supports_freeform_function_calling=is_freeform_function_calling_model,
         openai_unsupported_model_settings=openai_unsupported_model_settings,
         openai_system_prompt_role=openai_system_prompt_role,
         openai_chat_supports_web_search=supports_web_search,

@@ -25,7 +25,16 @@ from .format_prompt import format_as_xml
 from .messages import AudioUrl, BinaryContent, DocumentUrl, ImageUrl, VideoUrl
 from .output import NativeOutput, PromptedOutput, StructuredDict, TextOutput, ToolOutput
 from .settings import ModelSettings
-from .tools import DeferredToolRequests, DeferredToolResults, RunContext, Tool, ToolApproved, ToolDefinition, ToolDenied
+from .tools import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    FunctionTextFormat,
+    RunContext,
+    Tool,
+    ToolApproved,
+    ToolDefinition,
+    ToolDenied,
+)
 from .usage import RequestUsage, RunUsage, UsageLimits
 
 __all__ = (
@@ -62,6 +71,7 @@ __all__ = (
     'DeferredToolResults',
     'ToolApproved',
     'ToolDenied',
+    'FunctionTextFormat',
     # builtin_tools
     'WebSearchTool',
     'WebSearchUserLocation',

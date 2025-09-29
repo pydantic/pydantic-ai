@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, overload
+from typing import Any, Literal, overload
 
 from pydantic.json_schema import GenerateJsonSchema
 
@@ -10,6 +10,7 @@ from .._run_context import AgentDepsT, RunContext
 from ..exceptions import UserError
 from ..tools import (
     DocstringFormat,
+    FunctionTextFormat,
     GenerateToolJsonSchema,
     Tool,
     ToolFuncEither,
@@ -115,6 +116,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
@@ -132,6 +134,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
@@ -184,6 +187,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
+            text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
@@ -199,17 +204,18 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             # noinspection PyTypeChecker
             self.add_function(
                 func_,
-                None,
-                name,
-                retries,
-                prepare,
-                docstring_format,
-                require_parameter_descriptions,
-                schema_generator,
-                strict,
-                sequential,
-                requires_approval,
-                metadata,
+                takes_ctx=None,
+                name=name,
+                retries=retries,
+                prepare=prepare,
+                docstring_format=docstring_format,
+                require_parameter_descriptions=require_parameter_descriptions,
+                schema_generator=schema_generator,
+                strict=strict,
+                text_format=text_format,
+                sequential=sequential,
+                requires_approval=requires_approval,
+                metadata=metadata,
             )
             return func_
 
@@ -226,6 +232,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         require_parameter_descriptions: bool | None = None,
         schema_generator: type[GenerateJsonSchema] | None = None,
         strict: bool | None = None,
+        text_format: Literal['text'] | FunctionTextFormat | None = None,
         sequential: bool | None = None,
         requires_approval: bool | None = None,
         metadata: dict[str, Any] | None = None,
@@ -255,6 +262,8 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             strict: Whether to enforce JSON schema compliance (only affects OpenAI).
                 See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
                 If `None`, the default value is determined by the toolset.
+            text_format: Used to invoke the function using freeform function calling (only affects OpenAI).
+                See [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] for more info.
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
                 If `None`, the default value is determined by the toolset.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
@@ -286,6 +295,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             require_parameter_descriptions=require_parameter_descriptions,
             schema_generator=schema_generator,
             strict=strict,
+            text_format=text_format,
             sequential=sequential,
             requires_approval=requires_approval,
             metadata=metadata,

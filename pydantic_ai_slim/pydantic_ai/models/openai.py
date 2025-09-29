@@ -79,6 +79,7 @@ try:
     from openai.types.responses.response_status import ResponseStatus
     from openai.types.shared import ReasoningEffort
     from openai.types.shared_params import Reasoning
+    from openai.types.shared_params.custom_tool_input_format import CustomToolInputFormat
 except ImportError as _import_error:
     raise ImportError(
         'Please install `openai` to use the OpenAI model, '
@@ -396,7 +397,7 @@ class OpenAIChatModel(Model):
         response = await self._completions_create(
             messages, False, cast(OpenAIChatModelSettings, model_settings or {}), model_request_parameters
         )
-        model_response = self._process_response(response)
+        model_response = self._process_response(response, model_request_parameters)
         return model_response
 
     @asynccontextmanager
@@ -872,7 +873,7 @@ class OpenAIResponsesModel(Model):
         response = await self._responses_create(
             messages, False, cast(OpenAIResponsesModelSettings, model_settings or {}), model_request_parameters
         )
-        return self._process_response(response)
+        return self._process_response(response, model_request_parameters)
 
     @asynccontextmanager
     async def request_stream(
@@ -889,7 +890,11 @@ class OpenAIResponsesModel(Model):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters)
 
-    def _process_response(self, response: responses.Response) -> ModelResponse:  # noqa: C901
+    def _process_response(
+        self,
+        response: responses.Response,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
         timestamp = number_to_datetime(response.created_at)
         items: list[ModelResponsePart] = []
@@ -959,6 +964,16 @@ class OpenAIResponsesModel(Model):
             ):
                 # Pydantic AI supports MCP natively
                 pass
+            elif item.type == 'custom_tool_call':
+                if item.name not in model_request_parameters.tool_defs:
+                    raise UnexpectedModelBehavior(f'Unknown tool called: {item.name}')
+                tool = model_request_parameters.tool_defs[item.name]
+                argument_name = tool.single_string_argument_name
+                if argument_name is None:
+                    raise UnexpectedModelBehavior(
+                        f'Custom tool call made to function {item.name} which has unexpected arguments'
+                    )
+                items.append(ToolCallPart(item.name, {argument_name: item.input}, tool_call_id=item.call_id))
 
         finish_reason: FinishReason | None = None
         provider_details: dict[str, Any] | None = None
@@ -1080,11 +1095,14 @@ class OpenAIResponsesModel(Model):
         try:
             extra_headers = model_settings.get('extra_headers', {})
             extra_headers.setdefault('User-Agent', get_user_agent())
+            parallel_tool_calls = self._get_parallel_tool_calling(
+                model_settings=model_settings, model_request_parameters=model_request_parameters
+            )
             return await self.client.responses.create(
                 input=openai_messages,
                 model=self._model_name,
                 instructions=instructions,
-                parallel_tool_calls=model_settings.get('parallel_tool_calls', NOT_GIVEN),
+                parallel_tool_calls=parallel_tool_calls,
                 tools=tools or NOT_GIVEN,
                 tool_choice=tool_choice or NOT_GIVEN,
                 max_output_tokens=model_settings.get('max_tokens', NOT_GIVEN),
@@ -1126,7 +1144,16 @@ class OpenAIResponsesModel(Model):
             return NOT_GIVEN
         return Reasoning(effort=reasoning_effort, summary=reasoning_summary)
 
-    def _get_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.FunctionToolParam]:
+    def _get_parallel_tool_calling(
+        self, model_settings: OpenAIResponsesModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool | NotGiven:
+        if any(tool_definition.text_format for tool_definition in model_request_parameters.tool_defs.values()):
+            return False
+        return model_settings.get('parallel_tool_calls', NOT_GIVEN)
+
+    def _get_tools(
+        self, model_request_parameters: ModelRequestParameters
+    ) -> list[responses.FunctionToolParam | responses.CustomToolParam]:
         return [self._map_tool_definition(r) for r in model_request_parameters.tool_defs.values()]
 
     def _get_builtin_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
@@ -1149,15 +1176,33 @@ class OpenAIResponsesModel(Model):
                 )
         return tools
 
-    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam:
+    def _map_tool_definition(self, f: ToolDefinition) -> responses.FunctionToolParam | responses.CustomToolParam:
+        model_profile = OpenAIModelProfile.from_profile(self.profile)
+        if f.text_format:
+            if not model_profile.openai_supports_freeform_function_calling:
+                raise UserError(
+                    f'Tool {f.name!r} uses freeform function calling but {self._model_name!r} does not support freeform function calling.'
+                )
+            if not f.only_takes_string_argument:
+                raise UserError(f'`{f.name}` is set as a freeform function but does not take a single string argument.')
+            if f.text_format == 'text':
+                format: CustomToolInputFormat = {'type': 'text'}
+            else:
+                format = {'type': 'grammar', 'syntax': f.text_format.syntax, 'definition': f.text_format.grammar}
+            tool_param: responses.CustomToolParam = {
+                'name': f.name,
+                'type': 'custom',
+                'description': f.description or '',
+                'format': format,
+            }
+            return tool_param
+
         return {
             'name': f.name,
             'parameters': f.parameters_json_schema,
             'type': 'function',
             'description': f.description,
-            'strict': bool(
-                f.strict and OpenAIModelProfile.from_profile(self.profile).openai_supports_strict_tool_definition
-            ),
+            'strict': bool(f.strict and model_profile.openai_supports_strict_tool_definition),
         }
 
     def _get_previous_response_id_and_new_messages(

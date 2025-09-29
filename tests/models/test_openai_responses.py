@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
@@ -7,6 +8,7 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import TypedDict
 
+from pydantic_ai import UnexpectedModelBehavior, UserError
 from pydantic_ai.agent import Agent
 from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
@@ -33,6 +35,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.profiles.openai import openai_model_profile
 from pydantic_ai.tools import ToolDefinition
@@ -42,6 +45,8 @@ from ..conftest import IsDatetime, IsStr, TestEnv, try_import
 from .mock_openai import MockOpenAIResponses, response_message
 
 with try_import() as imports_successful:
+    from openai import NOT_GIVEN
+    from openai.types.responses.response_output_item import ResponseCustomToolCall
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage, ResponseOutputText
     from openai.types.responses.response_reasoning_item import ResponseReasoningItem, Summary
     from openai.types.responses.response_usage import ResponseUsage
@@ -1864,6 +1869,203 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
     assert result.usage() == snapshot(
         RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
     )
+
+
+def test_openai_responses_model_parallel_tool_calling_enabled():
+    regular_tool = ToolDefinition(
+        name='regular_function',
+        description='A regular function',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'param': {'type': 'string'}},
+            'required': ['param'],
+        },
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    params_regular_only = ModelRequestParameters(function_tools=[regular_tool])
+    parallel_calling = model._get_parallel_tool_calling({}, params_regular_only)  # type: ignore[reportPrivateUsage]
+    assert parallel_calling == NOT_GIVEN
+
+
+def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform():
+    freeform_tool = ToolDefinition(
+        name='freeform_analyzer',
+        description='A freeform analyzer',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format='text',
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    params_with_freeform = ModelRequestParameters(function_tools=[freeform_tool])
+    parallel_calling = model._get_parallel_tool_calling({}, params_with_freeform)  # type: ignore[reportPrivateUsage]
+    assert not parallel_calling
+
+
+def test_openai_responses_model_parallel_tool_calling_disabled_with_freeform_output():
+    freeform_tool = ToolDefinition(
+        name='freeform_analyzer',
+        description='A freeform analyzer',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format='text',
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    params_with_freeform = ModelRequestParameters(output_tools=[freeform_tool])
+    parallel_calling = model._get_parallel_tool_calling({}, params_with_freeform)  # type: ignore[reportPrivateUsage]
+    assert not parallel_calling
+
+
+def test_openai_responses_model_freeform_function_unsupported_model_error():
+    freeform_tool = ToolDefinition(
+        name='freeform_analyzer',
+        description='A freeform analyzer',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format='text',
+    )
+
+    # GPT-4 doesn't support freeform function calling
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key='foobar'))
+
+    with pytest.raises(UserError, match='uses freeform function calling but gpt-4o does not support'):
+        model._map_tool_definition(freeform_tool)  # type: ignore[reportPrivateUsage]
+
+
+def test_openai_responses_model_freeform_function_invalid_signature_error():
+    multi_param_tool = ToolDefinition(
+        name='multi_param_analyzer',
+        description='Tool with multiple params',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'param1': {'type': 'string'},
+                'param2': {'type': 'string'},
+            },
+            'required': ['param1', 'param2'],
+        },
+        text_format='text',
+    )
+
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='foobar'))
+
+    with pytest.raises(UserError, match='does not take a single string argument'):
+        model._map_tool_definition(multi_param_tool)  # type: ignore[reportPrivateUsage]
+
+
+async def test_openai_responses_model_custom_tool_call_response_processing(allow_model_requests: None):
+    """Test that OpenAI Responses model processes custom_tool_call responses correctly."""
+    from pydantic_ai.models import ModelRequestParameters
+
+    content_data = [
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='analyze_content',
+            call_id='call_custom_456',
+            input='This is the raw content input',
+        )
+    ]
+
+    mock_response = response_message(content_data)
+    mock_client = MockOpenAIResponses.create_mock(mock_response)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    freeform_tool = ToolDefinition(
+        name='analyze_content',
+        description='Analyze content',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {'content': {'type': 'string'}},
+            'required': ['content'],
+        },
+        text_format='text',
+    )
+
+    params = ModelRequestParameters(function_tools=[freeform_tool])
+
+    response = model._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+
+    assert response == snapshot(
+        ModelResponse(
+            parts=[],
+            model_name='gpt-4o-123',
+            timestamp=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            provider_name='openai',
+            provider_response_id='123',
+        )
+    )
+
+
+async def test_openai_responses_model_custom_tool_call_unknown_tool_error(allow_model_requests: None):
+    from pydantic_ai.models import ModelRequestParameters
+
+    content_data = [
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='unknown_analyzer',
+            call_id='call_unknown_456',
+            input='Some content',
+        )
+    ]
+
+    mock_response = response_message(content_data)
+    mock_client = MockOpenAIResponses.create_mock(mock_response)
+    m = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    params = ModelRequestParameters()
+
+    with pytest.raises(UnexpectedModelBehavior, match='Unknown tool called: unknown_analyzer'):
+        m._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
+
+
+async def test_openai_responses_model_custom_tool_call_invalid_signature_error(allow_model_requests: None):
+    """Test that OpenAI Responses model raises error for custom tool calls to tools with invalid signatures."""
+    from pydantic_ai.models import ModelRequestParameters
+
+    content_data = [
+        ResponseCustomToolCall(
+            type='custom_tool_call',
+            name='invalid_analyzer',
+            call_id='call_invalid_456',
+            input='Some content',
+        )
+    ]
+
+    mock_response = response_message(content_data)
+    mock_client = MockOpenAIResponses.create_mock(mock_response)
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
+
+    invalid_tool = ToolDefinition(
+        name='invalid_analyzer',
+        description='Tool with invalid signature',
+        parameters_json_schema={
+            'type': 'object',
+            'properties': {
+                'param1': {'type': 'string'},
+                'param2': {'type': 'string'},
+            },
+            'required': ['param1', 'param2'],
+        },
+    )
+
+    params = ModelRequestParameters(function_tools=[invalid_tool])
+
+    with pytest.raises(UnexpectedModelBehavior, match='has unexpected arguments'):
+        model._process_response(mock_response, params)  # type: ignore[reportPrivateUsage]
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):
