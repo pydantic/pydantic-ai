@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 from asyncio import Lock
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -51,10 +51,17 @@ ToolErrorBehavior = Literal['model_retry', 'error']
 
 @dataclass
 class FastMCPToolset(AbstractToolset[AgentDepsT]):
-    """A FastMCP Toolset that uses the FastMCP Client to call tools from a local or remote MCP Server."""
+    """A FastMCP Toolset that uses the FastMCP Client to call tools from a local or remote MCP Server.
+
+    The Toolset can accept a FastMCP Client, a FastMCP Transport, or any other object which a FastMCP Transport can be created from.
+
+    See https://gofastmcp.com/clients/transports for a full list of transports available.
+    """
 
     mcp: Client[Any] | ClientTransport | FastMCP | FastMCP1Server | AnyUrl | Path | MCPConfig | dict[str, Any] | str
-    """The FastMCP transport to use. This can be a local or remote MCP Server configuration or a FastMCP Client."""
+    """The FastMCP transport to use. This can be a local or remote MCP Server configuration, a transport string, or a FastMCP Client."""
+
+    _: KW_ONLY
 
     tool_error_behavior: Literal['model_retry', 'error'] = field(default='error')
     """The behavior to take when a tool error occurs."""

@@ -665,27 +665,32 @@ See the [MCP Client](./mcp/client.md) documentation for how to use MCP servers w
 
 ### FastMCP Tools {#fastmcp-tools}
 
-If you'd like to use tools from a [FastMCP](https://fastmcp.dev) Server, Client, or JSON MCP Configuration with Pydantic AI, you can use the [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset] [toolset](toolsets.md).
+The [FastMCP](https://fastmcp.dev) Client can also be used with Pydantic AI with the provided [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset] [toolset](toolsets.md).
 
 To use the `FastMCPToolset`, you will need to install `pydantic-ai-slim[fastmcp]`.
 
-```python {test="skip"}
-from fastmcp import FastMCP
+A FastMCP Toolset can be created from:
+- A FastMCP Client: `FastMCPToolset(mcp=Client(...))`
+- A FastMCP Transport: `FastMCPToolset(mcp=StdioTransport(command='uv', args=['run', 'mcp-run-python', 'stdio']))`
+- A FastMCP Server: `FastMCPToolset(mcp=FastMCP('my_server'))`
+- An HTTP URL: `FastMCPToolset(mcp='http://localhost:8000/mcp')`
+- An SSE URL: `FastMCPToolset(mcp='http://localhost:8000/sse')`
+- A Python Script: `FastMCPToolset(mcp='my_server.py')`
+- A Node.js Script: `FastMCPToolset(mcp='my_server.js')`
+- A JSON MCP Configuration: `FastMCPToolset(mcp={'mcpServers': {'my_server': {'command': 'python', 'args': ['-c', 'print("test")']}}})`
 
+Connecting your agent to an HTTP MCP Server is as simple as:
+
+```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.toolsets.fastmcp import FastMCPToolset
 
-fastmcp_server = FastMCP('my_server')
-@fastmcp_server.tool()
-async def my_tool(a: int, b: int) -> int:
-    return a + b
-
-toolset = FastMCPToolset.from_fastmcp_server(fastmcp_server)
+toolset = FastMCPToolset(mcp='http://localhost:8000/mcp')
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
 
-You can also use the [`FastMCPToolset`][pydantic_ai.toolsets.fastmcp.FastMCPToolset] to create a toolset from a JSON MCP Configuration. FastMCP supports additional capabilities on top of the MCP specification, like Tool Transformation in the MCP configuration that you can take advantage of with the `FastMCPToolset`.
+You can also create a toolset from a JSON MCP Configuration. FastMCP supports additional capabilities on top of the MCP specification, like Tool Transformation in the MCP configuration that you can take advantage of with the `FastMCPToolset`.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -700,7 +705,25 @@ mcp_config = {
     }
 }
 
-toolset = FastMCPToolset.from_mcp_config(mcp_config)
+toolset = FastMCPToolset(mcp=mcp_config)
+
+agent = Agent('openai:gpt-5', toolsets=[toolset])
+```
+
+Toolsets can also be created from a FastMCP Server:
+
+```python {test="skip"}
+from fastmcp import FastMCP
+
+from pydantic_ai import Agent
+from pydantic_ai.toolsets.fastmcp import FastMCPToolset
+
+fastmcp_server = FastMCP('my_server')
+@fastmcp_server.tool()
+async def my_tool(a: int, b: int) -> int:
+    return a + b
+
+toolset = FastMCPToolset(mcp=fastmcp_server)
 
 agent = Agent('openai:gpt-5', toolsets=[toolset])
 ```
