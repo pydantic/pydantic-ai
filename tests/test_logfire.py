@@ -1407,6 +1407,8 @@ def test_output_type_function_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1421,6 +1423,7 @@ def test_output_type_function_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
             }
         )
@@ -1468,6 +1471,8 @@ def test_output_type_function_with_run_context_logfire_attributes(
                             'properties': {
                                 'tool_arguments': {'type': 'object'},
                                 'tool_response': {'type': 'object'},
+                                'gen_ai.tool.name': {},
+                                'gen_ai.tool.call.id': {},
                             },
                         }
                     )
@@ -1482,6 +1487,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
                 'gen_ai.tool.name': 'final_result',
                 'gen_ai.tool.call.id': IsStr(),
                 'logfire.msg': 'running output function: final_result',
+                'logfire.json_schema': '{"type": "object", "properties": {"gen_ai.tool.name": {}, "gen_ai.tool.call.id": {}}}',
                 'logfire.span_type': 'span',
             }
         )
