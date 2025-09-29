@@ -148,6 +148,50 @@ def test_logfire(
         )
 
     if instrument is True or (isinstance(instrument, InstrumentationSettings) and instrument.version in (2, 3)):
+        if instrument is True or isinstance(instrument, InstrumentationSettings) and instrument.version == 2:
+            # default instrumentation settings
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'running tools',
+                                'message': 'running 1 tool',
+                                'children': [{'id': 3, 'name': 'running tool', 'message': 'running tool: my_ret'}],
+                            },
+                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        ],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [
+                            {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                            {
+                                'id': 2,
+                                'name': 'running tools',
+                                'message': 'running 1 tool',
+                                'children': [
+                                    {'id': 3, 'name': 'execute_tool my_ret', 'message': 'running tool: my_ret'}
+                                ],
+                            },
+                            {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                        ],
+                    }
+                ]
+            )
+
         assert summary.attributes[0] == snapshot(
             {
                 'model_name': 'test',
@@ -555,6 +599,29 @@ def test_instructions_with_structured_output(
             )
         )
     elif instrument.version in (2, 3):
+        if instrument.version == 2:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'agent run',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+        else:
+            assert summary.traces == snapshot(
+                [
+                    {
+                        'id': 0,
+                        'name': 'invoke_agent my_agent',
+                        'message': 'my_agent run',
+                        'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                    }
+                ]
+            )
+
         assert summary.attributes[0] == snapshot(
             {
                 'model_name': 'test',
@@ -739,6 +806,30 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
     assert result.output == MyOutput(content='a')
 
     summary = get_logfire_summary()
+
+    if version == 2:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'agent run',
+                    'message': 'my_agent run',
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                }
+            ]
+        )
+    else:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'invoke_agent my_agent',
+                    'message': 'my_agent run',
+                    'children': [{'id': 1, 'name': 'chat test', 'message': 'chat test'}],
+                }
+            ]
+        )
+
     # Version 2 and 3 have identical snapshots for this test case
     assert summary.attributes[0] == snapshot(
         {
@@ -1068,6 +1159,43 @@ def test_include_tool_args_span_attributes(
     if include_content:
         if version == 3:
             if tool_error:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'invoke_agent my_agent',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {
+                                            'id': 3,
+                                            'name': 'execute_tool add_numbers',
+                                            'message': 'running tool: add_numbers',
+                                        }
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 5,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {
+                                            'id': 6,
+                                            'name': 'execute_tool add_numbers',
+                                            'message': 'running tool: add_numbers',
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                )
                 assert tool_attributes == snapshot(
                     {
                         'gen_ai.tool.name': 'add_numbers',
@@ -1097,6 +1225,31 @@ Fix the errors and try again.\
                     }
                 )
             else:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'invoke_agent my_agent',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {
+                                            'id': 3,
+                                            'name': 'execute_tool add_numbers',
+                                            'message': 'running tool: add_numbers',
+                                        }
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            ],
+                        }
+                    ]
+                )
                 assert tool_attributes == snapshot(
                     {
                         'gen_ai.tool.name': 'add_numbers',
@@ -1122,6 +1275,35 @@ Fix the errors and try again.\
                 )
         else:
             if tool_error:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'agent run',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 5,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {'id': 6, 'name': 'running tool', 'message': 'running tool: add_numbers'}
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                )
                 assert tool_attributes == snapshot(
                     {
                         'gen_ai.tool.name': 'add_numbers',
@@ -1151,6 +1333,27 @@ Fix the errors and try again.\
                     }
                 )
             else:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'agent run',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            ],
+                        }
+                    ]
+                )
                 assert tool_attributes == snapshot(
                     {
                         'gen_ai.tool.name': 'add_numbers',
@@ -1177,6 +1380,74 @@ Fix the errors and try again.\
     else:
         # Version 2 and 3 have identical snapshots when include_content=False
         if tool_error:
+            if version == 3:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'invoke_agent my_agent',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {
+                                            'id': 3,
+                                            'name': 'execute_tool add_numbers',
+                                            'message': 'running tool: add_numbers',
+                                        }
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 5,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {
+                                            'id': 6,
+                                            'name': 'execute_tool add_numbers',
+                                            'message': 'running tool: add_numbers',
+                                        }
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                )
+            else:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'agent run',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 5,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {'id': 6, 'name': 'running tool', 'message': 'running tool: add_numbers'}
+                                    ],
+                                },
+                            ],
+                        }
+                    ]
+                )
             assert tool_attributes == snapshot(
                 {
                     'gen_ai.tool.name': 'add_numbers',
@@ -1190,6 +1461,54 @@ Fix the errors and try again.\
                 }
             )
         else:
+            if version == 3:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'invoke_agent my_agent',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {
+                                            'id': 3,
+                                            'name': 'execute_tool add_numbers',
+                                            'message': 'running tool: add_numbers',
+                                        }
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            ],
+                        }
+                    ]
+                )
+            else:
+                assert summary.traces == snapshot(
+                    [
+                        {
+                            'id': 0,
+                            'name': 'agent run',
+                            'message': 'my_agent run',
+                            'children': [
+                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
+                                {
+                                    'id': 2,
+                                    'name': 'running tools',
+                                    'message': 'running 1 tool',
+                                    'children': [
+                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
+                                    ],
+                                },
+                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
+                            ],
+                        }
+                    ]
+                )
             assert tool_attributes == snapshot(
                 {
                     'gen_ai.tool.name': 'add_numbers',
@@ -1213,17 +1532,18 @@ def get_weather_info(city: str) -> WeatherInfo:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('include_content, version', [(True, 2), (False, 2), (True, 3), (False, 3)])
 def test_output_type_function_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
+    version: Literal[2, 3],
 ) -> None:
     def call_tool(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    instrumentation_settings = InstrumentationSettings(include_content=include_content, version=version)
     my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
 
     result = my_agent.run_sync('Mexico City', output_type=get_weather_info)
@@ -1231,36 +1551,99 @@ def test_output_type_function_logfire_attributes(
 
     summary = get_logfire_summary()
 
-    # Find the output function span attributes
-    [output_function_attributes] = [
-        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
-    ]
-
-    if include_content:
-        assert output_function_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'final_result',
-                'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
-                'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
+    if version == 2:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'agent run',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
                         {
-                            'type': 'object',
-                            'properties': {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-            }
+                            'id': 2,
+                            'name': 'running output function',
+                            'message': 'running output function: final_result',
+                        },
+                    ],
+                }
+            ]
         )
     else:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'invoke_agent my_agent',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
+                        {
+                            'id': 2,
+                            'name': 'execute_tool final_result',
+                            'message': 'running output function: final_result',
+                        },
+                    ],
+                }
+            ]
+        )
+
+    # Find the output function span attributes
+    output_function_attributes = next(
+        attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
+    )
+
+    if include_content:
+        if version == 2:
+            assert output_function_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"city":"Mexico City"}',
+                    'logfire.msg': 'running output function: final_result',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+                }
+            )
+        else:
+            assert output_function_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'gen_ai.tool.call.arguments': '{"city":"Mexico City"}',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.call.arguments': {'type': 'object'},
+                                    'gen_ai.tool.call.result': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'gen_ai.tool.call.result': '{"temperature": 28.7, "description": "sunny"}',
+                }
+            )
+    else:
+        # Version 2 and 3 have the same output function attributes here
         assert output_function_attributes == snapshot(
             {
                 'gen_ai.tool.name': 'final_result',
@@ -1275,10 +1658,11 @@ def test_output_type_function_logfire_attributes(
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize('include_content', [True, False])
+@pytest.mark.parametrize('include_content,version', [(True, 2), (False, 2), (True, 3), (False, 3)])
 def test_output_type_function_with_run_context_logfire_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
+    version: Literal[2, 3],
 ) -> None:
     def get_weather_with_ctx(ctx: RunContext[None], city: str) -> WeatherInfo:
         assert ctx is not None
@@ -1289,7 +1673,7 @@ def test_output_type_function_with_run_context_logfire_attributes(
         args_json = '{"city": "Mexico City"}'
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args_json)])
 
-    instrumentation_settings = InstrumentationSettings(include_content=include_content)
+    instrumentation_settings = InstrumentationSettings(include_content=include_content, version=version)
     my_agent = Agent(model=FunctionModel(call_tool), instrument=instrumentation_settings)
 
     result = my_agent.run_sync('Mexico City', output_type=get_weather_with_ctx)
@@ -1297,35 +1681,97 @@ def test_output_type_function_with_run_context_logfire_attributes(
 
     summary = get_logfire_summary()
 
+    if version == 2:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'agent run',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
+                        {
+                            'id': 2,
+                            'name': 'running output function',
+                            'message': 'running output function: final_result',
+                        },
+                    ],
+                }
+            ]
+        )
+    else:
+        assert summary.traces == snapshot(
+            [
+                {
+                    'id': 0,
+                    'name': 'invoke_agent my_agent',
+                    'message': 'my_agent run',
+                    'children': [
+                        {'id': 1, 'name': 'chat function:call_tool:', 'message': 'chat function:call_tool:'},
+                        {
+                            'id': 2,
+                            'name': 'execute_tool final_result',
+                            'message': 'running output function: final_result',
+                        },
+                    ],
+                }
+            ]
+        )
+
     # Find the output function span attributes
-    [output_function_attributes] = [
+    output_function_attributes = next(
         attributes for attributes in summary.attributes.values() if attributes.get('gen_ai.tool.name') == 'final_result'
-    ]
+    )
 
     if include_content:
-        assert output_function_attributes == snapshot(
-            {
-                'gen_ai.tool.name': 'final_result',
-                'gen_ai.tool.call.id': IsStr(),
-                'tool_arguments': '{"city":"Mexico City"}',
-                'logfire.msg': 'running output function: final_result',
-                'logfire.json_schema': IsJson(
-                    snapshot(
-                        {
-                            'type': 'object',
-                            'properties': {
-                                'tool_arguments': {'type': 'object'},
-                                'tool_response': {'type': 'object'},
-                                'gen_ai.tool.name': {},
-                                'gen_ai.tool.call.id': {},
-                            },
-                        }
-                    )
-                ),
-                'logfire.span_type': 'span',
-                'tool_response': '{"temperature": 28.7, "description": "sunny"}',
-            }
-        )
+        if version == 2:
+            assert output_function_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"city":"Mexico City"}',
+                    'logfire.msg': 'running output function: final_result',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': '{"temperature": 28.7, "description": "sunny"}',
+                }
+            )
+        else:
+            assert output_function_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'final_result',
+                    'logfire.msg': 'running output function: final_result',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'gen_ai.tool.call.arguments': '{"city":"Mexico City"}',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.call.arguments': {'type': 'object'},
+                                    'gen_ai.tool.call.result': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'gen_ai.tool.call.result': '{"temperature": 28.7, "description": "sunny"}',
+                }
+            )
     else:
         assert output_function_attributes == snapshot(
             {
