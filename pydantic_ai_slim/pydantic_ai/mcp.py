@@ -276,7 +276,7 @@ class MCPServer(AbstractToolset[Any], ABC):
         )
 
     async def list_resources(self) -> list[mcp_types.Resource]:
-        """Retrieve resources that are currently active on the server.
+        """Retrieve resources that are currently present on the server.
 
         Note:
         - We don't cache resources as they might change.
@@ -285,6 +285,12 @@ class MCPServer(AbstractToolset[Any], ABC):
         async with self:  # Ensure server is running
             result = await self._client.list_resources()
         return result.resources
+
+    async def list_resource_templates(self) -> list[mcp_types.ResourceTemplate]:
+        """Retrieve resource templates that are currently present on the server."""
+        async with self:  # Ensure server is running
+            result = await self._client.list_resource_templates()
+        return result.resourceTemplates
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.

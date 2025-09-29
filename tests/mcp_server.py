@@ -124,6 +124,12 @@ async def product_name_resource() -> str:
     return Path(__file__).parent.joinpath('assets/product_name.txt').read_text()
 
 
+@mcp.resource('resource://greeting/{name}', mime_type='text/plain')
+async def greeting_resource_template(name: str) -> str:
+    """Dynamic greeting resource template."""
+    return f'Hello, {name}!'
+
+
 @mcp.tool()
 async def get_image() -> Image:
     data = Path(__file__).parent.joinpath('assets/kiwi.png').read_bytes()

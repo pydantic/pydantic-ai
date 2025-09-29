@@ -337,6 +337,17 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
         assert resources[2].name == snapshot('product_name_resource')
 
 
+async def test_stdio_server_list_resource_templates(run_context: RunContext[int]):
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        resource_templates = await server.list_resource_templates()
+        assert len(resource_templates) == snapshot(1)
+
+        assert resource_templates[0].uriTemplate == snapshot('resource://greeting/{name}')
+        assert resource_templates[0].name == snapshot('greeting_resource_template')
+        assert resource_templates[0].description == snapshot('Dynamic greeting resource template.')
+
+
 async def test_log_level_set(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'], log_level='info')
     assert server.log_level == 'info'
