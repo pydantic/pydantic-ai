@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import base64
-import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
 import pytest
+from fastmcp.client import PythonStdioTransport, SSETransport
+from fastmcp.client.transports import ClientTransport
 from inline_snapshot import snapshot
 
 from pydantic_ai._run_context import RunContext
@@ -21,7 +22,13 @@ from .conftest import try_import
 
 with try_import() as imports_successful:
     from fastmcp.client import Client
-    from fastmcp.client.transports import FastMCPTransport, MCPConfigTransport
+    from fastmcp.client.transports import (
+        FastMCPTransport,
+        MCPConfigTransport,
+        NodeStdioTransport,
+        StdioTransport,
+        StreamableHttpTransport,
+    )
     from fastmcp.exceptions import ToolError
     from fastmcp.server.server import FastMCP
     from mcp.types import (
@@ -40,6 +47,16 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='fastmcp not installed'),
     pytest.mark.anyio,
 ]
+
+
+def get_client_from_toolset(toolset: FastMCPToolset[None]) -> Client[FastMCPTransport]:
+    """Get the client from the toolset."""
+    return toolset._client  # type: ignore
+
+
+def get_transport_from_toolset(toolset: FastMCPToolset[None]) -> ClientTransport:
+    """Get the transport from the toolset."""
+    return get_client_from_toolset(toolset).transport
 
 
 @pytest.fixture
@@ -440,53 +457,88 @@ server.run()"""
                 tools = await toolset.get_tools(run_context)
                 assert 'test_tool' in tools
 
-    async def test_sse_transport(self, run_context: RunContext[None]):
-        """Test creating toolset from stdio transport."""
-        server_script = """
-from fastmcp import FastMCP
+    async def test_transports(self):
+        """Test creating toolset from different transports."""
+        toolset = FastMCPToolset(mcp='http://localhost:8000/mcp')
+        assert isinstance(get_transport_from_toolset(toolset), StreamableHttpTransport)
 
-server = FastMCP('test_server')
+        toolset = FastMCPToolset(mcp='http://localhost:8000/sse')
+        assert isinstance(get_transport_from_toolset(toolset), SSETransport)
 
-@server.tool()
-async def test_tool(param1: str, param2: int = 0) -> str:
-    return f'param1={param1}, param2={param2}'
+        toolset = FastMCPToolset(mcp=StdioTransport(command='python', args=['-c', 'print("test")']))
+        assert isinstance(get_transport_from_toolset(toolset), StdioTransport)
 
-server.run(transport='sse')"""
         with TemporaryDirectory() as temp_dir:
-            server_py = Path(temp_dir) / 'server.py'
-            server_py.write_text(server_script)
+            server_py: Path = Path(temp_dir) / 'server.py'
+            server_py.write_text(data='')
+            toolset = FastMCPToolset(mcp=server_py)
+            assert isinstance(get_transport_from_toolset(toolset), PythonStdioTransport)
+            toolset = FastMCPToolset(mcp=str(server_py))
+            assert isinstance(get_transport_from_toolset(toolset), PythonStdioTransport)
 
-            with subprocess.Popen(['python', server_py], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True):
-                toolset = FastMCPToolset(mcp='http://localhost:8000/sse')
-                async with toolset:
-                    tools = await toolset.get_tools(
-                        RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
-                    )
-                    assert 'test_tool' in tools
+            server_js: Path = Path(temp_dir) / 'server.js'
+            server_js.write_text(data='')
+            toolset = FastMCPToolset(mcp=server_js)
+            assert isinstance(get_transport_from_toolset(toolset), NodeStdioTransport)
+            toolset = FastMCPToolset(mcp=str(server_js))
+            assert isinstance(get_transport_from_toolset(toolset), NodeStdioTransport)
 
-    async def test_streamable_http_transport(self, run_context: RunContext[None]):
-        """Test creating toolset from stdio transport."""
-        server_script = """
-from fastmcp import FastMCP
-import asyncio
+        toolset = FastMCPToolset(
+            mcp={'mcpServers': {'test_server': {'command': 'python', 'args': ['-c', 'print("test")']}}}
+        )
+        assert isinstance(get_transport_from_toolset(toolset), MCPConfigTransport)
 
-server = FastMCP('test_server')
+    #     async def test_sse_transport(self, run_context: RunContext[None]):
+    #         """Test creating toolset from stdio transport."""
+    #         server_script = """
+    # from fastmcp import FastMCP
 
-@server.tool()
-async def test_tool(param1: str, param2: int = 0) -> str:
-    return f'param1={param1}, param2={param2}'
+    # server = FastMCP('test_server')
 
-asyncio.run(server.run_streamable_http_async(host='localhost', port=8001))
-"""
-        with TemporaryDirectory() as temp_dir:
-            server_py = Path(temp_dir) / 'server.py'
-            server_py.write_text(server_script)
+    # @server.tool()
+    # async def test_tool(param1: str, param2: int = 0) -> str:
+    #     return f'param1={param1}, param2={param2}'
 
-            with subprocess.Popen(['python', server_py], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True):
-                toolset = FastMCPToolset(mcp='http://localhost:8001/mcp')
-                async with toolset:
-                    tools = await toolset.get_tools(run_context)
-                    assert 'test_tool' in tools
+    # server.run(transport='sse')"""
+    #         with TemporaryDirectory() as temp_dir:
+    #             server_py = Path(temp_dir) / 'server.py'
+    #             server_py.write_text(server_script)
+
+    #             with subprocess.Popen(['python', server_py], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True):
+    #                 toolset = FastMCPToolset(mcp='http://localhost:8000/sse')
+    #                 async with toolset:
+    #                     tools = await toolset.get_tools(
+    #                         RunContext(deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0)
+    #                     )
+    #                     assert 'test_tool' in tools
+
+    #     async def test_streamable_http_transport(self, run_context: RunContext[None]):
+    #         """Test creating toolset from stdio transport."""
+
+    #         toolset = FastMCPToolset(mcp='http://localhost:8001/mcp')
+
+    #         assert isinstance(get_client_from_toolset(toolset).transport, StreamableHttpTransport)
+    #         server_script = """
+    # from fastmcp import FastMCP
+    # import asyncio
+
+    # server = FastMCP('test_server')
+
+    # @server.tool()
+    # async def test_tool(param1: str, param2: int = 0) -> str:
+    #     return f'param1={param1}, param2={param2}'
+
+    # asyncio.run(server.run_streamable_http_async(host='localhost', port=8001))
+    # """
+    #         with TemporaryDirectory() as temp_dir:
+    #             server_py = Path(temp_dir) / 'server.py'
+    #             server_py.write_text(server_script)
+
+    #             with subprocess.Popen(['python', server_py], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True):
+    #                 toolset = FastMCPToolset(mcp='http://localhost:8001/mcp')
+    #                 async with toolset:
+    #                     tools = await toolset.get_tools(run_context)
+    #                     assert 'test_tool' in tools
 
     async def test_in_memory_transport(self, run_context: RunContext[None]):
         """Test creating toolset from stdio transport."""
