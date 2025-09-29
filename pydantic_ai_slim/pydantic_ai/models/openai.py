@@ -535,7 +535,7 @@ class OpenAIChatModel(Model):
         # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
-        if reasoning := getattr(choice.message, 'reasoning', None):  # pragma: no cover
+        if reasoning := getattr(choice.message, 'reasoning', None):
             items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
 
         # NOTE: We don't currently handle OpenRouter `reasoning_details`:
