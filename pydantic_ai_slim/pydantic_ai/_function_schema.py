@@ -231,31 +231,39 @@ R = TypeVar('R')
 
 WithCtx = Callable[Concatenate[RunContext[Any], P], R]
 WithoutCtx = Callable[P, R]
-TargetFunc = WithCtx[P, R] | WithoutCtx[P, R]
+TargetCallable = WithCtx[P, R] | WithoutCtx[P, R]
 
 
-def _takes_ctx(function: TargetFunc[P, R]) -> TypeIs[WithCtx[P, R]]:
-    """Check if a function takes a `RunContext` first argument.
+def _takes_ctx(callable_obj: TargetCallable[P, R]) -> TypeIs[WithCtx[P, R]]:
+    """Check if a callable takes a `RunContext` first argument.
 
     Args:
-        function: The function to check.
+        callable_obj: The callable to check.
 
     Returns:
-        `True` if the function takes a `RunContext` as first argument, `False` otherwise.
+        `True` if the callable takes a `RunContext` as first argument, `False` otherwise.
     """
     try:
-        sig = signature(function)
-    except ValueError:  # pragma: no cover
-        return False  # pragma: no cover
+        sig = signature(callable_obj)
+    except ValueError:
+        return False
     try:
         first_param_name = next(iter(sig.parameters.keys()))
     except StopIteration:
         return False
     else:
-        type_hints = _typing_extra.get_function_type_hints(function)
+        # See https://github.com/pydantic/pydantic/pull/11451 for a similar implementation in Pydantic
+        if not isinstance(callable_obj, _decorators._function_like):  # pyright: ignore[reportPrivateUsage]
+            call_func = getattr(type(callable_obj), '__call__', None)
+            if call_func is not None:
+                callable_obj = call_func
+            else:
+                return False  # pragma: no cover
+
+        type_hints = _typing_extra.get_function_type_hints(_decorators.unwrap_wrapped_function(callable_obj))
         annotation = type_hints.get(first_param_name)
         if annotation is None:
-            return False  # pragma: no cover
+            return False
         return True is not sig.empty and _is_call_ctx(annotation)
 
 
