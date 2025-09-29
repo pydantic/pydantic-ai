@@ -324,15 +324,15 @@ async def test_stdio_server_list_resources(run_context: RunContext[int]):
         resources = await server.list_resources()
         assert len(resources) == snapshot(3)
 
-        assert resources[0].uri == snapshot('resource://kiwi.png')
+        assert str(resources[0].uri) == snapshot('resource://kiwi.png')
         assert resources[0].mimeType == snapshot('image/png')
         assert resources[0].name == snapshot('kiwi_resource')
 
-        assert resources[1].uri == snapshot('resource://marcelo.mp3')
+        assert str(resources[1].uri) == snapshot('resource://marcelo.mp3')
         assert resources[1].mimeType == snapshot('audio/mpeg')
         assert resources[1].name == snapshot('marcelo_resource')
 
-        assert resources[2].uri == snapshot('resource://product_name.txt')
+        assert str(resources[2].uri) == snapshot('resource://product_name.txt')
         assert resources[2].mimeType == snapshot('text/plain')
         assert resources[2].name == snapshot('product_name_resource')
 
