@@ -618,3 +618,46 @@ MCP elicitation supports string, number, boolean, and enum types with flat objec
 ### Security
 
 MCP Elicitation requires careful handling - servers must not request sensitive information, and clients must implement user approval controls with clear explanations. See [security considerations](https://modelcontextprotocol.io/specification/2025-06-18/client/elicitation#security-considerations) for details.
+
+## Accessing the underlying MCP client
+
+For advanced use cases, you can access the underlying `ClientSession` to manually retrieve prompts or resources from
+the MCP server. This gives you direct access to all MCP protocol methods.
+
+The [`MCPServer.client`][pydantic_ai.mcp.MCPServer.client] property provides access to the underlying `ClientSession`,
+which is only available when the server is running (within an async context manager).
+
+```python {title="manual_client_access.py"}
+from pydantic_ai.mcp import MCPServerStdio
+
+server = MCPServerStdio('python', args=['my_mcp_server.py'])
+
+async def main():
+    async with server:  # Server must be running to access client
+        # List all available prompts
+        prompts = await server.client.list_prompts()
+        print(f"Available prompts: {[p.name for p in prompts.prompts]}")
+
+        # Get a specific prompt
+        if prompts.prompts:
+            prompt = await server.client.get_prompt(
+                prompts.prompts[0].name,
+                arguments={"topic": "example"}
+            )
+            print(f"Prompt: {prompt}")
+
+        # List all available resources
+        resources = await server.client.list_resources()
+        print(f"Available resources: {[r.uri for r in resources.resources]}")
+
+        # Read a specific resource
+        if resources.resources:
+            resource = await server.client.read_resource(resources.resources[0].uri)
+            print(f"Resource content: {resource}")
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+!!! note
+    The `client` property is only available when the MCP server is running within an async context manager (`async with server:`).
+    Attempting to access it outside this context will raise an `AttributeError`.
