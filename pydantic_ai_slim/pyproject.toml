@@ -60,7 +60,7 @@ dependencies = [
     "exceptiongroup; python_version < '3.11'",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
-    "genai-prices>=0.0.23",
+    "genai-prices>=0.0.28",
 ]
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -97,7 +97,7 @@ ag-ui = ["ag-ui-protocol>=0.1.8", "starlette>=0.45.3"]
 # Retries
 retries = ["tenacity>=8.2.3"]
 # Temporal
-temporal = ["temporalio==1.17.0"]
+temporal = ["temporalio==1.18.0"]
 # DBOS
 dbos = ["dbos>=1.14.0"]
 

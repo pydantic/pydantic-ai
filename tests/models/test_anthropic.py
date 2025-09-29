@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
@@ -4180,6 +4181,29 @@ async def test_anthropic_native_output(allow_model_requests: None, anthropic_api
 
     with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
         await agent.run('What is the largest city in the user country?')
+
+
+async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel(
+        'claude-sonnet-4-0',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
+    )
+
+    agent = Agent(m, output_type=int)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is 3 + 3?')
+
+    agent = Agent(m, output_type=PromptedOutput(int))
+
+    result = await agent.run('What is 3 + 3?')
+    assert result.output == snapshot(6)
 
 
 async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
