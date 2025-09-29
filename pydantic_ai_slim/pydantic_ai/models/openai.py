@@ -757,12 +757,16 @@ class OpenAIChatModel(Model):
                 if isinstance(item, str):
                     content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
                 elif isinstance(item, ImageUrl):
-                    image_url = ImageURL(url=item.url)
+                    image_url: ImageURL = {'url': item.url}
+                    if metadata := item.vendor_metadata:
+                        image_url['detail'] = metadata.get('detail', 'auto')
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     if item.is_image:
-                        image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                        image_url: ImageURL = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
+                        if metadata := item.vendor_metadata:
+                            image_url['detail'] = metadata.get('detail', 'auto')
                         content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                     elif item.is_audio:
                         assert item.format in ('wav', 'mp3')
@@ -1387,11 +1391,17 @@ class OpenAIResponsesModel(Model):
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     if item.is_image:
+                        detail: Literal['auto', 'low', 'high'] = 'auto'
+                        if metadata := item.vendor_metadata:
+                            detail = cast(
+                                Literal['auto', 'low', 'high'],
+                                metadata.get('detail', 'auto'),
+                            )
                         content.append(
                             responses.ResponseInputImageParam(
                                 image_url=f'data:{item.media_type};base64,{base64_encoded}',
                                 type='input_image',
-                                detail='auto',
+                                detail=detail,
                             )
                         )
                     elif item.is_document:
@@ -1410,8 +1420,15 @@ class OpenAIResponsesModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
+                    detail: Literal['auto', 'low', 'high'] = 'auto'
+                    if metadata := item.vendor_metadata:
+                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
                     content.append(
-                        responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
+                        responses.ResponseInputImageParam(
+                            image_url=item.url,
+                            type='input_image',
+                            detail=detail,
+                        )
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
