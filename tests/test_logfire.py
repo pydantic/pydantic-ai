@@ -1111,28 +1111,15 @@ async def test_feedback(capfire: CaptureLogfire) -> None:
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
-@pytest.mark.parametrize(
-    'include_content,tool_error,version',
-    [
-        (True, False, 2),
-        (True, True, 2),
-        (False, False, 2),
-        (False, True, 2),
-        (True, False, 3),
-        (True, True, 3),
-        (False, False, 3),
-        (False, True, 3),
-    ],
-)
+@pytest.mark.parametrize('include_content,tool_error', [(True, False), (True, True), (False, False), (False, True)])
 def test_include_tool_args_span_attributes(
     get_logfire_summary: Callable[[], LogfireSummary],
     include_content: bool,
     tool_error: bool,
-    version: Literal[2, 3],
 ) -> None:
     """Test that tool arguments are included/excluded in span attributes based on instrumentation settings."""
 
-    instrumentation_settings = InstrumentationSettings(include_content=include_content, version=version)
+    instrumentation_settings = InstrumentationSettings(include_content=include_content)
     test_model = TestModel(seed=42)
     my_agent = Agent(model=test_model, instrument=instrumentation_settings)
 
@@ -1157,365 +1144,97 @@ def test_include_tool_args_span_attributes(
     )
 
     if include_content:
-        if version == 3:
-            if tool_error:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'invoke_agent my_agent',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {
-                                            'id': 3,
-                                            'name': 'execute_tool add_numbers',
-                                            'message': 'running tool: add_numbers',
-                                        }
-                                    ],
-                                },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 5,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {
-                                            'id': 6,
-                                            'name': 'execute_tool add_numbers',
-                                            'message': 'running tool: add_numbers',
-                                        }
-                                    ],
-                                },
-                            ],
-                        }
-                    ]
-                )
-                assert tool_attributes == snapshot(
-                    {
-                        'gen_ai.tool.name': 'add_numbers',
-                        'gen_ai.tool.call.id': IsStr(),
-                        'gen_ai.tool.call.arguments': '{"x":42,"y":42}',
-                        'logfire.msg': 'running tool: add_numbers',
-                        'logfire.json_schema': IsJson(
-                            snapshot(
-                                {
-                                    'type': 'object',
-                                    'properties': {
-                                        'gen_ai.tool.call.arguments': {'type': 'object'},
-                                        'gen_ai.tool.call.result': {'type': 'object'},
-                                        'gen_ai.tool.name': {},
-                                        'gen_ai.tool.call.id': {},
-                                    },
-                                }
-                            )
-                        ),
-                        'logfire.span_type': 'span',
-                        'gen_ai.tool.call.result': """\
-Tool error
-
-Fix the errors and try again.\
-""",
-                        'logfire.level_num': 17,
-                    }
-                )
-            else:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'invoke_agent my_agent',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {
-                                            'id': 3,
-                                            'name': 'execute_tool add_numbers',
-                                            'message': 'running tool: add_numbers',
-                                        }
-                                    ],
-                                },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                            ],
-                        }
-                    ]
-                )
-                assert tool_attributes == snapshot(
-                    {
-                        'gen_ai.tool.name': 'add_numbers',
-                        'gen_ai.tool.call.id': IsStr(),
-                        'gen_ai.tool.call.arguments': '{"x":42,"y":42}',
-                        'logfire.msg': 'running tool: add_numbers',
-                        'logfire.json_schema': IsJson(
-                            snapshot(
-                                {
-                                    'type': 'object',
-                                    'properties': {
-                                        'gen_ai.tool.call.arguments': {'type': 'object'},
-                                        'gen_ai.tool.call.result': {'type': 'object'},
-                                        'gen_ai.tool.name': {},
-                                        'gen_ai.tool.call.id': {},
-                                    },
-                                }
-                            )
-                        ),
-                        'logfire.span_type': 'span',
-                        'gen_ai.tool.call.result': '84',
-                    }
-                )
-        else:
-            if tool_error:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'agent run',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
-                                    ],
-                                },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 5,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {'id': 6, 'name': 'running tool', 'message': 'running tool: add_numbers'}
-                                    ],
-                                },
-                            ],
-                        }
-                    ]
-                )
-                assert tool_attributes == snapshot(
-                    {
-                        'gen_ai.tool.name': 'add_numbers',
-                        'gen_ai.tool.call.id': IsStr(),
-                        'tool_arguments': '{"x":42,"y":42}',
-                        'logfire.msg': 'running tool: add_numbers',
-                        'logfire.json_schema': IsJson(
-                            snapshot(
-                                {
-                                    'type': 'object',
-                                    'properties': {
-                                        'tool_arguments': {'type': 'object'},
-                                        'tool_response': {'type': 'object'},
-                                        'gen_ai.tool.name': {},
-                                        'gen_ai.tool.call.id': {},
-                                    },
-                                }
-                            )
-                        ),
-                        'logfire.span_type': 'span',
-                        'tool_response': """\
-Tool error
-
-Fix the errors and try again.\
-""",
-                        'logfire.level_num': 17,
-                    }
-                )
-            else:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'agent run',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
-                                    ],
-                                },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                            ],
-                        }
-                    ]
-                )
-                assert tool_attributes == snapshot(
-                    {
-                        'gen_ai.tool.name': 'add_numbers',
-                        'gen_ai.tool.call.id': IsStr(),
-                        'tool_arguments': '{"x":42,"y":42}',
-                        'tool_response': '84',
-                        'logfire.msg': 'running tool: add_numbers',
-                        'logfire.json_schema': IsJson(
-                            snapshot(
-                                {
-                                    'type': 'object',
-                                    'properties': {
-                                        'tool_arguments': {'type': 'object'},
-                                        'tool_response': {'type': 'object'},
-                                        'gen_ai.tool.name': {},
-                                        'gen_ai.tool.call.id': {},
-                                    },
-                                }
-                            )
-                        ),
-                        'logfire.span_type': 'span',
-                    }
-                )
-    else:
-        # Version 2 and 3 have identical snapshots when include_content=False
         if tool_error:
-            if version == 3:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'invoke_agent my_agent',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {
-                                            'id': 3,
-                                            'name': 'execute_tool add_numbers',
-                                            'message': 'running tool: add_numbers',
-                                        }
-                                    ],
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"x":42,"y":42}',
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
                                 },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 5,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {
-                                            'id': 6,
-                                            'name': 'execute_tool add_numbers',
-                                            'message': 'running tool: add_numbers',
-                                        }
-                                    ],
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                    'tool_response': """\
+Tool error
+
+Fix the errors and try again.\
+""",
+                    'logfire.level_num': 17,
+                }
+            )
+        else:
+            assert tool_attributes == snapshot(
+                {
+                    'gen_ai.tool.name': 'add_numbers',
+                    'gen_ai.tool.call.id': IsStr(),
+                    'tool_arguments': '{"x":42,"y":42}',
+                    'tool_response': '84',
+                    'logfire.msg': 'running tool: add_numbers',
+                    'logfire.json_schema': IsJson(
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'tool_arguments': {'type': 'object'},
+                                    'tool_response': {'type': 'object'},
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
                                 },
-                            ],
-                        }
-                    ]
-                )
-            else:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'agent run',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
-                                    ],
-                                },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 5,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {'id': 6, 'name': 'running tool', 'message': 'running tool: add_numbers'}
-                                    ],
-                                },
-                            ],
-                        }
-                    ]
-                )
+                            }
+                        )
+                    ),
+                    'logfire.span_type': 'span',
+                }
+            )
+    else:
+        if tool_error:
             assert tool_attributes == snapshot(
                 {
                     'gen_ai.tool.name': 'add_numbers',
                     'gen_ai.tool.call.id': IsStr(),
                     'logfire.msg': 'running tool: add_numbers',
                     'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
                     ),
                     'logfire.span_type': 'span',
                     'logfire.level_num': 17,
                 }
             )
         else:
-            if version == 3:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'invoke_agent my_agent',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {
-                                            'id': 3,
-                                            'name': 'execute_tool add_numbers',
-                                            'message': 'running tool: add_numbers',
-                                        }
-                                    ],
-                                },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                            ],
-                        }
-                    ]
-                )
-            else:
-                assert summary.traces == snapshot(
-                    [
-                        {
-                            'id': 0,
-                            'name': 'agent run',
-                            'message': 'my_agent run',
-                            'children': [
-                                {'id': 1, 'name': 'chat test', 'message': 'chat test'},
-                                {
-                                    'id': 2,
-                                    'name': 'running tools',
-                                    'message': 'running 1 tool',
-                                    'children': [
-                                        {'id': 3, 'name': 'running tool', 'message': 'running tool: add_numbers'}
-                                    ],
-                                },
-                                {'id': 4, 'name': 'chat test', 'message': 'chat test'},
-                            ],
-                        }
-                    ]
-                )
             assert tool_attributes == snapshot(
                 {
                     'gen_ai.tool.name': 'add_numbers',
                     'gen_ai.tool.call.id': IsStr(),
                     'logfire.msg': 'running tool: add_numbers',
                     'logfire.json_schema': IsJson(
-                        snapshot({'type': 'object', 'properties': {'gen_ai.tool.name': {}, 'gen_ai.tool.call.id': {}}})
+                        snapshot(
+                            {
+                                'type': 'object',
+                                'properties': {
+                                    'gen_ai.tool.name': {},
+                                    'gen_ai.tool.call.id': {},
+                                },
+                            }
+                        )
                     ),
                     'logfire.span_type': 'span',
                 }
