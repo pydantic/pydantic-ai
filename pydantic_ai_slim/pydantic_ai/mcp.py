@@ -275,6 +275,17 @@ class MCPServer(AbstractToolset[Any], ABC):
             args_validator=TOOL_SCHEMA_VALIDATOR,
         )
 
+    async def list_resources(self) -> list[mcp_types.Resource]:
+        """Retrieve resources that are currently active on the server.
+
+        Note:
+        - We don't cache resources as they might change.
+        - We also don't subscribe to resource changes to avoid complexity.
+        """
+        async with self:  # Ensure server is running
+            result = await self._client.list_resources()
+        return result.resources
+
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
 
