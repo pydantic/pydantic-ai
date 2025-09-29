@@ -265,6 +265,10 @@ class AnthropicModel(Model):
         else:
             if not model_request_parameters.allow_text_output:
                 tool_choice = {'type': 'any'}
+                if (thinking := model_settings.get('anthropic_thinking')) and thinking.get('type') == 'enabled':
+                    raise UserError(
+                        'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+                    )
             else:
                 tool_choice = {'type': 'auto'}
 
