@@ -598,7 +598,7 @@ def test_instructions_with_structured_output(
                 ]
             )
         )
-    elif instrument.version in (2, 3):
+    else:
         if instrument.version == 2:
             assert summary.traces == snapshot(
                 [
