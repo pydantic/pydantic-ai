@@ -334,98 +334,73 @@ Pydantic AI provides methods to discover and read resources from MCP servers:
 
 Resources can contain either text content ([`TextResourceContents`][mcp.types.TextResourceContents]) or binary content ([`BlobResourceContents`][mcp.types.BlobResourceContents]) encoded as base64.
 
-```python {title="mcp_resources.py"}
-import asyncio
-import base64
-from dataclasses import dataclass
+Before consuming resources, we need to run a server that exposes some:
 
-from mcp.types import BlobResourceContents, TextResourceContents
+```python {title="mcp_resource_server.py"}
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP('Pydantic AI MCP Server')
+log_level = 'unset'
+
+
+@mcp.resource('resource://user_name.txt', mime_type='text/plain')
+async def user_name_resource() -> str:
+    return 'Alice'
+
+
+if __name__ == '__main__':
+    mcp.run()
+```
+
+Then we can create the client:
+
+```python {title="mcp_resources.py", requires="mcp_resource_server.py"}
+import asyncio
+
+from mcp.types import TextResourceContents
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.mcp import MCPServerStdio
 from pydantic_ai.models.test import TestModel
 
-
-@dataclass
-class Deps:
-    product_name: str
-
-
 agent = Agent(
     model=TestModel(),
-    deps_type=Deps,
-    instructions='Be sure to give advice related to the users product.',
+    deps_type=str,
+    instructions="Use the customer's name while replying to them.",
 )
 
 
 @agent.instructions
-def add_the_users_product(ctx: RunContext[Deps]) -> str:
-    return f"The user's product is {ctx.deps.product_name}."
+def add_the_users_name(ctx: RunContext[str]) -> str:
+    return f"The user's name is {ctx.deps}."
 
 
 async def main():
-    server = MCPServerStdio('python', args=['-m', 'tests.mcp_server'])
+    server = MCPServerStdio('python', args=['-m', 'mcp_resource_server'])
 
     async with server:
         # List all available resources
         resources = await server.list_resources()
-        print(f'Found {len(resources)} resources:')
         for resource in resources:
-            print(f'  - {resource.name}: {resource.uri} ({resource.mimeType})')
-
-        # List resource templates (with parameters)
-        templates = await server.list_resource_templates()
-        print(f'\nFound {len(templates)} resource templates:')
-        for template in templates:
-            print(f'  - {template.name}: {template.uriTemplate}')
+            print(f' - {resource.name}: {resource.uri} ({resource.mimeType})')
+            #>  - user_name_resource: resource://user_name.txt (text/plain)
 
         # Read a text resource
-        text_contents = await server.read_resource('resource://product_name.txt')
+        text_contents = await server.read_resource('resource://user_name.txt')
         for content in text_contents:
             if isinstance(content, TextResourceContents):
-                print(f'\nText content from {content.uri}: {content.text.strip()}')
-
-        # Read a binary resource
-        binary_contents = await server.read_resource('resource://kiwi.png')
-        for content in binary_contents:
-            if isinstance(content, BlobResourceContents):
-                binary_data = base64.b64decode(content.blob)
-                print(f'\nBinary content from {content.uri}: {len(binary_data)} bytes')
-
-        # Read from a resource template with parameters
-        greeting_contents = await server.read_resource('resource://greeting/Alice')
-        for content in greeting_contents:
-            if isinstance(content, TextResourceContents):
-                print(f'\nTemplate content: {content.text}')
+                print(f'Text content from {content.uri}: {content.text.strip()}')
+                #> Text content from resource://user_name.txt: Alice
 
     # Use resources in dependencies
     async with agent:
-        product_name = text_contents[0].text
-        deps = Deps(product_name=product_name)
-        print(f'\nDeps: {deps}')
-        result = await agent.run('Can you help me with my product?', deps=deps)
-    print(result.output)
+        user_name = text_contents[0].text
+        _ = await agent.run('Can you help me with my product?', deps=user_name)
 
 
 if __name__ == '__main__':
     asyncio.run(main())
-
-    #> Found 3 resources:
-    #>   - kiwi_resource: resource://kiwi.png (image/png)
-    #>   - marcelo_resource: resource://marcelo.mp3 (audio/mpeg)
-    #>   - product_name_resource: resource://product_name.txt (text/plain)
-    #>
-    #> Found 1 resource templates:
-    #>   - greeting_resource_template: resource://greeting/{name}
-    #>
-    #> Text content from resource://product_name.txt: Pydantic AI
-    #>
-    #> Binary content from resource://kiwi.png: 2084609 bytes
-    #>
-    #> Template content: Hello, Alice!
-    #>
-    #> Deps: Deps(product_name='Pydantic AI\n')
 ```
 
 _(This example is complete, it can be run "as is")_
