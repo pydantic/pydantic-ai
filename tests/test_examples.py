@@ -622,6 +622,10 @@ async def model_logic(  # noqa: C901
                 return ModelResponse(parts=list(response))
             else:
                 return ModelResponse(parts=[response])
+        elif m.content == 'The secret is 1234':
+            return ModelResponse(parts=[TextPart('The secret is safe with me')])
+        elif m.content == 'What is the secret code?':
+            return ModelResponse(parts=[TextPart('1234')])
 
     elif isinstance(m, ToolReturnPart) and m.tool_name == 'roulette_wheel':
         win = m.content == 'winner'

@@ -48,7 +48,7 @@ class Provider(ABC, Generic[InterfaceClient]):
         return None  # pragma: no cover
 
     def __repr__(self) -> str:
-        return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'
+        return f'{self.__class__.__name__}(name={self.name}, base_url={self.base_url})'  # pragma: lax no cover
 
 
 def infer_provider_class(provider: str) -> type[Provider[Any]]:  # noqa: C901

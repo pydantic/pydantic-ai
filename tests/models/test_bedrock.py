@@ -965,7 +965,7 @@ async def test_bedrock_model_thinking_part_from_other_model(
                         content=IsStr(),
                         id='rs_68c1ffe148588191812b659c6dc35ce60003919771fccd27',
                     ),
-                    TextPart(content=IsStr()),
+                    TextPart(content=IsStr(), id='msg_68c200091ccc8191b38e07ea231e862d0003919771fccd27'),
                 ],
                 usage=RequestUsage(input_tokens=23, output_tokens=2030, details={'reasoning_tokens': 1728}),
                 model_name='gpt-5-2025-08-07',

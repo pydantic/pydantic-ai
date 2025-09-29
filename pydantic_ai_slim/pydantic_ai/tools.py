@@ -255,6 +255,7 @@ class Tool(Generic[AgentDepsT]):
     strict: bool | None
     sequential: bool
     requires_approval: bool
+    metadata: dict[str, Any] | None
     function_schema: _function_schema.FunctionSchema
     """
     The base JSON schema for the tool's parameters.
@@ -277,6 +278,7 @@ class Tool(Generic[AgentDepsT]):
         strict: bool | None = None,
         sequential: bool = False,
         requires_approval: bool = False,
+        metadata: dict[str, Any] | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
         """Create a new tool instance.
@@ -332,6 +334,7 @@ class Tool(Generic[AgentDepsT]):
             sequential: Whether the function requires a sequential/serial execution environment. Defaults to False.
             requires_approval: Whether this tool requires human-in-the-loop approval. Defaults to False.
                 See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+            metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
         """
         self.function = function
@@ -352,6 +355,7 @@ class Tool(Generic[AgentDepsT]):
         self.strict = strict
         self.sequential = sequential
         self.requires_approval = requires_approval
+        self.metadata = metadata
 
     @classmethod
     def from_schema(
@@ -406,6 +410,7 @@ class Tool(Generic[AgentDepsT]):
             parameters_json_schema=self.function_schema.json_schema,
             strict=self.strict,
             sequential=self.sequential,
+            metadata=self.metadata,
         )
 
     async def prepare_tool_def(self, ctx: RunContext[AgentDepsT]) -> ToolDefinition | None:
@@ -486,6 +491,12 @@ class ToolDefinition:
         See the [tools documentation](../deferred-tools.md#deferred-tools) for more info.
     - `'unapproved'`: a tool that requires human-in-the-loop approval.
         See the [tools documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for more info.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Tool metadata that can be set by the toolset this tool came from. It is not sent to the model, but can be used for filtering and tool behavior customization.
+
+    For MCP tools, this contains the `meta`, `annotations`, and `output_schema` fields from the tool definition.
     """
 
     @property

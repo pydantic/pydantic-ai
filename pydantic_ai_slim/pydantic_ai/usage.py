@@ -135,7 +135,7 @@ class RunUsage(UsageBase):
     """Number of successful tool calls executed during the run."""
 
     input_tokens: int = 0
-    """Total number of text input/prompt tokens."""
+    """Total number of input/prompt tokens."""
 
     cache_write_tokens: int = 0
     """Total number of tokens written to the cache."""
@@ -150,7 +150,7 @@ class RunUsage(UsageBase):
     """Total number of audio tokens read from the cache."""
 
     output_tokens: int = 0
-    """Total number of text output/completion tokens."""
+    """Total number of output/completion tokens."""
 
     details: dict[str, int] = dataclasses.field(default_factory=dict)
     """Any extra details returned by the model."""

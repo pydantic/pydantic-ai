@@ -251,12 +251,10 @@ interactions:
     headers:
       accept-ranges:
       - bytes
-      age:
-      - '264068'
       alt-svc:
       - h3=":443"; ma=86400
       cache-control:
-      - public, max-age=604800, s-maxage=604800
+      - max-age=21600
       connection:
       - keep-alive
       content-length:
@@ -268,7 +266,7 @@ interactions:
       etag:
       - '"33d0-438b181451e00"'
       expires:
-      - Tue, 24 Jun 2025 13:27:15 GMT
+      - Fri, 19 Sep 2025 22:42:26 GMT
       last-modified:
       - Mon, 27 Aug 2007 17:15:36 GMT
       strict-transport-security:
@@ -312,11 +310,11 @@ interactions:
       alt-svc:
       - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
       content-length:
-      - '776'
+      - '772'
       content-type:
       - application/json; charset=UTF-8
       server-timing:
-      - gfet4t7; dur=1228
+      - gfet4t7; dur=1306
       transfer-encoding:
       - chunked
       vary:
@@ -325,27 +323,27 @@ interactions:
       - Referer
     parsed_body:
       candidates:
-      - avgLogprobs: -0.28572704394658405
+      - avgLogprobs: -0.2349079738963734
         content:
           parts:
           - text: |
-              The document appears to be a "Dummy PDF file".
+              The document appears to be a dummy PDF file.
           role: model
         finishReason: STOP
       modelVersion: gemini-2.0-flash
-      responseId: 4FpeaJWYOLq3nvgP0vasuQk
+      responseId: 8ofNaO_lJsO1qtsP0OzFsQQ
       usageMetadata:
-        candidatesTokenCount: 12
+        candidatesTokenCount: 11
         candidatesTokensDetails:
         - modality: TEXT
-          tokenCount: 12
+          tokenCount: 11
         promptTokenCount: 1305
         promptTokensDetails:
-        - modality: TEXT
-          tokenCount: 15
         - modality: DOCUMENT
           tokenCount: 1290
-        totalTokenCount: 1317
+        - modality: TEXT
+          tokenCount: 15
+        totalTokenCount: 1316
     status:
       code: 200
       message: OK

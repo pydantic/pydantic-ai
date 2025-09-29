@@ -15,7 +15,6 @@ from pydantic_ai import (
 )
 from pydantic_ai.agent import AbstractAgent, AgentRun, AgentRunResult, EventStreamHandler, RunOutputDataT, WrapperAgent
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.mcp import MCPServer
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.result import StreamedRunResult
@@ -29,7 +28,6 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.toolsets import AbstractToolset
 
-from ._mcp_server import DBOSMCPServer
 from ._model import DBOSModel
 from ._utils import StepConfig
 
@@ -86,14 +84,21 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         def dbosify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
             # Replace MCPServer with DBOSMCPServer
-            if isinstance(toolset, MCPServer):
-                return DBOSMCPServer(
-                    wrapped=toolset,
-                    step_name_prefix=dbosagent_name,
-                    step_config=self._mcp_step_config,
-                )
+            try:
+                from pydantic_ai.mcp import MCPServer
+
+                from ._mcp_server import DBOSMCPServer
+            except ImportError:
+                pass
             else:
-                return toolset
+                if isinstance(toolset, MCPServer):
+                    return DBOSMCPServer(
+                        wrapped=toolset,
+                        step_name_prefix=dbosagent_name,
+                        step_config=self._mcp_step_config,
+                    )
+
+            return toolset
 
         dbos_toolsets = [toolset.visit_and_replace(dbosify_toolset) for toolset in wrapped.toolsets]
         self._toolsets = dbos_toolsets
@@ -622,7 +627,6 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             [
                 UserPromptNode(
                     user_prompt='What is the capital of France?',
-                    instructions=None,
                     instructions_functions=[],
                     system_prompts=(),
                     system_prompt_functions=[],

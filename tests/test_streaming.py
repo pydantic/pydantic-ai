@@ -400,15 +400,47 @@ async def test_call_tool():
         )
 
 
-async def test_call_tool_empty():
-    async def stream_structured_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
-        yield {}
+async def test_empty_response():
+    async def stream_structured_function(
+        messages: list[ModelMessage], _: AgentInfo
+    ) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) == 1:
+            yield {}
+        else:
+            yield 'ok here is text'
 
-    agent = Agent(FunctionModel(stream_function=stream_structured_function), output_type=tuple[str, int])
+    agent = Agent(FunctionModel(stream_function=stream_structured_function))
 
-    with pytest.raises(UnexpectedModelBehavior, match='Received empty model response'):
-        async with agent.run_stream('hello'):
-            pass
+    async with agent.run_stream('hello') as result:
+        response = await result.get_output()
+        assert response == snapshot('ok here is text')
+        messages = result.all_messages()
+
+    assert messages == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content='hello',
+                        timestamp=IsDatetime(),
+                    )
+                ]
+            ),
+            ModelResponse(
+                parts=[],
+                usage=RequestUsage(input_tokens=50),
+                model_name='function::stream_structured_function',
+                timestamp=IsDatetime(),
+            ),
+            ModelRequest(parts=[]),
+            ModelResponse(
+                parts=[TextPart(content='ok here is text')],
+                usage=RequestUsage(input_tokens=50, output_tokens=4),
+                model_name='function::stream_structured_function',
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
 
 
 async def test_call_tool_wrong_name():

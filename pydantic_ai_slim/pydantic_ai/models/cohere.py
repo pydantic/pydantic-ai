@@ -207,7 +207,7 @@ class CohereModel(Model):
                 if content.type == 'text':
                     parts.append(TextPart(content=content.text))
                 elif content.type == 'thinking':  # pragma: no branch
-                    parts.append(ThinkingPart(content=cast(str, content.thinking)))  # pyright: ignore[reportUnknownMemberType,reportAttributeAccessIssue] - https://github.com/cohere-ai/cohere-python/issues/692
+                    parts.append(ThinkingPart(content=content.thinking))
         for c in response.message.tool_calls or []:
             if c.function and c.function.name and c.function.arguments:  # pragma: no branch
                 parts.append(
@@ -258,7 +258,7 @@ class CohereModel(Model):
                 if texts or thinking:
                     contents: list[AssistantMessageV2ContentItem] = []
                     if thinking:
-                        contents.append(ThinkingAssistantMessageV2ContentItem(thinking='\n\n'.join(thinking)))  # pyright: ignore[reportCallIssue] - https://github.com/cohere-ai/cohere-python/issues/692
+                        contents.append(ThinkingAssistantMessageV2ContentItem(thinking='\n\n'.join(thinking)))
                     if texts:  # pragma: no branch
                         contents.append(TextAssistantMessageV2ContentItem(text='\n\n'.join(texts)))
                     message_param.content = contents

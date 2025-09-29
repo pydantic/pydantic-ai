@@ -1484,7 +1484,8 @@ Here are guidelines for safely crossing a street. Remember that these tips are g
  • Once you've safely reached the other side, continue to be aware of any vehicles that might be turning or reversing.
 
 Always be cautious—even if you have the right-of-way—and understand that it's better to wait a moment longer than risk being caught off guard. Stay safe!\
-"""
+""",
+                        id='msg_68039413525c8191aca9aa8f886eaf5d04f0817ea037a07b',
                     ),
                 ],
                 usage=RequestUsage(input_tokens=13, output_tokens=2028, details={'reasoning_tokens': 1664}),

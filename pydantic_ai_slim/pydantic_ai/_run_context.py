@@ -43,10 +43,17 @@ class RunContext(Generic[AgentDepsT]):
     tool_name: str | None = None
     """Name of the tool being called."""
     retry: int = 0
-    """Number of retries so far."""
+    """Number of retries of this tool so far."""
+    max_retries: int = 0
+    """The maximum number of retries of this tool."""
     run_step: int = 0
     """The current step in the run."""
     tool_call_approved: bool = False
     """Whether a tool call that required approval has now been approved."""
+
+    @property
+    def last_attempt(self) -> bool:
+        """Whether this is the last attempt at running this tool before an error is raised."""
+        return self.retry == self.max_retries
 
     __repr__ = _utils.dataclasses_no_defaults_repr

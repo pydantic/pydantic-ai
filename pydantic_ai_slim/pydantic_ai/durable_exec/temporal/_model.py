@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pydantic import ConfigDict, with_config
 from temporalio import activity, workflow
@@ -30,7 +30,8 @@ from ._run_context import TemporalRunContext
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _RequestParams:
     messages: list[ModelMessage]
-    model_settings: ModelSettings | None
+    # `model_settings` can't be a `ModelSettings` because Temporal would end up dropping fields only defined on its subclasses.
+    model_settings: dict[str, Any] | None
     model_request_parameters: ModelRequestParameters
     serialized_run_context: Any
 
@@ -82,7 +83,11 @@ class TemporalModel(WrapperModel):
 
         @activity.defn(name=f'{activity_name_prefix}__model_request')
         async def request_activity(params: _RequestParams) -> ModelResponse:
-            return await self.wrapped.request(params.messages, params.model_settings, params.model_request_parameters)
+            return await self.wrapped.request(
+                params.messages,
+                cast(ModelSettings | None, params.model_settings),
+                params.model_request_parameters,
+            )
 
         self.request_activity = request_activity
 
@@ -92,7 +97,10 @@ class TemporalModel(WrapperModel):
 
             run_context = self.run_context_type.deserialize_run_context(params.serialized_run_context, deps=deps)
             async with self.wrapped.request_stream(
-                params.messages, params.model_settings, params.model_request_parameters, run_context
+                params.messages,
+                cast(ModelSettings | None, params.model_settings),
+                params.model_request_parameters,
+                run_context,
             ) as streamed_response:
                 await self.event_stream_handler(run_context, streamed_response)
 
@@ -124,7 +132,7 @@ class TemporalModel(WrapperModel):
             activity=self.request_activity,
             arg=_RequestParams(
                 messages=messages,
-                model_settings=model_settings,
+                model_settings=cast(dict[str, Any] | None, model_settings),
                 model_request_parameters=model_request_parameters,
                 serialized_run_context=None,
             ),
@@ -161,7 +169,7 @@ class TemporalModel(WrapperModel):
             args=[
                 _RequestParams(
                     messages=messages,
-                    model_settings=model_settings,
+                    model_settings=cast(dict[str, Any] | None, model_settings),
                     model_request_parameters=model_request_parameters,
                     serialized_run_context=serialized_run_context,
                 ),

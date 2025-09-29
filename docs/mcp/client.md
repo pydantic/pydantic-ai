@@ -163,13 +163,66 @@ async def main():
 
 1. See [MCP Run Python](https://github.com/pydantic/mcp-run-python) for more information.
 
-## Tool call customisation
+## Loading MCP Servers from Configuration
+
+Instead of creating MCP server instances individually in code, you can load multiple servers from a JSON configuration file using [`load_mcp_servers()`][pydantic_ai.mcp.load_mcp_servers].
+
+This is particularly useful when you need to manage multiple MCP servers or want to configure servers externally without modifying code.
+
+### Configuration Format
+
+The configuration file should be a JSON file with an `mcpServers` object containing server definitions. Each server is identified by a unique key and contains the configuration for that server type:
+
+```json {title="mcp_config.json"}
+{
+  "mcpServers": {
+    "python-runner": {
+      "command": "uv",
+      "args": ["run", "mcp-run-python", "stdio"]
+    },
+    "weather-api": {
+      "url": "http://localhost:3001/sse"
+    },
+    "calculator": {
+      "url": "http://localhost:8000/mcp"
+    }
+  }
+}
+```
+
+!!! note
+    The MCP server is only inferred to be an SSE server because of the `/sse` suffix.
+    Any other server with the "url" field will be inferred to be a Streamable HTTP server.
+
+    We made this decision given that the SSE transport is deprecated.
+
+### Usage
+
+```python {title="mcp_config_loader.py" test="skip"}
+from pydantic_ai import Agent
+from pydantic_ai.mcp import load_mcp_servers
+
+# Load all servers from configuration file
+servers = load_mcp_servers('mcp_config.json')
+
+# Create agent with all loaded servers
+agent = Agent('openai:gpt-5', toolsets=servers)
+
+async def main():
+    async with agent:
+        result = await agent.run('What is 7 plus 5?')
+    print(result.output)
+```
+
+_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+
+## Tool call customization
 
 The MCP servers provide the ability to set a `process_tool_call` which allows
-the customisation of tool call requests and their responses.
+the customization of tool call requests and their responses.
 
 A common use case for this is to inject metadata to the requests which the server
-call needs.
+call needs:
 
 ```python {title="mcp_process_tool_call.py"}
 from typing import Any
@@ -204,6 +257,40 @@ async def main():
     #> {"echo_deps":{"echo":"This is an echo message","deps":42}}
 ```
 
+How to access the metadata is MCP server SDK specific. For example with the [MCP Python
+SDK](https://github.com/modelcontextprotocol/python-sdk), it is accessible via the
+[`ctx: Context`](https://github.com/modelcontextprotocol/python-sdk#context)
+argument that can be included on tool call handlers:
+
+```python {title="mcp_server.py"}
+from typing import Any
+
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.session import ServerSession
+
+mcp = FastMCP('Pydantic AI MCP Server')
+log_level = 'unset'
+
+
+@mcp.tool()
+async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
+    """Echo the run context.
+
+    Args:
+        ctx: Context object containing request and session information.
+
+    Returns:
+        Dictionary with an echo message and the deps.
+    """
+    await ctx.info('This is an info message')
+
+    deps: Any = getattr(ctx.request_context.meta, 'deps')
+    return {'echo': 'This is an echo message', 'deps': deps}
+
+if __name__ == '__main__':
+    mcp.run()
+```
+
 ## Using Tool Prefixes to Avoid Naming Conflicts
 
 When connecting to multiple MCP servers that might provide tools with the same name, you can use the `tool_prefix` parameter to avoid naming conflicts. This parameter adds a prefix to all tool names from a specific server.
@@ -230,6 +317,10 @@ calculator_server = MCPServerSSE(
 # - 'calc_get_data'
 agent = Agent('openai:gpt-4o', toolsets=[weather_server, calculator_server])
 ```
+
+## Tool metadata
+
+MCP tools can include metadata that provides additional information about the tool's characteristics, which can be useful when [filtering tools][pydantic_ai.toolsets.FilteredToolset]. The `meta`, `annotations`, and `output_schema` fields can be found on the `metadata` dict on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] object that's passed to filter functions.
 
 ## Custom TLS / SSL configuration
 

@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dbos import DBOS
 from typing_extensions import Self
 
-from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets.abstract import AbstractToolset, ToolsetTool
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 
 from ._utils import StepConfig
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPServer, ToolResult
 
 
 class DBOSMCPServer(WrapperToolset[AgentDepsT], ABC):

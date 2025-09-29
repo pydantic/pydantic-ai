@@ -1,7 +1,7 @@
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from copy import copy
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Generic, cast, overload
@@ -56,7 +56,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _initial_run_ctx_usage: RunUsage = field(init=False)
 
     def __post_init__(self):
-        self._initial_run_ctx_usage = copy(self._run_ctx.usage)
+        self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
@@ -163,7 +163,14 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 )
             return cast(OutputDataT, deferred_tool_requests)
         elif isinstance(self._output_schema, TextOutputSchema):
-            text = '\n\n'.join(x.content for x in message.parts if isinstance(x, _messages.TextPart))
+            text = ''
+            for part in message.parts:
+                if isinstance(part, _messages.TextPart):
+                    text += part.content
+                elif isinstance(part, _messages.BuiltinToolCallPart):
+                    # Text parts before a built-in tool call are essentially thoughts,
+                    # not part of the final result output, so we reset the accumulated text
+                    text = ''
 
             result_data = await self._output_schema.process(
                 text, self._run_ctx, allow_partial=allow_partial, wrap_validation_errors=False
@@ -193,19 +200,30 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 if isinstance(part, _messages.TextPart) and part.content:
                     yield part.content, i
 
+            last_text_index: int | None = None
             async for event in self._raw_stream_response:
                 if (
                     isinstance(event, _messages.PartStartEvent)
                     and isinstance(event.part, _messages.TextPart)
                     and event.part.content
                 ):
-                    yield event.part.content, event.index  # pragma: no cover
-                elif (  # pragma: no branch
+                    last_text_index = event.index
+                    yield event.part.content, event.index
+                elif (
                     isinstance(event, _messages.PartDeltaEvent)
                     and isinstance(event.delta, _messages.TextPartDelta)
                     and event.delta.content_delta
                 ):
+                    last_text_index = event.index
                     yield event.delta.content_delta, event.index
+                elif (
+                    isinstance(event, _messages.PartStartEvent)
+                    and isinstance(event.part, _messages.BuiltinToolCallPart)
+                    and last_text_index is not None
+                ):
+                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
+                    yield '\n\n', event.index
+                    last_text_index = None
 
         async def _stream_text_deltas() -> AsyncIterator[str]:
             async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
@@ -322,9 +340,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             self.all_messages(output_tool_return_content=output_tool_return_content)
         )
 
-    def new_messages(
-        self, *, output_tool_return_content: str | None = None
-    ) -> list[_messages.ModelMessage]:  # pragma: no cover
+    def new_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return new messages associated with this run.
 
         Messages from older runs are excluded.

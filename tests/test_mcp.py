@@ -14,6 +14,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.messages import (
     BinaryContent,
     ModelRequest,
@@ -1251,6 +1252,22 @@ async def test_tool_returning_multiple_items(allow_model_requests: None, agent: 
         )
 
 
+async def test_tool_metadata_extraction():
+    """Test that MCP tool metadata is properly extracted into ToolDefinition."""
+
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
+        tools = [tool.tool_def for tool in (await server.get_tools(ctx)).values()]
+        # find `celsius_to_fahrenheit`
+        celsius_to_fahrenheit = next(tool for tool in tools if tool.name == 'celsius_to_fahrenheit')
+        assert celsius_to_fahrenheit.metadata is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations') is not None
+        assert celsius_to_fahrenheit.metadata.get('annotations', {}).get('title', None) == 'Celsius to Fahrenheit'
+        assert celsius_to_fahrenheit.metadata.get('output_schema') is not None
+        assert celsius_to_fahrenheit.metadata.get('output_schema', {}).get('type', None) == 'object'
+
+
 async def test_client_sampling(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     server.sampling_model = TestModel(custom_output_text='sampling model response')
@@ -1375,3 +1392,19 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
         # Should raise an error when elicitation is attempted without callback
         with pytest.raises(ModelRetry, match='Elicitation not supported'):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+
+def test_load_mcp_servers(tmp_path: Path):
+    config = tmp_path / 'mcp.json'
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/mcp"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStreamableHTTP(url='https://example.com/mcp')])
+
+    config.write_text('{"mcpServers": {"potato": {"command": "python", "args": ["-m", "tests.mcp_server"]}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerStdio(command='python', args=['-m', 'tests.mcp_server'])])
+
+    config.write_text('{"mcpServers": {"potato": {"url": "https://example.com/sse"}}}')
+    assert load_mcp_servers(config) == snapshot([MCPServerSSE(url='https://example.com/sse')])
+
+    with pytest.raises(FileNotFoundError):
+        load_mcp_servers(tmp_path / 'does_not_exist.json')
