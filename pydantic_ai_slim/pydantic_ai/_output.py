@@ -20,6 +20,7 @@ from .output import (
     NativeOutput,
     OutputDataT,
     OutputMode,
+    OutputObjectDefinition,
     OutputSpec,
     OutputTypeOrFunction,
     PromptedOutput,
@@ -581,14 +582,6 @@ class ToolOrTextOutputSchema(ToolOutputSchema[OutputDataT], PlainTextOutputSchem
     @property
     def mode(self) -> OutputMode:
         return 'tool_or_text'
-
-
-@dataclass
-class OutputObjectDefinition:
-    json_schema: ObjectJsonSchema
-    name: str | None = None
-    description: str | None = None
-    strict: bool | None = None
 
 
 @dataclass(init=False)
