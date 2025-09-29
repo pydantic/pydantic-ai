@@ -526,16 +526,20 @@ class OpenAIChatModel(Model):
 
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
             items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
 
-        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
-        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
-        # NOTE: We don't currently handle OpenRouter/gpt-oss `reasoning`:
+        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(choice.message, 'reasoning', None):  # pragma: no cover
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+
+        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
         # If you need this, please file an issue.
 
         vendor_details: dict[str, Any] = {}
@@ -1489,6 +1493,17 @@ class OpenAIStreamedResponse(StreamedResponse):
                     vendor_part_id='reasoning_content',
                     id='reasoning_content',
                     content=reasoning_content,
+                    provider_name=self.provider_name,
+                )
+
+            # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+            # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+            # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+            if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning',
+                    id='reasoning',
+                    content=reasoning,
                     provider_name=self.provider_name,
                 )
 
