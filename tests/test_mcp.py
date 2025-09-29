@@ -37,7 +37,15 @@ with try_import() as imports_successful:
     from mcp import ErrorData, McpError, SamplingMessage
     from mcp.client.session import ClientSession
     from mcp.shared.context import RequestContext
-    from mcp.types import CreateMessageRequestParams, ElicitRequestParams, ElicitResult, ImageContent, TextContent
+    from mcp.types import (
+        BlobResourceContents,
+        CreateMessageRequestParams,
+        ElicitRequestParams,
+        ElicitResult,
+        ImageContent,
+        TextContent,
+        TextResourceContents,
+    )
 
     from pydantic_ai._mcp import map_from_mcp_params, map_from_model_response
     from pydantic_ai.mcp import CallToolFunc, MCPServerSSE, MCPServerStdio, ToolResult
@@ -1422,6 +1430,52 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
         # Should raise an error when elicitation is attempted without callback
         with pytest.raises(ModelRetry, match='Elicitation not supported'):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
+
+
+async def test_read_text_resource(run_context: RunContext[int]):
+    """Test reading a text resource (TextResourceContents)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        contents = await server.read_resource('resource://product_name.txt')
+        assert len(contents) == snapshot(1)
+
+        content = contents[0]
+        assert str(content.uri) == snapshot('resource://product_name.txt')
+        assert content.mimeType == snapshot('text/plain')
+        assert isinstance(content, TextResourceContents)
+        assert content.text == snapshot('Pydantic AI\n')
+
+
+async def test_read_blob_resource(run_context: RunContext[int]):
+    """Test reading a binary resource (BlobResourceContents)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        contents = await server.read_resource('resource://kiwi.png')
+        assert len(contents) == snapshot(1)
+
+        content = contents[0]
+        assert str(content.uri) == snapshot('resource://kiwi.png')
+        assert content.mimeType == snapshot('image/png')
+        assert isinstance(content, BlobResourceContents)
+        # blob should be base64 encoded string
+        assert isinstance(content.blob, str)
+        # Decode and verify it's PNG data (starts with PNG magic bytes)
+        decoded_data = base64.b64decode(content.blob)
+        assert decoded_data[:8] == b'\x89PNG\r\n\x1a\n'  # PNG magic bytes
+
+
+async def test_read_resource_template(run_context: RunContext[int]):
+    """Test reading a resource template with parameters (TextResourceContents)."""
+    server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
+    async with server:
+        contents = await server.read_resource('resource://greeting/Alice')
+        assert len(contents) == snapshot(1)
+
+        content = contents[0]
+        assert str(content.uri) == snapshot('resource://greeting/Alice')
+        assert content.mimeType == snapshot('text/plain')
+        assert isinstance(content, TextResourceContents)
+        assert content.text == snapshot('Hello, Alice!')
 
 
 def test_load_mcp_servers(tmp_path: Path):

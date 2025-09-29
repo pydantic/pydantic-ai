@@ -16,7 +16,7 @@ import anyio
 import httpx
 import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from pydantic import BaseModel, Discriminator, Field, Tag
+from pydantic import AnyUrl, BaseModel, Discriminator, Field, Tag
 from pydantic_core import CoreSchema, core_schema
 from typing_extensions import Self, assert_never, deprecated
 
@@ -291,6 +291,19 @@ class MCPServer(AbstractToolset[Any], ABC):
         async with self:  # Ensure server is running
             result = await self._client.list_resource_templates()
         return result.resourceTemplates
+
+    async def read_resource(self, uri: str) -> list[mcp_types.TextResourceContents | mcp_types.BlobResourceContents]:
+        """Read the contents of a specific resource by URI.
+
+        Args:
+            uri: The URI of the resource to read.
+
+        Returns:
+            A list of resource contents (either TextResourceContents or BlobResourceContents).
+        """
+        async with self:  # Ensure server is running
+            result = await self._client.read_resource(AnyUrl(uri))
+        return result.contents
 
     async def __aenter__(self) -> Self:
         """Enter the MCP server context.
