@@ -11,6 +11,8 @@ from pydantic import Json, TypeAdapter, ValidationError
 from pydantic_core import SchemaValidator, to_json
 from typing_extensions import Self, TypedDict, TypeVar, assert_never
 
+from pydantic_ai._instrumentation import InstrumentationConfig
+
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UserError
@@ -94,6 +96,7 @@ async def execute_traced_output_function(
         ToolRetryError: When wrap_validation_errors is True and a ModelRetry is caught
         ModelRetry: When wrap_validation_errors is False and a ModelRetry occurs
     """
+    instrumentation_config = InstrumentationConfig.for_version(run_context.instrumentation_version)
     # Set up span attributes
     tool_name = run_context.tool_name or getattr(function_schema.function, '__name__', 'output_function')
     attributes = {
@@ -103,18 +106,29 @@ async def execute_traced_output_function(
     if run_context.tool_call_id:
         attributes['gen_ai.tool.call.id'] = run_context.tool_call_id
     if run_context.trace_include_content:
-        attributes['tool_arguments'] = to_json(args).decode()
-        attributes['logfire.json_schema'] = json.dumps(
-            {
-                'type': 'object',
-                'properties': {
-                    'tool_arguments': {'type': 'object'},
-                    'tool_response': {'type': 'object'},
-                },
-            }
-        )
+        attributes[instrumentation_config.tool_arguments_attr] = to_json(args).decode()
 
-    with run_context.tracer.start_as_current_span('running output function', attributes=attributes) as span:
+    attributes['logfire.json_schema'] = json.dumps(
+        {
+            'type': 'object',
+            'properties': {
+                **(
+                    {
+                        instrumentation_config.tool_arguments_attr: {'type': 'object'},
+                        instrumentation_config.tool_result_attr: {'type': 'object'},
+                    }
+                    if run_context.trace_include_content
+                    else {}
+                ),
+                'gen_ai.tool.name': {},
+                **({'gen_ai.tool.call.id': {}} if run_context.tool_call_id else {}),
+            },
+        }
+    )
+
+    with run_context.tracer.start_as_current_span(
+        instrumentation_config.get_output_tool_span_name(tool_name), attributes=attributes
+    ) as span:
         try:
             output = await function_schema.call(args, run_context)
         except ModelRetry as r:
@@ -134,7 +148,7 @@ async def execute_traced_output_function(
             from .models.instrumented import InstrumentedModel
 
             span.set_attribute(
-                'tool_response',
+                instrumentation_config.tool_result_attr,
                 output if isinstance(output, str) else json.dumps(InstrumentedModel.serialize_any(output)),
             )
 
