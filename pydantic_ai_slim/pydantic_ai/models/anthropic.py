@@ -763,10 +763,8 @@ def _map_server_tool_use_block(item: BetaServerToolUseBlock, provider_name: str)
             args=cast(dict[str, Any], item.input) or None,
             tool_call_id=item.id,
         )
-    elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):
-        raise NotImplementedError(
-            f'Anthropic built-in tool {item.name!r} is not currently supported.'
-        )  # pragma: no cover
+    elif item.name in ('web_fetch', 'bash_code_execution', 'text_editor_code_execution'):  # pragma: no cover
+        raise NotImplementedError(f'Anthropic built-in tool {item.name!r} is not currently supported.')
     else:
         assert_never(item.name)
 
