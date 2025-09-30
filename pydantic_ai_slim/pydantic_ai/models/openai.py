@@ -838,7 +838,8 @@ class OpenAIChatModel(Model):
 
     @staticmethod
     def _inline_file_block(media_type: str, text: str, identifier: str | None) -> str:
-        id_attr = f' id="{identifier}"' if identifier else ''
+        assert identifier is not None
+        id_attr = f' id="{identifier}"'
         return '\n'.join([f'-----BEGIN FILE{id_attr} type="{media_type}"-----', text, f'-----END FILE{id_attr}-----'])
 
 
