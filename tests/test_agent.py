@@ -1466,6 +1466,20 @@ def test_output_type_structured_dict_nested():
     assert result.output == snapshot({'make': 'Toyota', 'model': 'Camry', 'tires': [{'brand': 'Michelin', 'size': 17}]})
 
 
+def test_structured_dict_recursive_refs():
+    class Node(BaseModel):
+        nodes: list['Node']
+
+    schema = Node.model_json_schema()
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            '`StructuredDict` does not currently support recursive `$ref`s and `$defs`. See https://github.com/pydantic/pydantic/issues/12145 for more information.'
+        ),
+    ):
+        StructuredDict(schema)
+
+
 def test_default_structured_output_mode():
     def hello(_: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart(content='hello')])  # pragma: no cover

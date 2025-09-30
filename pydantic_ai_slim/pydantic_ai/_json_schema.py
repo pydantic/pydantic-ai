@@ -77,6 +77,8 @@ class JsonSchemaTransformer(ABC):
         if self.prefer_inlined_defs:
             while ref := schema.get('$ref'):
                 key = re.sub(r'^#/\$defs/', '', ref)
+                if key in self.recursive_refs:
+                    break
                 if key in self.refs_stack:
                     self.recursive_refs.add(key)
                     break  # recursive ref can't be unpacked
