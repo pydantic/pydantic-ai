@@ -1046,6 +1046,30 @@ async def test_document_as_binary_content_input(
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
+async def test_text_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/TR/2003/REC-PNG-20031110/iso_8859-1.txt')
+
+    result = await agent.run(['What is the main content on this document, in one sentence?', document_url])
+    assert result.output == snapshot(
+        'The document lists the graphical characters defined by ISO 8859-1 (1987) with their hexadecimal codes and descriptions.'
+    )
+
+
+async def test_text_document_as_binary_content_input(
+    allow_model_requests: None, text_document_content: BinaryContent, openai_api_key: str
+):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    result = await agent.run(['What is the main content on this document?', text_document_content])
+    assert result.output == snapshot(
+        'The main content of the document is simply the text "Dummy TXT file." It does not appear to contain any other detailed information.'
+    )
+
+
 async def test_document_as_binary_content_input_with_tool(
     allow_model_requests: None, document_content: BinaryContent, openai_api_key: str
 ):
