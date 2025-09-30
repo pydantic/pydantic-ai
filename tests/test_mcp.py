@@ -12,10 +12,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai.agent import Agent
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
-from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
-from pydantic_ai.messages import (
+from pydantic_ai import (
     BinaryContent,
     ModelRequest,
     ModelResponse,
@@ -26,6 +23,9 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.agent import Agent
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.mcp import MCPServerStreamableHTTP, load_mcp_servers
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext

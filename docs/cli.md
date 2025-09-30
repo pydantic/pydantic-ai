@@ -114,8 +114,8 @@ _(You'll need to add `asyncio.run(main())` to run `main`)_
 Both `Agent.to_cli()` and `Agent.to_cli_sync()` support a `message_history` parameter, allowing you to continue an existing conversation or provide conversation context:
 
 ```python {title="agent_with_history.py" test="skip"}
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
