@@ -419,8 +419,8 @@ class GoogleModel(Model):
         return contents, config
 
     def _process_response(self, response: GenerateContentResponse) -> ModelResponse:
-        if not response.candidates or len(response.candidates) != 1:
-            raise UnexpectedModelBehavior('Expected exactly one candidate in Gemini response')  # pragma: no cover
+        if not response.candidates:
+            raise UnexpectedModelBehavior('Expected at least one candidate in Gemini response')
         candidate = response.candidates[0]
         if candidate.content is None or candidate.content.parts is None:
             if candidate.finish_reason == 'SAFETY':
