@@ -2890,7 +2890,7 @@ async def test_process_response_no_finish_reason(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='world', role='assistant'),
     )
-    c.finish_reason = None  # type: ignore
+    c.choices[0].finish_reason = None  # type: ignore
 
     mock_client = MockOpenAI.create_mock(c)
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
