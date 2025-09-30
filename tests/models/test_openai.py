@@ -3012,10 +3012,8 @@ async def test_openai_map_single_item_unsupported_binary_content() -> None:
 
     bc = BinaryContent(data=b'data', media_type='application/octet-stream')
     part = UserPromptPart(content=[bc])
-
-    msg = await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
-    content = cast(list[dict[str, Any]], msg['content'])
-    assert content == []
+    with pytest.raises(RuntimeError, match='Unsupported binary content type: application/octet-stream'):
+        await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
 
 
 async def test_openai_binary_content_unsupported_type() -> None:
