@@ -58,8 +58,17 @@ FinishReason: TypeAlias = Literal[
     'content_filter',
     'tool_call',
     'error',
+    'incomplete',
 ]
-"""Reason the model finished generating the response, normalized to OpenTelemetry values."""
+"""Reason the model finished generating the response, normalized to OpenTelemetry values.
+
+- `'stop'`: The model completed its response naturally
+- `'length'`: The model hit a token limit
+- `'content_filter'`: The response was filtered due to content policy
+- `'tool_call'`: The model is requesting a tool call
+- `'error'`: An error occurred
+- `'incomplete'`: The model paused mid-execution and will continue (e.g., Anthropic's `pause_turn`)
+"""
 
 
 @dataclass(repr=False)

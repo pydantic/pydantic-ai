@@ -580,12 +580,20 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                         self._next_node = await self._handle_text_response(ctx, text)
                     elif invisible_parts:
                         # handle responses with only thinking or built-in tool parts.
-                        # this can happen with models that support thinking mode when they don't provide
-                        # actionable output alongside their thinking content. so we tell the model to try again.
-                        m = _messages.RetryPromptPart(
-                            content='Responses without text or tool calls are not permitted.',
-                        )
-                        raise ToolRetryError(m)
+                        # Check if this is an incomplete response that should continue
+                        if self.model_response.finish_reason == 'incomplete':
+                            # 'incomplete' indicates the model is pausing mid-execution (e.g., Anthropic's pause_turn
+                            # during long-running builtin tools). This is expected behavior, not an error.
+                            # Continue with an empty request to allow the model to resume without incrementing retries.
+                            self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[]))
+                        else:
+                            # Other cases with invisible parts are errors - this can happen with models that support
+                            # thinking mode when they don't provide actionable output alongside their thinking content.
+                            # So we tell the model to try again.
+                            m = _messages.RetryPromptPart(
+                                content='Responses without text or tool calls are not permitted.',
+                            )
+                            raise ToolRetryError(m)
                     else:
                         # we got an empty response with no tool calls, text, thinking, or built-in tool calls.
                         # this sometimes happens with anthropic (and perhaps other models)

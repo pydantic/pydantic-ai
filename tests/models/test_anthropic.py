@@ -5112,3 +5112,127 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
 
 According to my memory, you live in **Mexico City**.\
 """)
+
+
+def test_pause_turn_finish_reason_mapping():
+    """Test that pause_turn is mapped to 'incomplete' so the agent continues."""
+    from pydantic_ai.models.anthropic import _FINISH_REASON_MAP  # pyright: ignore[reportPrivateUsage]
+
+    assert _FINISH_REASON_MAP['pause_turn'] == 'incomplete'
+    assert _FINISH_REASON_MAP['end_turn'] == 'stop'
+    assert _FINISH_REASON_MAP['tool_use'] == 'tool_call'
+
+
+async def test_pause_turn_continues_with_unaltered_history(env: TestEnv, allow_model_requests: None):
+    """Test that pause_turn causes the agent to continue with unaltered message history.
+
+    This simulates the scenario where a long-running builtin tool (like web_search)
+    triggers pause_turn, and the agent should retry with the same message history
+    to allow Anthropic to continue from where it left off.
+    """
+    # First response: web_search starts but pauses (pause_turn)
+    first_response = BetaMessage(
+        id='msg_pause',
+        content=[
+            BetaServerToolUseBlock(
+                id='toolu_pause_123',
+                name='web_search',
+                input={'query': 'latest AI developments'},
+                type='server_tool_use',
+            )
+        ],
+        model='claude-sonnet-4-0',
+        role='assistant',
+        stop_reason='pause_turn',  # ← Key: pause_turn indicates incomplete response
+        type='message',
+        usage=BetaUsage(input_tokens=50, output_tokens=10),
+    )
+
+    # Second response: web_search completes (continuation after pause_turn)
+    second_response = BetaMessage(
+        id='msg_continue',
+        content=[
+            BetaWebSearchToolResultBlock(
+                tool_use_id='toolu_pause_123',
+                type='web_search_tool_result',
+                content=[
+                    BetaWebSearchResultBlock(
+                        title='Latest AI News',
+                        url='https://example.com/ai-news',
+                        type='web_search_result',
+                        encrypted_content='dummy_encrypted_content',
+                    )
+                ],
+            ),
+            BetaTextBlock(text='Based on the search results, here are the latest AI developments...', type='text'),
+        ],
+        model='claude-sonnet-4-0',
+        role='assistant',
+        stop_reason='end_turn',  # ← Complete response
+        type='message',
+        usage=BetaUsage(input_tokens=60, output_tokens=50),
+    )
+
+    # Create mock client that returns both responses in sequence
+    mock_anthropic = MockAnthropic.create_mock([first_response, second_response])
+    m = AnthropicModel('claude-sonnet-4-0', provider=AnthropicProvider(anthropic_client=mock_anthropic))
+    agent = Agent(m, builtin_tools=[WebSearchTool()])
+
+    # Run the agent
+    result = await agent.run('What are the latest AI developments?')
+
+    # Verify we got the final result
+    assert result.output == 'Based on the search results, here are the latest AI developments...'
+
+    # Get the captured request kwargs - type: ignore for mock access
+    mock_client = cast(MockAnthropic, mock_anthropic)
+    assert len(mock_client.chat_completion_kwargs) == 2
+    first_request = mock_client.chat_completion_kwargs[0]
+    second_request = mock_client.chat_completion_kwargs[1]
+
+    # Verify first request has the user prompt
+    assert len(first_request['messages']) == 1
+    assert first_request['messages'][0]['role'] == 'user'
+    assert first_request['messages'][0]['content'][0]['text'] == 'What are the latest AI developments?'
+
+    # KEY ASSERTION: Second request preserves ONLY the original user prompt
+    # and the incomplete server_tool_use from the pause_turn response
+    # NO retry message is added (clean continuation)
+    assert len(second_request['messages']) == 2
+
+    # First message is still the original user prompt
+    assert second_request['messages'][0]['role'] == 'user'
+    assert second_request['messages'][0]['content'][0]['text'] == 'What are the latest AI developments?'
+
+    # Second message is the first response (with incomplete server_tool_use)
+    assert second_request['messages'][1]['role'] == 'assistant'
+    assert second_request['messages'][1]['content'][0]['type'] == 'server_tool_use'
+    assert second_request['messages'][1]['content'][0]['name'] == 'web_search'
+    assert second_request['messages'][1]['content'][0]['id'] == 'toolu_pause_123'
+
+    # No third message! pause_turn is handled cleanly without adding retry prompts
+
+    # Verify the final message history
+    all_messages = result.all_messages()
+
+    # Find the pause_turn response
+    pause_turn_responses = [
+        msg
+        for msg in all_messages
+        if (
+            isinstance(msg, ModelResponse)
+            and msg.provider_details
+            and msg.provider_details.get('finish_reason') == 'pause_turn'
+        )
+    ]
+    assert len(pause_turn_responses) == 1
+    pause_turn_response = pause_turn_responses[0]
+    # KEY ASSERTION: pause_turn is mapped to 'incomplete', allowing continuation
+    assert pause_turn_response.finish_reason == 'incomplete'
+    assert pause_turn_response.provider_details == {'finish_reason': 'pause_turn'}
+
+    # Verify the pause_turn response contains the incomplete builtin tool call
+    builtin_tool_parts = [p for p in pause_turn_response.parts if isinstance(p, BuiltinToolCallPart)]
+    assert len(builtin_tool_parts) == 1
+    assert builtin_tool_parts[0].tool_name == 'web_search'
+    assert builtin_tool_parts[0].tool_call_id == 'toolu_pause_123'
