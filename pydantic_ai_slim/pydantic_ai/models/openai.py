@@ -773,7 +773,7 @@ class OpenAIChatModel(Model):
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
                     content.append(await OpenAIChatModel._handle_document_url(item))
-                elif isinstance(item, VideoUrl):  # pragma: no cover
+                elif isinstance(item, VideoUrl):
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
                     assert_never(item)
