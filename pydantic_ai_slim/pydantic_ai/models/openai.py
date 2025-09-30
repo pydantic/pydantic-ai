@@ -787,27 +787,26 @@ class OpenAIChatModel(Model):
             media_type = item.media_type
             inline = OpenAIChatModel._inline_file_block(media_type, text, identifier=item.identifier)
             return ChatCompletionContentPartTextParam(text=inline, type='text')
+        base64_encoded = base64.b64encode(item.data).decode('utf-8')
+        if item.is_image:
+            image_url: ImageURL = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
+            if metadata := item.vendor_metadata:
+                image_url['detail'] = metadata.get('detail', 'auto')
+            return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
+        elif item.is_audio:
+            assert item.format in ('wav', 'mp3')
+            audio = InputAudio(data=base64_encoded, format=item.format)
+            return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
+        elif item.is_document:
+            return File(
+                file=FileFile(
+                    file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                    filename=f'filename.{item.format}',
+                ),
+                type='file',
+            )
         else:
-            base64_encoded = base64.b64encode(item.data).decode('utf-8')
-            if item.is_image:
-                image_url: ImageURL = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
-                if metadata := item.vendor_metadata:
-                    image_url['detail'] = metadata.get('detail', 'auto')
-                return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
-            elif item.is_audio:
-                assert item.format in ('wav', 'mp3')
-                audio = InputAudio(data=base64_encoded, format=item.format)
-                return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
-            elif item.is_document:
-                return File(
-                    file=FileFile(
-                        file_data=f'data:{item.media_type};base64,{base64_encoded}',
-                        filename=f'filename.{item.format}',
-                    ),
-                    type='file',
-                )
-            else:
-                raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
+            raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
 
     @staticmethod
     async def _handle_document_url(item: DocumentUrl) -> ChatCompletionContentPartParam:
