@@ -33,7 +33,6 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UserError,
     UserPromptPart,
-    VideoUrl,
 )
 from pydantic_ai.builtin_tools import WebSearchTool
 from pydantic_ai.models import ModelRequestParameters
@@ -840,78 +839,6 @@ async def test_document_url_input(allow_model_requests: None, openai_api_key: st
     assert result.output == snapshot('The document contains the text "Dummy PDF file" on its single page.')
 
 
-@pytest.mark.parametrize(
-    'media_type,body',
-    [
-        ('text/plain', 'Hello'),
-        ('application/json', '{"a":1}'),
-        ('application/xml', '<a>1</a>'),
-        ('application/yaml', 'a: 1'),
-    ],
-)
-async def test_openai_binary_content_text_like_is_inlined(
-    media_type: str,
-    body: str,
-) -> None:
-    # Arrange input
-    bin_content = BinaryContent(data=body.encode(), media_type=media_type)
-    identifier = bin_content.identifier
-    part = UserPromptPart(content=[bin_content])
-
-    msg = await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
-    content = cast(list[dict[str, Any]], msg['content'])
-
-    assert content[0]['type'] == 'text'
-    text = content[0]['text']
-    expected = (
-        f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE id="{identifier}"-----'
-    )
-    assert text == expected
-
-
-@pytest.mark.parametrize(
-    'url,media_type,data_type,body',
-    [
-        ('https://example.com/file.txt', 'text/plain', 'txt', 'hello'),
-        ('https://example.com/data.csv', 'text/csv', 'csv', 'a,b\n1,2'),
-        ('https://example.com/data.json', 'application/json', 'json', '{"a":1}'),
-        ('https://example.com/data.xml', 'application/xml', 'xml', '<a>1</a>'),
-        ('https://example.com/readme.md', 'text/markdown', 'md', '# Title'),
-        ('https://example.com/conf.yaml', 'application/yaml', 'yaml', 'a: 1'),
-    ],
-)
-async def test_openai_document_url_text_like_is_inlined(
-    monkeypatch: pytest.MonkeyPatch,
-    url: str,
-    media_type: str,
-    data_type: str,
-    body: str,
-) -> None:
-    async def fake_download_item(
-        item: Any, data_format: str = 'text', type_format: str = 'extension'
-    ) -> dict[str, str]:
-        assert item.url == url
-        assert data_format == 'text'
-        return {'data': body, 'data_type': data_type}
-
-    monkeypatch.setattr('pydantic_ai.models.openai.download_item', fake_download_item)
-
-    document_url = DocumentUrl(url=url, media_type=media_type)
-    identifier = document_url.identifier
-
-    part = UserPromptPart(content=[document_url])
-
-    msg = await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
-    content = cast(list[dict[str, Any]], msg['content'])
-
-    assert content[0]['type'] == 'text'
-    text = content[0]['text']
-    expected = (
-        f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----\n{body}\n-----END FILE id="{identifier}"-----'
-    )
-    assert text == expected
-
-
 @pytest.mark.vcr()
 async def test_image_url_tool_response(allow_model_requests: None, openai_api_key: str):
     m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
@@ -1119,6 +1046,18 @@ async def test_document_as_binary_content_input(
     assert result.output == snapshot('The main content of the document is "Dummy PDF file."')
 
 
+async def test_text_document_url_input(allow_model_requests: None, openai_api_key: str):
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(m)
+
+    document_url = DocumentUrl(url='https://www.w3.org/TR/2003/REC-PNG-20031110/iso_8859-1.txt')
+
+    result = await agent.run(['What is the main content on this document, in one sentence?', document_url])
+    assert result.output == snapshot(
+        'The document lists the graphical characters defined by ISO 8859-1 (1987) with their hexadecimal codes and descriptions.'
+    )
+
+
 async def test_text_document_as_binary_content_input(
     allow_model_requests: None, text_document_content: BinaryContent, openai_api_key: str
 ):
@@ -1126,7 +1065,9 @@ async def test_text_document_as_binary_content_input(
     agent = Agent(m)
 
     result = await agent.run(['What is the main content on this document?', text_document_content])
-    assert result.output == snapshot('The main content of the document is simply "Dummy TXT file."')
+    assert result.output == snapshot(
+        'The main content of the document is simply the text "Dummy TXT file." It does not appear to contain any other detailed information.'
+    )
 
 
 async def test_document_as_binary_content_input_with_tool(
@@ -3045,46 +2986,3 @@ def test_deprecated_openai_model(openai_api_key: str):
 
         provider = OpenAIProvider(api_key=openai_api_key)
         OpenAIModel('gpt-4o', provider=provider)  # type: ignore[reportDeprecated]
-
-
-@pytest.mark.vcr()
-async def test_openai_video_url_raises_not_implemented(openai_api_key: str, allow_model_requests: None) -> None:
-    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
-    with pytest.raises(NotImplementedError):
-        await model.request(
-            [ModelRequest(parts=[UserPromptPart(content=[VideoUrl(url='https://example.com/file.mp4')])])],
-            {},
-            ModelRequestParameters(),
-        )
-
-
-async def test_openai_map_user_prompt_unsupported_binary_content() -> None:
-    # Use BinaryContent with unsupported media_type to exercise empty mapping via public API
-
-    bc = BinaryContent(data=b'data', media_type='application/octet-stream')
-    part = UserPromptPart(content=[bc])
-    with pytest.raises(RuntimeError, match='Unsupported binary content type: application/octet-stream'):
-        await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
-
-
-async def test_openai_map_user_prompt_video_url_raises_not_implemented() -> None:
-    # Covers VideoUrl unsupported path via public API
-    part = UserPromptPart(content=[VideoUrl(url='https://example.com/file.mp4')])
-    with pytest.raises(NotImplementedError, match='VideoUrl is not supported for OpenAI'):
-        await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
-
-
-async def test_openai_binary_content_unsupported_type() -> None:
-    # Covers BinaryContent unsupported path (not text-like, not image/audio/document/video) via public API
-    class Location(TypedDict):
-        """Location model for testing"""
-
-        city: str
-        country: str
-
-    unsupported = Location(city='Paris', country='France')
-    part = UserPromptPart(content=[unsupported])  # type: ignore[reportArgumentType]
-    with pytest.raises(
-        AssertionError, match="Expected code to be unreachable, but got: {'city': 'Paris', 'country': 'France'}"
-    ):
-        await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]

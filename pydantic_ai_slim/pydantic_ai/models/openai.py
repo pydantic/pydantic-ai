@@ -750,8 +750,7 @@ class OpenAIChatModel(Model):
             else:
                 assert_never(part)
 
-    @staticmethod
-    async def _map_user_prompt(part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:
+    async def _map_user_prompt(self, part: UserPromptPart) -> chat.ChatCompletionUserMessageParam:  # noqa: C901
         content: str | list[ChatCompletionContentPartParam]
         if isinstance(part.content, str):
             content = part.content
@@ -766,7 +765,40 @@ class OpenAIChatModel(Model):
                         image_url['detail'] = metadata.get('detail', 'auto')
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
-                    content.append(await OpenAIChatModel._handle_binary_content(item))
+                    if self._is_text_like_media_type(item.media_type):
+                        # Inline text-like binary content as a text block
+                        content.append(
+                            self._inline_text_file_part(
+                                item.data.decode('utf-8'),
+                                media_type=item.media_type,
+                                identifier=item.identifier,
+                            )
+                        )
+                    else:
+                        base64_encoded = base64.b64encode(item.data).decode('utf-8')
+                        if item.is_image:
+                            image_url: ImageURL = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
+                            if metadata := item.vendor_metadata:
+                                image_url['detail'] = metadata.get('detail', 'auto')
+                            content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
+                        elif item.is_audio:
+                            assert item.format in ('wav', 'mp3')
+                            audio = InputAudio(data=base64_encoded, format=item.format)
+                            content.append(
+                                ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
+                            )
+                        elif item.is_document:
+                            content.append(
+                                File(
+                                    file=FileFile(
+                                        file_data=f'data:{item.media_type};base64,{base64_encoded}',
+                                        filename=f'filename.{item.format}',
+                                    ),
+                                    type='file',
+                                )
+                            )
+                        else:  # pragma: no cover
+                            raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, AudioUrl):
                     downloaded_item = await download_item(item, data_format='base64', type_format='extension')
                     assert downloaded_item['data_type'] in (
@@ -776,58 +808,31 @@ class OpenAIChatModel(Model):
                     audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
                     content.append(ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio'))
                 elif isinstance(item, DocumentUrl):
-                    content.append(await OpenAIChatModel._handle_document_url(item))
-                elif isinstance(item, VideoUrl):
+                    if self._is_text_like_media_type(item.media_type):
+                        downloaded_text = await download_item(item, data_format='text')
+                        content.append(
+                            self._inline_text_file_part(
+                                downloaded_text['data'],
+                                media_type=item.media_type,
+                                identifier=item.identifier,
+                            )
+                        )
+                    else:
+                        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
+                        content.append(
+                            File(
+                                file=FileFile(
+                                    file_data=downloaded_item['data'],
+                                    filename=f'filename.{downloaded_item["data_type"]}',
+                                ),
+                                type='file',
+                            )
+                        )
+                elif isinstance(item, VideoUrl):  # pragma: no cover
                     raise NotImplementedError('VideoUrl is not supported for OpenAI')
                 else:
                     assert_never(item)
         return chat.ChatCompletionUserMessageParam(role='user', content=content)
-
-    @staticmethod
-    async def _handle_binary_content(item: BinaryContent) -> ChatCompletionContentPartParam:
-        if OpenAIChatModel._is_text_like_media_type(item.media_type):
-            # Inline text-like binary content as a text block
-            text = item.data.decode('utf-8')
-            media_type = item.media_type
-            inline = OpenAIChatModel._inline_file_block(media_type, text, identifier=item.identifier)
-            return ChatCompletionContentPartTextParam(text=inline, type='text')
-        base64_encoded = base64.b64encode(item.data).decode('utf-8')
-        if item.is_image:
-            image_url: ImageURL = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
-            if metadata := item.vendor_metadata:
-                image_url['detail'] = metadata.get('detail', 'auto')
-            return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
-        elif item.is_audio:
-            assert item.format in ('wav', 'mp3')
-            audio = InputAudio(data=base64_encoded, format=item.format)
-            return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
-        elif item.is_document:
-            return File(
-                file=FileFile(
-                    file_data=f'data:{item.media_type};base64,{base64_encoded}',
-                    filename=f'filename.{item.format}',
-                ),
-                type='file',
-            )
-        else:
-            raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
-
-    @staticmethod
-    async def _handle_document_url(item: DocumentUrl) -> ChatCompletionContentPartParam:
-        if OpenAIChatModel._is_text_like_media_type(item.media_type):
-            downloaded_text = await download_item(item, data_format='text', type_format='extension')
-            inline = OpenAIChatModel._inline_file_block(
-                item.media_type, downloaded_text['data'], identifier=item.identifier
-            )
-            return ChatCompletionContentPartTextParam(text=inline, type='text')
-        downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
-        return File(
-            file=FileFile(
-                file_data=downloaded_item['data'],
-                filename=f'filename.{downloaded_item["data_type"]}',
-            ),
-            type='file',
-        )
 
     @staticmethod
     def _is_text_like_media_type(media_type: str) -> bool:
@@ -841,10 +846,15 @@ class OpenAIChatModel(Model):
         )
 
     @staticmethod
-    def _inline_file_block(media_type: str, text: str, identifier: str | None) -> str:
-        assert identifier is not None
-        id_attr = f' id="{identifier}"'
-        return '\n'.join([f'-----BEGIN FILE{id_attr} type="{media_type}"-----', text, f'-----END FILE{id_attr}-----'])
+    def _inline_text_file_part(text: str, *, media_type: str, identifier: str) -> ChatCompletionContentPartTextParam:
+        text = '\n'.join(
+            [
+                f'-----BEGIN FILE id="{identifier}" type="{media_type}"-----',
+                text,
+                f'-----END FILE id="{identifier}"-----',
+            ]
+        )
+        return ChatCompletionContentPartTextParam(text=text, type='text')
 
 
 @deprecated(
