@@ -9,10 +9,10 @@ from temporalio import activity, workflow
 from temporalio.workflow import ActivityConfig
 from typing_extensions import Self
 
+from pydantic_ai import ToolsetTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.mcp import MCPServer, ToolResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
-from pydantic_ai.toolsets.abstract import ToolsetTool
 
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset

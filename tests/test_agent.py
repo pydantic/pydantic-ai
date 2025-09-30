@@ -15,7 +15,37 @@ from pydantic import BaseModel, TypeAdapter, field_validator
 from pydantic_core import to_json
 from typing_extensions import Self
 
-from pydantic_ai import Agent, ModelRetry, RunContext, UnexpectedModelBehavior, UserError, capture_run_messages
+from pydantic_ai import (
+    AbstractToolset,
+    Agent,
+    AgentStreamEvent,
+    AudioUrl,
+    BinaryContent,
+    CombinedToolset,
+    DocumentUrl,
+    FunctionToolset,
+    ImageUrl,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelProfile,
+    ModelRequest,
+    ModelResponse,
+    ModelResponsePart,
+    ModelRetry,
+    PrefixedToolset,
+    RetryPromptPart,
+    RunContext,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+    UnexpectedModelBehavior,
+    UserError,
+    UserPromptPart,
+    VideoUrl,
+    capture_run_messages,
+)
 from pydantic_ai._output import (
     NativeOutput,
     NativeOutputSchema,
@@ -26,36 +56,11 @@ from pydantic_ai._output import (
     ToolOutputSchema,
 )
 from pydantic_ai.agent import AgentRunResult, WrapperAgent
-from pydantic_ai.messages import (
-    AgentStreamEvent,
-    AudioUrl,
-    BinaryContent,
-    DocumentUrl,
-    ImageUrl,
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    ModelResponse,
-    ModelResponsePart,
-    RetryPromptPart,
-    SystemPromptPart,
-    TextPart,
-    ToolCallPart,
-    ToolReturn,
-    ToolReturnPart,
-    UserPromptPart,
-    VideoUrl,
-)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import StructuredDict, ToolOutput
-from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
-from pydantic_ai.toolsets.abstract import AbstractToolset
-from pydantic_ai.toolsets.combined import CombinedToolset
-from pydantic_ai.toolsets.function import FunctionToolset
-from pydantic_ai.toolsets.prefixed import PrefixedToolset
 from pydantic_ai.usage import RequestUsage
 
 from .conftest import IsDatetime, IsNow, IsStr, TestEnv
@@ -4586,7 +4591,7 @@ async def test_wrapper_agent():
 
 async def test_thinking_only_response_retry():
     """Test that thinking-only responses trigger a retry mechanism."""
-    from pydantic_ai.messages import ThinkingPart
+    from pydantic_ai import ThinkingPart
     from pydantic_ai.models.function import FunctionModel
 
     call_count = 0

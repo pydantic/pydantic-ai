@@ -6,8 +6,8 @@ import pytest
 from dirty_equals import IsListOrTuple
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     FinalResultEvent,
     ModelRequest,
     ModelResponse,

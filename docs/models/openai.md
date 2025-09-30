@@ -235,9 +235,8 @@ When using an alternative provider class provided by Pydantic AI, an appropriate
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIChatModel`):
 
 ```py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, InlineDefsJsonSchemaTransformer
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
