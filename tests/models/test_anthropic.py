@@ -5083,22 +5083,22 @@ async def test_anthropic_memory_tool(allow_model_requests: None, anthropic_api_k
             return 'The user lives in Mexico City.'
 
         def create(self, command: BetaMemoryTool20250818CreateCommand) -> str:
-            return f'File created successfully at {command.path}'
+            return f'File created successfully at {command.path}'  # pragma: no cover
 
         def str_replace(self, command: BetaMemoryTool20250818StrReplaceCommand) -> str:
-            return f'File {command.path} has been edited'
+            return f'File {command.path} has been edited'  # pragma: no cover
 
         def insert(self, command: BetaMemoryTool20250818InsertCommand) -> str:
-            return f'Text inserted at line {command.insert_line} in {command.path}'
+            return f'Text inserted at line {command.insert_line} in {command.path}'  # pragma: no cover
 
         def delete(self, command: BetaMemoryTool20250818DeleteCommand) -> str:
-            return f'File deleted: {command.path}'
+            return f'File deleted: {command.path}'  # pragma: no cover
 
         def rename(self, command: BetaMemoryTool20250818RenameCommand) -> str:
-            return f'Renamed {command.old_path} to {command.new_path}'
+            return f'Renamed {command.old_path} to {command.new_path}'  # pragma: no cover
 
         def clear_all_memory(self) -> str:
-            return 'All memory cleared'
+            return 'All memory cleared'  # pragma: no cover
 
     fake_memory = FakeMemoryTool()
 
