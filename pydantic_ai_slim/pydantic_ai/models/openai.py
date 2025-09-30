@@ -519,6 +519,10 @@ class OpenAIChatModel(Model):
             timestamp = _now_utc()
             response.created = int(timestamp.timestamp())
 
+        # Workaround for local Ollama which sometimes returns a `None` finish reason.
+        if response.choices and (choice := response.choices[0]) and choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
+            choice.finish_reason = 'stop'
+
         try:
             response = chat.ChatCompletion.model_validate(response.model_dump())
         except ValidationError as e:
@@ -1467,6 +1471,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for chunk in self._response:
+            print(chunk)
             self._usage += _map_usage(chunk)
 
             if chunk.id:  # pragma: no branch
