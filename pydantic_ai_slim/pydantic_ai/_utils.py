@@ -6,7 +6,7 @@ import inspect
 import re
 import time
 import uuid
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, fields, is_dataclass
 from datetime import datetime, timezone
@@ -85,21 +85,16 @@ def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
         raise UserError('Schema must be an object')
 
 
-def _contains_ref(obj: Any) -> bool:
+def _contains_ref(obj: JsonSchemaValue | list[JsonSchemaValue]) -> bool:
     """Recursively check if an object contains any $ref keys."""
+    items: Iterable[JsonSchemaValue]
     if isinstance(obj, dict):
         if '$ref' in obj:
             return True
-        for v in obj.values():  # pyright: ignore[reportUnknownVariableType]
-            if isinstance(v, dict | list) and _contains_ref(v):
-                return True
-        return False
-    elif isinstance(obj, list):
-        for item in obj:  # pyright: ignore[reportUnknownVariableType]
-            if isinstance(item, dict | list) and _contains_ref(item):
-                return True
-        return False
-    return False
+        items = obj.values()
+    else:
+        items = obj
+    return any(isinstance(item, dict | list) and _contains_ref(item) for item in items)  # pyright: ignore[reportUnknownArgumentType]
 
 
 T = TypeVar('T')
