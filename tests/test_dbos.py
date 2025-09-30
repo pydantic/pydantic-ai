@@ -33,8 +33,8 @@ from pydantic_ai import (
     ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
-    model_request_stream,
 )
+from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel

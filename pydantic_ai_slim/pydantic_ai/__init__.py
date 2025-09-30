@@ -10,13 +10,6 @@ from .agent import (
     capture_run_messages,
 )
 from .builtin_tools import CodeExecutionTool, UrlContextTool, WebSearchTool, WebSearchUserLocation
-from .direct import (
-    StreamedResponseSync,
-    model_request,
-    model_request_stream,
-    model_request_stream_sync,
-    model_request_sync,
-)
 from .exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -114,12 +107,6 @@ __all__ = (
     'UserPromptNode',
     'capture_run_messages',
     'InstrumentationSettings',
-    # direct
-    'model_request',
-    'model_request_sync',
-    'model_request_stream',
-    'model_request_stream_sync',
-    'StreamedResponseSync',
     # exceptions
     'AgentRunError',
     'CallDeferred',
