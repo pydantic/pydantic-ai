@@ -293,27 +293,11 @@ agent = Agent(model)
 
 ### Ollama
 
-To use [Ollama](https://ollama.com/), you must first download the Ollama client, and then download a model using the [Ollama model library](https://ollama.com/library).
+Pydantic AI supports both self-hosted [Ollama](https://ollama.com/) servers (running locally or remotely) and [Ollama Cloud](https://ollama.com/cloud) through the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
 
-You must also ensure the Ollama server is running when trying to make requests to it. For more information, please see the [Ollama documentation](https://github.com/ollama/ollama/tree/main/docs).
+The API URL and optional API key can be provided to the `OllamaProvider` using the `base_url` and `api_key` arguments, or the `OLLAMA_BASE_URL` and `OLLAMA_API_KEY` environment variables.
 
-You can then use the model with the [`OllamaProvider`][pydantic_ai.providers.ollama.OllamaProvider].
-
-#### Example local usage
-
-With `ollama` installed, you can download the model you want to use:
-
-```bash
-ollama pull llama3.2
-```
-
-Run the server with the model you want to use:
-
-```bash
-ollama serve
-```
-
-Then run your code, here's a minimal example:
+For servers running locally, use the `http://localhost:11434/v1` base URL. For Ollama Cloud, use `https://ollama.com/v1` and ensure an API key is set.
 
 ```python
 from pydantic import BaseModel
@@ -329,8 +313,8 @@ class CityLocation(BaseModel):
 
 
 ollama_model = OpenAIChatModel(
-    model_name='llama3.2',
-    provider=OllamaProvider(base_url='http://localhost:11434/v1'),
+    model_name='gpt-oss:20b',
+    provider=OllamaProvider(base_url='http://localhost:11434/v1'),  # (1)!
 )
 agent = Agent(ollama_model, output_type=CityLocation)
 
@@ -341,37 +325,8 @@ print(result.usage())
 #> RunUsage(input_tokens=57, output_tokens=8, requests=1)
 ```
 
-#### Example using a remote server
+1. For Ollama Cloud, use the `base_url='https://ollama.com/v1'` and set the `OLLAMA_API_KEY` environment variable.
 
-```python
-from pydantic import BaseModel
-
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.ollama import OllamaProvider
-
-ollama_model = OpenAIChatModel(
-    model_name='qwen2.5-coder:7b',  # (1)!
-    provider=OllamaProvider(base_url='http://192.168.1.74:11434/v1'),  # (2)!
-)
-
-
-class CityLocation(BaseModel):
-    city: str
-    country: str
-
-
-agent = Agent(model=ollama_model, output_type=CityLocation)
-
-result = agent.run_sync('Where were the olympics held in 2012?')
-print(result.output)
-#> city='London' country='United Kingdom'
-print(result.usage())
-#> RunUsage(input_tokens=57, output_tokens=8, requests=1)
-```
-
-1. The name of the model running on the remote server
-2. The url of the remote server
 
 ### Azure AI Foundry
 
