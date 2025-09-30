@@ -6,8 +6,8 @@ from textwrap import dedent
 
 from typing_extensions import Self
 
+from .._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from ..output import StructuredOutputMode
-from ._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 
 __all__ = [
     'ModelProfile',

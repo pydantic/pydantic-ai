@@ -10,6 +10,7 @@ from pydantic_core import core_schema
 from typing_extensions import TypeAliasType, TypeVar, deprecated
 
 from . import _utils
+from ._json_schema import InlineDefsJsonSchemaTransformer
 from .messages import ToolCallPart
 from .tools import DeferredToolRequests, ObjectJsonSchema, RunContext, ToolDefinition
 
@@ -310,6 +311,11 @@ def StructuredDict(
     ```
     """
     json_schema = _utils.check_object_json_schema(json_schema)
+
+    # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
+    # See https://github.com/pydantic/pydantic/issues/12145
+    if '$defs' in json_schema:
+        json_schema = InlineDefsJsonSchemaTransformer(json_schema).walk()
 
     if name:
         json_schema['title'] = name
