@@ -110,9 +110,14 @@ agent = Agent(model)
 
 #### Customizing Model
 
-You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns: `{model_id}` for Gemini models, `{publisher}/{model_id}`, `publishers/{publisher}/models/{model_id}`, or `projects/{project}/locations/{location}/publishers/{publisher}/models/{model_id}`.
+You can access models from the [Model Garden](https://cloud.google.com/model-garden?hl=en) that support the generateContent API and are available under your GCP project, including but not limited to Gemini, using one of the following `model_name` patterns: 
 
-```python
+- `{model_id}` for Gemini models
+- `{publisher}/{model_id}`
+- `publishers/{publisher}/models/{model_id}`
+- `projects/{project}/locations/{location}/publishers/{publisher}/models/{model_id}`
+
+```python {test="skip"}
 from google.oauth2 import service_account
 
 from pydantic_ai import Agent
