@@ -227,7 +227,7 @@ class MCPServer(AbstractToolset[Any], ABC):
 
         if result.isError:
             message: str | None = None
-            if result.content:
+            if result.content:  # pragma: no branch
                 text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
                 message = '\n'.join(text_parts)
 
