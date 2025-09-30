@@ -68,17 +68,18 @@ def is_model_like(type_: Any) -> bool:
 def check_object_json_schema(schema: JsonSchemaValue) -> ObjectJsonSchema:
     from .exceptions import UserError
 
-    if ref := schema.get('$ref'):
+    if schema.get('type') == 'object':
+        return schema
+    elif ref := schema.get('$ref'):
         prefix = '#/$defs/'
         # Return the referenced schema unless it contains additional nested references.
         if (
             ref.startswith(prefix)
             and (resolved := schema.get('$defs', {}).get(ref[len(prefix) :]))
+            and resolved.get('type') == 'object'
             and not _contains_ref(resolved)
         ):
-            schema = resolved
-
-    if schema.get('type') == 'object':
+            return resolved
         return schema
     else:
         raise UserError('Schema must be an object')
