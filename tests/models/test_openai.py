@@ -3032,7 +3032,7 @@ async def test_openai_video_url_raises_not_implemented(openai_api_key: str, allo
         )
 
 
-async def test_openai_map_single_item_unsupported_binary_content() -> None:
+async def test_openai_map_user_prompt_unsupported_binary_content() -> None:
     # Use BinaryContent with unsupported media_type to exercise empty mapping via public API
 
     bc = BinaryContent(data=b'data', media_type='application/octet-stream')
@@ -3041,7 +3041,7 @@ async def test_openai_map_single_item_unsupported_binary_content() -> None:
         await OpenAIChatModel._map_user_prompt(part)  # type: ignore[reportPrivateUsage]
 
 
-async def test_openai_video_url_raises_not_implemented() -> None:
+async def test_openai_map_user_prompt_video_url_raises_not_implemented() -> None:
     # Covers VideoUrl unsupported path via public API
     part = UserPromptPart(content=[VideoUrl(url='https://example.com/file.mp4')])
     with pytest.raises(NotImplementedError, match='VideoUrl is not supported for OpenAI'):
