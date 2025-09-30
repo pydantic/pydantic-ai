@@ -114,6 +114,20 @@ class FileUrl(ABC):
 
     _: KW_ONLY
 
+    identifier: str
+    """The identifier of the file, such as a unique ID. generating one from the url if not explicitly set.
+
+    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
+    and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
+
+    This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
+    If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
+    e.g. "This is file <identifier>:" preceding the `FileUrl`.
+
+    It's also included in inline-text delimiters for providers that require inlining text documents, so the model can
+    distinguish multiple files.
+    """
+
     force_download: bool = False
     """If the model supports it:
 
@@ -132,17 +146,6 @@ class FileUrl(ABC):
     _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
     )
-
-    identifier: str | None = None
-    """The identifier of the file, such as a unique ID. generating one from the url if not explicitly set
-
-    This identifier can be provided to the model in a message to allow it to refer to this file in a tool call argument,
-    and the tool can look up the file in question by iterating over the message history and finding the matching `FileUrl`.
-
-    This identifier is only automatically passed to the model when the `FileUrl` is returned by a tool.
-    If you're passing the `FileUrl` as a user message, it's up to you to include a separate text part with the identifier,
-    e.g. "This is file <identifier>:" preceding the `FileUrl`.
-    """
 
     def __init__(
         self,
