@@ -119,21 +119,16 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
 
-location = 'your-region'
-project = 'your-project-id'
 credentials = service_account.Credentials.from_service_account_file(
     'path/to/service-account.json',
     scopes=['https://www.googleapis.com/auth/cloud-platform'],
 )
 provider = GoogleProvider(
     credentials=credentials,
-    project=project,
-    location=location
+    project='your-gcp-project-id',
+    location='us-central1',  # the region where the model is available
 )
-model = GoogleModel(
-    f'projects/{project}/locations/{location}/publishers/meta/models/llama-3.3-70b-instruct-maas',
-    provider=provider
-)
+model = GoogleModel('llama-3.3-70b-instruct-maas', provider=provider)
 agent = Agent(model)
 ...
 ```
