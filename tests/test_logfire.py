@@ -10,10 +10,9 @@ from inline_snapshot import snapshot
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
@@ -1608,7 +1607,7 @@ def test_text_output_function_logfire_attributes(
 
     def call_text_response(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Return a plain text response (not a tool call)
-        from pydantic_ai.messages import TextPart
+        from pydantic_ai import TextPart
 
         return ModelResponse(parts=[TextPart(content='hello world')])
 

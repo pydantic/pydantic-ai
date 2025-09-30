@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import json
 import os
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import timezone
@@ -14,21 +15,19 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelHTTPError, ModelRetry
-from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     BinaryContent,
-    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolCallPart,
-    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
     BuiltinToolReturnPart,
     DocumentUrl,
     FinalResultEvent,
     ImageUrl,
+    ModelHTTPError,
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelRetry,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -41,6 +40,12 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
+)
+from pydantic_ai.builtin_tools import CodeExecutionTool, WebSearchTool
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,  # pyright: ignore[reportDeprecated]
+    BuiltinToolResultEvent,  # pyright: ignore[reportDeprecated]
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
 from pydantic_ai.result import RunUsage
@@ -4180,6 +4185,29 @@ async def test_anthropic_native_output(allow_model_requests: None, anthropic_api
 
     with pytest.raises(UserError, match='Native structured output is not supported by the model.'):
         await agent.run('What is the largest city in the user country?')
+
+
+async def test_anthropic_output_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):
+    m = AnthropicModel(
+        'claude-sonnet-4-0',
+        provider=AnthropicProvider(api_key=anthropic_api_key),
+        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
+    )
+
+    agent = Agent(m, output_type=int)
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            'Anthropic does not support thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
+        ),
+    ):
+        await agent.run('What is 3 + 3?')
+
+    agent = Agent(m, output_type=PromptedOutput(int))
+
+    result = await agent.run('What is 3 + 3?')
+    assert result.output == snapshot(6)
 
 
 async def test_anthropic_tool_with_thinking(allow_model_requests: None, anthropic_api_key: str):

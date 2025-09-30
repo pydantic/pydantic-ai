@@ -25,13 +25,14 @@ from fastapi import Depends, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from typing_extensions import LiteralString, ParamSpec, TypedDict
 
-from pydantic_ai import Agent, UnexpectedModelBehavior
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     TextPart,
+    UnexpectedModelBehavior,
     UserPromptPart,
 )
 

@@ -526,16 +526,20 @@ class OpenAIChatModel(Model):
 
         choice = response.choices[0]
         items: list[ModelResponsePart] = []
+
         # The `reasoning_content` field is only present in DeepSeek models.
         # https://api-docs.deepseek.com/guides/reasoning_model
         if reasoning_content := getattr(choice.message, 'reasoning_content', None):
             items.append(ThinkingPart(id='reasoning_content', content=reasoning_content, provider_name=self.system))
 
-        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
-        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
-        # NOTE: We don't currently handle OpenRouter/gpt-oss `reasoning`:
+        # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
         # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
         # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+        if reasoning := getattr(choice.message, 'reasoning', None):
+            items.append(ThinkingPart(id='reasoning', content=reasoning, provider_name=self.system))
+
+        # NOTE: We don't currently handle OpenRouter `reasoning_details`:
+        # - https://openrouter.ai/docs/use-cases/reasoning-tokens#preserving-reasoning-blocks
         # If you need this, please file an issue.
 
         vendor_details: dict[str, Any] = {}
@@ -753,7 +757,9 @@ class OpenAIChatModel(Model):
                 if isinstance(item, str):
                     content.append(ChatCompletionContentPartTextParam(text=item, type='text'))
                 elif isinstance(item, ImageUrl):
-                    image_url = ImageURL(url=item.url)
+                    image_url: ImageURL = {'url': item.url}
+                    if metadata := item.vendor_metadata:
+                        image_url['detail'] = metadata.get('detail', 'auto')
                     content.append(ChatCompletionContentPartImageParam(image_url=image_url, type='image_url'))
                 elif isinstance(item, BinaryContent):
                     content.append(await OpenAIChatModel._handle_binary_content(item))
@@ -784,7 +790,9 @@ class OpenAIChatModel(Model):
         else:
             base64_encoded = base64.b64encode(item.data).decode('utf-8')
             if item.is_image:
-                image_url = ImageURL(url=f'data:{item.media_type};base64,{base64_encoded}')
+                image_url: ImageURL = {'url': f'data:{item.media_type};base64,{base64_encoded}'}
+                if metadata := item.vendor_metadata:
+                    image_url['detail'] = metadata.get('detail', 'auto')
                 return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
             elif item.is_audio:
                 assert item.format in ('wav', 'mp3')
@@ -1418,11 +1426,17 @@ class OpenAIResponsesModel(Model):
                 elif isinstance(item, BinaryContent):
                     base64_encoded = base64.b64encode(item.data).decode('utf-8')
                     if item.is_image:
+                        detail: Literal['auto', 'low', 'high'] = 'auto'
+                        if metadata := item.vendor_metadata:
+                            detail = cast(
+                                Literal['auto', 'low', 'high'],
+                                metadata.get('detail', 'auto'),
+                            )
                         content.append(
                             responses.ResponseInputImageParam(
                                 image_url=f'data:{item.media_type};base64,{base64_encoded}',
                                 type='input_image',
-                                detail='auto',
+                                detail=detail,
                             )
                         )
                     elif item.is_document:
@@ -1441,8 +1455,15 @@ class OpenAIResponsesModel(Model):
                     else:  # pragma: no cover
                         raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
                 elif isinstance(item, ImageUrl):
+                    detail: Literal['auto', 'low', 'high'] = 'auto'
+                    if metadata := item.vendor_metadata:
+                        detail = cast(Literal['auto', 'low', 'high'], metadata.get('detail', 'auto'))
                     content.append(
-                        responses.ResponseInputImageParam(image_url=item.url, type='input_image', detail='auto')
+                        responses.ResponseInputImageParam(
+                            image_url=item.url,
+                            type='input_image',
+                            detail=detail,
+                        )
                     )
                 elif isinstance(item, AudioUrl):  # pragma: no cover
                     downloaded_item = await download_item(item, data_format='base64_uri', type_format='extension')
@@ -1524,6 +1545,17 @@ class OpenAIStreamedResponse(StreamedResponse):
                     vendor_part_id='reasoning_content',
                     id='reasoning_content',
                     content=reasoning_content,
+                    provider_name=self.provider_name,
+                )
+
+            # The `reasoning` field is only present in gpt-oss via Ollama and OpenRouter.
+            # - https://cookbook.openai.com/articles/gpt-oss/handle-raw-cot#chat-completions-api
+            # - https://openrouter.ai/docs/use-cases/reasoning-tokens#basic-usage-with-reasoning-tokens
+            if reasoning := getattr(choice.delta, 'reasoning', None):  # pragma: no cover
+                yield self._parts_manager.handle_thinking_delta(
+                    vendor_part_id='reasoning',
+                    id='reasoning',
+                    content=reasoning,
                     provider_name=self.provider_name,
                 )
 

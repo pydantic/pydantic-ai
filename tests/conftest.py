@@ -23,8 +23,7 @@ from pytest_mock import MockerFixture
 from vcr import VCR, request as vcr_request
 
 import pydantic_ai.models
-from pydantic_ai import Agent
-from pydantic_ai.messages import BinaryContent
+from pydantic_ai import Agent, BinaryContent
 from pydantic_ai.models import Model, cached_async_http_client
 
 __all__ = 'IsDatetime', 'IsFloat', 'IsNow', 'IsStr', 'IsInt', 'IsInstance', 'TestEnv', 'ClientWithHandler', 'try_import'

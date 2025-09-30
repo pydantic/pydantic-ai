@@ -235,9 +235,8 @@ When using an alternative provider class provided by Pydantic AI, an appropriate
 If the model you're using is not working correctly out of the box, you can tweak various aspects of how model requests are constructed by providing your own [`ModelProfile`][pydantic_ai.profiles.ModelProfile] (for behaviors shared among all model classes) or [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (for behaviors specific to `OpenAIChatModel`):
 
 ```py
-from pydantic_ai import Agent
+from pydantic_ai import Agent, InlineDefsJsonSchemaTransformer
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer
 from pydantic_ai.profiles.openai import OpenAIModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -302,13 +301,17 @@ You can then use the model with the [`OllamaProvider`][pydantic_ai.providers.oll
 
 #### Example local usage
 
-With `ollama` installed, you can run the server with the model you want to use:
+With `ollama` installed, you can download the model you want to use:
 
 ```bash
-ollama run llama3.2
+ollama pull llama3.2
 ```
 
-(this will pull the `llama3.2` model if you don't already have it downloaded)
+Run the server with the model you want to use:
+
+```bash
+ollama serve
+```
 
 Then run your code, here's a minimal example:
 

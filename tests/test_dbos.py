@@ -14,10 +14,8 @@ import pytest
 from httpx import AsyncClient
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, ModelSettings, RunContext
-from pydantic_ai.direct import model_request_stream
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
-from pydantic_ai.messages import (
+from pydantic_ai import (
+    Agent,
     AgentStreamEvent,
     FinalResultEvent,
     FunctionToolCallEvent,
@@ -25,15 +23,19 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
+    RunContext,
     TextPart,
     ToolCallPart,
     ToolCallPartDelta,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.direct import model_request_stream
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, UserError
 from pydantic_ai.models import cached_async_http_client
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -43,9 +45,14 @@ from pydantic_ai.usage import RequestUsage
 from .conftest import IsDatetime, IsStr
 
 try:
+    import importlib.metadata
+
     from dbos import DBOS, DBOSConfig, SetWorkflowID
+    from packaging.version import Version
 
     from pydantic_ai.durable_exec.dbos import DBOSAgent, DBOSMCPServer, DBOSModel
+
+    dbos_version = Version(importlib.metadata.version('dbos'))
 except ImportError:  # pragma: lax no cover
     pytest.skip('DBOS is not installed', allow_module_level=True)
 
@@ -69,8 +76,8 @@ except ImportError:  # pragma: lax no cover
 
 from inline_snapshot import snapshot
 
+from pydantic_ai import ExternalToolset, FunctionToolset
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
-from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 
 pytestmark = [
     pytest.mark.anyio,
@@ -110,9 +117,10 @@ def workflow_raises(exc_type: type[Exception], exc_message: str) -> Iterator[Non
 DBOS_SQLITE_FILE = 'dbostest.sqlite'
 DBOS_CONFIG: DBOSConfig = {
     'name': 'pydantic_dbos_tests',
-    'database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'system_database_url': f'sqlite:///{DBOS_SQLITE_FILE}',
     'run_admin_server': False,
+    # enable_otlp requires dbos>1.14
+    'enable_otlp': True,
 }
 
 
@@ -1042,8 +1050,18 @@ async def test_dbos_agent_run_in_workflow_with_event_stream_handler(allow_model_
     ):
         pass
 
-    with workflow_raises(TypeError, snapshot('Serialized function should be defined at the top level of a module')):
+    with pytest.raises(Exception) as exc_info:
         await simple_dbos_agent.run('What is the capital of Mexico?', event_stream_handler=simple_event_stream_handler)
+
+    if dbos_version <= Version('1.14'):  # pragma: lax no cover
+        # Older DBOS versions used jsonpickle
+        assert str(exc_info.value) == snapshot('Serialized function should be defined at the top level of a module')
+    else:
+        # Newer DBOS versions use pickle
+        assert (
+            "local object 'test_dbos_agent_run_in_workflow_with_event_stream_handler.<locals>.simple_event_stream_handler'"
+            in str(exc_info.value)
+        )
 
 
 async def test_dbos_agent_run_in_workflow_with_model(allow_model_requests: None, dbos: DBOS):
@@ -1142,14 +1160,18 @@ async def get_model_name(ctx: RunContext[UnserializableDeps]) -> int:
 async def test_dbos_agent_with_unserializable_deps_type(allow_model_requests: None, dbos: DBOS):
     unserializable_deps_dbos_agent = DBOSAgent(unserializable_deps_agent)
     # Test this raises a serialization error because httpx.AsyncClient is not serializable.
-    with pytest.raises(
-        Exception,
-        match='object proxy must define __reduce_ex__()',
-    ):
+    with pytest.raises(Exception) as exc_info:
         async with AsyncClient() as client:
             # This will trigger the client to be unserializable
             logfire.instrument_httpx(client, capture_all=True)
             await unserializable_deps_dbos_agent.run('What is the model name?', deps=UnserializableDeps(client=client))
+
+    if dbos_version <= Version('1.14'):  # pragma: lax no cover
+        # Older DBOS versions used jsonpickle
+        assert str(exc_info.value) == snapshot('object proxy must define __reduce_ex__()')
+    else:
+        # Newer DBOS versions use pickle
+        assert str(exc_info.value) == snapshot("cannot pickle '_thread.RLock' object")
 
 
 # Test dynamic toolsets in an agent with DBOS
