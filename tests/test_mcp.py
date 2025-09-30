@@ -77,15 +77,14 @@ async def test_stdio_server(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     async with server:
         tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(17)
+        assert len(tools) == snapshot(18)
         assert tools[0].name == 'celsius_to_fahrenheit'
         assert isinstance(tools[0].description, str)
         assert tools[0].description.startswith('Convert Celsius to Fahrenheit.')
 
         # Test calling the temperature conversion tool
         result = await server.direct_call_tool('celsius_to_fahrenheit', {'celsius': 0})
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-        assert result_text == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_reentrant_context_manager():
@@ -131,8 +130,7 @@ async def test_stdio_server_with_tool_prefix(run_context: RunContext[int]):
         result = await server.call_tool(
             'foo_celsius_to_fahrenheit', {'celsius': 0}, run_context, tools['foo_celsius_to_fahrenheit']
         )
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-        assert result_text == snapshot('32.0')
+        assert result == snapshot(32.0)
 
 
 async def test_stdio_server_with_cwd(run_context: RunContext[int]):
@@ -140,7 +138,7 @@ async def test_stdio_server_with_cwd(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['mcp_server.py'], cwd=test_dir)
     async with server:
         tools = await server.get_tools(run_context)
-        assert len(tools) == snapshot(17)
+        assert len(tools) == snapshot(18)
 
 
 async def test_process_tool_call(run_context: RunContext[int]) -> int:
@@ -239,7 +237,7 @@ async def test_agent_with_stdio_server(allow_model_requests: None, agent: Agent)
                     parts=[
                         ToolReturnPart(
                             tool_name='celsius_to_fahrenheit',
-                            content={'result': '32.0'},
+                            content=32.0,
                             tool_call_id='call_QssdxTGkPblTYHmyVES1tKBj',
                             timestamp=IsDatetime(),
                         )
@@ -312,13 +310,8 @@ async def test_log_level_unset(run_context: RunContext[int]):
     server = MCPServerStdio('python', ['-m', 'tests.mcp_server'])
     assert server.log_level is None
     async with server:
-        tools = [tool.tool_def for tool in (await server.get_tools(run_context)).values()]
-        assert len(tools) == snapshot(17)
-        assert tools[13].name == 'get_log_level'
-
         result = await server.direct_call_tool('get_log_level', {})
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-        assert result_text == snapshot('unset')
+        assert result == snapshot('unset')
 
 
 async def test_log_level_set(run_context: RunContext[int]):
@@ -326,8 +319,7 @@ async def test_log_level_set(run_context: RunContext[int]):
     assert server.log_level == 'info'
     async with server:
         result = await server.direct_call_tool('get_log_level', {})
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-        assert result_text == snapshot('info')
+        assert result == snapshot('info')
 
 
 async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
@@ -375,7 +367,7 @@ async def test_tool_returning_str(allow_model_requests: None, agent: Agent):
                     parts=[
                         ToolReturnPart(
                             tool_name='get_weather_forecast',
-                            content={'result': 'The weather in Mexico City is sunny and 26 degrees Celsius.'},
+                            content='The weather in Mexico City is sunny and 26 degrees Celsius.',
                             tool_call_id='call_m9goNwaHBbU926w47V7RtWPt',
                             timestamp=IsDatetime(),
                         )
@@ -987,6 +979,76 @@ async def test_tool_returning_dict(allow_model_requests: None, agent: Agent):
         )
 
 
+async def test_tool_returning_unstructured_dict(allow_model_requests: None, agent: Agent):
+    async with agent:
+        result = await agent.run('Get me an unstructured dict, respond on one line')
+        assert result.output == snapshot('{"foo":"bar","baz":123}')
+        assert result.all_messages() == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(
+                            content='Get me an unstructured dict, respond on one line',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='get_unstructured_dict', args='{}', tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd'
+                        )
+                    ],
+                    usage=RequestUsage(
+                        input_tokens=343,
+                        output_tokens=12,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'tool_calls'},
+                    provider_response_id='chatcmpl-CLbP82ODQMEznhobUKdq6Rjn9Aa12',
+                    finish_reason='tool_call',
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='get_unstructured_dict',
+                            content={'foo': 'bar', 'baz': 123},
+                            tool_call_id='call_R0n2R7S9vL2aZOX25T9jahTd',
+                            timestamp=IsDatetime(),
+                        )
+                    ]
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='{"foo":"bar","baz":123}')],
+                    usage=RequestUsage(
+                        input_tokens=374,
+                        output_tokens=10,
+                        details={
+                            'accepted_prediction_tokens': 0,
+                            'audio_tokens': 0,
+                            'reasoning_tokens': 0,
+                            'rejected_prediction_tokens': 0,
+                        },
+                    ),
+                    model_name='gpt-4o-2024-08-06',
+                    timestamp=IsDatetime(),
+                    provider_name='openai',
+                    provider_details={'finish_reason': 'stop'},
+                    provider_response_id='chatcmpl-CLbPAOYN3jPYdvYeD8JNOOXF5N554',
+                    finish_reason='stop',
+                ),
+            ]
+        )
+
+
 async def test_tool_returning_error(allow_model_requests: None, agent: Agent):
     async with agent:
         result = await agent.run('Get me an error, pass False as a value, unless the tool tells you otherwise')
@@ -1261,15 +1323,11 @@ async def test_client_sampling(run_context: RunContext[int]):
     server.sampling_model = TestModel(custom_output_text='sampling model response')
     async with server:
         result = await server.direct_call_tool('use_sampling', {'foo': 'bar'})
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-        import json
-
-        result_text = json.loads(result_text)  # type: ignore
-        assert result_text == snapshot(
+        assert result == snapshot(
             {
-                'meta': None,
+                '_meta': None,
                 'role': 'assistant',
-                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, 'meta': None},
+                'content': {'type': 'text', 'text': 'sampling model response', 'annotations': None, '_meta': None},
                 'model': 'test',
                 'stopReason': None,
             }
@@ -1369,11 +1427,11 @@ async def test_elicitation_callback_functionality(run_context: RunContext[int]):
     async with server:
         # Call the tool that uses elicitation
         result = await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
+
         # Verify the callback was called
         assert callback_called, 'Elicitation callback should have been called'
         assert callback_message == 'Should I continue?', 'Callback should receive the question'
-        assert result_text == f'User responded: {callback_response}', 'Tool should return the callback response'
+        assert result == f'User responded: {callback_response}', 'Tool should return the callback response'
 
 
 async def test_elicitation_callback_not_set(run_context: RunContext[int]):
@@ -1384,29 +1442,6 @@ async def test_elicitation_callback_not_set(run_context: RunContext[int]):
         # Should raise an error when elicitation is attempted without callback
         with pytest.raises(ModelRetry, match='Elicitation not supported'):
             await server.direct_call_tool('use_elicitation', {'question': 'Should I continue?'})
-
-
-async def test_direct_call_returns_text_content(mcp_server: MCPServerStdio):
-    """Direct tool call returns legacy text content when tool returns str."""
-    async with mcp_server:
-        result = await mcp_server.direct_call_tool('get_weather_forecast', {'location': 'Paris'})
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-    assert result_text == 'The weather in Paris is sunny and 26 degrees Celsius.'
-
-
-async def test_direct_call_returns_structured_dict(mcp_server: MCPServerStdio):
-    """Direct tool call returns structured dict when tool returns dict."""
-    async with mcp_server:
-        result = await mcp_server.direct_call_tool('get_dict', {})
-        result_text = result['result'] if isinstance(result, dict) and 'result' in result else result
-    assert result_text == {'foo': 'bar', 'baz': 123}
-
-
-async def test_direct_call_error_uses_text_content(mcp_server: MCPServerStdio):
-    """On error, the raised message should prefer text content from server."""
-    async with mcp_server:
-        with pytest.raises(ModelRetry, match='This is an error'):
-            await mcp_server.direct_call_tool('get_error', {})
 
 
 def test_load_mcp_servers(tmp_path: Path):

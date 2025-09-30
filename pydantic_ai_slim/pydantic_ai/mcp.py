@@ -226,24 +226,23 @@ class MCPServer(AbstractToolset[Any], ABC):
                 raise exceptions.ModelRetry(e.error.message)
 
         if result.isError:
-            error_message = 'Error in direct tool call'
+            message: str | None = None
             if result.content:
                 text_parts = [part.text for part in result.content if isinstance(part, mcp_types.TextContent)]
-                message = '\n'.join(text_parts) if text_parts else error_message
-            else:
-                message = error_message
+                message = '\n'.join(text_parts)
 
-            raise exceptions.ModelRetry(message)
+            raise exceptions.ModelRetry(message or 'MCP tool call failed')
 
-        structured = result.structuredContent
-        if structured and not any(not isinstance(part, mcp_types.TextContent) for part in result.content):
-            return structured  # pragma: no cover
-            # if result.content:  # pragma: no cover
-            #     mapped = [await self._map_tool_result_part(part) for part in result.content]
-            #     return mapped[0] if len(mapped) == 1 else mapped
-
-            # value = structured['result'] if isinstance(structured, dict) and 'result' in structured else structured
-            # return value
+        # Prefer structured content if there are only text parts, which per the docs would contain the JSON-encoded structured content for backward compatibility.
+        # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+        if (structured := result.structuredContent) and not any(
+            not isinstance(part, mcp_types.TextContent) for part in result.content
+        ):
+            # The MCP SDK wraps primitives and generic types like list in a `result` key, but we want to use the raw value returned by the tool function.
+            # See https://github.com/modelcontextprotocol/python-sdk#structured-output
+            if isinstance(structured, dict) and len(structured) == 1 and 'result' in structured:
+                return structured['result']
+            return structured
 
         mapped = [await self._map_tool_result_part(part) for part in result.content]
         return mapped[0] if len(mapped) == 1 else mapped

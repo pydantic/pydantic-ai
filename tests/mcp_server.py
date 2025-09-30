@@ -6,6 +6,7 @@ from mcp.server.fastmcp import Context, FastMCP, Image
 from mcp.server.session import ServerSession
 from mcp.types import (
     BlobResourceContents,
+    CreateMessageResult,
     EmbeddedResource,
     ResourceLink,
     SamplingMessage,
@@ -134,6 +135,11 @@ async def get_dict() -> dict[str, Any]:
     return {'foo': 'bar', 'baz': 123}
 
 
+@mcp.tool(structured_output=False)
+async def get_unstructured_dict() -> dict[str, Any]:
+    return {'foo': 'bar', 'baz': 123}
+
+
 @mcp.tool()
 async def get_error(value: bool = False):
     if value:
@@ -185,7 +191,7 @@ async def echo_deps(ctx: Context[ServerSession, None]) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> str:
+async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> CreateMessageResult:
     """Use sampling callback."""
 
     result = await ctx.session.create_message(
@@ -198,7 +204,7 @@ async def use_sampling(ctx: Context[ServerSession, None], foo: str) -> str:
         temperature=0.5,
         stop_sequences=['potato'],
     )
-    return result.model_dump_json(indent=2)
+    return result
 
 
 class UserResponse(BaseModel):
